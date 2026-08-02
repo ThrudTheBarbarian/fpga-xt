@@ -441,8 +441,16 @@ void pokey_timer_tick(pokey_timer *p)
 {
     p->ticks++;
     for (int i = 0; i < 8; i++)
-        if (p->st_lag[i] && --p->st_lag[i] == 0)
+        if (p->st_lag[i] && --p->st_lag[i] == 0) {
             p->irqst = (uint8_t)(p->irqst & ~(1u << i));
+            /* The cycle the BIT BECOMES READABLE, which is what every IRQST
+             * bracket in pokey_timertiming actually measures.  Deriving it by
+             * adding a lag to the raise by hand is how the last premise went
+             * wrong. */
+            if (pokey_timer_probe)
+                fprintf(stderr, "    -> IRQST bit %d readable at +%llu\n", i,
+                        (unsigned long long)(p->ticks - p->stimer_at));
+        }
     if (p->hi_age[0] < 255) p->hi_age[0]++;
     if (p->hi_age[1] < 255) p->hi_age[1]++;
     if (p->init) return;                       /* held in init */
@@ -552,8 +560,10 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
     case 0x08: p->audctl = val; break;
     case 0x09:
         p->stimer_at = p->ticks;
-        if (pokey_timer_probe) fprintf(stderr, "  STIMER at tick %llu\n",
-                                       (unsigned long long)p->ticks);
+        if (pokey_timer_probe)
+            fprintf(stderr, "  STIMER at tick %llu (audctl $%02X audf %d/%d)\n",
+                    (unsigned long long)p->ticks, p->audctl,
+                    p->audf[0], p->audf[1]);
         /* STIMER reloads the four CHANNEL counters but does NOT touch the base
          * clock divider, which free-runs.  pokey_inittiming shows why: with
          * AUDF = 0 it measures the first interrupt at 86 cycles on the 15 kHz
@@ -573,6 +583,9 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         p->lo_el[0] = p->lo_el[1] = 0;
         p->lo_first[0] = p->lo_first[1] = 1;
         p->locnt[1] = p->audf[2] + ((p->audctl & 0x20) ? 4 : 1) + LO_EXTRA;
+        if (pokey_timer_probe)
+            fprintf(stderr, "    STIMER loads cnt[0]=%d locnt[0]=%d\n",
+                    p->cnt[0], p->locnt[0]);
         p->hi_lag[0] = p->hi_lag[1] = 0;
         /* EXPERIMENT: the first period after STIMER runs long.  pokey_timertiming
          * tabulates it: with AUDF1 = 0 on the 1.79 MHz clock the first interrupt

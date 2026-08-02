@@ -2890,3 +2890,38 @@ three more.  Find the first discrepancy (is the LO underflow really at 17, and
 is the pair's counter reloading from the same event?) before touching
 PAIR_IRQ_LAG again -- sweeping it moved nothing earlier, which already said the
 error is upstream of it.
+
+
+### ...and the premise was wrong at the INPUT: AUDF1 is 16, not 13
+
+The probe now prints the machine state at the STIMER write and the cycle each
+IRQST bit BECOMES READABLE, rather than the raise with a lag added by hand.
+Both were needed, and the first one settled it:
+
+    STIMER (audctl $50 audf 16/0)
+      loads cnt[0]=23 locnt[0]=20
+    T1 underflow at +20
+    T2 underflow at +26
+      -> IRQST bit 1 readable at +30
+
+AUDF1 is SIXTEEN in the 16-bit HI loop, not the 13 I had been carrying — 13
+belongs to a different section further down the test.  Every calculation built
+on 13 was arithmetic on the wrong input, including the "pair underflows at
+13 + LINK_FAST = 20" that made the pair-lag premise look exact.
+
+With the right input the model is entirely self-consistent with its own
+constants: locnt = 16 + 4 + LO_EXTRA(0) = 20, cnt = 16 + LINK_FAST(7) = 23,
+raise at 23 + PAIR_IRQ_LAG(3) = 26, readable at 26 + IRQST_LAG(4) = 30.  Nothing
+is behaving unexpectedly; the question is only which of those four steps the
+hardware does not take, since the test wants +23.
+
+WHAT NOT TO DO NEXT: do not solve `readable = 23` by zeroing both pair lags just
+because 23 is the pair's underflow cycle.  That would put timer 2's bit ahead of
+timer 1's (whose own table gives 23c/24c for AUDF=$0010), and the test's prose
+says timer 2 asserts AFTER timer 1, not before.  Check which loop iteration the
++22/+23 bracket actually lands on before assuming it is the first underflow —
+the pair repeats every 23 cycles and the test acknowledges IRQEN twice.
+
+LESSON: read the machine's own state at the reference point before doing any
+arithmetic against a test's numbers.  A probe that prints the INPUTS is worth
+more than one that prints the outputs.
