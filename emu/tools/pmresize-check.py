@@ -28,6 +28,11 @@ TABS = [0x2397, 0x23A7, 0x23B7, 0x23C7, 0x23D7, 0x23E7, 0x23F7]
 PAIRS = [(3, 0), (3, 1), (1, 3), (0, 1), (0, 3), (1, 2), (3, 2)]
 NAMES = ["4x-to-1x", "4x-to-2x", "2x-to-4x", "1x-to-2x", "1x-to-4x",
          "2x-to-1xalt", "4x-to-1xalt"]
+# The HPOS sweep does NOT start at the same place for every test: tests 1 and 2
+# run $48..$57 and tests 3-7 run $54..$63.  Read off each test's own `mva #$xx d4`
+# rather than assumed -- assuming $48 throughout is why the last five transitions
+# looked catastrophically wrong when only their input range was.
+HPOS0 = [0x48, 0x48, 0x54, 0x54, 0x54, 0x54, 0x54]
 PROBE = [0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67]
 GRAFP = 0xAA
 
@@ -60,7 +65,7 @@ def _reg(name):
 def m_phase_kept(hpos, old, new, wcc):
     """WHAT gtia.c DOES TODAY.  The divider runs at the CURRENT width and the
     phase counter is NOT reset by the SIZEP write, so a phase already past the
-    new width rolls on the next clock.  47/112 at $62.
+    new width rolls on the next clock.  94/112 at $62.
 
     THE WRITE CLOCK IS $62, and this model PINS it: 4x-to-1x is 16/16 there and
     0/16 two clocks either side.  It reproduces that whole row byte for byte --
@@ -69,18 +74,26 @@ def m_phase_kept(hpos, old, new, wcc):
     MODEL and not the harness.
 
     WHERE IT STANDS, per transition at $62:
-        4x-to-1x    16/16      1x-to-2x      7/16
-        4x-to-2x    12/16      1x-to-4x      7/16
-        2x-to-4x     2/16      2x-to-1xalt   3/16
-                               4x-to-1xalt   0/16
-    So SHRINKING is nearly right and WIDENING is not: 2x-to-4x, 1x-to-2x and
-    1x-to-4x are the three that widen, and the two 1x-to-N rows score 7/16 at
-    EVERY write clock from $5E to $64 -- they do not depend on the write time at
-    all, which means their error is not a timing one.
+        4x-to-1x    16/16      1x-to-2x     16/16
+        4x-to-2x    12/16      1x-to-4x     16/16
+        2x-to-4x    16/16      2x-to-1xalt   9/16
+                               4x-to-1xalt   9/16
+    FIVE of the seven are already exact, so the divider model itself is right and
+    what is left is two specific effects.
 
-    And "1xalt" (SIZEP 2) is not the same as 1x (SIZEP 0) even though both scale
-    by one: 4x-to-1x is 16/16 while 4x-to-1xalt is 0/16 with an identical scale.
-    The test names the difference itself and mentions a "1xalt lockup"."""
+    (An earlier reading of this table had 2x-to-4x at 2/16 and the two 1x-to-N
+    rows at 7/16, and concluded that WIDENING was broken.  That was wrong, and it
+    was an input error, not a model one: tests 1 and 2 sweep HPOS $48..$57 but
+    tests 3-7 sweep $54..$63, and scoring all seven from $48 mis-fed the last
+    five.  Nothing about widening was ever wrong.)
+
+    What remains: 4x-to-2x misses 4, and "1xalt" (SIZEP 2) misses 7 in each of
+    its two rows.  Alt is not the same as 1x (SIZEP 0) even though both scale by
+    one, and the tables say what the difference is -- testpat6 and testpat7 both
+    contain $FE, every one of the seven probes lit, which is the player emitting
+    a lit bit CONTINUOUSLY.  That is the "1xalt lockup" the test's own runtest
+    comment names, and it is phase-dependent: $FE appears at four of the sixteen
+    positions in each row."""
     lit, bit, ph, live = set(), 0, 0, False
     for cc in range(0x40, 0xA0):
         w = scale(old if cc < wcc else new)
@@ -90,6 +103,51 @@ def m_phase_kept(hpos, old, new, wcc):
             ph += 1
             if ph >= w:
                 ph = 0
+                bit += 1
+                if bit >= 8:
+                    live = False
+        if live and (GRAFP >> (7 - bit)) & 1:
+            lit.add(cc)
+    return lit
+
+
+@_reg("tap")
+def m_tap(hpos, old, new, wcc):
+    """The divider is a free-running 2-bit counter and SIZE SELECTS A TAP, rather
+    than a comparator that rolls as soon as the phase reaches the width.
+
+    phase_kept's only 4x-to-2x misses are at HPOS = 3 mod 4, and each wants the
+    bit boundary ONE CLOCK LATER than an immediate roll gives: at hpos $4b the
+    counter stands at 3 when the write lands, and hardware carries the old bit
+    through $62 and starts the next at $63.  A comparator says "3 >= 2, roll
+    now"; a tap says "the low bit is not zero yet, wait one".
+
+        4x  roll when the counter wraps to 0
+        2x  roll when the low bit is 0
+        1x  roll every clock
+
+    84/112 -- BETTER where it was aimed and WORSE overall, which makes it a
+    useful disproof rather than a dead end.  Per transition against phase_kept's
+    94:  4x-to-2x 12 -> 16 (fixed, as intended), but 2x-to-4x 16 -> 10,
+    1x-to-2x 16 -> 13 and 1x-to-4x 16 -> 11.
+
+    So the counter is NOT free-running: widening wants the new period to start
+    at the WRITE (which is phase_kept, where a roll resets the phase), while
+    4x-to-2x at phase 3 wants the boundary left where the OLD width would have
+    put it.  Both are true at once and neither model expresses both, so the rule
+    is a hybrid that has not been found yet.  The two cases differ in the phase
+    at the write (2 vs 3) and in the new width (1 vs 2); which of those selects
+    the behaviour is the open question."""
+    lit, bit, ph, live = set(), 0, 0, False
+    for cc in range(0x40, 0xA0):
+        s = old if cc < wcc else new
+        w = scale(s)
+        if cc == hpos:
+            live, bit, ph = True, 0, 0
+        elif live:
+            ph = (ph + 1) & 3
+            roll = (ph == 0) if w == 4 else (ph & 1) == 0 if w == 2 else True
+            if roll:
                 bit += 1
                 if bit >= 8:
                     live = False
@@ -130,7 +188,7 @@ def score(mem, model, label, a, wcc):
             want = mem.get(TABS[t] + i)
             if want is None:
                 continue
-            hpos = 0x48 + i
+            hpos = HPOS0[t] + i
             lit = model(hpos, old, new, wcc)
             got = 0
             for b, cc in enumerate(PROBE):
