@@ -688,7 +688,16 @@ static void latch_edges(antic *a)
     antic_pf_window(dma_mode(a, mode), width_of(a->dmactl), hscrol_of(a), &s, &e);
 
     int off   = (mode < 8) ? 1 : 3;
-    int x     = a->cycle;
+    /* a->cycle is ALREADY ADVANCED past the cycle the CPU is executing --
+     * antic_tick increments it before the access for the cycle it just ticked,
+     * deliberately, so NMIST still stands when that access is made.  The window
+     * constants are in ANTIC's own frame, so the comparison has to be too.
+     *
+     * One cycle, and it decides antic_pfstarttiming: its DLI writes DMACTL on
+     * cycle 16 and a normal character row latches its start at 18 - 1 = 17.
+     * Comparing the inflated 17 against 17 froze the old width and fetched two
+     * bytes too many. */
+    int x     = a->cycle - 1;
     int last  = a->pf_last_check;
     if (x >= last) {
         if ((s - off) >= last && (s - off) <= x) a->pf_lat_start = s;
