@@ -2,6 +2,7 @@
  * gtia.c — GTIA collisions and object rendering.  See gtia.h.
  */
 #include "gtia.h"
+#include <stdio.h>
 #include <string.h>
 
 void gtia_init(gtia *g)

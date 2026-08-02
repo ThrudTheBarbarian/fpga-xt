@@ -344,6 +344,10 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
         if (s->col_probe && (a & 0x1F) < 0x08)
             fprintf(stderr, "  HPOS%d <- $%02X sl %3d cyc %3d\n",
                     a & 0x07, v, s->an.scanline, s->an.cycle);
+        if (s->col_probe && (a & 0x1F) >= 0x08 && (a & 0x1F) <= 0x0B)
+            fprintf(stderr, "  SIZEP%d <- $%02X at cyc %3d -> cc $%02X (sl %d)\n",
+                    a & 3, v, s->an.cycle,
+                    (s->an.cycle * 2 + GTIA_CC_ORIGIN) % GTIA_CLOCKS, s->an.scanline);
         gtia_write(&s->gt, a, v);
         break;
     case 0xD200:
