@@ -62,6 +62,9 @@ typedef struct {
     int p_n[4];                          /* live runs on each player */
     int p_bit[4][GTIA_RUNS], p_phase[4][GTIA_RUNS];
     int p_active[4];                     /* p_n > 0, kept for probes */
+    uint8_t p_locked[4][GTIA_RUNS];      /* SIZEP 2 stopped this run dead */
+    uint8_t sizep_pend[4];               /* a SIZEP write in flight ... */
+    uint8_t sizep_cnt[4];                /* ... and its countdown */
     int m_active[4], m_bit[4], m_phase[4];
 
     /* per-scanline state */

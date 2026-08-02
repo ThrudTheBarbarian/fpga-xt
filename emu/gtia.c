@@ -10,6 +10,14 @@ void gtia_init(gtia *g)
     g->consol = 0;
 }
 
+/* How long a SIZEP write takes to reach the object, in colour clocks.  Measured
+ * against gtia_pmresize through tools/pmresize-check.py, which pins the effect
+ * at colour clock $62 and scores 112/112 there against 35/56/54/28 on the clocks
+ * either side. */
+#ifndef SIZEP_DELAY
+#define SIZEP_DELAY 3
+#endif
+
 /* SIZEP/SIZEM: 0 and 2 are 1x, 1 is 2x, 3 is 4x. */
 static int size_scale(uint8_t s)
 {
@@ -45,15 +53,41 @@ int gtia_missile_lit(const gtia *g, int i)
 static void obj_step(gtia *g, int hpos)
 {
     for (int i = 0; i < 4; i++) {
+        /* A SIZEP write reaching the object THIS clock replaces the ordinary
+         * advance, and what it does is not "roll if the phase has reached the
+         * new width".  Both rules below were SEARCHED against every cell of
+         * gtia_pmresize rather than assumed -- see tools/pmresize-check.py.
+         *
+         *  - the run rolls iff the phase's low bits are ALL ONES for the new
+         *    width, (ph & (w-1)) == (w-1), which is the counter about to carry.
+         *    "Roll iff ph + 1 >= w" agrees except at phase 2 of width 2.
+         *  - and SIZEP 2 -- the "1xalt" that divides by one exactly as SIZEP 0
+         *    does -- STOPS THE RUN DEAD when the counter's two bits disagree.
+         *    A locked run emits its current bit for the rest of the line, which
+         *    is the $FE the test's alt tables carry at four of sixteen
+         *    positions, and is what its runtest comment calls a lockup. */
+        int resize = g->sizep_cnt[i] && --g->sizep_cnt[i] == 0;
+        if (resize) g->sizep[i] = g->sizep_pend[i];
         int w = size_scale(g->sizep[i]);
+        int alt = (g->sizep[i] & 3) == 2;
 
         /* Advance every live run, retiring the ones that have shifted out. */
         int keep = 0;
         for (int r = 0; r < g->p_n[i]; r++) {
             int bit = g->p_bit[i][r], ph = g->p_phase[i][r];
-            if (++ph >= w) { ph = 0; bit++; }
+            int lk = g->p_locked[i][r];
+            if (lk) {
+                /* frozen: neither phase nor bit moves again */
+            } else if (resize) {
+                if (alt && ((ph >> 1) & 1) != (ph & 1)) lk = 1;
+                else if ((ph & (w - 1)) == (w - 1))     { ph = 0; bit++; }
+                else                                    ph++;
+            } else {
+                if (++ph >= w) { ph = 0; bit++; }
+            }
             if (bit >= 8) continue;                  /* run finished */
-            g->p_bit[i][keep] = bit; g->p_phase[i][keep] = ph; keep++;
+            g->p_bit[i][keep] = bit; g->p_phase[i][keep] = ph;
+            g->p_locked[i][keep] = (uint8_t)lk; keep++;
         }
         g->p_n[i] = keep;
 
@@ -76,12 +110,14 @@ static void obj_step(gtia *g, int hpos)
                 if (g->p_bit[i][r] < 8) {
                     g->p_bit[i][keep] = g->p_bit[i][r];
                     g->p_phase[i][keep] = g->p_phase[i][r];
+                    g->p_locked[i][keep] = g->p_locked[i][r];
                     keep++;
                 }
             g->p_n[i] = keep;
             if (g->p_n[i] < GTIA_RUNS) {
                 g->p_bit[i][g->p_n[i]] = 0;
                 g->p_phase[i][g->p_n[i]] = 0;
+                g->p_locked[i][g->p_n[i]] = 0;
                 g->p_n[i]++;
             }
         }
@@ -179,7 +215,14 @@ void gtia_write(gtia *g, uint16_t addr, uint8_t val)
     switch (addr & 0x1F) {
     case 0x00: case 0x01: case 0x02: case 0x03: g->hposp[addr & 3] = val; break;
     case 0x04: case 0x05: case 0x06: case 0x07: g->hposm[addr & 3] = val; break;
-    case 0x08: case 0x09: case 0x0A: case 0x0B: g->sizep[addr & 3] = val; break;
+    case 0x08: case 0x09: case 0x0A: case 0x0B:
+        if (SIZEP_DELAY) {
+            g->sizep_pend[addr & 3] = val;
+            g->sizep_cnt[addr & 3]  = SIZEP_DELAY;
+        } else {
+            g->sizep[addr & 3] = val;
+        }
+        break;
     case 0x0C: g->sizem = val; break;
     case 0x0D: case 0x0E: case 0x0F: case 0x10: g->grafp[(addr - 0x0D) & 3] = val; break;
     case 0x11: g->grafm  = val; break;
