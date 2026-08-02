@@ -207,6 +207,11 @@ typedef struct {
 
     /* the DMA schedule for the scanline in progress */
     uint8_t blocked[ANTIC_LINE_CYCLES];
+    /* Which of those blocked cycles are memory REFRESH.  Refresh is the
+     * slippable, lowest-priority DMA, and the only kind that can yield to a CPU
+     * write -- see DMA_SPARES_WRITE in antic.c. */
+    uint8_t refresh_at[ANTIC_LINE_CYCLES];
+    uint8_t refresh_known;
 } antic;
 
 void    antic_init(antic *a, antic_fetch_fn fetch, void *ctx, int lines);

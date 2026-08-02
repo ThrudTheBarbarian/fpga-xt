@@ -80,6 +80,10 @@
  * what it measures -- exactly the compensation shape where a provably-wrong
  * constant cannot simply be corrected.  Left at 1 until the pair can be
  * satisfied together; the numbers are here so this is not re-run blind. */
+#ifndef DMA_SPARES_WRITE
+#define DMA_SPARES_WRITE 0
+#endif
+
 #ifndef WSYNC_RMW_EXTRA
 #define WSYNC_RMW_EXTRA 1
 #endif
@@ -1018,7 +1022,30 @@ int antic_tick(antic *a)
         }
     }
 
-    if (!took && c < ANTIC_LINE_CYCLES && a->blocked[c])
+    /* EXPERIMENT (DMA_SPARES_WRITE): /RDY does not stop a WRITE cycle, so a DMA
+     * slot cannot take one either -- which matters because an RMW's two writes
+     * are consecutive on hardware and our steal was splitting them.  That split
+     * is what makes gtia_pmresize's WSYNC release alternate 104/104/105/105
+     * across its iterations, since the adjacency of `inc wsync`'s write pair
+     * drifts with where the instruction falls in the line.
+     *
+     * DISPROVED, kept with its result.  Sparing EVERY blocked cycle breaks
+     * antic_dmapattern, and narrowing it to REFRESH ONLY -- the slippable,
+     * lowest-priority DMA, and the only kind present in gtia_pmresize, which
+     * runs with the screen off -- breaks antic_dmapattern just the same.  So the
+     * emulator's steal really can split an RMW's write pair and no version of
+     * "DMA yields to a write" fixes it without costing the DMA pattern.
+     * antic_wsync stays green throughout, so it is not the constraint here.
+     *
+     * The alternating release is REAL and MEASURED: pmresize's iterations
+     * release at 104, 104, 105, 105, ... as the INC drifts through the line.
+     * Whatever the right account is, it is not this one. */
+    if (DMA_SPARES_WRITE && !a->refresh_known) {
+        antic_dma_refresh(a->refresh_at);
+        a->refresh_known = 1;
+    }
+    if (!took && c < ANTIC_LINE_CYCLES && a->blocked[c]
+        && !(DMA_SPARES_WRITE && a->cpu_writing && a->refresh_at[c]))
         took = 1;
 
     /* ---- advance ---------------------------------------------------------- */
