@@ -139,6 +139,12 @@ static int period_of(const pokey_timer *p, int ch)
 #define STIMER_PAIR_RAW 0
 #endif
 
+/* Whether a STIMER strobe cancels an underflow raised on the very last tick --
+ * see the preemption section in the STIMER case. */
+#ifndef STIMER_CANCELS_FRESH
+#define STIMER_CANCELS_FRESH 1
+#endif
+
 /* Six, and the test says why in prose: "the deadline timing for writes to AUDF1
  * is the same as unlinked from the END of the loop, presumably due to the late
  * reset from channel 2."  The unlinked window admits ages 0..2 (CH_LATCH_LAG);
@@ -705,6 +711,36 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
             fprintf(stderr, "  STIMER at tick %llu (audctl $%02X audf %d/%d)\n",
                     (unsigned long long)p->ticks, p->audctl,
                     p->audf[0], p->audf[1]);
+        /* A STIMER STROBE CANCELS AN INTERRUPT THAT HAS ONLY JUST UNDERFLOWED.
+         * pokey_timertiming's preemption section tabulates the boundary for two
+         * AUDF values and both STIMER strobes at once:
+         *
+         *     AUDF1=0    4c/ 5c     8c/ 9c
+         *     AUDF1=8   12c/13c    24c/25c
+         *
+         * Period is AUDF + 4, so those underflows land at the end of cycles 3,
+         * 7, 11 and 23 -- and every single "preempts" cycle is the one
+         * IMMEDIATELY AFTER an underflow, every "does not" the one after that.
+         * So the window is ONE cycle, not the four the status bit is in flight
+         * for: STIMER reaches the counter and the first stage of the delay that
+         * carries the underflow to IRQST, and nothing further along it.
+         *
+         * A bit raised on the last tick still has its full lag standing, and one
+         * more tick would have decremented it -- so "st_lag still at its maximum"
+         * IS the one-cycle window, with no separate timer needed.  IRQST is
+         * active low and the bit has not been cleared yet, so dropping the
+         * countdown is the whole cancellation. */
+        if (STIMER_CANCELS_FRESH) {
+            uint8_t fresh = POKEY_IRQ_TIMER1 | POKEY_IRQ_TIMER2 | POKEY_IRQ_TIMER4;
+            for (int i = 0; i < 8; i++) {
+                if (!(fresh & (1u << i)) || p->st_lag[i] != IRQST_LAG) continue;
+                p->st_lag[i] = 0;
+                if (p->irq_arm == IRQ_LINE_LAG + IRQST_LAG) p->irq_arm = 0;
+                if (pokey_timer_probe)
+                    fprintf(stderr, "    STIMER cancels in-flight IRQST bit %d\n", i);
+            }
+        }
+
         /* STIMER reloads the four CHANNEL counters but does NOT touch the base
          * clock divider, which free-runs.  pokey_inittiming shows why: with
          * AUDF = 0 it measures the first interrupt at 86 cycles on the 15 kHz
