@@ -306,7 +306,14 @@ static int spec_line(uint8_t mode_in, antic_width width, int first_line,
 
     int idx = 0;
     for (int c = 0; c < ANTIC_LINE_CYCLES; c++) {
-        int in_window = step && c >= start && c < vend
+        /* Exclusive of the stop cycle for the stream generally -- making it
+         * inclusive breaks every later-line row -- but a first line takes ONE
+         * MORE name fetch, at vend itself.  That is the character PREFETCH:
+         * a row's first line reads one name beyond the data it will use, which
+         * is why ACID's first-line rows want a fetch at 90 on a narrow char
+         * window of 26..90 while its later-line rows stop at 88. */
+        int last = (mode < 8 && first_line) ? vend : vend - 1;
+        int in_window = step && c >= start && c <= last
                      && ((c - start) % step) == 0;
         int carried   = (clock & (1u << (c & 7))) != 0;
         if (!in_window && !carried) continue;
@@ -314,14 +321,24 @@ static int spec_line(uint8_t mode_in, antic_width width, int first_line,
         if (mode >= 8)            fetch = c + 2;
         else if (first_line)      fetch = c;            /* name; data at c+3 */
         else                      fetch = c + 3;        /* data only */
+        /* REFRESH HAS PRIORITY: a playfield fetch landing on a refresh slot
+         * slips one cycle.  That is what makes ACID's later-line rows read as
+         * triples -- 29 is the refresh, 30 the fetch it displaced, 31 the next
+         * fetch -- rather than an even stride. */
+        if (is_refresh(fetch)) fetch++;
         if (fetch < ANTIC_LINE_CYCLES) {
             /* cycles from PF_HBLANK_FIRST on still FETCH but steal nothing */
             if (fetch < PF_HBLANK_FIRST) blocked[fetch] = 1;
             if (name_at && idx < 128) name_at[fetch] = (int8_t)idx;
             idx++;
         }
-        if (mode < 8 && first_line && c + 3 < ANTIC_LINE_CYCLES) {
-            if (c + 3 < PF_HBLANK_FIRST) blocked[c + 3] = 1;
+        /* ...and the prefetch reads a NAME only: no character data goes with
+         * the extra clock at vend, or the row takes a fetch at 93 that ACID
+         * does not have. */
+        if (mode < 8 && first_line && c < vend) {
+            int d = c + 3;
+            if (is_refresh(d)) d++;
+            if (d < ANTIC_LINE_CYCLES && d < PF_HBLANK_FIRST) blocked[d] = 1;
         }
     }
 
