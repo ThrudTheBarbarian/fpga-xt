@@ -38,10 +38,10 @@
 #define LO_UPCOUNT 0
 #endif
 #ifndef PAIR_IRQ_LAG
-#define PAIR_IRQ_LAG 4
+#define PAIR_IRQ_LAG 3
 #endif
 #ifndef LO_EXTRA
-#define LO_EXTRA 4
+#define LO_EXTRA 0
 #endif
 #ifndef LINK_EXTRA
 #define LINK_EXTRA 0
@@ -50,7 +50,7 @@
 #define LINK_TWO_COUNTERS 1
 #endif
 #ifndef STIMER_EXTRA
-#define STIMER_EXTRA 4
+#define STIMER_EXTRA 0
 #endif
 #define BASE_64K  28
 #define BASE_15K 114
@@ -221,8 +221,12 @@ int pokey_timer_probe;
 
 /* How long the STATUS bit lags the underflow that set it.  Measured -- see
  * raise().  Zero restores the old "set at the underflow" model. */
+#ifndef ACK_CANCELS_INFLIGHT
+#define ACK_CANCELS_INFLIGHT 0
+#endif
+
 #ifndef IRQST_LAG
-#define IRQST_LAG 0
+#define IRQST_LAG 4
 #endif
 
 /* Is the channel behind this IRQ bit clocked off 1.79 MHz? */
@@ -606,8 +610,13 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         /* A bit written as zero drops a request that has not become readable
          * yet as well as one that has: the status bit is delayed, not queued
          * somewhere IRQEN cannot reach. */
-        for (int i = 0; i < 8; i++)
-            if (!(val & (1u << i))) p->st_lag[i] = 0;
+        /* Does an acknowledge reach a request that has ALREADY UNDERFLOWED but
+         * whose status bit has not surfaced yet?  The delayed bit is a pulse in
+         * flight, not something queued where IRQEN can see it -- so on this
+         * reading it arrives regardless and sets the latch after the write. */
+        if (ACK_CANCELS_INFLIGHT)
+            for (int i = 0; i < 8; i++)
+                if (!(val & (1u << i))) p->st_lag[i] = 0;
         p->irqst = (uint8_t)(p->irqst | ~val);
         /* nothing pending any more.  Written as a comparison against $FF
          * rather than `(uint8_t)~irqst == 0`: that form is correct but reads as
