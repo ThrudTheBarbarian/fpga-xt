@@ -948,6 +948,38 @@ PORTB bit polarities does NOT reconcile with the assertion `d0 == $02` for
 BASIC. Take the bit semantics from Altirra's memory manager rather than from
 folklore; guessing them is how the last several days of this file were spent.
 
+### Altirra's DMA timing table, and what it says about our constants
+
+`UpdateDMAPattern`'s comment block is a complete specification:
+
+```
+Modes 2-5: every 2 cycles from 10/18/26   (wide/normal/narrow)
+Modes 6-7: every 4 cycles from 10/18/26
+Modes 8-9: every 8 cycles from 12/20/28
+Modes A-C: every 4 cycles from 12/20/28
+Modes D-F: every 2 cycles from 12/20/28
+DMA is delayed by one clock for every 2 in HSCROL.
+```
+
+* the CHARACTER NAME fetch is the clock cycle itself;
+* a BITMAP data fetch is the clock **+2**;
+* a CHARACTER data fetch is the clock **+3**.
+
+Cycles **105-113** block playfield DMA: the requests still happen, the line
+buffer still loads, and the scan and row counters still increment — but no cycle
+is stolen, so whatever is on the bus lands in the buffer. (We use 106 as
+`PF_HBLANK_FIRST`; Altirra says 105.)
+
+Our normal and narrow starts agree exactly — char `21-3 = 18`, bitmap
+`21-1 = 20`, narrow `29-3 = 26` and `29-1 = 28`. **WIDE does not**: Altirra's
+steps are a uniform 8 cycles, giving nominal 13 and starts 10/12, where
+`PF_WIDE_ADJ = 2` gives us nominal 15 and starts 12/14.
+
+DISPROVED as a standalone fix: setting `PF_WIDE_ADJ = 0` to match drops the
+suite from 49 to 48 and breaks `antic_virtdma`. So the constant is wrong AND
+something around it compensates — which is the per-line map. Fixing the number
+without fixing the shape moves the error rather than removing it.
+
 ### THE RIGHT SHAPE, from Altirra: playfield DMA is a PHASE MASK
 
 Every "dead end" recorded below was a consequence of one architectural mistake,
