@@ -211,11 +211,15 @@ int pokey_timer_probe;
 
 static void raise(pokey_timer *p, uint8_t bit)
 {
+    /* Reported either way, and SAID SO: a raise that IRQEN masks sets no status
+     * bit at all, and a probe that does not distinguish the two invites reading
+     * a masked underflow as a fired one. */
     if (pokey_timer_probe)
-        fprintf(stderr, "  T%d IRQ at +%llu (irqen $%02X)\n",
+        fprintf(stderr, "  T%d underflow at +%llu (irqen $%02X)%s\n",
                 bit == POKEY_IRQ_TIMER1 ? 1 : bit == POKEY_IRQ_TIMER2 ? 2 :
                 bit == POKEY_IRQ_TIMER4 ? 4 : 0,
-                (unsigned long long)(p->ticks - p->stimer_at), p->irqen);
+                (unsigned long long)(p->ticks - p->stimer_at), p->irqen,
+                (p->irqen & bit) ? "" : "  [MASKED]");
 
     if (!(p->irqen & bit)) return;             /* masked: no request at all */
     p->irqst = (uint8_t)(p->irqst & ~bit);     /* active low */
