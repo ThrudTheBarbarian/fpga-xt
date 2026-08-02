@@ -287,12 +287,20 @@ static void spec_window(uint8_t mode, antic_width w, int scrolled, int hscrol,
     *vend  = st + span + off;              /* deliberately NOT clamped */
 }
 
-static int spec_line(uint8_t mode_in, antic_width width, int first_line,
-                     int hscrol, uint8_t *clock_io,
-                     uint8_t blocked[ANTIC_LINE_CYCLES],
-                     int8_t name_at[ANTIC_LINE_CYCLES])
+/* The line, built from EXPLICIT window edges.
+ *
+ * The edges are an INPUT because ANTIC latches them one at a time.  A DMACTL or
+ * HSCROL write part way down a scanline does not re-open a window the line has
+ * already passed: each edge freezes as its own cycle goes by, so the row can end
+ * up running the OLD start against the NEW stop, and its byte count then belongs
+ * to neither width.  That hybrid is precisely what antic_pfstarttiming and
+ * antic_pfstoptiming measure from opposite directions.  See antic.c's
+ * latch_edges, re-implemented from Altirra's LatchPlayfieldEdges. */
+static int spec_edges(uint8_t mode_in, int first_line, int start, int vend,
+                      uint8_t *clock_io,
+                      uint8_t blocked[ANTIC_LINE_CYCLES],
+                      int8_t name_at[ANTIC_LINE_CYCLES])
 {
-    int scrolled = (mode_in & 0x10) != 0 || hscrol != 0;
     uint8_t mode = (uint8_t)(mode_in & 0x0F);
 
     memset(blocked, 0, ANTIC_LINE_CYCLES);
@@ -310,11 +318,11 @@ static int spec_line(uint8_t mode_in, antic_width width, int first_line,
      * two cancel, because a span of 64/80/96 is a multiple of 8 whenever the
      * stop is not misaligned -- `clock |= p; clock &= ~p` is zero. */
     int rate = (mode >= 2) ? spec_rate[mode] : 0;
-    int start = 0, vend = 0, step = 0;
-    if (mode >= 2 && rate) {
-        spec_window(mode, width, scrolled, hscrol, &start, &vend);
+    int step = 0;
+    if (mode >= 2 && rate)
         step = 8 >> (rate - 1);            /* rate 1/2/3 -> every 8/4/2 */
-    }
+    else
+        start = vend = 0;
 
     uint8_t clock = clock_io ? *clock_io : 0;
     if (step && start < vend) {
@@ -395,6 +403,36 @@ static int spec_line(uint8_t mode_in, antic_width width, int first_line,
 
     if (clock_io) *clock_io = (uint8_t)((clock << 6) | (clock >> 2));
     return 0;
+}
+
+static int spec_line(uint8_t mode_in, antic_width width, int first_line,
+                     int hscrol, uint8_t *clock_io,
+                     uint8_t blocked[ANTIC_LINE_CYCLES],
+                     int8_t name_at[ANTIC_LINE_CYCLES])
+{
+    int start = 0, vend = 0;
+    spec_window((uint8_t)(mode_in & 0x0F), width,
+                (mode_in & 0x10) != 0 || hscrol != 0, hscrol, &start, &vend);
+    return spec_edges(mode_in, first_line, start, vend, clock_io,
+                      blocked, name_at);
+}
+
+/* The window ANTIC would use for this mode, width, scroll bit and HSCROL, as a
+ * half-open cycle range.  Exposed so antic.c can latch the two edges
+ * independently and hand back whatever mixture the line actually ran. */
+void antic_pf_window(uint8_t mode, antic_width w, int hscrol,
+                     int *start, int *vend)
+{
+    spec_window((uint8_t)(mode & 0x0F), w, (mode & 0x10) != 0 || hscrol != 0,
+                hscrol, start, vend);
+}
+
+/* The same schedule from edges the caller has already latched. */
+void antic_dma_line_edges(uint8_t mode, int first_line, int start, int vend,
+                          uint8_t blocked[ANTIC_LINE_CYCLES],
+                          int8_t name_at[ANTIC_LINE_CYCLES])
+{
+    spec_edges(mode, first_line, start, vend, NULL, blocked, name_at);
 }
 
 /* The LAST playfield DMA slot of the line, and the buffer index it fills, or

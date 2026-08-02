@@ -117,6 +117,12 @@ typedef struct {
      * the scanline; this is the cycle on the NEXT line at which its next fetch
      * falls, or -1 when the line starts idle.  antic_hscrolbug is built on it. */
     int      pf_carry;
+    /* Window edges FROZEN because the line has already gone past them, -1 for
+     * an edge still live, and the cycle the last such check was made at.  See
+     * antic.c's latch_edges. */
+    int      pf_lat_start;
+    int      pf_lat_vend;
+    int      pf_last_check;
     /* The line buffer's READ ORIGIN: how many bytes were fetched BEFORE the
      * display window opened.  ANTIC's buffer has a write pointer that advances
      * per FETCH and a read pointer that advances per DISPLAYED byte, so a line

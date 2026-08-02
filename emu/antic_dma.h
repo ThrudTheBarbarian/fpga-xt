@@ -77,6 +77,17 @@ int antic_pf_grid(uint8_t mode, int first);
  * lines fetch glyphs, which take no scan-address index. */
 int antic_pf_last(uint8_t mode, antic_width w, int first, int hscrol, int *idx);
 
+/* ANTIC's playfield window for this mode/width/HSCROL, as a HALF-OPEN cycle
+ * range.  The two edges latch INDEPENDENTLY as the line passes them, so a
+ * mid-line DMACTL or HSCROL write can leave a row running the old start against
+ * the new stop -- hence a window the caller assembles and hands back. */
+void antic_pf_window(uint8_t mode, antic_width w, int hscrol,
+                     int *start, int *vend);
+
+void antic_dma_line_edges(uint8_t mode, int first_line, int start, int vend,
+                          uint8_t blocked[ANTIC_LINE_CYCLES],
+                          int8_t name_at[ANTIC_LINE_CYCLES]);
+
 /* The same schedule with the grid PINNED to `nom_start` while the stream still
  * ends where `width`'s own last fetch cycle is (-1 = derive both, i.e. plain
  * antic_dma_line_map).  ANTIC commits the START of the fetch a cycle or two

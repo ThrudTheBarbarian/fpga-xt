@@ -21,6 +21,12 @@
 #define VIRT_DMA 1
 #endif
 
+/* Latch the playfield window's edges independently as the line passes them,
+ * the way ANTIC does, instead of pinning the whole window at one commit point. */
+#ifndef PF_LATCH_EDGES
+#define PF_LATCH_EDGES 1
+#endif
+
 #ifndef HSCROL_CC_DISPLAY
 #define HSCROL_CC_DISPLAY 0
 #endif
@@ -196,6 +202,8 @@ void antic_reset(antic *a)
 {
     a->cycle = a->scanline = a->vcount = 0;
     a->pf_carry = -1;                     /* no stream running across the reset */
+    a->pf_lat_start = a->pf_lat_vend = -1;
+    a->pf_last_check = 0;
     a->wsync_halt = 0;
     /* Start PARKED, as if a JVB had just executed: a well-formed display list
      * only ever begins after vertical blank ends, and the release at scanline 8
@@ -432,6 +440,9 @@ static void line_start(antic *a)
      * fetches nothing drops it. */
     int carry_in = a->pf_carry;
     a->pf_carry = -1;
+    /* Both window edges are live again at the top of every scanline. */
+    a->pf_lat_start = a->pf_lat_vend = -1;
+    a->pf_last_check = 0;
     if (mode >= 2 && pf_dma_on(a)) {
         antic_dma_line_map_carry(dma_mode(a, mode), width_of(a->dmactl),
                                  a->row_first, hscrol_of(a), carry_in,
@@ -568,8 +579,87 @@ static int pf_span(const antic *a)
     }
 }
 
+/* Freeze any window edge the line has already gone past.
+ *
+ * Re-implemented from Altirra's LatchPlayfieldEdges.  Each edge is a comparison
+ * against the horizontal counter, and once that comparison has been made it
+ * cannot be un-made -- so a mid-line DMACTL or HSCROL write moves only the
+ * edges still ahead of the beam, and a row can end up running the OLD start
+ * against the NEW stop.  Its byte count then belongs to neither width, which is
+ * what antic_pfstarttiming and antic_pfstoptiming measure from opposite sides.
+ *
+ * The test is a RANGE over the cycles elapsed since the last check, not a test
+ * against the current cycle: several cycles can pass between two writes and the
+ * edge in between must still be caught.  The decision sits one cycle before the
+ * window for the character modes and three before it for the bitmap ones --
+ * which is the SAME absolute cycle for both, since their starts differ by two
+ * (26-1 == 28-3 == 25 on a narrow line).
+ *
+ * Called BEFORE the register takes its new value, because the edge that latches
+ * is the one the line has been running. */
+static void latch_edges(antic *a)
+{
+    if (!PF_LATCH_EDGES) return;
+    int mode = a->dl_insn & 0x0F;
+    if (mode < 2 || !pf_dma_on(a)) return;
+
+    int s = 0, e = 0;
+    antic_pf_window(dma_mode(a, mode), width_of(a->dmactl), hscrol_of(a), &s, &e);
+
+    int off   = (mode < 8) ? 1 : 3;
+    int x     = a->cycle;
+    int last  = a->pf_last_check;
+    if (x >= last) {
+        if ((s - off) >= last && (s - off) <= x) a->pf_lat_start = s;
+        if ((e - off) >= last && (e - off) <= x) a->pf_lat_vend  = e;
+    }
+    a->pf_last_check = x;
+}
+
+/* The window this line is actually running: live where the beam has not reached
+ * the edge yet, latched where it has. */
+static void pf_edges(const antic *a, int *s, int *e)
+{
+    int mode = a->dl_insn & 0x0F;
+    antic_pf_window(dma_mode(a, mode), width_of(a->dmactl), hscrol_of(a), s, e);
+    if (PF_LATCH_EDGES) {
+        if (a->pf_lat_start >= 0) *s = a->pf_lat_start;
+        if (a->pf_lat_vend  >= 0) *e = a->pf_lat_vend;
+    }
+}
+
 static void rebuild_line(antic *a, int old_nom, int old_span, int lead)
 {
+    if (PF_LATCH_EDGES) {
+        int from = a->cycle;
+        if (from < 0 || from >= ANTIC_LINE_CYCLES) return;
+        int mode = a->dl_insn & 0x0F;
+        int on   = mode >= 2 && pf_dma_on(a);
+        (void)old_nom; (void)old_span; (void)lead;
+
+        uint8_t blk[ANTIC_LINE_CYCLES];
+        int8_t  map[ANTIC_LINE_CYCLES];
+        int s = 0, e = 0;
+        if (on) pf_edges(a, &s, &e);
+
+        /* Playfield DMA runs at all only if the start is either already latched
+         * or still ahead of the beam -- a width that opens behind the beam has
+         * missed its own start and fetches nothing. */
+        int commit = s - ((mode < 8) ? 2 : 4);
+        if (commit < 10) commit = 10;
+        if (on && a->pf_lat_start < 0 && from > commit) s = e = 0;
+
+        antic_dma_line_edges(on ? dma_mode(a, mode) : 0, a->row_first, s, e,
+                             blk, map);
+
+        int keep_map = !on || antic_pf_bytes(a->dmactl, (uint8_t)mode) == 0;
+        for (int c = from; c < ANTIC_LINE_CYCLES; c++) {
+            a->blocked[c] = blk[c];
+            if (!keep_map) a->pf_at[c] = map[c];
+        }
+        return;
+    }
+
     int from = a->cycle;                    /* the next cycle to run */
     if (from < 0 || from >= ANTIC_LINE_CYCLES) return;
 
@@ -1034,6 +1124,7 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
     case 0x00: {
         int old_nom = pf_window(a);           /* the window BEFORE the write */
         int old_span = pf_span(a);
+        latch_edges(a);                       /* ...and freeze what it passed */
         a->dmactl = val;
         rebuild_line(a, old_nom, old_span, PF_COMMIT_LEAD);
         break;
@@ -1047,6 +1138,7 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
     case 0x04: {
         int old_nom = pf_window(a);
         int old_span = pf_span(a);
+        latch_edges(a);
         a->hscrol = val;
         /* HSCROL moves the playfield's left edge by ONE COLOUR CLOCK per unit —
          * the window start is `nominal - hscrol/2` machine cycles, so the edge
