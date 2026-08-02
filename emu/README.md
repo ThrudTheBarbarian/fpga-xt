@@ -961,6 +961,18 @@ to
 
 — every value now between the two widths' 16 and 20, as it must be.
 
+PARKED HERE, with the state recorded. The real write/restore pairs now give
+`dli1` (narrow 13, restore 21) **19 fetches** and `dli2` (narrow 14, restore 25)
+**18** — one byte apart, where before the fix they were 16 and 11, five apart.
+The two tests moved correspondingly, from bits 0 and 2 to bits 8 and 6 against
+wanted 6 and 4. Genuine convergence, and the remaining error is a single colour
+class at the probe positions rather than a gross geometry error.
+
+Do NOT read those fetch counts as the assertions' numbers: the assertion values
+(16, 18) are `(p0pf << 2) | p1pf` PLUS A LITERAL, not byte counts. The
+coincidence of 18 appearing in both is exactly the trap this file records
+earlier.
+
 HONEST STATUS: this does NOT fix either test. Both MOVED — `pfstarttiming` late
 from bits 0 to 8, `pfstoptiming` early from bits 2 to 6 — and neither is right
 yet: pfstarttiming wants 6 (P0 over PF0 AND P1 over PF1) and gives 8 (P0 over
