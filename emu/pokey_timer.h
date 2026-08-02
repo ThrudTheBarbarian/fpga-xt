@@ -89,6 +89,7 @@ typedef struct {
     uint8_t  hi_skip[2];
     uint8_t  hi_age[2];            /* cycles since the pair reloaded */
     uint8_t  lo_age[2];            /* cycles since the low half reloaded */
+    uint8_t  ch_age[4];            /* cycles since an UNLINKED channel reloaded */
     unsigned long long ticks;      /* free-running tick count, for probes */
     unsigned long long stimer_at;  /* tick of the last STIMER write */
 } pokey_timer;

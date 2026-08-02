@@ -139,13 +139,35 @@ static int period_of(const pokey_timer *p, int ch)
 #define STIMER_PAIR_RAW 0
 #endif
 
+/* Six, and the test says why in prose: "the deadline timing for writes to AUDF1
+ * is the same as unlinked from the END of the loop, presumably due to the late
+ * reset from channel 2."  The unlinked window admits ages 0..2 (CH_LATCH_LAG);
+ * the low half's admits 0..5, three wider, and those three are the late reset.
+ * Measured on the 16-bit lo section: AUDCTL $50, AUDF1 $0D, so the low half
+ * underflows at STIMER+17 (13 + 4) and IRQST bit 0 surfaces at +21 = "1 + 20".
+ * A write at +22 is age 5 and must lengthen the next period to 22 (readable at
+ * +43); a write at +23 is age 6 and must not (readable at +41).  Only 6 admits
+ * the one and rejects the other. */
 #ifndef LO_LATCH_LAG
-#define LO_LATCH_LAG 2
+#define LO_LATCH_LAG 6
 #endif
 
 /* The same window for a linked pair's HIGH half -- see audf_prime. */
 #ifndef HI_LATCH_LAG
 #define HI_LATCH_LAG 3
+#endif
+
+/* ...and for an UNLINKED channel, which had no window at all.  Same shape, same
+ * width, and pokey_timertiming brackets it in four consecutive sub-tests rather
+ * than in prose: AUDCTL $40, AUDF1 $10 (period 20), STIMER, then AUDF1 := $12
+ * (period 22).  Written 22 cycles after the STIMER write it must lengthen the
+ * NEXT period -- IRQST bit 0 first readable at 46 = 4 + 20 + 22, checked from
+ * both sides at +45 and +46 -- and written at 23 it must not, leaving
+ * 44 = 4 + 20 + 20, again checked at +43 and +44.  The underflow is at +20
+ * (IRQST_LAG carries it to the +24 the test's own diagram marks), so the window
+ * admits an age of 2 and rejects 3, exactly as the pair's high half does. */
+#ifndef CH_LATCH_LAG
+#define CH_LATCH_LAG 3
 #endif
 
 static void audf_prime(pokey_timer *p, int ch)
@@ -180,6 +202,24 @@ static void audf_prime(pokey_timer *p, int ch)
      * bit 2 then asserts at 300 (4 + 20 + 276) -- and at 19 cycles it does not,
      * leaving 44 (4 + 20 + 20).  The pair reloads at +20, so the window admits
      * an age of 2 and rejects 3. */
+    /* An UNLINKED channel keeps its own counter, so it keeps its own window.
+     * The delay line above cannot serve this one: it captures the value TWO
+     * cycles BEFORE the reload, which was fitted when the first underflow was
+     * thought to be at STIMER+24.  IRQST_LAG puts the underflow at +20 and the
+     * +24 the test marks is the STATUS BIT, so the write the test requires to
+     * land arrives two cycles AFTER the reload, on the far side of the delay
+     * line.  Re-latching from the raw AUDF is what reaches it. */
+    {
+        int linked = (ch == 0) ? (p->audctl & 0x10)
+                   : (ch == 2) ? (p->audctl & 0x08)
+                   : (ch == 1) ? (p->audctl & 0x10) : (p->audctl & 0x08);
+        int fast   = (ch <= 1) ? (p->audctl & 0x40) : (p->audctl & 0x20);
+        if (CH_LATCH_LAG && !linked && p->ch_age[ch] < CH_LATCH_LAG) {
+            int per = p->audf[ch] + ((fast && (ch == 0 || ch == 2)) ? 4 : 1);
+            p->cnt[ch] = per - p->ch_age[ch];
+        }
+    }
+
     if ((ch == 1 || ch == 3)) {
         int pair = (ch == 1) ? 0 : 1;
         int lo   = 2 * pair;
@@ -201,6 +241,7 @@ static uint8_t af_lo(const pokey_timer *p, int pair)
 static void reload(pokey_timer *p, int ch)
 {
     p->cnt[ch] = period_of(p, ch);
+    p->ch_age[ch] = 0;
 }
 
 void pokey_timer_reset(pokey_timer *p)
@@ -217,6 +258,7 @@ void pokey_timer_reset(pokey_timer *p)
     for (int i = 0; i < 8; i++) p->st_lag[i] = 0;
     p->hi_age[0] = p->hi_age[1] = 0;
     p->lo_age[0] = p->lo_age[1] = 0;
+    for (int i = 0; i < 4; i++) p->ch_age[i] = 0;
     p->ticks = p->stimer_at = 0;
     for (int i = 0; i < 4; i++) { p->audf[i] = 0; p->cnt[i] = 1; }
     p->audctl = 0;
@@ -502,6 +544,7 @@ void pokey_timer_tick(pokey_timer *p)
             }
     if (p->hi_age[0] < 255) p->hi_age[0]++;
     if (p->hi_age[1] < 255) p->hi_age[1]++;
+    for (int i = 0; i < 4; i++) if (p->ch_age[i] < 255) p->ch_age[i]++;
     if (p->init) return;                       /* held in init */
 
     /* the line catching up with the status bit — see raise() */
