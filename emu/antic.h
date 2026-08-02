@@ -117,6 +117,12 @@ typedef struct {
      * the scanline; this is the cycle on the NEXT line at which its next fetch
      * falls, or -1 when the line starts idle.  antic_hscrolbug is built on it. */
     int      pf_carry;
+    /* The line buffer's READ ORIGIN: how many bytes were fetched BEFORE the
+     * display window opened.  ANTIC's buffer has a write pointer that advances
+     * per FETCH and a read pointer that advances per DISPLAYED byte, so a line
+     * whose stream ran on from the previous one starts with its write pointer
+     * ahead and the display must skip those bytes.  Zero on a normal line. */
+    uint8_t  lb_origin;
     uint8_t  glyph_row;    /* the row within the glyph for THIS scanline */
     uint8_t  row_first;    /* this scanline is the row's FIRST, which is NOT the
                             * same as row_line == 0: a row ENTERING a vertically

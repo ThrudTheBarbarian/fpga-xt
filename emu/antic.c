@@ -48,6 +48,11 @@
 #define PF_KEEP_PHASE 1
 #endif
 
+/* Whether the display honours the line buffer's read origin (see antic.h). */
+#ifndef LB_READ_ORIGIN
+#define LB_READ_ORIGIN 1
+#endif
+
 #ifndef WSYNC_READ_ARMS
 #define WSYNC_READ_ARMS 0
 #endif
@@ -345,6 +350,7 @@ static void line_start(antic *a)
     memset(a->blocked, 0, sizeof a->blocked);
     memset(a->pf_at, -1, sizeof a->pf_at);
     a->pf_next = 0;
+    a->lb_origin = 0;
     a->dli_line = 0;
 
     /* Memory refresh is taken on EVERY scanline, whatever DMACTL says — nine
@@ -394,6 +400,21 @@ static void line_start(antic *a)
         antic_dma_line_map_carry(dma_mode(a, mode), width_of(a->dmactl),
                                  a->row_first, hscrol_of(a), carry_in,
                                  a->blocked, a->pf_at, &a->pf_carry);
+
+        /* Bytes fetched before the display window opens are NOT displayed —
+         * they push the write pointer ahead of the read pointer.  On a normal
+         * line there are none; on one whose stream ran on from the previous
+         * scanline there are as many as the run-on produced, and the display
+         * has to skip them.  That is antic_hscrolbug's "shifted left by 17
+         * bytes": the bytes go into the buffer, the window shows the ones
+         * after them. */
+        int wnom = antic_pf_nominal_s(width_of(a->dmactl), hscrol_of(a),
+                                      scrolled_of(a));
+        int wstart = (mode >= 8) ? wnom - 1 : (a->row_first ? wnom - 3 : wnom);
+        int skipped = 0;
+        for (int c = 0; c < wstart && c < ANTIC_LINE_CYCLES; c++)
+            if (a->pf_at[c] >= 0) skipped++;
+        a->lb_origin = (uint8_t)skipped;
 
         /* The LAST playfield slot of a scrolled row is VIRTUAL.  antic_virtdma
          * documents the pattern for mode 7 wide with HSCROL 2 and marks its
@@ -786,6 +807,14 @@ int antic_tick(antic *a)
 static const uint8_t pf_ccpp[16] = { 0,0,0,0,0,0,0,0, 4,2,2,1,1,1,1,1 };
 static const uint8_t pf_bpp [16] = { 0,0,0,0,0,0,0,0, 2,1,2,1,1,2,2,1 };
 
+/* The line buffer's read index: the display skips the bytes fetched before the
+ * window opened (see antic.h's lb_origin). */
+static int lb(const antic *a, int i)
+{
+    if (LB_READ_ORIGIN) i += a->lb_origin;
+    return i % (int)sizeof a->linebuf;
+}
+
 int antic_pf_at(const antic *a, int cc, int *hires_lit)
 {
     *hires_lit = 0;
@@ -821,8 +850,8 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
         int ci = off / cw;
         if (ci >= a->lb_len || ci >= (int)sizeof a->glyphbuf)
             return -1;
-        uint8_t name  = a->linebuf[ci];
-        uint8_t glyph = a->glyphbuf[ci];
+        uint8_t name  = a->linebuf[lb(a, ci)];
+        uint8_t glyph = a->glyphbuf[lb(a, ci)];
         int within = off % cw;
 
         if (mode <= 3) {                  /* hi-res text, two pixels per clock */
@@ -851,8 +880,8 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
 
     if (mode == 0x0F) {                   /* hi-res: TWO pixels per colour clock */
         int p  = off * 2;
-        int i0 = (p >> 3) % (int)sizeof a->linebuf;
-        int i1 = ((p + 1) >> 3) % (int)sizeof a->linebuf;
+        int i0 = lb(a, p >> 3);
+        int i1 = lb(a, (p + 1) >> 3);
         int b0 = (a->linebuf[i0] >> (7 - (p & 7))) & 1;
         int b1 = (a->linebuf[i1] >> (7 - ((p + 1) & 7))) & 1;
         *hires_lit = b0 | b1;
@@ -862,7 +891,7 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
     int px     = off / pf_ccpp[mode];
     int bits   = pf_bpp[mode];
     int bitpos = px * bits;
-    uint8_t byte = a->linebuf[(bitpos >> 3) % (int)sizeof a->linebuf];
+    uint8_t byte = a->linebuf[lb(a, bitpos >> 3)];
 
     if (bits == 1)
         return ((byte >> (7 - (bitpos & 7))) & 1) ? 0 : -1;   /* 2-colour: PF0 */
