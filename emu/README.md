@@ -2925,3 +2925,34 @@ the pair repeats every 23 cycles and the test acknowledges IRQEN twice.
 LESSON: read the machine's own state at the reference point before doing any
 arithmetic against a test's numbers.  A probe that prints the INPUTS is worth
 more than one that prints the outputs.
+
+
+## antic_pfstarttiming's "stride" is a COLLISION READING, not a byte count
+
+Its failure prints `stride=%d` and we have been reading that as a fetch count.
+It is not.  The value is built from two player-versus-playfield collisions
+(.lst 91-96):
+
+    lda p0pf / asl / asl / ora p1pf / add #12      must equal 16
+
+so the assertion is really `(p0pf << 2) | p1pf == 4`, i.e. player 0 collides
+with PF0 and player 1 collides with NOTHING.  We produce 18, which is
+`p0pf = 1, p1pf = 2`: player 1 is touching PF1 where the row should leave it
+blank.
+
+The geometry, which the name hides: both players are FOUR COLOUR CLOCKS wide
+(GRAFP $F0, SIZEP 0) and sit at hposp $80 and $84 — MID-PLAYFIELD on a narrow
+display that spans $40-$BF, not at either edge.  So the test is asking what is
+DRAWN at two fixed positions after DMACTL changes early in the line, not how
+many bytes were fetched.
+
+The manoeuvre: the row before is normal ($22); the DLI writes narrow ($21) at
+cycles 13-16, which is well before a character row's start comparison at 25, so
+the narrow window should take effect in full.  Then after WSYNC it restores $22.
+So the measured line is a plain narrow row whose width was set early — and what
+we draw at $84 is wrong.
+
+That makes it a DISPLAY-side failure like antic_virtdma, not a fetch-window one,
+which is consistent with the fetch model matching all 50 ACID DMA rows.  Attack
+it through what is displayed at $84 on a narrow row, and note that the two
+tests now point at the same place from different widths.
