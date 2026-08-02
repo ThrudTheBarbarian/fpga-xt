@@ -281,23 +281,35 @@ static int spec_line(uint8_t mode_in, antic_width width, int first_line,
         blocked[c] = 1;
     if (first_line) { blocked[1] = 1; blocked[6] = blocked[7] = 1; }
 
-    uint8_t clock = clock_io ? *clock_io : 0;
+    /* TWO DIFFERENT THINGS, which the first cut of this conflated.
+     *
+     * A line's OWN fetches come from walking the window start to vend at the
+     * mode's rate -- the clock has one bit flying round it and that bit lands
+     * on those cycles.  The 8-bit MASK arithmetic (|= at the start phase,
+     * &= ~ at the stop phase) is the CROSS-LINE CARRY: it computes what is
+     * still circulating when the line ends, which is why Altirra does it in
+     * the end-of-scanline block and not here.  Applied to a single line the
+     * two cancel, because a span of 64/80/96 is a multiple of 8 whenever the
+     * stop is not misaligned -- `clock |= p; clock &= ~p` is zero. */
     int rate = (mode >= 2) ? spec_rate[mode] : 0;
+    int start = 0, vend = 0, step = 0;
     if (mode >= 2 && rate) {
-        int start, vend;
         spec_window(mode, width, scrolled, hscrol, &start, &vend);
-        if (start < vend) {
-            clock |= spec_clock[rate][start & 7];
-            clock &= (uint8_t)~spec_clock[rate][vend & 7];
-        }
+        step = 8 >> (rate - 1);            /* rate 1/2/3 -> every 8/4/2 */
     }
 
-    /* Walk the line: the clock's phase decides the fetch, and the cycle KIND
-     * hangs off it -- a character name is the clock cycle itself, a character's
-     * data is three later, a bitmap byte two later. */
+    uint8_t clock = clock_io ? *clock_io : 0;
+    if (step && start < vend) {
+        clock |= spec_clock[rate][start & 7];
+        clock &= (uint8_t)~spec_clock[rate][vend & 7];
+    }
+
     int idx = 0;
     for (int c = 0; c < ANTIC_LINE_CYCLES; c++) {
-        if (!(clock & (1u << (c & 7)))) continue;
+        int in_window = step && c >= start && c < vend
+                     && ((c - start) % step) == 0;
+        int carried   = (clock & (1u << (c & 7))) != 0;
+        if (!in_window && !carried) continue;
         int fetch = -1;
         if (mode >= 8)            fetch = c + 2;
         else if (first_line)      fetch = c;            /* name; data at c+3 */
