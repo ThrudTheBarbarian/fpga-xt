@@ -912,7 +912,7 @@ Two register-semantics bugs fell out of the same test:
   bitmap row would fetch nothing anyway; the row bookkeeping has to be got right
   before that flag means much.
 
-### Still open: antic_hscrolbug's test #2
+### PARKED: antic_hscrolbug's test #2
 
 Its second case reads ALL ZEROS where it wants `d0..d3 = 02 00 04 04`. The
 blocker is identified: **scanline 38's instruction is `$41` (JVB)**, so there is
@@ -920,7 +920,21 @@ no playfield row at all. The test turns DL DMA off mid-line 37 "so that the `$5e
 byte is reused" but restores `DMACTL = $21` before line 37 ends, and we then
 fetch the next instruction at line 38 cycle 1. The open question is WHEN ANTIC
 latches the decision to fetch a new display-list instruction and which DMACTL
-sample it uses — the row-end compare at cycle 111 is the obvious candidate.
+sample it uses.
+
+**DISPROVED, and this is why it is parked.** The obvious mechanism is that ANTIC
+samples the decision late in the PREVIOUS line, catching `DMACTL = $01` before
+the restore lands. Implemented as a latch and swept across cycles 100-113: the
+result is FLAT — every cycle gives the same all-zero collisions. By rule (v),
+when no setting of a parameter separates the cases the error is upstream, so the
+latch was reverted rather than left in as a half-model. Note also that
+`ANTIC_CYC_ROWEND` is cycle **5**, an early-line sample, not a late one; it is
+not the latch this would need.
+
+Whatever reuses the `$5e` is not a question of WHEN DMACTL is sampled. Test #1
+passes and the whole run-on mechanism above is verified against the published
+DMA map, so the remaining gap is specific to this second case. Four iterations
+went in; the next thing worth more is the P/M pair.
 
 DISPROVED along the way, so nobody re-runs them: the cycle-0 `rebuild_line` call
 is NOT destroying the carried map. It runs BEFORE `line_start`, carries the
