@@ -181,6 +181,16 @@ static void reload(pokey_timer *p, int ch)
 
 void pokey_timer_reset(pokey_timer *p)
 {
+    /* The reload-latch ages and the deferred status bits are STATE, and reset
+     * initialises field by field rather than zeroing the struct -- so anything
+     * added here has to be cleared here too.  A stack-allocated pokey_timer
+     * (which is what the ptimer gate uses, where the ACID harness has a zeroed
+     * static) otherwise starts with garbage ages that fire a latch immediately
+     * and garbage countdowns that clear IRQST bits nothing ever set. */
+    for (int i = 0; i < 8; i++) p->st_lag[i] = 0;
+    p->hi_age[0] = p->hi_age[1] = 0;
+    p->lo_age[0] = p->lo_age[1] = 0;
+    p->ticks = p->stimer_at = 0;
     for (int i = 0; i < 4; i++) { p->audf[i] = 0; p->cnt[i] = 1; }
     p->audctl = 0;
     p->irqen  = 0;
@@ -209,6 +219,18 @@ void pokey_timer_reset(pokey_timer *p)
  * produce -- so measure it. */
 int pokey_timer_probe;
 
+/* How long the STATUS bit lags the underflow that set it.  Measured -- see
+ * raise().  Zero restores the old "set at the underflow" model. */
+#ifndef IRQST_LAG
+#define IRQST_LAG 0
+#endif
+
+static int bit_index(uint8_t bit)
+{
+    for (int i = 0; i < 8; i++) if (bit & (1u << i)) return i;
+    return 0;
+}
+
 static void raise(pokey_timer *p, uint8_t bit)
 {
     /* Reported either way, and SAID SO: a raise that IRQEN masks sets no status
@@ -222,7 +244,20 @@ static void raise(pokey_timer *p, uint8_t bit)
                 (p->irqen & bit) ? "" : "  [MASKED]");
 
     if (!(p->irqen & bit)) return;             /* masked: no request at all */
-    p->irqst = (uint8_t)(p->irqst & ~bit);     /* active low */
+    /* THE UNDERFLOW AND THE READABLE STATUS BIT ARE FOUR CYCLES APART.
+     * pokey_timertiming tabulates the same timer twice, and the two tables
+     * differ by exactly that on every row they share.  Its STIMER-preemption
+     * table measures the UNDERFLOW directly, by strobing STIMER until the timer
+     * stops firing: AUDF1=0 underflows at 4 and AUDF1=8 at 12, i.e. AUDF + 4
+     * with nothing added for the first period.  Its IRQST table measures when
+     * the BIT can be read: AUDF1=0 at 8 and AUDF1=16 at 24, four later than the
+     * underflow in both cases.
+     *
+     * Modelling that gap as a longer FIRST PERIOD (the old STIMER_EXTRA) put it
+     * in the counter, where it also delayed the underflow the preemption test
+     * strobes against — and no value could then satisfy both tables. */
+    if (IRQST_LAG) p->st_lag[bit_index(bit)] = IRQST_LAG;
+    else           p->irqst = (uint8_t)(p->irqst & ~bit);
     if (IRQ_LINE_LAG) p->irq_arm = IRQ_LINE_LAG;
     else              p->irq = 1;
 }
@@ -385,6 +420,9 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
 void pokey_timer_tick(pokey_timer *p)
 {
     p->ticks++;
+    for (int i = 0; i < 8; i++)
+        if (p->st_lag[i] && --p->st_lag[i] == 0)
+            p->irqst = (uint8_t)(p->irqst & ~(1u << i));
     if (p->hi_age[0] < 255) p->hi_age[0]++;
     if (p->hi_age[1] < 255) p->hi_age[1]++;
     if (p->init) return;                       /* held in init */
@@ -549,6 +587,11 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         /* IRQEN both masks and CLEARS: a bit written as zero drops any request
          * already standing, which is how a handler acknowledges. */
         p->irqen = val;
+        /* A bit written as zero drops a request that has not become readable
+         * yet as well as one that has: the status bit is delayed, not queued
+         * somewhere IRQEN cannot reach. */
+        for (int i = 0; i < 8; i++)
+            if (!(val & (1u << i))) p->st_lag[i] = 0;
         p->irqst = (uint8_t)(p->irqst | ~val);
         /* nothing pending any more.  Written as a comparison against $FF
          * rather than `(uint8_t)~irqst == 0`: that form is correct but reads as
