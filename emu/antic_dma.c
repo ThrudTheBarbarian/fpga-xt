@@ -212,6 +212,12 @@ static void name_slot(int8_t *name_at, int c, int i, int chars)
 #define PF_PIN_COMPARATOR 1
 #endif
 
+/* Whether the character-mode pair branch reports its OWN bound to a caller
+ * pinning a mid-line rebuild, rather than the dense branch's. */
+#ifndef PF_PAIR_BOUND
+#define PF_PAIR_BOUND 1
+#endif
+
 /* Returns the STOP the stream ran against — the horizontal-counter value the
  * sequencer compares on its own ticks — so a caller rebuilding the line
  * mid-scanline can pin the OLD grid against the NEW window's stop without
@@ -368,7 +374,14 @@ static int build(uint8_t mode, antic_width width, int first_line, int hscrol,
                 if ((fi & 1) == 0) name_slot(name_at, c + k, fi / 2, names);
             }
         }
-        return stop;
+        /* Return the bound THIS branch actually ran against.  The pair grid
+         * ends at `pstop` (nom + 4*chars), NOT at the dense branch's `stop`
+         * (start + 2 + chars*2) -- for a narrow mode 6 first line those are 93
+         * and 60.  Returning `stop` fed a mid-line rebuild a bound 30-odd
+         * cycles short of the row's real end, so a DMACTL restore truncated
+         * the row instead of extending it: tools/dmactl-curve.c showed 9 where
+         * the answer must lie between the two widths' 16 and 20. */
+        return PF_PAIR_BOUND ? pstop : stop;
     }
 
     /* Sparse streams: the nominal fetch slots run at `stride` from cycle 29,

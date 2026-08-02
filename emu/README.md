@@ -930,53 +930,44 @@ before "is the thing broken?". Two consecutive iterations were spent on a
 phantom. Worse, the false claim was committed here, where the next iteration
 would have believed it.
 
-### A mid-line DMACTL restore can drop the fetch count BELOW BOTH WIDTHS
+### FIXED: the pair branch was reporting the DENSE branch's bound
 
-`tools/dmactl-curve.c` drives a mode 6 + LMS + VSCROL=7 row, writes DMACTL
-narrow at one cycle and restores it to normal at another, and prints the
-resulting fetch count. A row that spends part of its line narrow (16 bytes) and
-part normal (20) must land BETWEEN 16 and 20. Ours does not:
+`build()` has two character-mode paths with DIFFERENT natural bounds. The dense
+run ends at `stop = start + 2 + chars*2`; the first-line PAIR grid ends at
+`pstop = nom + 4*chars`. For a narrow mode 6 first line those are **60** and
+**93** — thirty-odd cycles apart. The pair branch was returning `stop`, and
+`antic_dma_line_map_at` feeds that value straight back as the bound for a pinned
+mid-line rebuild. So a DMACTL restore truncated the row to cycle 61 instead of
+extending it.
+
+Found by instrumenting rather than guessing: tracing `build()` for a restore at
+cycle 28 (gave 9) against one at 91 (gave 16) showed the two calls receive
+IDENTICAL parameters — `nom_in 29, cyc_stop 60, pstop 61` — so the difference
+could only be in what the caller did with the returned bound. Two previous
+guesses at which bound was at fault were both wrong.
+
+The branch now returns the bound it actually ran against (`PF_PAIR_BOUND`), and
+`tools/dmactl-curve.c` goes from
 
 ```
-no write:                                    20
-narrow at 13, restored at  21 -> 19    at  28 ->  9    at  56 ->  9
-                          63 -> 10        70 -> 11        91 -> 16
+20, 19,  9,  9,  9,  9,  9, 10, 11, 13, 15, 16, 16, 16, 16
 ```
 
-Nine. For a restore at cycle 28 — a line that is normal-width for 85 of its 114
-cycles. The curve is non-monotonic and dips far below the narrow total, so this
-is a real defect in the mid-line rebuild, not a boundary being a cycle out.
+to
 
-DISPROVED as the cause: "the window is a LEVEL the counter can already be
-inside". Modelling that — when a mid-line write moves the window's start to
-before the write cycle, begin fetching at once rather than never — changes the
-curve NOT AT ALL, because in the failing region `rebuild_line` already finds a
-running phase: the old NARROW window opens at cycle 26, before the restore at
-28, so the "no start was ever reached" branch is never taken. Reverted.
+```
+20, 19, 20, 20, 20, 20, 20, 20, 20, 20, 20, 16, 16, 16, 16
+```
 
-That is itself informative. The stream IS running and IS re-phased correctly at
-the restore; something downstream still cuts it to 9. The next step is to
-instrument `build()` for ONE case — narrow at 13, restore at 28 — and print
-which loop bound terminates it: `stop`, `pstop`, `left`, or `chars`.
+— every value now between the two widths' 16 and 20, as it must be.
 
-It explains the test exactly. Measured write positions:
-
-| | narrow write | restore | our fetches | wanted |
-|---|---|---|---|---|
-| `dli1` | line 33 cycle 13 | cycle **21** | 16 | 16 ✓ |
-| `dli2` | line 51 cycle 14 | cycle **25** | 11 | 18 |
-
-The two differ by ONE cycle in the narrow write and FOUR in the restore, and our
-count swings 16 -> 11 across that gap where hardware steps 16 -> 18. An earlier
-note here blaming the one-cycle difference in the NARROW write was wrong: swept
-alone, that write gives 16 for every cycle from 6 to 17 and only cliffs at 18.
-It is the RESTORE that these two cases separate on.
-
-The chain to the assertion is unchanged and still holds: each `$66` row is mode
-6 with LMS, so its fetch count sets where the following `$0a` mode 10 row's
-content begins; the players at `$80-$87` sit over that row; five bytes out of
-step is why scanline 34 collides and 52 does not. `ACID_COLPROBE=1` prints
-exactly one collision for the whole run.
+HONEST STATUS: this does NOT fix either test. Both MOVED — `pfstarttiming` late
+from bits 0 to 8, `pfstoptiming` early from bits 2 to 6 — and neither is right
+yet: pfstarttiming wants 6 (P0 over PF0 AND P1 over PF1) and gives 8 (P0 over
+PF1 only); pfstoptiming wants 4 and gives 6, one collision too many. Kept
+because the oracle demands it independently of the tests: a row that is narrow
+for part of a line and normal for the rest cannot fetch fewer bytes than either.
+Twelve gates green, suite unchanged at 48.
 
 ### PARKED: antic_hscrolbug's test #2
 

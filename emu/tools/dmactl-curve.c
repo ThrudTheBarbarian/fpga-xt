@@ -7,6 +7,7 @@
  * so the bound names itself. */
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "antic.h"
 
 static uint8_t mem[65536];
@@ -38,7 +39,7 @@ static int run(int at, int back)             /* -1 = no write */
     return n;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     for (int i = 0; i < 64; i++)   mem[0x2D00 + i] = (uint8_t)(0x40 + i);
     for (int i = 0; i < 1024; i++) mem[0xE000 + i] = (uint8_t)(0x81 + (i & 7));
@@ -47,6 +48,11 @@ int main(void)
     mem[d++] = 0x66; mem[d++] = 0x00; mem[d++] = 0x2D;
     mem[d++] = 0x0A; mem[d++] = 0x41; mem[d++] = 0x00; mem[d++] = 0x2C;
 
+    if (argc == 3) {
+        int at = atoi(argv[1]), back = atoi(argv[2]);
+        printf("narrow %d back %d -> %d fetches\n", at, back, run(at, back));
+        return 0;
+    }
     printf("no write: %d fetches\n", run(-1, -1));
     printf("narrow at 13, restored to normal at cycle N:\n");
     for (int b = 14; b <= 113; b += 7)
