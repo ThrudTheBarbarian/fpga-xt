@@ -68,6 +68,12 @@ void antic_dma_refresh(uint8_t blocked[ANTIC_LINE_CYCLES])
         blocked[c] = 1;
 }
 
+int antic_dma_in_refresh(int c)
+{
+    return c >= REFRESH_FIRST
+        && c <= REFRESH_FIRST + (REFRESH_COUNT - 1) * REFRESH_STEP;
+}
+
 static int is_refresh(int c)
 {
     return c >= REFRESH_FIRST

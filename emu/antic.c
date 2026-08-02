@@ -272,6 +272,36 @@
 #ifndef WSYNC_RMW_SINCE
 #define WSYNC_RMW_SINCE 0
 #endif
+
+/* THE REFRESH WINDOW.  Tabulating the whole population by LINE CYCLE (real, not
+ * the probe's +1) separates it exactly, and along a boundary the hardware
+ * already has:
+ *
+ *   NEEDS the extra:  2 (antic_wsync), 0/3/12 (pokey_noise), 12 (phantomdma),
+ *                     5/21/68/110 (psuedomodee), 6/7/96/97 (dlitiming),
+ *                     109 (dmapattern)
+ *   MUST NOT:         34 and 55 (gtia_pmresize)
+ *
+ * Every case that needs it is OUTSIDE cycles 25..57; both that forbid it are
+ * INSIDE.  That range is not fitted -- it is ANTIC's memory-refresh window,
+ * REFRESH_FIRST 25 through REFRESH_FIRST + 8*REFRESH_STEP = 57, already in
+ * antic_dma.c and already pinned by `make dma` at 50/50.
+ *
+ * The reading: an RMW whose second write lands in the refresh window does not
+ * re-arm, because that write is contending with a refresh cycle for the bus.
+ * MARKED AS AN INFERENCE -- the separation is measured, the causal story is not.
+ * Also resolves the direct clash between two annotations by the same author:
+ * gtia_phantomdma $208F/$209C both write `inc wsync ... sta hitclr ;105,106,
+ * 107,108` (the extra) at cycle 12, while gtia_pmresize $233B writes the same
+ * instruction pair `;104,105,106,107` (no extra) at cycles 34 and 55.
+ *
+ * DEFAULT ON.  Full suite 56/63 with NO regressions, and gtia_pmresize carries
+ * from its FIRST section (4x-to-1x, 32058 cycles) to 2x-to-1xalt at 73895 --
+ * same score, strictly more correct behaviour, and what remains of pmresize is
+ * now a GTIA question rather than a WSYNC one. */
+#ifndef WSYNC_RMW_REFRESH
+#define WSYNC_RMW_REFRESH 1
+#endif
 #include <stdio.h>
 int antic_glyph_probe;
 #include <string.h>
@@ -1475,7 +1505,9 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         /* WSYNC.  Arms on the FIRST write — an RMW writes it twice and the
          * halt must not re-arm on the second (antic_wsync, d5). */
         if (!a->wsync_halt) a->wsync_halt = 1;
-        else if (WSYNC_RMW_SINCE
+        else if (WSYNC_RMW_REFRESH
+                     ? !antic_dma_in_refresh(a->cycle - 1)
+               : WSYNC_RMW_SINCE
                      ? a->cpu_acc - a->wsync_rel_acc <= WSYNC_RMW_SINCE
                : WSYNC_RMW_EARLY  ? a->cycle <= WSYNC_RMW_EARLY
                : WSYNC_RMW_ADJ_CYCLE

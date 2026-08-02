@@ -44,6 +44,10 @@ int antic_pf_nominal_s(antic_width w, int hscrol, int scrolled);
 /* Memory refresh: nine cycles a scanline, taken whatever DMACTL says.  Exposed
  * because it happens even with the screen off, where no other DMA does. */
 void antic_dma_refresh(uint8_t blocked[ANTIC_LINE_CYCLES]);
+/* Is this line cycle inside ANTIC's memory-refresh window?  The WHOLE span, not
+ * just the nine slots -- see WSYNC_RMW_REFRESH in antic.c, which needs the
+ * window as a region rather than as a set of stolen cycles. */
+int  antic_dma_in_refresh(int cycle);
 #define PF_DISPLAY_LEAD 3
 
 void antic_dma_line(uint8_t mode, antic_width width, int first_line,
