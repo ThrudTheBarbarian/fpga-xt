@@ -93,9 +93,9 @@ typedef struct {
     uint8_t  lo_age[2];            /* cycles since the low half reloaded */
     uint8_t  ch_age[4];            /* cycles since an UNLINKED channel reloaded */
     uint8_t  ch_first[4];          /* still in the FIRST period after STIMER */
-    uint8_t  fresh_mask;           /* bits whose underflow IRQEN masked on the
-                                    * MOST RECENT tick -- an enable one cycle
-                                    * later still picks them up */
+    uint8_t  st_armed[8];          /* was this in-flight status bit ENABLED at any
+                                    * point during its flight?  An enable arms
+                                    * one; a disable never disarms it */
     unsigned long long ticks;      /* free-running tick count, for probes */
     unsigned long long stimer_at;  /* tick of the last STIMER write */
 } pokey_timer;

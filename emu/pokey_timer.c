@@ -167,15 +167,23 @@ static int period_of(const pokey_timer *p, int ch)
  * have succeeded" assertion at 38294 cycles to the "+16c should have succeeded"
  * one at 38066 -- something now fires that must not.  Whatever lets that
  * underflow through is narrower than a blanket deferral of the mask. */
-/* THE MIRROR OF STIMER_CANCELS_FRESH.  A STIMER strobe cancels an interrupt
- * raised on the last tick; an IRQEN ENABLE one cycle after a masked underflow
- * picks that underflow back up.  pokey_timertiming's two-tone reprogramming
- * sub-test is built on it: IRQEN is held at 0, the second period underflows at
- * +26, and IRQEN is enabled by a write on cycle 26 -- one cycle after the
- * underflow's tick -- and the bit is then required at +30.  Same window, same
- * "raised on the tick the write follows", opposite sign. */
-#ifndef IRQEN_UNMASKS_FRESH
-#define IRQEN_UNMASKS_FRESH 1
+/* A MASKED UNDERFLOW STILL ENTERS THE DELAY, AND AN ENABLE DURING ITS FLIGHT
+ * LETS IT SURFACE.  The rule is ASYMMETRIC, and that asymmetry is the point: an
+ * ENABLE arms a bit already in flight, a DISABLE never disarms one -- which is
+ * ACK_CANCELS_INFLIGHT=0, settled long ago, stated the other way round.
+ *
+ * pokey_timertiming's two-tone reprogramming section needs both ends of it.  Its
+ * second period underflows at +26 with IRQEN at 0 and the enable lands on cycle
+ * 26, one cycle later; its third underflows at +40 and the enable lands on cycle
+ * 42, THREE cycles later.  So the window is not one cycle -- it is however long
+ * the status bit is in flight, IRQST_LAG.
+ *
+ * Gating the mask at surface time instead (MASK_AT_SURFACE) gets the same two
+ * sub-tests and is still wrong: it lets a DISABLE cancel a bit in flight too,
+ * which the ptimer gate catches directly ("...by exactly the modelled lag: got
+ * -55 want 1") and which costs NINE tests -- 43 pass against 52. */
+#ifndef IRQEN_ARMS_INFLIGHT
+#define IRQEN_ARMS_INFLIGHT 1
 #endif
 
 #ifndef MASK_AT_SURFACE
@@ -351,7 +359,7 @@ void pokey_timer_reset(pokey_timer *p)
     p->hi_age[0] = p->hi_age[1] = 0;
     p->lo_age[0] = p->lo_age[1] = 0;
     for (int i = 0; i < 4; i++) p->ch_age[i] = p->ch_first[i] = 0;
-    p->fresh_mask = 0;
+    for (int i = 0; i < 8; i++) p->st_armed[i] = 0;
     p->ticks = p->stimer_at = 0;
     for (int i = 0; i < 4; i++) { p->audf[i] = 0; p->cnt[i] = 1; }
     p->audctl = 0;
@@ -421,10 +429,9 @@ static void raise(pokey_timer *p, uint8_t bit)
      * reprogramming sub-test enables IRQEN on the SAME cycle its second period
      * underflows (+26) and then requires the bit READ at +30 -- so the underflow
      * has to survive a mask that is lifted at the moment it happens. */
-    if (!MASK_AT_SURFACE && !(p->irqen & bit)) {
-        p->fresh_mask |= bit;    /* an enable NEXT CYCLE can still take it */
+    int enabled = (p->irqen & bit) != 0;
+    if (!MASK_AT_SURFACE && !enabled && !IRQEN_ARMS_INFLIGHT)
         return;                                          /* masked: no request */
-    }
     /* THE UNDERFLOW AND THE READABLE STATUS BIT ARE FOUR CYCLES APART.
      * pokey_timertiming tabulates the same timer twice, and the two tables
      * differ by exactly that on every row they share.  Its STIMER-preemption
@@ -446,8 +453,16 @@ static void raise(pokey_timer *p, uint8_t bit)
      * is what keeps a fast channel's acknowledge in place while its underflow
      * moves four cycles earlier. */
     int lag = fast_for_bit(p, bit) ? IRQST_LAG : 0;
-    if (lag) p->st_lag[bit_index(bit)] = (uint8_t)lag;
-    else     p->irqst = (uint8_t)(p->irqst & ~bit);
+    /* With no lag there is no flight to be armed during, so a masked raise on a
+     * base-clocked channel is simply lost, exactly as before. */
+    if (!enabled && !lag) return;
+    if (lag) {
+        p->st_lag[bit_index(bit)]   = (uint8_t)lag;
+        p->st_armed[bit_index(bit)] = (uint8_t)enabled;
+    } else {
+        p->irqst = (uint8_t)(p->irqst & ~bit);
+    }
+    if (!enabled) return;                    /* in flight, but nothing asked yet */
     if (pokey_timer_probe == 2) {
         static int n;
         if (n < 20) { n++;
@@ -622,15 +637,13 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
 void pokey_timer_tick(pokey_timer *p)
 {
     p->ticks++;
-    /* Cleared BEFORE this tick's raises, so a masked underflow is visible to
-     * the access on the next cycle and to nothing after it. */
-    p->fresh_mask = 0;
     for (int i = 0; i < 8; i++)
         if (p->st_lag[i] && --p->st_lag[i] == 0) {
             /* The mask is read HERE under MASK_AT_SURFACE: the underflow enters
              * the delay chain regardless and IRQEN gates the latch at the point
              * the bit is presented. */
             if (MASK_AT_SURFACE && !(p->irqen & (1u << i))) continue;
+            if (IRQEN_ARMS_INFLIGHT && !p->st_armed[i]) continue;
             p->irqst = (uint8_t)(p->irqst & ~(1u << i));
             /* The cycle the BIT BECOMES READABLE, which is what every IRQST
              * bracket in pokey_timertiming actually measures.  Deriving it by
@@ -927,12 +940,12 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         if ((val & POKEY_IRQ_SEROC) && p->seroc) p->irq = 1;
         /* ...and an enable takes up an underflow masked on the last tick.  After
          * the clear above, which would otherwise undo it. */
-        if (IRQEN_UNMASKS_FRESH) {
-            uint8_t take = (uint8_t)(p->fresh_mask & val);
-            p->fresh_mask = (uint8_t)(p->fresh_mask & ~take);
+        if (IRQEN_ARMS_INFLIGHT)
             for (int i = 0; i < 8; i++)
-                if (take & (1u << i)) raise(p, (uint8_t)(1u << i));
-        }
+                if ((val & (1u << i)) && p->st_lag[i] && !p->st_armed[i]) {
+                    p->st_armed[i] = 1;
+                    p->irq_arm = (uint8_t)(p->st_lag[i] + IRQ_LINE_LAG);
+                }
         break;
     default: break;
     }
