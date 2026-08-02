@@ -2996,3 +2996,37 @@ latch offset.
 `lb_len` is a second, smaller bug visible in the same line: it reads 20 on a row
 that ends up fetching 18, because the length is settled at line_start from the
 width then in force and never revisited when DMACTL moves mid-line.
+
+
+## GTIA: the P/M register write delays, and the twelve cells that remain
+
+MEASURED FROM ALTIRRA (gtia.cpp ~3340-3363).  A write to a P/M register does not
+take effect where it lands, and the delays are NOT uniform:
+
+    HPOSP0-3, HPOSM0-3                  xpos + 5
+    SIZEP0-3, SIZEM, GRAFP0-3, GRAFM    xpos + 3
+
+and `xpos` is COLOUR CLOCKS — GTIAGetXClock() is GetBeamX() * 2.  So a POSITION
+write lands TWO COLOUR CLOCKS LATER than a size or graphics write issued on the
+same cycle.  We apply every one of them immediately.
+
+TRIED AND REVERTED, both at 51 against the current 52: the absolute delays
+(5 and 3) and the relative asymmetry alone (2 and 0).  The absolute form also
+breaks gtia_pmretrigger and makes gtia_pmoverlap fail EARLIER, which is the
+signature of a model tuned around the missing delay — the same trap PF_WIDE_ADJ
+turned out to be.  So the delays are almost certainly right and something that
+compensates for their absence has to be found and removed IN THE SAME CHANGE.
+Adding them alone is not an improvement, and neither is leaving them out.
+
+WHERE WE ACTUALLY STAND, from tools/pmoverlap-check.py: the best model is
+`union_realign` at 660/672 cells, and the twelve failures are two shapes, not
+twelve problems:
+
+    pass 7, sizep 1 (2x), sp $6C, Y odd from $6F to $7F  — want 3, got 6 (and
+        7 at Y $6F).  Our player sits ONE COLOUR CLOCK LEFT of where it should.
+    pass 3, sizep 3 (4x), sp $78, Y $7D/$7E/$7F          — want 0, got 7/3/1.
+        We keep drawing where the object should already have stopped.
+
+One shape is a position error and the other is a duration error, which is
+suggestively close to the two delays above being different.  That is the lead:
+find what currently compensates for the missing delay before adding it.
