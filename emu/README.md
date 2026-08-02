@@ -846,6 +846,90 @@ worth noting:
 The suite score is unchanged at 48 — this is a correctness fix under the tests
 that already passed, and the prerequisite for the run-on below.
 
+### The unstopped playfield: what antic_hscrolbug actually measures
+
+This test sat in the "exhausted, four levers disproved" pile for six iterations
+because only its FAILURE STRING had ever been read. Its source says outright
+what it does:
+
+> temporarily glitch HSCROL to move the PF stop cycle, which causes ANTIC to
+> **fail to stop the playfield counter**. This causes it to continue fetching
+> through horizontal blank.
+
+No constant can produce that. A stream bounded by a byte count always
+terminates. The whole thing needed a different SHAPE, and six pieces of one:
+
+**1. The stop is a comparator, and it is missable.** ANTIC's playfield
+sequencer runs on its own fetch clock — every `stride` machine cycles — and
+compares the horizontal counter against the window's stop on ITS OWN ticks, not
+on every cycle. A stop of the wrong PARITY is never looked at. `build()` breaks
+on `c == stop` and returns the stop it used.
+
+**2. The numbers fall out with no tuning.** Narrow scrolled mode E at HSCROL 0:
+start 20, forty bytes at stride 2, stop = 20 + 80 = **100** — even, sampled,
+last fetch 98. Glitch HSCROL to 2 and the window moves one cycle left: start 19,
+stop **99** — ODD, and an even grid never sees it. Restore HSCROL to 0 and the
+stop is back at 100 with the counter already past it. Neither is matched, so the
+row runs to the end of the line.
+
+**3. The stream carries across the scanline boundary.** `pf_carry` holds the
+cycle on the next line at which a still-running stream takes its next fetch;
+`line_start` consumes it, and a line that fetches nothing drops it.
+
+**4. Fetches past `PF_HBLANK_FIRST` (106) still FETCH but do not STEAL the
+cycle** — the `#` versus `F` distinction in the test's own map.
+
+**5. A rebuild must not RE-PHASE a running stream.** ANTIC's fetch clock
+free-runs; a register write moves the COMPARATOR, not the phase. This one was
+worth a whole iteration: the test's FIRST write already produced the published
+map (47 fetches, last at 112, carry 0) and its SECOND — restoring HSCROL —
+re-derived the grid from the new nominal, flipped its parity, ended at 113 and
+carried into cycle 1 instead of 0. `rebuild_line` now hands the running phase
+back in as `carry_in`.
+
+**6. The display skips the bytes fetched before the window opened.** The line
+buffer has a WRITE pointer that advances per FETCH and a READ pointer that
+advances per DISPLAYED byte. A run-on line starts with its write pointer ahead,
+so display index 18 must read the byte written by fetch 28. `lb_origin` counts
+them and every display read goes through `lb()`. THIS is what "shifted left by
+17 bytes" means — the bytes go into the buffer, the window shows the ones after
+them.
+
+Result: the fetch schedule matches the test's published map character for
+character (scanline 32 at 20,22...112 = 47 fetches; scanline 33 at 0,2...98 =
+50), and its FIRST assertion cluster passes: `d0..d3 = 01 00 04 04`, the `$04`
+being the `$ff` byte reaching hpos `$78-$7b` as PF2.
+
+Two register-semantics bugs fell out of the same test:
+
+* **playfield DMA is gated by DMACTL's WIDTH bits, not bit 5**, which is the
+  DISPLAY LIST DMA enable. Clearing bit 5 stops new INSTRUCTIONS being fetched;
+  the playfield goes on being fetched at the programmed width;
+* `line_start` returned as soon as a row ended with DL DMA off, and that return
+  skipped the playfield build below it. **UNPROVEN** — kept on the argument, not
+  on evidence, behind `DL_REUSE_KEEPS_PF`. Note a reused row does not currently
+  get `row_first` set, and a bitmap mode's `stride_rest` is 0, so a reused
+  bitmap row would fetch nothing anyway; the row bookkeeping has to be got right
+  before that flag means much.
+
+### Still open: antic_hscrolbug's test #2
+
+Its second case reads ALL ZEROS where it wants `d0..d3 = 02 00 04 04`. The
+blocker is identified: **scanline 38's instruction is `$41` (JVB)**, so there is
+no playfield row at all. The test turns DL DMA off mid-line 37 "so that the `$5e`
+byte is reused" but restores `DMACTL = $21` before line 37 ends, and we then
+fetch the next instruction at line 38 cycle 1. The open question is WHEN ANTIC
+latches the decision to fetch a new display-list instruction and which DMACTL
+sample it uses — the row-end compare at cycle 111 is the obvious candidate.
+
+DISPROVED along the way, so nobody re-runs them: the cycle-0 `rebuild_line` call
+is NOT destroying the carried map. It runs BEFORE `line_start`, carries the
+previous line's state, and wipes a map that has already been displayed. It
+reports zero fetches only because a bitmap mode's `stride_rest` is 0 and
+`row_first` is already cleared. That diagnosis was published here in error for
+one iteration, on a probe that had not printed enough columns to say which
+line's state it was showing.
+
 ### Still open: the last HSCROL cycle, and antic_hscrolbug
 
 What remains is a **one byte per one cycle of write delay** boundary, and both
