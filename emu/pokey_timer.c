@@ -116,7 +116,8 @@ static int period_of(const pokey_timer *p, int ch)
     int fast3 = (p->audctl & 0x20) != 0;
 
     if (ch == 0 && (p->audctl & 0x10))          /* 1+2 linked, 1 is the low half */
-        return ((af(p, 1) << 8) | af(p, 0)) + (fast1 ? LINK_FAST : 1);
+        return ((af(p, 1) << 8) | af(p, 0)) + (fast1 ? LINK_FAST : 1)
+             + (((p->skctl & 0x08) && !p->ch_first[0]) ? TWOTONE_EXTRA : 0);
     if (ch == 2 && (p->audctl & 0x08))          /* 3+4 linked */
         return ((af(p, 3) << 8) | af(p, 2)) + (fast3 ? LINK_FAST : 1);
     if (ch == 0 && fast1)
@@ -555,8 +556,12 @@ static int timer34_held(const pokey_timer *p)
 static void underflow(pokey_timer *p, int ch)
 {
     if (ch == 1 && timer2_held(p)) return;
-    /* Before the reload, which computes the period about to run. */
+    /* Before the reload, which computes the period about to run.  A linked
+     * pair's event arrives as the HIGH channel, but the counter it reloads is
+     * the LOW one -- so that is the first-period flag to clear. */
     p->ch_first[ch] = 0;
+    if (ch == 1 && (p->audctl & 0x10)) p->ch_first[0] = 0;
+    if (ch == 3 && (p->audctl & 0x08)) p->ch_first[2] = 0;
 
     if (ch == ser_clock_ch(p)) ser_tick(p);
     /* a linked pair reloads its own low half, so only the unlinked case
@@ -661,7 +666,8 @@ void pokey_timer_tick(pokey_timer *p)
                  * first period passes the 16-bit HI loop #1 and then fails
                  * loop #2 late, which is the same gap one period further on. */
                 p->hi_first[i] = ((p->audf[2 * i + 1] << 8) | p->audf[2 * i])
-                               + PAIR_REARM_ADD;
+                               + PAIR_REARM_ADD
+                               + ((i == 0 && (p->skctl & 0x08)) ? TWOTONE_EXTRA : 0);
                 p->hi_first_per[i] = p->hi_first[i];
                 p->hi_skip[i] = 1;
                 p->hi_lag[i] = PAIR_IRQ_LAG;
@@ -737,7 +743,12 @@ void pokey_timer_tick(pokey_timer *p)
                 raise(p, POKEY_IRQ_TIMER1);
             }
         } else if (--p->locnt[0] <= 0) {
-            p->locnt[0] = af_lo(p, 0) + LINK_FAST;
+            /* Every reload here is past the first period by construction --
+             * STIMER sets locnt directly -- so the two-tone extra is
+             * unconditional.  Timers 1 and 2 are the pair two-tone keys
+             * between, so pair 3+4 does not take it. */
+            p->locnt[0] = af_lo(p, 0) + LINK_FAST
+                        + ((p->skctl & 0x08) ? TWOTONE_EXTRA : 0);
             p->lo_age[0] = 0;               /* the latch is still open, just */
             raise(p, POKEY_IRQ_TIMER1);
         } else if (p->lo_age[0] < 255) {
