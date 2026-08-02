@@ -1205,6 +1205,9 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
 {
     switch (addr & 0x0F) {
     case 0x00: {
+        if (antic_glyph_probe == 9 && a->scanline >= 32 && a->scanline <= 34)
+            fprintf(stderr, "  DMACTL $%02X at sl %d cyc %d\n",
+                    val, a->scanline, a->cycle);
         int old_nom = pf_window(a);           /* the window BEFORE the write */
         int old_span = pf_span(a);
         latch_edges(a);                       /* ...and freeze what it passed */

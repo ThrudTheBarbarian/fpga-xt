@@ -2956,3 +2956,43 @@ That makes it a DISPLAY-side failure like antic_virtdma, not a fetch-window one,
 which is consistent with the fetch model matching all 50 ACID DMA rows.  Attack
 it through what is displayed at $84 on a narrow row, and note that the two
 tests now point at the same place from different widths.
+
+
+### ...and it IS a stride after all — one CPU cycle, on the latch boundary
+
+Correcting the correction.  Last entry called antic_pfstarttiming display-side
+because its value is built from collisions.  It is built from collisions, but
+the author CALIBRATED that encoding so the answer reads out as the byte count:
+wanting 16 is wanting sixteen bytes, and our 18 is eighteen.  The probe agrees
+exactly — `END sl 33 insn $66 org 0 len 20 next 18`.  The name was right; only
+my route to it was wrong.
+
+WHAT ACTUALLY HAPPENS, and it is one cycle.  The row is `$66` — mode 6 with LMS
+— and the DLI writes DMACTL narrow expecting the write on cycle 16.  We deliver
+it on SEVENTEEN:
+
+    DMACTL $21 at sl 33 cyc 17
+
+A normal-width character row starts its fetch at 18, so its start latches at
+18 - 1 = 17.  The write therefore arrives exactly ON the latch cycle: the old
+normal start is frozen, the row keeps fetching from 18, and we get the two extra
+bytes the finished map shows (a fetch at 18, then the narrow pattern from 26).
+At cycle 16 nothing would have latched and the row would have been plainly
+narrow at sixteen.
+
+So the test is a one-cycle CPU-timing probe wearing a DMA costume, and the two
+sides are one apart.
+
+WHICH SIDE IS WRONG — do not guess.  The latch offset is not a free parameter:
+one cycle for character modes and three for bitmap come straight from Altirra
+and are the same absolute cycle (26-1 == 28-3 == 25), and the ACID DMA table
+agrees with the windows they are built on.  So suspect the CPU/DMA cycle
+accounting inside the DLI first — the test counts its own instruction stream
+cycle by cycle ("*, 105, 106 ... 111, 112, 113, 0, 1*") and any extra stolen
+cycle before the STA pushes the write late.  Check what our schedule steals on
+that scanline against the cycles the DLI's comments assume, BEFORE touching the
+latch offset.
+
+`lb_len` is a second, smaller bug visible in the same line: it reads 20 on a row
+that ends up fetching 18, because the length is settled at line_start from the
+width then in force and never revisited when DMACTL moves mid-line.
