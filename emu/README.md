@@ -912,6 +912,42 @@ Two register-semantics bugs fell out of the same test:
   bitmap row would fetch nothing anyway; the row bookkeeping has to be got right
   before that flag means much.
 
+### mmu_xlbanking: a MISSING FEATURE, not a timing puzzle
+
+It reports `skip` after 31 cycles because of its own first check:
+
+```
+lda ramtop      ; $6A
+cmp #$41
+bcs memok
+_SKIP c"Test skipped: <64K of memory."
+```
+
+We never initialise `ramtop`, so it skips immediately. Beyond that we model no
+ROM and no banking at all: memory is a flat 64K array with I/O at $D000-$D7FF,
+and PORTB ($D301) is handled by the generic PIA path with no banking effect.
+
+The contract, read from the test's own code rather than its strings:
+
+* `testAddress` reads a byte, writes back its complement, then reports whether
+  the write STUCK. `$AA` means writable (RAM); `$00` means blocked (ROM).
+* `testROMs` runs that at `$C000`, `$F000`, `$A000`, `$5000` in that order,
+  shifting left each time, so `d0` is a 4-bit ROM-PRESENT mask with **bit 3 =
+  $C000, bit 2 = $F000, bit 1 = $A000, bit 0 = $5000**.
+* The test also probes whether PORTB bit 7 is a BANKING bit on this machine (by
+  writing `$cf` then `$4f` and comparing `$7fff`); if it is, it skips the
+  extended-RAM/self-test case. On a 64K XL where bit 7 is self-test, `$7fff` is
+  RAM under both values, so that branch is NOT taken and the case runs.
+
+TO IMPLEMENT: `ramtop`, ROM regions for OS / BASIC / self-test, and PORTB
+banking with writes through ROM blocked.
+
+CAUTION, and the reason this is not finished yet: a first-pass reading of the
+PORTB bit polarities does NOT reconcile with the assertion `d0 == $02` for
+`portb = $43` — that mask says $A000 is ROM while bit 1 of $43 should disable
+BASIC. Take the bit semantics from Altirra's memory manager rather than from
+folklore; guessing them is how the last several days of this file were spent.
+
 ### THE RIGHT SHAPE, from Altirra: playfield DMA is a PHASE MASK
 
 Every "dead end" recorded below was a consequence of one architectural mistake,
