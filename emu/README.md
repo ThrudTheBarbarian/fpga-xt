@@ -3160,3 +3160,37 @@ pair's interrupt tracking the serial edge in a way the permanent 2-cycle offset
 breaks.  Look at what asyncrecv watches before touching the constants again;
 three tests now bracket this (sertiming, timertiming, asyncrecv) and any answer
 has to satisfy all three.
+
+## The SIO device (pokey_skstat, pokey_serdirect)
+
+Both tests SKIP today, and the skip is correct: each opens with `jsr dskinv`
+against a `$53` STATUS to D1:, and the harness's `$E480` stub answers NO DEVICE
+on purpose.  Turning them green is a FEATURE — a device on the serial line —
+not a bug fix, and reading both listings shows how much of one.
+
+What they assert, past the `disk_ok` gate:
+
+  pokey_skstat
+    - SKSTAT bit 1 (serial input active) SET while the line is idle
+    - the result byte is ACK ($41)
+    - the COMPLETE byte ($43) arrives
+    - SKSTAT bit 1 asserted DURING reception
+    - the serial input OVERRUN bit asserts when SERIN is deliberately not read
+    - and does NOT assert in the case that reads it in time
+
+  pokey_serdirect
+    - no framing error
+    - the received byte is a NAK ($4E) — it corrupts the command frame on
+      purpose
+    - no timeout waiting for that NAK
+
+So the device has to decode a five-byte command frame (device, command, aux1,
+aux2, checksum), validate the checksum, answer ACK or NAK accordingly, send
+COMPLETE, and then a data frame with its own checksum — clocked off AUDF3/AUDF4
+as the serial clock, with SKSTAT's framing and overrun bits behaving.  Neither
+test drives this through the OS: after the gate they write PBCTL, SKCTL and
+SEROUT directly and watch SKSTAT, which is exactly why a paravirtual SIO cannot
+stand in for it.
+
+The `jsr dskinv` gate is a separate problem: dskinv is an OS routine our harness
+stubs out entirely, so a device on the line does not by itself get past it.
