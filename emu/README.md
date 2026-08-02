@@ -930,23 +930,31 @@ before "is the thing broken?". Two consecutive iterations were spent on a
 phantom. Worse, the false claim was committed here, where the next iteration
 would have believed it.
 
-### pfstarttiming: the DMACTL write lands on scanline 51, and we draw nothing
+### pfstarttiming: ONE collision in the whole run, and it is the mode 10 row
 
-Now measured with a working probe. `dli2` is entered at **line 49**, and its
-`sta dmactl` (narrow) executes at **line 51, cycle 14** — exactly the source's
-own annotation "14, 15, 16, 17", so the test's cycle budget and ours agree.
+`ACID_COLPROBE=1` over the entire run prints exactly one line:
 
-The display list confirms it independently: `$70,$70` cover scanlines 8-23,
-`$f0` (blank + DLI) 24-31, `$00` 32, `$66` (mode 6, LMS, VSCROL) 33, `$0a`
-34-41, then the pattern repeats — `$f0` 42-49, `$00` 50, `$66` **51**. Each
-`$66` row is mode 6 truncated to a single scanline by the DLI's `VSCROL = 7`,
-which is why an 8-line mode occupies one line.
+```
+COLLIDE sl  34 cc $82 mode 10 ppf 1000 ppl 00 vbl 0
+```
 
-`ACID_PFPROBE=51` prints NOTHING: our ANTIC renders no playfield whatever on
-that line. That is the direct cause of the failure — the test wants P0 over PF0
-at `$80-$83` and P1 over PF1 at `$84-$87`, and we give it a blank line, hence
-bits 0. The question for the next iteration is why a mode 6 row with LMS and
-VSCROL = 7 produces no display at all.
+That single collision — P0 against PF0 — IS the early case's wanted bits 4, and
+it identifies the measured row: the **`$0a` (mode 10) row**, not the `$66` mode 6
+row. An earlier note here saying the test measures the `$66` row at scanlines 33
+and 51 had the display-list mapping wrong; the `$66` rows are the LMS/VSCROL
+setup and the mode 10 rows after them are what the players sit over.
+
+So the failure is sharp: the mode 10 row at scanline 34 collides correctly, and
+**the equivalent row after the second DLI produces no collision at all** — which
+is why the late case reads bits 0 where it wants 6.
+
+SUSPECT TOOL, not yet proven either way: `ACID_PFPROBE` prints nothing even for
+scanline 34, where COLPROBE proves there is both a lit player and a playfield
+class at that very colour clock. Its condition is `lit || pf >= 0` inside the
+same per-clock loop that COLPROBE sits in, so it should fire. Do NOT repeat the
+last mistake and declare it broken — the binary existed this time, but the "did
+it run / is it wired up" check has not been done properly. Use COLPROBE for this
+work; it is verified.
 
 ### PARKED: antic_hscrolbug's test #2
 
