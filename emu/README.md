@@ -964,16 +964,24 @@ shared quantity, and nothing here is a byte count at all:
 | `pfstarttiming` late | +12 | 6 | **0** | P0 must hit PF0 and P1 must hit PF1; NEITHER collides for us |
 | `pfstoptiming` early | +14 | 4 | **2** | P0 must hit PF0 and P1 must hit nothing; we have it exactly backwards |
 
-Two players are parked at the left and right edges of the playfield window and
-the test asks which of them the playfield actually reaches after a mid-line
-DMACTL write. The quantity is the window's EDGES IN COLOUR CLOCKS — display-side
-geometry, `antic_pf_at`'s `start` and `span` — and NOT the fetch schedule.
+The setup, read rather than inferred: `hposp0 = $80`, `hposp1 = $84`, both
+`grafp = $f0` and `sizep = 0`, so each player is FOUR colour clocks wide and the
+two sit adjacent — `$80-$83` and `$84-$87` — in the MIDDLE of the playfield, not
+at its edges. They sample two neighbouring character cells, and what the test
+asks is which characters have reached that fixed screen position after a
+mid-line DMACTL write.
 
-That is why every fetch-side sweep came back flat or saturating. The earlier
-framing recorded here ("both want 18, the hybrid count belonging to neither
-width, both SHORT so the mechanism ADDS") was wrong in every part: they do not
-want the same thing, 18 is not a count, and one of them is not short but
-INVERTED.
+So the "stride" label is fair in spirit — it is about how far the fetch stream
+got — but the reported VALUE is a collision bitfield plus a literal, and the two
+tests' literals differ. An intermediate reading recorded here for one iteration,
+that the players sit at the window's left and right EDGES and the quantity is
+`antic_pf_at`'s `start`/`span`, was an INFERENCE and is wrong; the positions are
+mid-playfield.
+
+What survives: the earlier framing ("both want 18, a hybrid byte count, both
+SHORT so the mechanism ADDS") is wrong in every part — they do not want the same
+thing, 18 is not a count, and one of them is not short but INVERTED (we light P1
+where hardware lights P0).
 
 ### The trio MOVED: pfstarttiming and pfstoptiming now fail elsewhere
 
