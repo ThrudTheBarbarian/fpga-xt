@@ -4,50 +4,47 @@
 
 # Immediate targets
 
-## >>> CURRENT DIRECTION: software 6502/ANTIC investigation (Simon, 2026-07-31) <<<
+## >>> THE SOFTWARE 6502/ANTIC INVESTIGATION IS ANSWERED — pick the next target <<<
 
-**Start here.** Full brief: `docs/Design/software-emulation-investigation.md`.
+**Verdict: feasible, and the baseline is beaten outright.**  The software Atari
+800 in `emu/` scores **57 pass / 0 fail of 63 ACID800** — every in-scope test.
+The six that remain were out of scope from the start and are not emulator bugs:
+the five `mod_*` display modules need a boot-loader/OS in the `$0A00` resident
+page the harness does not provide, and `cpu_65c816` skips itself without a
+65C816 core.  Brief: `docs/Design/software-emulation-investigation.md`.
+Fabric baseline it replaced: 32/63 at sallyrst `$06`, ceiling 57.
 
-Investigate moving the 6502 and ANTIC/GTIA into SOFTWARE, rendering to an
-8-bit palette-index framebuffer in DDR that hardware converts to RGBA32 per
-vblank.  **POKEY STAYS IN HARDWARE**, register-driven.
+The fabric path is untouched, as instructed — it is still the fallback.
 
-* This is a **feasibility + performance investigation, NOT a rewrite**.  Do not
-  delete or regress the fabric path -- it is the fallback and the baseline.
-* Stage order: (1) prove an app can be launched on the OTHER A9 core so it is
-  dedicated; (2) write the 6502/ANTIC shape, gated on Klaus + illegal opcodes
-  before ACID800 comes in as input; (3) Mac first, integrate onto the A9 at
-  staged points.
+**What is open is which direction to take next.  Candidates, unranked:**
 
-**STAGE 1 IS DONE (2026-07-31) — CPU1 runs our code.** `cat /OS/proc/cpu1` on
-the board: `mpidr 0x80000001` (affinity 1, so genuinely the second core) plus a
-live ping whose answer CPU0 never computed, a climbing heartbeat, and a
-benchmark. Code: `loader/test/freertos/cpu1.{h,c}` (CPU0 side), `cpu1_core.c`
-(runs ON CPU1), `cpu1_boot.S`, `mmu_poke_phys0()` in `mmu.c`. Full write-up in
-the `cpu1-amp-bringup` memory. Two things worth knowing:
+* **An OS / boot-loader stub for the `mod_*` modules.**  A real feature with its
+  own scope, exactly as the SIO drive was: ship it inert until it answers
+  honestly.  Turns 5 more tests green.
+* **A 65C816 core** for `cpu_65c816`.  Large, and only that one test wants it.
+* **Port the validated ANTIC/GTIA semantics back into the RTL.**  This was the
+  original point of the investigation — the software model is now a cycle-level
+  oracle the fabric can be diffed against, which is what the fabric never had.
+* **Performance on the A9.**  `make bench` projects what a frame costs; CPU1 is
+  at parity with CPU0 (9.00 ns/iter with MMU + caches), so ~35x realtime holds
+  on the second core.
+
+**Stage 1 (dedicated second A9 core) is DONE.**  `cat /OS/proc/cpu1` on the
+board: `mpidr 0x80000001`, a live ping CPU0 never computed, heartbeat, benchmark.
+Code: `loader/test/freertos/cpu1.{h,c}`, `cpu1_core.c`, `cpu1_boot.S`,
+`mmu_poke_phys0()`.  Two things worth keeping:
   - **The documented release (`0xFFFFFFF0` + SEV) does not work on this board.**
-    SEV never wakes CPU1 even with the SCU on and ACTLR.SMP set. What works is
-    Linux's method: a trampoline at physical 0 plus an SLCR reset pulse. An SLCR
-    core reset does *not* re-enter the BootROM, so CPU1 restarts at address 0.
-  - **MMU + caches are ON and CPU1 is at PARITY with CPU0.** Uncached it ran at
-    133 ns/iter against CPU0's 9.35; with MMU + D-cache + I-cache + branch
-    prediction it measures **9.00 ns/iter**. So the ~35x-realtime premise below
-    holds on the second core. CPU1 shares CPU0's *master* table (flat identity,
-    AMP region already non-cacheable, peripherals already Device) and never
-    switches TTBR. `/OS/proc/cpuinfo` reports both cores Linux-style.
-  - Still true: kernel pages are not marked Shareable, so CPU1 must touch only
-    the uncached AMP region at `0x2100_0000` plus read-only kernel text — never
-    CPU0's mutable cached data. That is why CPU1's code lives in its own file.
-* Writing it may well expose the fabric bug -- a sequential model has no CDC,
-  no two-raster phase, no /RDY sampling window, so a disagreement localises it.
-* Measured going in: libatari800 headless = 267x realtime on the Mac; the A9 is
-  only 6-7.5x slower than the Mac (caches fine, 64 KB == 4 KB) => ~35x realtime
-  on one A9.  **Throughput is not the obstacle.**
-* Licensing: atari800/Altirra are GPL, this repo is permissive-only.  Write
-  fresh against the Altirra Hardware Reference Manual; use libatari800 and
-  AltirraSDL as measurement + oracle only, never vendor.
-* ACID baseline to preserve and beat: **32/63 at sallyrst $06, 27 at $0A**,
-  ceiling 57.  Latest bitstream build19.
+    What works is Linux's method: a trampoline at physical 0 plus an SLCR reset
+    pulse (an SLCR core reset does not re-enter the BootROM, so CPU1 restarts at
+    address 0).
+  - Kernel pages are not marked Shareable, so CPU1 must touch only the uncached
+    AMP region at `0x2100_0000` plus read-only kernel text — never CPU0's mutable
+    cached data.  That is why CPU1's code lives in its own file.
+
+Licensing, unchanged: atari800/Altirra are GPL and this repo is permissive-only.
+Everything in `emu/` was written fresh; libatari800 and AltirraSDL are used as
+measurement and oracle only, never vendored.  `emu/tools/altirra-wsync.py` drives
+the AltirraSDL bridge for cycle-accurate ground truth and earned its keep.
 
 
 - **tb_hscrol_e2e AND tb_antic_display are STALE (fail at HEAD, pre-existing).** Both
