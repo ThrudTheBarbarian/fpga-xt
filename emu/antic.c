@@ -1329,9 +1329,9 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         /* WSYNC.  Arms on the FIRST write — an RMW writes it twice and the
          * halt must not re-arm on the second (antic_wsync, d5). */
         if (!a->wsync_halt) a->wsync_halt = 1;
-        else if (!WSYNC_RMW_ADJACENT || a->wsync_wr_at + 1 == a->ticks)
+        else if (!WSYNC_RMW_ADJACENT || a->wsync_wr_at + 1 == a->cpu_acc)
             a->wsync_extra = WSYNC_RMW_EXTRA;
-        a->wsync_wr_at = a->ticks;
+        a->wsync_wr_at = a->cpu_acc;
         break;
     case 0x0E:
         a->nmien = val;

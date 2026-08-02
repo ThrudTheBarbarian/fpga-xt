@@ -148,6 +148,10 @@ typedef struct {
     uint8_t  virt_idx;     /* which line-buffer entry that slot feeds */
     uint8_t  nmi_arm;      /* the status set at cycle 7 raises /NMI at 8 */
     unsigned long ticks;   /* free-running machine cycles since reset */
+    /* Counts CPU BUS ACCESSES, not cycles.  An RMW's two writes are consecutive
+     * ACCESSES whatever DMA does in between -- /RDY cannot stop a write cycle --
+     * so adjacency has to be judged in this frame and not in `ticks`. */
+    unsigned long cpu_acc;
     unsigned long wsync_wr_at; /* `ticks` of the last WSYNC write.  An RMW's two
                             * writes are only ADJACENT when no DMA falls between
                             * them, and the pair can straddle a line boundary —

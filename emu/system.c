@@ -437,6 +437,7 @@ static const uint8_t *rom_at(const atari *s, uint16_t a)
 static uint8_t bus_rd(void *ctx, uint16_t a)
 {
     atari *s = ctx;
+    s->an.cpu_acc++;
     sys_cycle(s);
     dbg(s, a, 0);
     const uint8_t *rp;
@@ -451,6 +452,7 @@ static uint8_t bus_rd(void *ctx, uint16_t a)
 static void bus_wr(void *ctx, uint16_t a, uint8_t v)
 {
     atari *s = ctx;
+    s->an.cpu_acc++;
     s->an.cpu_writing = 1;
     sys_cycle(s);
     s->an.cpu_writing = 0;
