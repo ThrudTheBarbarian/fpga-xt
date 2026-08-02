@@ -233,7 +233,7 @@ static void render_cycle(atari *s, int cyc)
             if (lit || pf >= 0)
                 fprintf(stderr, "  f%-3llu mode %2d chactl $%02X cc $%02X pf %2d objs $%02X hp0 $%02X act%d bit%d\n",
                         (unsigned long long)(s->cycles / (114ULL * 262ULL)),
-                        s->an.dl_insn & 0x0F, s->an.chactl, cc, pf, lit, s->gt.hposp[0], s->gt.p_active[0], s->gt.p_bit[0]);
+                        s->an.dl_insn & 0x0F, s->an.chactl, cc, pf, lit, s->gt.hposp[0], s->gt.p_active[0], s->gt.p_n[0] ? s->gt.p_bit[0][0] : 0);
         }
     }
 }

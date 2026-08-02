@@ -22,7 +22,9 @@ static int size_scale(uint8_t s)
 
 int gtia_player_lit(const gtia *g, int i)
 {
-    return g->p_active[i] && ((g->grafp[i] >> (7 - g->p_bit[i])) & 1);
+    for (int r = 0; r < g->p_n[i]; r++)
+        if ((g->grafp[i] >> (7 - g->p_bit[i][r])) & 1) return 1;
+    return 0;
 }
 
 int gtia_missile_lit(const gtia *g, int i)
@@ -43,14 +45,47 @@ int gtia_missile_lit(const gtia *g, int i)
 static void obj_step(gtia *g, int hpos)
 {
     for (int i = 0; i < 4; i++) {
+        int w = size_scale(g->sizep[i]);
+
+        /* Advance every live run, retiring the ones that have shifted out. */
+        int keep = 0;
+        for (int r = 0; r < g->p_n[i]; r++) {
+            int bit = g->p_bit[i][r], ph = g->p_phase[i][r];
+            if (++ph >= w) { ph = 0; bit++; }
+            if (bit >= 8) continue;                  /* run finished */
+            g->p_bit[i][keep] = bit; g->p_phase[i][keep] = ph; keep++;
+        }
+        g->p_n[i] = keep;
+
         if (hpos == g->hposp[i]) {
-            g->p_active[i] = 1; g->p_bit[i] = 0; g->p_phase[i] = 0;
-        } else if (g->p_active[i]) {
-            if (++g->p_phase[i] >= size_scale(g->sizep[i])) {
-                g->p_phase[i] = 0;
-                if (++g->p_bit[i] >= 8) g->p_active[i] = 0;
+            /* The match RE-ANCHORS every run still emitting: its divider phase
+             * restarts here and its bit counter advances with it, because the
+             * boundary it was heading for is superseded by this one.  A run that
+             * ALREADY rolled on this very clock is left alone -- its boundary is
+             * this boundary, and rolling again would count one twice.  That last
+             * clause is worth 19 cells on its own (653 -> 672). */
+            for (int r = 0; r < g->p_n[i]; r++)
+                if (g->p_phase[i][r] != 0) {
+                    g->p_phase[i][r] = 0;
+                    g->p_bit[i][r]++;
+                }
+            /* ...and the new run joins the ones already running rather than
+             * replacing them. */
+            keep = 0;
+            for (int r = 0; r < g->p_n[i]; r++)
+                if (g->p_bit[i][r] < 8) {
+                    g->p_bit[i][keep] = g->p_bit[i][r];
+                    g->p_phase[i][keep] = g->p_phase[i][r];
+                    keep++;
+                }
+            g->p_n[i] = keep;
+            if (g->p_n[i] < GTIA_RUNS) {
+                g->p_bit[i][g->p_n[i]] = 0;
+                g->p_phase[i][g->p_n[i]] = 0;
+                g->p_n[i]++;
             }
         }
+        g->p_active[i] = g->p_n[i] > 0;
         if (hpos == g->hposm[i]) {
             g->m_active[i] = 1; g->m_bit[i] = 0; g->m_phase[i] = 0;
         } else if (g->m_active[i]) {

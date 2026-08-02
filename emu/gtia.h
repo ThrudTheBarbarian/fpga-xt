@@ -30,6 +30,10 @@
 #define GTIA_MODE_10     2   /* PRIOR $80 — shifted one colour clock */
 #define GTIA_MODE_11     3   /* PRIOR $C0 */
 
+/* Concurrent emissions a single player can carry.  A run lasts 8*width colour
+ * clocks and a new one can only start on an HPOS match, so this is generous. */
+#define GTIA_RUNS 8
+
 typedef struct {
     /* object registers */
     uint8_t hposp[4], hposm[4];
@@ -49,7 +53,15 @@ typedef struct {
      * outcome depends on the counter's PHASE when SIZEP changed, and not just
      * on the old and new sizes.  A recomputed-from-scratch model cannot express
      * any of its seven transitions. */
-    int p_active[4], p_bit[4], p_phase[4];
+    /* A player carries SEVERAL runs at once, not one.  gtia_pmoverlap's tables
+     * are only reproducible as the UNION of the run already emitting and the one
+     * a mid-line HPOS write starts -- a model where the match RESTARTS the
+     * single run scores 624 of its 672 cells, the union with a re-anchor scores
+     * all 672.  See tools/pmoverlap-check.py, which scores any candidate against
+     * every cell in about a second. */
+    int p_n[4];                          /* live runs on each player */
+    int p_bit[4][GTIA_RUNS], p_phase[4][GTIA_RUNS];
+    int p_active[4];                     /* p_n > 0, kept for probes */
     int m_active[4], m_bit[4], m_phase[4];
 
     /* per-scanline state */
