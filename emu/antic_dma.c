@@ -377,10 +377,18 @@ static int spec_edges(uint8_t mode_in, int first_line, int start, int vend,
     int idx = 0;
     for (int c = 0; c < ANTIC_LINE_CYCLES; c++) {
         if (step) {
-            if (c == start) clock |= spec_clock[rate][start & 7];
-            if (c == vend)  clock &= (uint8_t)~spec_clock[rate][vend & 7];
+            /* A line that takes no playfield DMA of its own INJECTS nothing --
+             * but the stop comparator still runs, and anything already flying
+             * round the clock still fetches.  Gating the EMISSION on `fetches`
+             * rather than the injection threw away the carried bits, so an
+             * abnormal run-on died the moment it reached a bitmap row's later
+             * scanline.  That is exactly where antic_hscrolbug's second
+             * unstopped case sends it: DL DMA is off, the `$5E` is reused, and
+             * the row it lands on is not a first line. */
+            if (c == start && fetches) clock |= spec_clock[rate][start & 7];
+            if (c == vend)             clock &= (uint8_t)~spec_clock[rate][vend & 7];
         }
-        if (!fetches || !(clock & (1u << (c & 7)))) continue;
+        if (!(clock & (1u << (c & 7)))) continue;
 
         /* The window start already carries the two-cycle offset that the
          * bitmap modes need (28/20/12 against the character modes' 26/18/

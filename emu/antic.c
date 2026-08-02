@@ -384,7 +384,7 @@ static void line_start(antic *a)
     /* The PREVIOUS line's map, as the hardware finished it -- after every
      * mid-line rebuild, not as it was first built.  Diffing the line_start map
      * against a reference compares two different things. */
-    if (antic_glyph_probe == 9 && a->scanline >= 31 && a->scanline <= 34) {
+    if (antic_glyph_probe == 9 && a->scanline >= 31 && a->scanline <= 40) {
         fprintf(stderr, "  END sl %3d insn $%02X clk $%02X ", a->scanline - 1, a->dl_insn, a->pf_clock);
         for (int k = 0; k < ANTIC_LINE_CYCLES; k++)
             fputc(a->blocked[k] ? '#' : '.', stderr);
