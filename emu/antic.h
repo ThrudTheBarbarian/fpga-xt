@@ -157,6 +157,10 @@ typedef struct {
      * follows the first IMMEDIATELY -- a stolen cycle in between and it does
      * not.  See antic_write's $D40A case. */
     int wsync_wr_cyc, wsync_wr_sl;
+    /* cpu_acc at the moment the last WSYNC halt was released.  How far an RMW
+     * sits from that release is the one thing that separates the three tests
+     * bracketing the re-arm -- see antic_write's $D40A case. */
+    unsigned long wsync_rel_acc;
     unsigned long wsync_wr_at; /* `ticks` of the last WSYNC write.  An RMW's two
                             * writes are only ADJACENT when no DMA falls between
                             * them, and the pair can straddle a line boundary —

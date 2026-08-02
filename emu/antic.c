@@ -238,6 +238,40 @@
 #ifndef WSYNC_RMW_EARLY
 #define WSYNC_RMW_EARLY 0
 #endif
+
+/* HOW FAR THE RMW SITS FROM THE LAST WSYNC RELEASE, in CPU accesses.  Altirra
+ * says the three cases differ in exactly this: dmapattern's $2359 is HALTED at
+ * its own fetch (distance 0), antic_wsync's $2033 is two instructions past a
+ * release, and pmresize's $233B is a long way past one.  The first two take the
+ * extra and the third does not, so unlike every position-in-the-line rule this
+ * is at least measuring the machine's state.
+ *
+ * MEASURED DISTANCES (ACID_COLPROBE=1 prints `since`), count x distance, for
+ * every test that reaches this branch at all:
+ *
+ *   antic_wsync        1x12                      NEEDS
+ *   antic_dmapattern  50x5                       NEEDS
+ *   gtia_phantomdma    1x20   1x4744             NEEDS BOTH
+ *   pokey_noise        2x9    1x13   1x22        NEEDS
+ *   gtia_psuedomodee   4x5    1x14   1x30  1x31  NEEDS (plus insensitive ones)
+ *   antic_dlitiming    7x5    then 96/97/98/119  NEEDS only the 5s; the rest are
+ *                                                insensitive (it passes at 14)
+ *   gtia_pmresize      1x56   1x3086             MUST NOT TAKE EITHER
+ *
+ * Scored: SINCE=14 gives 54/63 (loses gtia_phantomdma and pokey_noise);
+ * SINCE=40 gives 55/63, losing only gtia_phantomdma.  DISPROVED as a plain
+ * threshold, and by one pair: phantomdma needs the extra at 4744 while pmresize
+ * must be denied it at 3086.  Nothing monotonic in this variable separates
+ * those, so distance-since-release is closer than position in the line but is
+ * still not the discriminator on its own.  Default 0.
+ *
+ * What the table does say, and it is worth keeping: every case that NEEDS the
+ * extra at a short distance is short (5..31), pmresize's shortest is 56, and the
+ * only overlap is phantomdma's single long one.  Whatever the real rule is, it
+ * has to explain that one entry. */
+#ifndef WSYNC_RMW_SINCE
+#define WSYNC_RMW_SINCE 0
+#endif
 #include <stdio.h>
 int antic_glyph_probe;
 #include <string.h>
@@ -1128,6 +1162,7 @@ int antic_tick(antic *a)
         if (c == ANTIC_CYC_WSYNC + a->wsync_extra) {
             a->wsync_halt = 0;
             a->wsync_extra = 0;
+            a->wsync_rel_acc = a->cpu_acc;
         } else if (!a->cpu_writing) {
             took = 1;
         }
@@ -1440,7 +1475,9 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         /* WSYNC.  Arms on the FIRST write — an RMW writes it twice and the
          * halt must not re-arm on the second (antic_wsync, d5). */
         if (!a->wsync_halt) a->wsync_halt = 1;
-        else if (WSYNC_RMW_EARLY  ? a->cycle <= WSYNC_RMW_EARLY
+        else if (WSYNC_RMW_SINCE
+                     ? a->cpu_acc - a->wsync_rel_acc <= WSYNC_RMW_SINCE
+               : WSYNC_RMW_EARLY  ? a->cycle <= WSYNC_RMW_EARLY
                : WSYNC_RMW_ADJ_CYCLE
                      ? (a->wsync_wr_sl == a->scanline
                         && a->wsync_wr_cyc + 1 == a->cycle)
