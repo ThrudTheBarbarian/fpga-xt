@@ -25,6 +25,12 @@
 static void spec_window(uint8_t mode, antic_width w, int scrolled, int hscrol,
                         int *start, int *vend);
 
+/* Charge a row for the display list's two OPERAND fetches only when the
+ * instruction actually has operands (LMS or jump), not on every first line. */
+#ifndef DL_OPERAND_LMS
+#define DL_OPERAND_LMS 1
+#endif
+
 #ifndef REFRESH_FIRST
 #define REFRESH_FIRST 25
 #endif
@@ -305,7 +311,16 @@ static int spec_edges(uint8_t mode_in, int first_line, int start, int vend,
 
     memset(blocked, 0, ANTIC_LINE_CYCLES);
     if (name_at) memset(name_at, -1, ANTIC_LINE_CYCLES);
-    if (first_line) { blocked[1] = 1; blocked[6] = blocked[7] = 1; }
+    /* The display-list INSTRUCTION fetch is one cycle.  Its two OPERAND fetches
+     * happen only when the instruction has operands -- an LMS or a jump -- and
+     * a plain `$0E` row takes neither.  antic_hscrolbug's own DMA map shows it:
+     * cycle 1 is `D` and cycles 6 and 7 are free.  Charging every row for them
+     * steals two CPU cycles a line that the hardware does not, which derails
+     * anything counting cycles to a mid-line register write. */
+    if (first_line) {
+        blocked[1] = 1;
+        if (!DL_OPERAND_LMS || (mode_in & 0x40)) blocked[6] = blocked[7] = 1;
+    }
 
     /* TWO DIFFERENT THINGS, which the first cut of this conflated.
      *
@@ -324,12 +339,6 @@ static int spec_edges(uint8_t mode_in, int first_line, int start, int vend,
     else
         start = vend = 0;
 
-    uint8_t clock = clock_io ? *clock_io : 0;
-    if (step && start < vend) {
-        clock |= spec_clock[rate][start & 7];
-        clock &= (uint8_t)~spec_clock[rate][vend & 7];
-    }
-
     /* A BITMAP row reads its bytes on the FIRST scanline of the row only; the
      * remaining scanlines of a mode 8/9/10/11/13/14/15 row take no playfield
      * DMA at all, which is why ACID's later-line rows for those modes are pure
@@ -337,50 +346,68 @@ static int spec_edges(uint8_t mode_in, int first_line, int start, int vend,
      * NAMES only on the first. */
     int fetches = (mode < 8) || first_line;
 
-    int idx = 0;
-    if (step && fetches) {
-        for (int c = 0; c < ANTIC_LINE_CYCLES; c++) {
-            /* Half-open: the stop cycle itself does not fetch.  There is NO
-             * character prefetch -- an earlier reading of ACID saw a fetch at
-             * 90 on a narrow char first line and called it one, but that cycle
-             * is a REFRESH that slipped there, and the character windows are
-             * both exactly [start, vend). */
-            int in_window = c >= start && c < vend && ((c - start) % step) == 0;
-            int carried   = (clock & (1u << (c & 7))) != 0;
-            if (!in_window && !carried) continue;
+    /* THE DMA CLOCK, in five phases.
+     *
+     * ANTIC does not walk a window; it has an eight-bit clock with (normally) a
+     * single bit flying round it, and a cycle fetches when the clock's bit for
+     * that cycle's phase is set.  The window's START injects a bit and its STOP
+     * removes one, so the line is: run on whatever came in, set at the start,
+     * run to the stop, clear at the stop, run on afterwards.
+     *
+     * That last phase is ABNORMAL DMA, and it is the whole point of doing it
+     * this way.  The clear only removes the bit if the stop lands on the SAME
+     * PHASE the start injected -- and HSCROL can move the stop without moving
+     * the start, because the two edges latch independently.  Then nothing is
+     * cleared, the bit keeps flying, and the playfield goes on fetching through
+     * horizontal blank and into the next scanline.  antic_hscrolbug is built
+     * entirely on that: it glitches HSCROL to miss the stop and gets seventeen
+     * extra fetches in HBLANK, which shift the next line's display left by the
+     * same seventeen bytes.
+     *
+     * A walk from start to vend cannot express it at all -- it stops because
+     * the loop stops.  This stops because a bit was cleared, or does not. */
+    uint8_t clock = clock_io ? *clock_io : 0;
 
-            /* The window start already carries the two-cycle offset that the
-             * bitmap modes need (28/20/12 against the character modes' 26/18/
-             * 10), so a bitmap byte is read ON its clock cycle, not two after
-             * it -- adding the +2 again double-counts and shifts every bitmap
-             * row late by two, which is exactly what ACID showed. */
-            int fetch = (mode >= 8 || first_line) ? c : c + 3;
-            if (fetch < ANTIC_LINE_CYCLES) {
-                /* cycles from PF_HBLANK_FIRST on still FETCH but steal nothing */
-                if (fetch < PF_HBLANK_FIRST) blocked[fetch] = 1;
-                /* name_at indexes bytes read from the PLAYFIELD SCAN ADDRESS.
-                 * A character row's later lines re-read only the GLYPH, from
-                 * the character base, replaying names out of the line buffer --
-                 * so they advance no scan address and take no index. */
-                /* name_at indexes bytes read from the PLAYFIELD SCAN ADDRESS.
-                 * A character row's later lines re-read only the GLYPH, from
-                 * the character base, replaying names out of the line buffer --
-                 * so they advance no scan address and take no index.  Anything
-                 * that wants the last DMA SLOT of such a line (the virtual-slot
-                 * rule) has to ask antic_pf_last, not this map. */
-                if (name_at && idx < 128 && (mode >= 8 || first_line))
-                    name_at[fetch] = (int8_t)idx;
-                idx++;
-            }
-            /* A character first line ALSO takes the character data three
-             * cycles later: the name window is [start, vend) and the data
-             * window is the same window shifted by three. */
-            if (mode < 8 && first_line) {
-                int d = c + 3;
-                if (d < ANTIC_LINE_CYCLES && d < PF_HBLANK_FIRST) blocked[d] = 1;
-            }
+    int idx = 0;
+    for (int c = 0; c < ANTIC_LINE_CYCLES; c++) {
+        if (step) {
+            if (c == start) clock |= spec_clock[rate][start & 7];
+            if (c == vend)  clock &= (uint8_t)~spec_clock[rate][vend & 7];
+        }
+        if (!fetches || !(clock & (1u << (c & 7)))) continue;
+
+        /* The window start already carries the two-cycle offset that the
+         * bitmap modes need (28/20/12 against the character modes' 26/18/
+         * 10), so a bitmap byte is read ON its clock cycle, not two after
+         * it -- adding the +2 again double-counts and shifts every bitmap
+         * row late by two, which is exactly what ACID showed. */
+        int fetch = (mode >= 8 || first_line) ? c : c + 3;
+        if (fetch < ANTIC_LINE_CYCLES) {
+            /* cycles from PF_HBLANK_FIRST on still FETCH but steal nothing */
+            if (fetch < PF_HBLANK_FIRST) blocked[fetch] = 1;
+            /* name_at indexes bytes read from the PLAYFIELD SCAN ADDRESS.
+             * A character row's later lines re-read only the GLYPH, from
+             * the character base, replaying names out of the line buffer --
+             * so they advance no scan address and take no index.  Anything
+             * that wants the last DMA SLOT of such a line (the virtual-slot
+             * rule) has to ask antic_pf_last, not this map. */
+            if (name_at && idx < 128 && (mode >= 8 || first_line))
+                name_at[fetch] = (int8_t)idx;
+            idx++;
+        }
+        /* A character first line ALSO takes the character data three
+         * cycles later: the name window is [start, vend) and the data
+         * window is the same window shifted by three. */
+        if (mode < 8 && first_line) {
+            int d = c + 3;
+            if (d < ANTIC_LINE_CYCLES && d < PF_HBLANK_FIRST) blocked[d] = 1;
         }
     }
+
+    /* Cycle 0 is never a real DMA cycle -- a fetch landing there happens, and
+     * clocks the line buffer, but steals nothing.  Only abnormal DMA can put
+     * one there at all. */
+    blocked[0] = 0;
 
     /* REFRESH IS THE LOWEST PRIORITY DMA -- the opposite of what the first cut
      * of this assumed.  Nine slots every fourth cycle from 25; a slot the
@@ -430,9 +457,10 @@ void antic_pf_window(uint8_t mode, antic_width w, int hscrol,
 /* The same schedule from edges the caller has already latched. */
 void antic_dma_line_edges(uint8_t mode, int first_line, int start, int vend,
                           uint8_t blocked[ANTIC_LINE_CYCLES],
-                          int8_t name_at[ANTIC_LINE_CYCLES])
+                          int8_t name_at[ANTIC_LINE_CYCLES],
+                          uint8_t *clock_io)
 {
-    spec_edges(mode, first_line, start, vend, NULL, blocked, name_at);
+    spec_edges(mode, first_line, start, vend, clock_io, blocked, name_at);
 }
 
 /* The LAST playfield DMA slot of the line, and the buffer index it fills, or

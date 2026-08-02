@@ -84,9 +84,16 @@ int antic_pf_last(uint8_t mode, antic_width w, int first, int hscrol, int *idx);
 void antic_pf_window(uint8_t mode, antic_width w, int hscrol,
                      int *start, int *vend);
 
+/* `clock_io` is the DMA CLOCK: in, whatever was still flying round it when the
+ * previous scanline ended; out, what is still flying when this one does, having
+ * been rotated two phases because 114 is not a multiple of 8.  Normally zero at
+ * both ends -- it is non-zero only under ABNORMAL DMA, where a stop that has
+ * been moved off the start's phase fails to clear the bit it was meant to and
+ * the playfield goes on fetching.  NULL if the caller does not model that. */
 void antic_dma_line_edges(uint8_t mode, int first_line, int start, int vend,
                           uint8_t blocked[ANTIC_LINE_CYCLES],
-                          int8_t name_at[ANTIC_LINE_CYCLES]);
+                          int8_t name_at[ANTIC_LINE_CYCLES],
+                          uint8_t *clock_io);
 
 /* The same schedule with the grid PINNED to `nom_start` while the stream still
  * ends where `width`'s own last fetch cycle is (-1 = derive both, i.e. plain

@@ -117,6 +117,11 @@ typedef struct {
      * the scanline; this is the cycle on the NEXT line at which its next fetch
      * falls, or -1 when the line starts idle.  antic_hscrolbug is built on it. */
     int      pf_carry;
+    /* The DMA clock carried between scanlines, and its value at the top of THIS
+     * one so a mid-line rebuild starts from the same place.  Non-zero only
+     * under abnormal DMA -- see antic_dma.h. */
+    uint8_t  pf_clock;
+    uint8_t  pf_clock_in;
     /* Window edges FROZEN because the line has already gone past them, -1 for
      * an edge still live, and the cycle the last such check was made at.  See
      * antic.c's latch_edges. */

@@ -38,7 +38,14 @@ int main(int argc, char **argv)
         antic_width w = strcmp(row->width, "narrow") ? ANTIC_NORMAL : ANTIC_NARROW;
         /* variants a,c are a row's first scanline; b,d are the rest */
         int first = (row->variant == 'a' || row->variant == 'c');
-        antic_dma_line(row->mode, w, first, 0, got);
+        /* Every row in the table is an LMS row: antic_dmapattern builds its
+         * mode byte with `ora #$40` before storing it (its line 344), so each
+         * one takes the display list's two OPERAND fetches at cycles 6 and 7
+         * as well as the instruction fetch at 1.  antic_hscrolbug's plain `$0E`
+         * row takes only cycle 1, and the two tests together are what prove the
+         * operand fetches belong to the INSTRUCTION rather than to every first
+         * line.  Bit 6 says so here. */
+        antic_dma_line((uint8_t)(row->mode | 0x40), w, first, 0, got);
 
         int bad = -1, ndiff = 0;
         for (int c = 0; c < ANTIC_DMA_CHECKED; c++)

@@ -262,7 +262,8 @@ static int pf_dma_on(const antic *a)
 
 static uint8_t dma_mode(const antic *a, int mode)
 {
-    return (uint8_t)(mode | (a->dl_insn & 0x10));
+    /* bit 4 = horizontal scroll, bit 6 = LMS/jump (the operand fetches) */
+    return (uint8_t)(mode | (a->dl_insn & 0x50));
 }
 
 static antic_width width_of(uint8_t dmactl)
@@ -440,10 +441,30 @@ static void line_start(antic *a)
      * fetches nothing drops it. */
     int carry_in = a->pf_carry;
     a->pf_carry = -1;
-    /* Both window edges are live again at the top of every scanline. */
+    /* Both window edges are live again at the top of every scanline.  The DMA
+     * CLOCK is not: whatever was still flying round it when the last line ended
+     * is still flying now, which is how abnormal DMA crosses the line boundary
+     * (antic_hscrolbug's next line starts fetching at cycle 0). */
     a->pf_lat_start = a->pf_lat_vend = -1;
     a->pf_last_check = 0;
+    a->pf_clock_in = a->pf_clock;
     if (mode >= 2 && pf_dma_on(a)) {
+        if (PF_LATCH_EDGES) {
+            int s0 = 0, e0 = 0;
+            uint8_t ck = a->pf_clock_in;
+            antic_pf_window(dma_mode(a, mode), width_of(a->dmactl),
+                            hscrol_of(a), &s0, &e0);
+            antic_dma_line_edges(dma_mode(a, mode), a->row_first, s0, e0,
+                                 a->blocked, a->pf_at, &ck);
+            a->pf_clock = ck;
+            if (antic_glyph_probe == 9 && a->scanline >= 30 && a->scanline <= 34) {
+                fprintf(stderr, "  CLK sl %3d win %3d..%3d in $%02X out $%02X\n  MAP ",
+                        a->scanline, s0, e0, a->pf_clock_in, ck);
+                for (int k = 0; k < ANTIC_LINE_CYCLES; k++)
+                    fputc(a->blocked[k] ? '#' : '.', stderr);
+                fputc('\n', stderr);
+            }
+        } else
         antic_dma_line_map_carry(dma_mode(a, mode), width_of(a->dmactl),
                                  a->row_first, hscrol_of(a), carry_in,
                                  a->blocked, a->pf_at, &a->pf_carry);
@@ -649,8 +670,13 @@ static void rebuild_line(antic *a, int old_nom, int old_span, int lead)
         if (commit < 10) commit = 10;
         if (on && a->pf_lat_start < 0 && from > commit) s = e = 0;
 
+        /* A rebuild restarts from the clock this line BEGAN with, not from
+         * whatever the previous build left, or the abnormal bits would be
+         * injected twice. */
+        uint8_t ck = a->pf_clock_in;
         antic_dma_line_edges(on ? dma_mode(a, mode) : 0, a->row_first, s, e,
-                             blk, map);
+                             blk, map, &ck);
+        a->pf_clock = ck;
 
         int keep_map = !on || antic_pf_bytes(a->dmactl, (uint8_t)mode) == 0;
         for (int c = from; c < ANTIC_LINE_CYCLES; c++) {
