@@ -27,6 +27,26 @@
 #define PF_LATCH_EDGES 1
 #endif
 
+/* Derive the DISPLAY window from its own geometry rather than from the fetch
+ * window's nominal. */
+#ifndef LB_ORIGIN_DISPLAY
+#define LB_ORIGIN_DISPLAY 0
+#endif
+
+#ifndef PF_DISPLAY_SPEC
+#define PF_DISPLAY_SPEC 0
+#endif
+
+/* Which way HSCROL moves the PICTURE.  The fetch window is delayed by it, so
+ * the byte that lands at the left of the display was read later -- and
+ * antic_hscrolbug's two unstopped cases pin the answer from the same setup at
+ * two HSCROL values: it restores 0 and wants its marker byte at $78, then
+ * restores 2 and wants the same byte at $7a.  Two colour clocks LATER for
+ * HSCROL=2, so the term is added. */
+#ifndef HSCROL_DISPLAY_SIGN
+#define HSCROL_DISPLAY_SIGN (+1)
+#endif
+
 #ifndef HSCROL_CC_DISPLAY
 #define HSCROL_CC_DISPLAY 0
 #endif
@@ -268,6 +288,27 @@ static uint8_t dma_mode(const antic *a, int mode)
     return (uint8_t)(mode | (a->dl_insn & 0x50) | (a->dmactl & 0x20));
 }
 
+/* Where the DISPLAY window opens, in colour clocks.
+ *
+ * A DIFFERENT QUANTITY from the fetch window, and deriving it from the fetch
+ * nominal is what tied the two together.  It opens at machine cycle 32/24/22
+ * for narrow/normal/wide -- and unlike the fetch window it is NOT stepped up
+ * when the row is scrolled: a scrolled row fetches wider so it has something to
+ * scroll in, but it shows the same rectangle.  Narrow and normal happened to
+ * come out right from the old derivation; wide was four machine cycles early,
+ * and antic_virtdma had absorbed that into the HSCROL term's sign. */
+static int pf_display_start(const antic *a, antic_width w)
+{
+    if (PF_DISPLAY_SPEC) {
+        int ds = (w == ANTIC_NARROW) ? 32 : (w == ANTIC_WIDE) ? 22 : 24;
+        return 2 * ds + HSCROL_DISPLAY_SIGN
+             * (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
+    }
+    return 2 * (antic_pf_nominal_s(w, 0, scrolled_of(a)) + PF_DISPLAY_LEAD)
+         + HSCROL_DISPLAY_SIGN
+           * (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
+}
+
 static antic_width width_of(uint8_t dmactl)
 {
     switch (dmactl & 0x03) {
@@ -385,7 +426,7 @@ static void line_start(antic *a)
      * mid-line rebuild, not as it was first built.  Diffing the line_start map
      * against a reference compares two different things. */
     if (antic_glyph_probe == 9 && a->scanline >= 31 && a->scanline <= 40) {
-        fprintf(stderr, "  END sl %3d insn $%02X clk $%02X ", a->scanline - 1, a->dl_insn, a->pf_clock);
+        fprintf(stderr, "  END sl %3d insn $%02X clk $%02X org %2u len %2u next %3d ", a->scanline - 1, a->dl_insn, a->pf_clock, a->lb_origin, a->lb_len, a->pf_next);
         for (int k = 0; k < ANTIC_LINE_CYCLES; k++)
             fputc(a->blocked[k] ? '#' : '.', stderr);
         fputc('\n', stderr);
@@ -492,6 +533,13 @@ static void line_start(antic *a)
          * second time here is how the two came to disagree. */
         int wstart = antic_pf_start(dma_mode(a, mode), width_of(a->dmactl),
                                     a->row_first, hscrol_of(a));
+        /* ...measured against the DISPLAY window, not the fetch one.  A
+         * scrolled row fetches from a wider window than it shows, so bytes are
+         * consumed before the picture opens even with no abnormal DMA at all --
+         * six of them on a scrolled narrow row, which is exactly the "line
+         * buffer advanced by six additional locations" antic_hscrolbug states. */
+        if (LB_ORIGIN_DISPLAY)
+            wstart = pf_display_start(a, width_of(a->dmactl)) / 2 - PF_DISPLAY_LEAD;
         int skipped = 0;
         for (int c = 0; c < wstart && c < ANTIC_LINE_CYCLES; c++)
             if (a->pf_at[c] >= 0) skipped++;
@@ -1001,8 +1049,7 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
      * values indistinguishable from the even one below, which is why
      * antic_pfstarttiming's stride quantised in steps of four where the test
      * resolves single units. */
-    int start = 2 * (antic_pf_nominal_s(w, 0, scrolled_of(a)) + PF_DISPLAY_LEAD)
-              - (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
+    int start = pf_display_start(a, w);
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
     int off = cc - start;
@@ -1081,8 +1128,7 @@ int antic_pf_pair(const antic *a, int cc)
      * values indistinguishable from the even one below, which is why
      * antic_pfstarttiming's stride quantised in steps of four where the test
      * resolves single units. */
-    int start = 2 * (antic_pf_nominal_s(w, 0, scrolled_of(a)) + PF_DISPLAY_LEAD)
-              - (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
+    int start = pf_display_start(a, w);
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
     int off = cc - start;
@@ -1107,8 +1153,7 @@ int antic_pf_nibble(const antic *a, int cc, int shift)
      * values indistinguishable from the even one below, which is why
      * antic_pfstarttiming's stride quantised in steps of four where the test
      * resolves single units. */
-    int start = 2 * (antic_pf_nominal_s(w, 0, scrolled_of(a)) + PF_DISPLAY_LEAD)
-              - (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
+    int start = pf_display_start(a, w);
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
     int off = cc - start - shift;
