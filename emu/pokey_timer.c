@@ -142,6 +142,10 @@ static uint8_t af(const pokey_timer *p, int ch)
 #define TWOTONE_RESYNC 2
 #endif
 
+#ifndef TWOTONE_CANCELS_FRESH
+#define TWOTONE_CANCELS_FRESH 1
+#endif
+
 /* EXPERIMENT: with FORCE BREAK as well as two-tone, channel 1's first period
  * after STIMER runs longer.  pokey_timertiming's cancellation section needs
  * timer 1 at AUDF + 9 for its three sub-tests to land 1, 2 and 3 cycles after
@@ -158,7 +162,7 @@ static uint8_t af(const pokey_timer *p, int ch)
  * understood, because a constant that fixes the order and loses the test is
  * fitting the wrong thing. */
 #ifndef TWOTONE_FB_FIRST
-#define TWOTONE_FB_FIRST 0
+#define TWOTONE_FB_FIRST 3
 #endif
 
 static int period_of(const pokey_timer *p, int ch)
@@ -627,8 +631,23 @@ static void underflow(pokey_timer *p, int ch)
      * the LOW one -- so that is the first-period flag to clear. */
     p->ch_first[ch] = 0;
     if (ch == 1 && (p->audctl & 0x10)) p->ch_first[0] = 0;
-    /* Timer 2 underflowing in two-tone resyncs timer 1, after a delay. */
-    if (ch == 1 && (p->skctl & 0x08)) p->tt_resync = TWOTONE_RESYNC;
+    /* Timer 2 underflowing in two-tone resyncs timer 1, after a delay -- and it
+     * also CANCELS a timer-1 interrupt raised on this very tick, whose status
+     * bit is still in flight.  Same one-cycle shape as STIMER_CANCELS_FRESH:
+     * "st_lag still at its maximum" IS "raised this tick".
+     *
+     * That is what the cancellation sub-tests measure.  With timer 1 at AUDF + 7
+     * its three underflows land at 105, 106 and 107 against timer 2's 106, and
+     * the read is at +110: 105 is readable at 109 and must FIRE, 106 coincides
+     * with timer 2 and must be CANCELLED, and 107 would only be readable at 111
+     * so it reads as not-fired whatever happens to it. */
+    if (ch == 1 && (p->skctl & 0x08)) {
+        p->tt_resync = TWOTONE_RESYNC;
+        if (TWOTONE_CANCELS_FRESH && p->st_lag[0] == IRQST_LAG) {
+            p->st_lag[0] = 0;
+            if (p->irq_arm == IRQ_LINE_LAG + IRQST_LAG) p->irq_arm = 0;
+        }
+    }
     if (ch == 3 && (p->audctl & 0x08)) p->ch_first[2] = 0;
 
     if (ch == ser_clock_ch(p)) ser_tick(p);
