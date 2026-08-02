@@ -2814,3 +2814,43 @@ re-arms at +31 and reads IRQST at +41 expecting the timer to have ALREADY fired
 visible.  The defect is the interrupt latch's timing relative to the underflow,
 not the reload -- and pokey_timer.c's own header already notes that a linked
 pair's INTERRUPT edge lags its SERIAL-CLOCK edge.  That is where to look.
+
+
+## POKEY IRQ timing: the shape is measured, two compensators remain (2026-08-02)
+
+pokey_timertiming tabulates the SAME timer twice and the tables differ by
+exactly four on every row they share:
+
+    STIMER preemption (strobe until it stops firing) -- the UNDERFLOW
+        AUDF1=0   4c/5c        AUDF1=8   12c/13c
+    IRQST read bracket -- when the BIT becomes READABLE
+        AUDF1=0   7c/8c        AUDF1=16  23c/24c
+
+So the underflow is AUDF + 4 with NOTHING added for the first period, and the
+STATUS BIT lags it by four.  Modelling that gap as a longer first period
+(STIMER_EXTRA) puts it in the counter, where it also delays the underflow the
+preemption test strobes against -- which is why no value of STIMER_EXTRA could
+satisfy both tables at once.
+
+VERIFIED under the reshaping: with IRQST_LAG=4 and STIMER_EXTRA=0 the probe
+shows AUDF1=16 underflowing at +20 (= AUDF + 4) and its status readable at +24.
+Both tables at once, which nothing else has managed.
+
+The compensation chain, measured one link at a time:
+
+    IRQST_LAG=4 STIMER_EXTRA=0 LO_EXTRA=0                        48
+      + IRQ_LINE_LAG 1 -> 5   (the /IRQ line arms at the UNDERFLOW,
+        independently of the status bit, so moving the underflow four cycles
+        earlier moved the LINE four cycles earlier too -- pokey_irqtiming
+        recovers)                                                49
+      + PAIR_IRQ_LAG 4 -> 3, and BASE_LEAD 0/2                   49, no change
+
+Still OFF: 49 against the 50 the old shape scores.  Two compensators are still
+unfound -- pokey_inittiming's "Incorrect 15KHz cycle count (even)" and
+pokey_timertiming's own "16-bit hi timer triggered too late (loop #1)".  Neither
+PAIR_IRQ_LAG nor BASE_LEAD moves the total, so per rule (v) both are upstream of
+those constants.
+
+Do not re-derive the 4-cycle status lag: it is measured from the test's own two
+tables, and the probe confirms it end to end.  What is missing is what else was
+absorbing it.
