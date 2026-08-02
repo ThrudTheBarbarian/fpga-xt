@@ -191,10 +191,31 @@
  * 109-110 and unwanted at 30-55, which no threshold expresses: position in the
  * line is the wrong variable.  Kept at 0.
  *
- * NEXT LEAD: those delay routines write WSYNC TWICE WITHOUT AN RMW --
- * `sta wsync / sta wsync` back to back -- and this branch fires for any second
- * write while the halt still stands, not just for an RMW's pair.  Measure WHICH
- * pair each of the five actually depends on before assuming it is the `inc`. */
+ * That lead is CLOSED: measured with ACID_COLPROBE=1 (the probe prints the CPU
+ * PC), every extra antic_dmapattern takes comes from ONE instruction, the `inc
+ * wsync` at $2359, and consecutive `sta wsync` writes never reach this branch
+ * at all -- the halt is already released by the time the second one lands.
+ *
+ * ALTIRRA SAYS BOTH ANNOTATIONS ARE RIGHT.  tools/altirra-wsync.py drives the
+ * bridge and reads Altirra's cycle-accurate history; calibrated against the
+ * beam and against the WSYNC-resume anchor (a halted instruction's post-fetch
+ * cycles resume at line 105):
+ *
+ *   antic_wsync $2033   inc at line 111, writes at 1 and 2  -> next instruction
+ *                       starts at line 105.  The extra is REAL.
+ *   gtia_pmresize $233B inc at line 26, writes at 30 and 31 -> next instruction
+ *                       starts at line 104.  No extra.
+ *
+ * So this is not a modelling error to be argued away -- the hardware really
+ * does both, and the annotations in the two tests are each correct.
+ *
+ * WHAT IS STILL UNMEASURED, and is the next thing to run: antic_dmapattern's
+ * $2359.  Its own fetch is HALTED (the `sta wsync` at $2356 writes at line 107,
+ * after the release, so it arms a fresh halt), it resumes at 105, and its two
+ * writes land at lines 108 and 109.  antic_wsync's inc was NOT halted at its
+ * fetch; pmresize's was not either.  If Altirra shows $235C starting at 105
+ * rather than 104, then what distinguishes the cases is whether the RMW ITSELF
+ * ran out of a WSYNC release -- which is a mechanism, not a position. */
 #ifndef WSYNC_RMW_EARLY
 #define WSYNC_RMW_EARLY 0
 #endif

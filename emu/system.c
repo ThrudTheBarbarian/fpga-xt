@@ -389,9 +389,9 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
     case 0xD300: pia_write(&s->pia, a, v); break;
     case 0xD400:
         if (s->col_probe && (a & 0x0F) == 0x0A)
-            fprintf(stderr, "  WSYNC write sl %3d cyc %3d (halt %d extra %d acc %llu)\n",
+            fprintf(stderr, "  WSYNC write sl %3d cyc %3d (halt %d extra %d acc %llu) pc $%04X\n",
                     s->an.scanline, s->an.cycle, s->an.wsync_halt, s->an.wsync_extra,
-                    (unsigned long long)s->an.cpu_acc);
+                    (unsigned long long)s->an.cpu_acc, s->cpu.pc);
         if (s->col_probe && (a & 0x0F) == 0x0E)
             fprintf(stderr, "  NMIEN  write $%02X sl %3d cyc %3d (set_now %d nmist $%02X)\n",
                     v, s->an.scanline, s->an.cycle - 1, s->an.nmist_set_now, s->an.nmist);
