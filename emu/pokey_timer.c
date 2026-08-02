@@ -93,6 +93,19 @@ static uint8_t af(const pokey_timer *p, int ch)
     return AUDF_PIPE ? p->audf_d[ch][AUDF_PIPE - 1] : p->audf[ch];
 }
 
+/* TWO-TONE MODE LENGTHENS EVERY PERIOD BUT THE FIRST.  pokey_timertiming's
+ * two-tone section says so in its own header -- "IRQST is set at the same time
+ * for the first period after STIMER.  Second and subsequent periods are two
+ * cycles longer" -- and then tabulates it:
+ *
+ *     AUDF1=0    7c/ 8c    13c/14c
+ *     AUDF1=8   15c/16c    29c/30c
+ *
+ * 16 is 4 + 12, the ordinary AUDF + 4 period; 30 is 16 + 14, not 16 + 12. */
+#ifndef TWOTONE_EXTRA
+#define TWOTONE_EXTRA 2
+#endif
+
 static int period_of(const pokey_timer *p, int ch)
 {
     /* The divider reloads with AUDF+1 of its input ticks — except off the 1.79
@@ -106,7 +119,9 @@ static int period_of(const pokey_timer *p, int ch)
         return ((af(p, 1) << 8) | af(p, 0)) + (fast1 ? LINK_FAST : 1);
     if (ch == 2 && (p->audctl & 0x08))          /* 3+4 linked */
         return ((af(p, 3) << 8) | af(p, 2)) + (fast3 ? LINK_FAST : 1);
-    if (ch == 0 && fast1) return af(p, 0) + 4;
+    if (ch == 0 && fast1)
+        return af(p, 0) + 4
+             + (((p->skctl & 0x08) && !p->ch_first[0]) ? TWOTONE_EXTRA : 0);
     if (ch == 2 && fast3) return af(p, 2) + 4;
     return af(p, ch) + 1;
 }
@@ -143,6 +158,17 @@ static int period_of(const pokey_timer *p, int ch)
  * see the preemption section in the STIMER case. */
 #ifndef STIMER_CANCELS_FRESH
 #define STIMER_CANCELS_FRESH 1
+#endif
+
+/* DISPROVED, kept with its score.  The two-tone reprogramming sub-test enables
+ * IRQEN on the same cycle its second period underflows, which looked like the
+ * mask being read when the bit SURFACES rather than at the underflow.  It is
+ * not: MASK_AT_SURFACE=1 moves the failure BACKWARDS, from the "+17c should not
+ * have succeeded" assertion at 38294 cycles to the "+16c should have succeeded"
+ * one at 38066 -- something now fires that must not.  Whatever lets that
+ * underflow through is narrower than a blanket deferral of the mask. */
+#ifndef MASK_AT_SURFACE
+#define MASK_AT_SURFACE 0
 #endif
 
 /* Six, and the test says why in prose: "the deadline timing for writes to AUDF1
@@ -234,7 +260,9 @@ static void audf_prime(pokey_timer *p, int ch)
                    : (ch == 1) ? (p->audctl & 0x10) : (p->audctl & 0x08);
         int fast   = (ch <= 1) ? (p->audctl & 0x40) : (p->audctl & 0x20);
         if (CH_LATCH_LAG && !linked && p->ch_age[ch] < CH_LATCH_LAG) {
-            int per = p->audf[ch] + ((fast && (ch == 0 || ch == 2)) ? 4 : 1);
+            int per = p->audf[ch] + ((fast && (ch == 0 || ch == 2)) ? 4 : 1)
+                    + ((ch == 0 && (p->skctl & 0x08) && !p->ch_first[0])
+                       ? TWOTONE_EXTRA : 0);
             p->cnt[ch] = per - p->ch_age[ch];
         }
     }
@@ -296,7 +324,7 @@ void pokey_timer_reset(pokey_timer *p)
     for (int i = 0; i < 8; i++) p->st_lag[i] = 0;
     p->hi_age[0] = p->hi_age[1] = 0;
     p->lo_age[0] = p->lo_age[1] = 0;
-    for (int i = 0; i < 4; i++) p->ch_age[i] = 0;
+    for (int i = 0; i < 4; i++) p->ch_age[i] = p->ch_first[i] = 0;
     p->ticks = p->stimer_at = 0;
     for (int i = 0; i < 4; i++) { p->audf[i] = 0; p->cnt[i] = 1; }
     p->audctl = 0;
@@ -361,7 +389,12 @@ static void raise(pokey_timer *p, uint8_t bit)
                 (unsigned long long)(p->ticks - p->stimer_at), p->irqen,
                 (p->irqen & bit) ? "" : "  [MASKED]");
 
-    if (!(p->irqen & bit)) return;             /* masked: no request at all */
+    /* EXPERIMENT (MASK_AT_SURFACE): is the mask applied at the UNDERFLOW or when
+     * the status bit SURFACES four cycles later?  pokey_timertiming's two-tone
+     * reprogramming sub-test enables IRQEN on the SAME cycle its second period
+     * underflows (+26) and then requires the bit READ at +30 -- so the underflow
+     * has to survive a mask that is lifted at the moment it happens. */
+    if (!MASK_AT_SURFACE && !(p->irqen & bit)) return;   /* masked: no request */
     /* THE UNDERFLOW AND THE READABLE STATUS BIT ARE FOUR CYCLES APART.
      * pokey_timertiming tabulates the same timer twice, and the two tables
      * differ by exactly that on every row they share.  Its STIMER-preemption
@@ -477,6 +510,8 @@ static int timer34_held(const pokey_timer *p)
 static void underflow(pokey_timer *p, int ch)
 {
     if (ch == 1 && timer2_held(p)) return;
+    /* Before the reload, which computes the period about to run. */
+    p->ch_first[ch] = 0;
 
     if (ch == ser_clock_ch(p)) ser_tick(p);
     /* a linked pair reloads its own low half, so only the unlinked case
@@ -559,6 +594,10 @@ void pokey_timer_tick(pokey_timer *p)
     p->ticks++;
     for (int i = 0; i < 8; i++)
         if (p->st_lag[i] && --p->st_lag[i] == 0) {
+            /* The mask is read HERE under MASK_AT_SURFACE: the underflow enters
+             * the delay chain regardless and IRQEN gates the latch at the point
+             * the bit is presented. */
+            if (MASK_AT_SURFACE && !(p->irqen & (1u << i))) continue;
             p->irqst = (uint8_t)(p->irqst & ~(1u << i));
             /* The cycle the BIT BECOMES READABLE, which is what every IRQST
              * bracket in pokey_timertiming actually measures.  Deriving it by
@@ -755,6 +794,7 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
             for (int k = 0; k < AUDF_PIPE; k++) p->audf_d[i][k] = p->audf[i];
         for (int i = 0; i < 2; i++)
             for (int k = 0; k < AUDF_PIPE; k++) p->audf_lo_d[i][k] = p->audf[2 * i];
+        for (int i = 0; i < 4; i++) p->ch_first[i] = 1;
         for (int i = 0; i < 4; i++) reload(p, i);
         /* A LINKED PAIR'S FIRST PERIOD AFTER STIMER IS THE RAW 16-BIT VALUE,
          * with none of the propagation LINK_FAST adds to every period after it.
