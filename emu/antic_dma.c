@@ -222,12 +222,113 @@ static void name_slot(int8_t *name_at, int c, int i, int chars)
  * sequencer compares on its own ticks — so a caller rebuilding the line
  * mid-scanline can pin the OLD grid against the NEW window's stop without
  * recomputing the geometry or scanning for a last fetch. */
+/* ---- the Altirra-shaped model -------------------------------------------
+ * ANTIC keeps a DMA CLOCK: an 8-bit phase mask where bit k means "fetch on
+ * every cycle congruent to k mod 8".  The start injects a bit, the stop
+ * removes it, and the whole mask rotates two places per scanline because 114
+ * is not divisible by 8.  Everything the per-line map below models by hand --
+ * the byte counts, the missable stop, the cross-line carry -- falls out of
+ * that.  See "THE COMPLETE ANTIC PLAYFIELD SPEC" in emu/README.md.
+ *
+ * Re-implemented from the behaviour, not copied: Altirra is GPL and none of
+ * its code is in this repo. */
+#ifndef PF_SPEC_MODEL
+#define PF_SPEC_MODEL 0
+#endif
+
+/* every 2, every 4 or every 8 cycles, by mode */
+static const uint8_t spec_rate[16] =
+    { 0,0,3,3,3,3,2,2,1,1,2,2,2,3,3,3 };
+
+static const uint8_t spec_clock[4][8] = {
+    { 0,0,0,0,0,0,0,0 },
+    { 0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80 },   /* every 8 */
+    { 0x11,0x22,0x44,0x88,0x11,0x22,0x44,0x88 },   /* every 4 */
+    { 0x55,0xAA,0x55,0xAA,0x55,0xAA,0x55,0xAA },   /* every 2 */
+};
+
+/* The FETCH window.  Its width is the display width stepped UP one when the
+ * row is scrolled -- that is a different quantity from the DISPLAY width, and
+ * conflating the two is what the old model got wrong. */
+static void spec_window(uint8_t mode, antic_width w, int scrolled, int hscrol,
+                        int *start, int *vend)
+{
+    antic_width fw = w;
+    if (scrolled && fw != ANTIC_WIDE) fw = (antic_width)((int)fw + 1);
+
+    int st, span;
+    switch (fw) {
+    case ANTIC_NARROW: st = (mode < 8) ? 26 : 28; span = 64; break;
+    case ANTIC_WIDE:   st = (mode < 8) ? 10 : 12; span = 96; break;
+    default:           st = (mode < 8) ? 18 : 20; span = 80; break;
+    }
+    int off = (hscrol & 14) >> 1;          /* HSCROL DELAYS by one per two */
+    *start = st + off;
+    *vend  = st + span + off;              /* deliberately NOT clamped */
+}
+
+static int spec_line(uint8_t mode_in, antic_width width, int first_line,
+                     int hscrol, uint8_t *clock_io,
+                     uint8_t blocked[ANTIC_LINE_CYCLES],
+                     int8_t name_at[ANTIC_LINE_CYCLES])
+{
+    int scrolled = (mode_in & 0x10) != 0 || hscrol != 0;
+    uint8_t mode = (uint8_t)(mode_in & 0x0F);
+
+    memset(blocked, 0, ANTIC_LINE_CYCLES);
+    if (name_at) memset(name_at, -1, ANTIC_LINE_CYCLES);
+    for (int i = 0, c = REFRESH_FIRST; i < REFRESH_COUNT; i++, c += REFRESH_STEP)
+        blocked[c] = 1;
+    if (first_line) { blocked[1] = 1; blocked[6] = blocked[7] = 1; }
+
+    uint8_t clock = clock_io ? *clock_io : 0;
+    int rate = (mode >= 2) ? spec_rate[mode] : 0;
+    if (mode >= 2 && rate) {
+        int start, vend;
+        spec_window(mode, width, scrolled, hscrol, &start, &vend);
+        if (start < vend) {
+            clock |= spec_clock[rate][start & 7];
+            clock &= (uint8_t)~spec_clock[rate][vend & 7];
+        }
+    }
+
+    /* Walk the line: the clock's phase decides the fetch, and the cycle KIND
+     * hangs off it -- a character name is the clock cycle itself, a character's
+     * data is three later, a bitmap byte two later. */
+    int idx = 0;
+    for (int c = 0; c < ANTIC_LINE_CYCLES; c++) {
+        if (!(clock & (1u << (c & 7)))) continue;
+        int fetch = -1;
+        if (mode >= 8)            fetch = c + 2;
+        else if (first_line)      fetch = c;            /* name; data at c+3 */
+        else                      fetch = c + 3;        /* data only */
+        if (fetch < ANTIC_LINE_CYCLES) {
+            /* cycles from PF_HBLANK_FIRST on still FETCH but steal nothing */
+            if (fetch < PF_HBLANK_FIRST) blocked[fetch] = 1;
+            if (name_at && idx < 128) name_at[fetch] = (int8_t)idx;
+            idx++;
+        }
+        if (mode < 8 && first_line && c + 3 < ANTIC_LINE_CYCLES) {
+            if (c + 3 < PF_HBLANK_FIRST) blocked[c + 3] = 1;
+        }
+    }
+
+    if (clock_io) *clock_io = (uint8_t)((clock << 6) | (clock >> 2));
+    return 0;
+}
+
 static int build(uint8_t mode, antic_width width, int first_line, int hscrol,
                  int nom_in, int cyc_stop, int carry_in, int *carry_out,
                  uint8_t blocked[ANTIC_LINE_CYCLES],
                  int8_t name_at[ANTIC_LINE_CYCLES])
 {
     if (carry_out) *carry_out = -1;
+
+    /* The Altirra-shaped model, for the plain per-line case while it is being
+     * validated against `make dma`'s 50 tabulated rows. */
+    if (PF_SPEC_MODEL && nom_in < 0 && cyc_stop < 0 && carry_in < 0)
+        return spec_line(mode, width, first_line, hscrol, NULL, blocked, name_at);
+
     /* Bit 4 of the display-list instruction is the row's SCROLL bit, and the
      * callers that know it pass it through in `mode`.  A caller that does not
      * (the gates, which tabulate ACID's table and have only an HSCROL column)
