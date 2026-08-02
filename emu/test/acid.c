@@ -122,6 +122,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     { const char *p = getenv("ACID_BUSTRACE"); if (p) s.bus_probe = atoi(p); }
     if (getenv("ACID_IRQPROBE")) { s.irq_probe = 1; s.irq_shadow = 0xFF; }
     if (getenv("ACID_GLYPHPROBE")) antic_glyph_probe = atoi(getenv("ACID_GLYPHPROBE"));
+    if (getenv("ACID_PTPROBE")) pokey_timer_probe = atoi(getenv("ACID_PTPROBE"));
     if (getenv("ACID_COLPROBE")) s.col_probe = 1;
     if (!load_xex(&s, xex, &run) || !run) return R_SKIP;
 

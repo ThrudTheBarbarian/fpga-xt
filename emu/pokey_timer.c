@@ -1,4 +1,5 @@
 #include "pokey_timer.h"
+#include <stdio.h>
 
 /* Where the free-running base divider sits relative to the machine-cycle count.
  * A real POKEY shares its master clock with ANTIC, so this phase is fixed by
@@ -34,7 +35,7 @@
  * which edge they watch.  The lag applies to EVERY pair underflow, not just the
  * first after STIMER. */
 #ifndef LO_UPCOUNT
-#define LO_UPCOUNT 1
+#define LO_UPCOUNT 0
 #endif
 #ifndef PAIR_IRQ_LAG
 #define PAIR_IRQ_LAG 4
@@ -112,14 +113,37 @@ static int period_of(const pokey_timer *p, int ch)
 
 /* Prime the capture path when the counter is far enough from its underflow that
  * the delay could not have mattered. */
+/* How long the low half's reload value stays open to a late AUDF write, in
+ * cycles after the underflow.  Measured, not chosen -- see audf_prime. */
+#ifndef LO_LATCH_LAG
+#define LO_LATCH_LAG 2
+#endif
+
 static void audf_prime(pokey_timer *p, int ch)
 {
     if (p->cnt[ch] > AUDF_PIPE)
         for (int k = 0; k < AUDF_PIPE; k++) p->audf_d[ch][k] = p->audf[ch];
     /* the low half of a linked pair runs its own counter, so its window is its
-     * own too */
+     * own too.
+     *
+     * ...but a write cannot reach BACK into a period the counter has already
+     * loaded.  pokey_timertiming's "earliest AUDF1 write to be too late" writes
+     * AUDF1 two cycles after an underflow and requires the period already
+     * running to keep the OLD value: back-filling the whole delay line let that
+     * write lengthen a period it should not have touched, and the underflow
+     * landed at +43 where the test wants +41. */
     if ((ch == 0 || ch == 2) && p->locnt[ch / 2] > AUDF_PIPE)
         for (int k = 0; k < AUDF_PIPE; k++) p->audf_lo_d[ch / 2][k] = p->audf[ch];
+
+    /* THE RELOAD VALUE LATCHES ONE CYCLE AFTER THE UNDERFLOW, not at it.
+     * pokey_timertiming brackets the boundary from both sides in consecutive
+     * sub-tests: with the underflow at +21, a write at +22 must still lengthen
+     * the period and a write at +23 must not.  Reloading at the underflow makes
+     * +22 too late; letting a mid-count rewrite land (the up-counting model)
+     * makes +23 too early.  Only a latch that stays open for exactly one more
+     * cycle satisfies both. */
+    if ((ch == 0 || ch == 2) && p->lo_age[ch / 2] < LO_LATCH_LAG)
+        p->locnt[ch / 2] = p->audf[ch] + LINK_FAST - p->lo_age[ch / 2];
 }
 
 /* AUDF for a linked pair's LOW half, through its own delay line. */
@@ -156,8 +180,19 @@ void pokey_timer_reset(pokey_timer *p)
  * cannot be satisfied by one tap phase: the sled wants the underflow two cycles
  * later than the bracket does.  So IRQST is set at the underflow and the line to
  * the CPU follows IRQ_LINE_LAG cycles behind it. */
+/* Measurement hook: the CYCLE each timer-1 underflow becomes readable, against
+ * the STIMER write that started it.  pokey_timertiming states its expectations
+ * in exactly those terms (its table at .lst 274-277) and no amount of squinting
+ * at reload constants settles an off-by-one that the tick/read order can also
+ * produce -- so measure it. */
+int pokey_timer_probe;
+
 static void raise(pokey_timer *p, uint8_t bit)
 {
+    if (pokey_timer_probe && (bit & POKEY_IRQ_TIMER1))
+        fprintf(stderr, "  T1 underflow at +%llu (irqen $%02X)\n",
+                (unsigned long long)(p->ticks - p->stimer_at), p->irqen);
+
     if (!(p->irqen & bit)) return;             /* masked: no request at all */
     p->irqst = (uint8_t)(p->irqst & ~bit);     /* active low */
     if (IRQ_LINE_LAG) p->irq_arm = IRQ_LINE_LAG;
@@ -321,6 +356,7 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
 
 void pokey_timer_tick(pokey_timer *p)
 {
+    p->ticks++;
     if (p->init) return;                       /* held in init */
 
     /* the line catching up with the status bit — see raise() */
@@ -374,7 +410,10 @@ void pokey_timer_tick(pokey_timer *p)
             }
         } else if (--p->locnt[0] <= 0) {
             p->locnt[0] = af_lo(p, 0) + LINK_FAST;
+            p->lo_age[0] = 0;               /* the latch is still open, just */
             raise(p, POKEY_IRQ_TIMER1);
+        } else if (p->lo_age[0] < 255) {
+            p->lo_age[0]++;
         }
     }
     if (fast1 && --p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
@@ -424,6 +463,9 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
     case 0x06: p->audf[3] = val; audf_prime(p, 3); break;
     case 0x08: p->audctl = val; break;
     case 0x09:
+        p->stimer_at = p->ticks;
+        if (pokey_timer_probe) fprintf(stderr, "  STIMER at tick %llu\n",
+                                       (unsigned long long)p->ticks);
         /* STIMER reloads the four CHANNEL counters but does NOT touch the base
          * clock divider, which free-runs.  pokey_inittiming shows why: with
          * AUDF = 0 it measures the first interrupt at 86 cycles on the 15 kHz
