@@ -31,6 +31,12 @@
 #include <dirent.h>
 #include "../system.h"
 
+/* Whether a disk drive answers on the serial line -- see the DSKINV stub. */
+#ifndef SIO_DEVICE
+#define SIO_DEVICE 0
+#endif
+
+
 #define MAX_CYCLES 200000000ULL
 
 static int lab_lookup(const char *path, const char *sym, uint16_t *out)
@@ -233,6 +239,35 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     for (unsigned v = 0xE453; v <= 0xE459; v += 3) {
         s.ram[v] = 0x4C; s.ram[v + 1] = 0x80; s.ram[v + 2] = 0xE4;   /* JMP $E480 */
     }
+    /* ...except DSKINV ($E453), which now answers SUCCESS because there IS a
+     * drive on the serial line.  pokey_skstat and pokey_serdirect open with
+     * `jsr dskinv` purely as a "is a drive present" gate and SKIP if it fails;
+     * everything they actually test comes after, driving PBCTL/SKCTL/SEROUT
+     * directly and watching SKSTAT.  So this opens the gate and nothing more --
+     * it is NOT a paravirtual SIO standing in for the line, and it would be a
+     * lie if no device answered.  CIOV ($E456) and SIOV ($E459) keep the
+     * no-device answer.
+     *
+     * OFF BY DEFAULT UNTIL THE DEVICE EXISTS.  With no drive on the line, "no
+     * device -> skip" is the CORRECT answer, and opening the gate would have the
+     * emulator claim a drive that is not there -- pokey_skstat then stops
+     * skipping and starts LOOPING, waiting for a response nobody sends.  Build
+     * with -DSIO_DEVICE=1 to work on it.
+     *
+     * Measured with it on: pokey_skstat gets past the gate and hangs on the
+     * line; pokey_serdirect gets past it and reaches its SECOND gate at 58230
+     * cycles -- "Unable to find NAKed command on D1:" -- so both are then
+     * blocked on the device itself and nothing else. */
+    static const uint8_t dskok[] = {
+        0xA9, 0x01,              /* LDA #$01   — N clear: operation succeeded */
+        0x8D, 0x03, 0x03,        /* STA DSTATS                                */
+        0xA0, 0x01,              /* LDY #$01   — success                      */
+        0x60,                    /* RTS                                       */
+    };
+    if (SIO_DEVICE) {
+        memcpy(&s.ram[0xE4A0], dskok, sizeof dskok);
+        s.ram[0xE453] = 0x4C; s.ram[0xE454] = 0xA0; s.ram[0xE455] = 0xE4;
+    }
 
     /* IOCB 0's PUT-CHARACTER vector.  The library prints through it —
      * _vputchar is loaded from ICPTL ($0346) and then INCREMENTED, because the
@@ -292,7 +327,8 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
                                      * it BRK-walks; counting that as "inside"
                                      * hid the entry and reported the exit. */
                                     || (pc >= 0xE453 && pc <= 0xE45B)
-                                    || (pc >= 0xE480 && pc <= 0xE493);
+                                    || (pc >= 0xE480 && pc <= 0xE493)
+                                    || (pc >= 0xE4A0 && pc <= 0xE4A7);
             if (!inside) {
                 trapped = 1;
                 int n = hcount < 40 ? hcount : 40;
