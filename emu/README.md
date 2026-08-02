@@ -981,6 +981,40 @@ because the oracle demands it independently of the tests: a row that is narrow
 for part of a line and normal for the rest cannot fetch fewer bytes than either.
 Twelve gates green, suite unchanged at 48.
 
+### pokey_timertiming: the assertion decoded, and the knobs are at a local optimum
+
+Read at last, and it is a DEADLINE PAIR rather than a value. After `STIMER` the
+test writes `AUDF1` at **+23c** and then reads `IRQST`:
+
+```
+lda irqst   ;+40c (should be last cycle NOT fired)   _ASSERTA $01
+lda irqst   ;+41c (should be first cycle fired)      _ASSERTA $00
+```
+
+IRQST is ACTIVE LOW, so `$00` means fired. The two assertions bracket the fire
+moment to the boundary between cycle 40 and 41. AUDF1 starts at `$0d` and is
+rewritten mid-count; the pair's period is "13 + 7 = 20 cycles" by the test's own
+comment.
+
+We PASS the +40c bound (we do not fire early) and FAIL the +41c one, returning
+`$01` — so our 16-bit lo timer fires at least one cycle LATE, and the residual is
+a magnitude with a known sign.
+
+Swept the six plausible constants against it. `LO_UPCOUNT=1` leaves the failure
+where it is; **every other setting fails an EARLIER assertion that currently
+passes**:
+
+| setting | result |
+|---|---|
+| `LO_EXTRA=0`, `LO_EXTRA=2` | "lo timer triggered too early (loop #...)" |
+| `PAIR_IRQ_LAG=0`, `=2` | "hi timer triggered too early (loop #...)" |
+| `LINK_FAST=0` | "lo timer triggered too early (loop #...)" |
+| `LO_UPCOUNT=1` | unchanged — still the +41c deadline |
+
+So the current constants are at a LOCAL OPTIMUM and no single one separates this
+case: by rule (v) the error is upstream of them, in the shape of the linked-pair
+model rather than its numbers.
+
 ### PARKED: antic_hscrolbug's test #2
 
 Its second case reads ALL ZEROS where it wants `d0..d3 = 02 00 04 04`. The
