@@ -563,6 +563,10 @@ static void line_start(antic *a)
             int vc = antic_pf_last(dma_mode(a, mode), width_of(a->dmactl),
                                    a->row_first, hscrol_of(a), &vi);
             if (vc >= 0 && vi >= 0) { a->virt_cyc = vc; a->virt_idx = (uint8_t)vi; }
+            if (antic_glyph_probe == 8)
+                fprintf(stderr, "  VIRT sl %3d insn $%02X w %d hs %d -> cyc %d idx %d\n",
+                        a->scanline, a->dl_insn, width_of(a->dmactl),
+                        hscrol_of(a), a->virt_cyc, a->virt_idx);
             /* A row's LATER lines have no name fetches at all — the map's `b`
              * variant is glyph slots only — so the virtual slot has to be found
              * from those instead.  Refresh is long finished by then, so the

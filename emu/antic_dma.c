@@ -99,7 +99,7 @@ static int is_refresh(int c)
  * Note which map: the FIRST-line map fits at 5 instead, and 5 moves the probe
  * off character 23 entirely.  antic_virtdma measures a row's LATER lines. */
 #ifndef PF_WIDE_ADJ
-#define PF_WIDE_ADJ 2
+#define PF_WIDE_ADJ 0
 #endif
 
 /* A HORIZONTALLY SCROLLED row runs the NEXT WIDTH UP entirely — the window's
