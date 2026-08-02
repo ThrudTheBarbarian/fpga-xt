@@ -156,6 +156,93 @@ def m_tap(hpos, old, new, wcc):
     return lit
 
 
+@_reg("carry")
+def m_carry(hpos, old, new, wcc):
+    """On the resize clock the run rolls iff the phase's low bits are ALL ONES
+    for the new width -- (ph & (w-1)) == (w-1) -- rather than iff the phase has
+    reached the width.
+
+    Not guessed: the roll/no-roll decision at the write clock was SEARCHED as 12
+    free booleans, one per (phase, new width), against the five non-alt
+    transitions.  A unique setting scores 80/80, and it reads:
+
+        new width 1   roll at every phase
+        new width 2   roll at ODD phases only
+        new width 4   no roll at the phases that occur (0 and 1)
+
+    which is exactly "the low log2(w) bits are about to carry".  phase_kept's
+    rule, roll iff ph + 1 >= w, agrees everywhere except phase 2 at width 2 --
+    the four cells it was missing.  Width 4 phases 2 and 3 never arise (a run
+    widening to 4x comes from 1x or 2x, so its phase is 0 or 1), so the formula
+    is consistent with every cell the test constrains and unconstrained beyond
+    them; that is an inference, flagged as one."""
+    lit, bit, ph, live = set(), 0, 0, False
+    nw = scale(new)
+    for cc in range(0x40, 0xA0):
+        w = scale(old) if cc < wcc else nw
+        if cc == hpos:
+            live, bit, ph = True, 0, 0
+        elif live:
+            if cc == wcc:
+                if (ph & (nw - 1)) == (nw - 1):
+                    ph, bit = 0, bit + 1
+                else:
+                    ph += 1
+            else:
+                ph += 1
+                if ph >= w:
+                    ph, bit = 0, bit + 1
+            if bit >= 8:
+                live = False
+        if live and (GRAFP >> (7 - bit)) & 1:
+            lit.add(cc)
+    return lit
+
+
+@_reg("carry_lock")
+def m_carry_lock(hpos, old, new, wcc):
+    """`carry`, plus the 1xalt LOCKUP: SIZEP 2 stops the shifter dead when the
+    two phase bits DISAGREE.
+
+    Searched, not guessed, the same way as carry: four free booleans for "does
+    phase p lock" and four for "does phase p roll", scored against the two alt
+    rows.  A unique setting scores 32/32 and it is
+
+        phase 00 -> roll     phase 01 -> LOCK
+        phase 11 -> roll     phase 10 -> LOCK
+
+    i.e. the run advances only while the counter's two bits AGREE, and once they
+    disagree it never advances again.  That is why SIZEP 2 differs from SIZEP 0
+    at all despite both dividing by one, and it is what the test's own runtest
+    comment calls the "1xalt lockup" -- a locked run emits its current bit for
+    the rest of the line, which is the $FE (every probe lit) that appears at four
+    of the sixteen positions in each alt row."""
+    lit, bit, ph, live, locked = set(), 0, 0, False, False
+    nw = scale(new)
+    alt = (new & 3) == 2
+    for cc in range(0x40, 0xA0):
+        w = scale(old) if cc < wcc else nw
+        if cc == hpos:
+            live, bit, ph, locked = True, 0, 0, False
+        elif live and not locked:
+            if cc == wcc:
+                if alt and ((ph >> 1) & 1) != (ph & 1):
+                    locked = True
+                elif (ph & (nw - 1)) == (nw - 1):
+                    ph, bit = 0, bit + 1
+                else:
+                    ph += 1
+            else:
+                ph += 1
+                if ph >= w:
+                    ph, bit = 0, bit + 1
+            if bit >= 8:
+                live = False
+        if live and (GRAFP >> (7 - bit)) & 1:
+            lit.add(cc)
+    return lit
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--lst",
