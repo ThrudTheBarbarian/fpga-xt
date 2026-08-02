@@ -225,6 +225,13 @@ int pokey_timer_probe;
 #define IRQST_LAG 0
 #endif
 
+/* Is the channel behind this IRQ bit clocked off 1.79 MHz? */
+static int fast_for_bit(const pokey_timer *p, uint8_t bit)
+{
+    if (bit & POKEY_IRQ_TIMER4) return (p->audctl & 0x20) != 0;
+    return (p->audctl & 0x40) != 0;            /* timers 1 and 2 */
+}
+
 static int bit_index(uint8_t bit)
 {
     for (int i = 0; i < 8; i++) if (bit & (1u << i)) return i;
@@ -256,10 +263,19 @@ static void raise(pokey_timer *p, uint8_t bit)
      * Modelling that gap as a longer FIRST PERIOD (the old STIMER_EXTRA) put it
      * in the counter, where it also delayed the underflow the preemption test
      * strobes against — and no value could then satisfy both tables. */
-    if (IRQST_LAG) p->st_lag[bit_index(bit)] = IRQST_LAG;
-    else           p->irqst = (uint8_t)(p->irqst & ~bit);
-    if (IRQ_LINE_LAG) p->irq_arm = IRQ_LINE_LAG;
-    else              p->irq = 1;
+    /* ...and it is a property of the 1.79 MHz TAP, not of every channel.  The
+     * tables that measure it are all fast-clocked, and the extra pipeline
+     * stages that make a fast period AUDF+4 are the same ones that delay the
+     * interrupt.  A base-clocked channel takes neither: pokey_inittiming times
+     * its acknowledge on the 15 kHz clock and wants it exactly where it always
+     * was.  BOTH the status bit and the /IRQ line take the lag together, which
+     * is what keeps a fast channel's acknowledge in place while its underflow
+     * moves four cycles earlier. */
+    int lag = fast_for_bit(p, bit) ? IRQST_LAG : 0;
+    if (lag) p->st_lag[bit_index(bit)] = (uint8_t)lag;
+    else     p->irqst = (uint8_t)(p->irqst & ~bit);
+    if (IRQ_LINE_LAG + lag) p->irq_arm = (uint8_t)(IRQ_LINE_LAG + lag);
+    else                    p->irq = 1;
 }
 
 /* Fire channel `ch`, which has just underflowed. */
