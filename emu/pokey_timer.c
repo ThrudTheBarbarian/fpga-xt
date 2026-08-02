@@ -436,6 +436,12 @@ void pokey_timer_reset(pokey_timer *p)
     p->skctl = 0;
     p->serout_full = 0;
     p->init = 0;
+    p->serin = p->serin_full = 0;
+    p->rx_line = 1;                /* the line idles at MARK */
+    p->rx_active = p->rx_n = p->rx_shift = p->rx_busy = 0;
+    p->sk_frame_err = p->sk_overrun = 0;
+    p->ser_tx = 0;
+    p->ser_ctx = 0;
 }
 
 /* The STATUS BIT and the /IRQ LINE are not the same instant.  pokey_inittiming
@@ -557,6 +563,12 @@ static void ser_take(pokey_timer *p)
 {
     if (!p->serout_full || p->ser_bits) return;
     p->serout_full = 0;
+    /* SEROUT is free again, and SEROR is a LEVEL -- so this is an EDGE on the
+     * /IRQ line, not just a bit that reads differently.  pokey_serclock only
+     * ever polls IRQST, so nothing until now needed the line to move; the
+     * pokey_serdirect command frame is driven ENTIRELY from the SEROR handler
+     * and never gets past its first byte without it. */
+    if (p->irqen & POKEY_IRQ_SEROR) p->irq = 1;
     p->ser_byte = p->serout_val;
     p->seroc = 0;
     /* TWENTY timer underflows, not ten: the timer produces the serial clock's
@@ -571,6 +583,8 @@ static void ser_tick(pokey_timer *p)
 {
     if (p->ser_bits && --p->ser_bits == 0) {
         p->seroc = 1;
+        /* the byte is off the wire: whatever is listening has it now */
+        if (p->ser_tx) p->ser_tx(p->ser_ctx, p->ser_byte);
         if (p->irqen & POKEY_IRQ_SEROC) p->irq = 1;
     }
     /* a byte already waiting is taken on THIS tick, not the next */
@@ -620,7 +634,73 @@ static int timer2_held(const pokey_timer *p)
  * which is how this failed (sub-case 3). */
 static int timer34_held(const pokey_timer *p)
 {
-    return (p->skctl & 0x10) != 0;
+    /* ...and the hold comes OFF for the duration of a byte.  That is the whole
+     * of the receive clock: the pair is held waiting for a start bit, released
+     * by the edge, and held again once the stop bit has gone by. */
+    return (p->skctl & 0x10) && !p->rx_active;
+}
+
+/* HALF a bit time has gone by — one underflow of the 3+4 pair, which at the
+ * 19200-baud setting both tests use (AUDCTL $28, AUDF3 = $28, AUDF4 = 0) is 47
+ * machine cycles.  Ticks are counted from the start edge, so the centre of data
+ * bit n is tick 3 + 2n and the centre of the stop bit is tick 19. */
+static void rx_tick(pokey_timer *p)
+{
+    int n = ++p->rx_n;
+    if (n >= 3 && n <= 17 && (n & 1)) {
+        if (p->rx_line) p->rx_shift = (uint8_t)(p->rx_shift | (1u << ((n - 3) / 2)));
+    } else if (n == 19) {
+        if (!p->rx_line) p->sk_frame_err = 1;
+        /* OVERRUN is a byte landing on one nobody read.  pokey_skstat proves it
+         * both ways in the same run: it reads bytes 1-3 in time and requires no
+         * overrun, then deliberately leaves byte 4 in SERIN and requires the bit
+         * once byte 5 has come in on top of it. */
+        if (p->serin_full) p->sk_overrun = 1;
+        p->serin      = p->rx_shift;
+        p->serin_full = 1;
+        p->irqst = (uint8_t)(p->irqst & ~POKEY_IRQ_SERIN);
+        if (p->irqen & POKEY_IRQ_SERIN) p->irq = 1;
+        /* BUSY drops on the SAME event that raises data-ready, and pokey_skstat
+         * brackets it from both sides within about a dozen cycles:
+         *   - ReceiveByte reads SKSTAT and then IRQST twelve cycles later, and
+         *     requires bit 1 still ASSERTED on the iteration that sees the byte;
+         *   - the loop that watches byte #5 arrive waits for bit 1 to assert,
+         *     so by thirteen cycles after byte #4's data-ready it must be IDLE.
+         * Nothing but "together" fits both. */
+        p->rx_active = 0;
+        p->rx_busy   = 0;
+    }
+}
+
+void pokey_timer_serin_line(pokey_timer *p, int level)
+{
+    int was = p->rx_line;
+    p->rx_line = (uint8_t)(level != 0);
+    if (was && !p->rx_line && (p->skctl & 0x10) && !p->rx_active) {
+        p->rx_active = 1;
+        p->rx_n      = 0;
+        p->rx_shift  = 0;
+        p->rx_busy   = 1;
+    }
+}
+
+/* SKSTAT reads ACTIVE LOW throughout: a clear bit is the event.  Bit 4 is the
+ * serial input line itself, which is the whole of pokey_serdirect — it bit-bangs
+ * the reply out of this one bit rather than letting the receiver assemble it. */
+uint8_t pokey_timer_skstat(const pokey_timer *p)
+{
+    uint8_t v = 0xFF;
+    if (!p->rx_line)     v = (uint8_t)(v & ~0x10);
+    if (p->rx_busy)      v = (uint8_t)(v & ~0x02);
+    if (p->sk_overrun)   v = (uint8_t)(v & ~0x20);
+    if (p->sk_frame_err) v = (uint8_t)(v & ~0x80);
+    return v;
+}
+
+uint8_t pokey_timer_serin(pokey_timer *p)
+{
+    p->serin_full = 0;
+    return p->serin;
 }
 
 static void underflow(pokey_timer *p, int ch)
@@ -651,6 +731,8 @@ static void underflow(pokey_timer *p, int ch)
     if (ch == 3 && (p->audctl & 0x08)) p->ch_first[2] = 0;
 
     if (ch == ser_clock_ch(p)) ser_tick(p);
+    /* ...and in async receive the SAME pair is the bit-time divider */
+    if (ch == 3 && p->rx_active) rx_tick(p);
     /* a linked pair reloads its own low half, so only the unlinked case
      * reloads here */
 
@@ -701,6 +783,13 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
         p->ser_bits = 0;
         p->serout_full = 0;
         p->seroc = 1;
+        /* ...and the RECEIVER with it: a byte half-way in is abandoned, and the
+         * error bits go with the reset.  pokey_serdirect drops through SKCTL 0
+         * on its way from transmitting to bit-banging and then reads SKSTAT as
+         * a plain line probe, which a stale framing error would poison. */
+        p->rx_active = p->rx_busy = p->rx_n = p->rx_shift = 0;
+        p->serin_full = 0;
+        p->sk_frame_err = p->sk_overrun = 0;
     }
     if (p->init && !now) {
         /* The divider chain FREE-RUNS through the release — it is not reloaded.
@@ -894,6 +983,10 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
     case 0x04: p->audf[2] = val; audf_prime(p, 2); break;
     case 0x06: p->audf[3] = val; audf_prime(p, 3); break;
     case 0x08: p->audctl = val; break;
+    /* SKREST: strobing $D20A clears SKSTAT's latched error bits.  Nothing else
+     * about it is observable — the register is write-only at this address, and
+     * $D20A READS are POKEY's RANDOM. */
+    case 0x0A: p->sk_frame_err = p->sk_overrun = 0; break;
     case 0x09:
         p->stimer_at = p->ticks;
         if (pokey_timer_probe)
@@ -1042,6 +1135,8 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         /* Enabling SEROC while the level stands fires immediately — and it must
          * be decided AFTER the clear above, or the clear undoes it. */
         if ((val & POKEY_IRQ_SEROC) && p->seroc) p->irq = 1;
+        /* ...and the same for SEROR, which stands whenever SEROUT is empty. */
+        if ((val & POKEY_IRQ_SEROR) && !p->serout_full) p->irq = 1;
         /* ...and an enable takes up an underflow masked on the last tick.  After
          * the clear above, which would otherwise undo it. */
         if (IRQEN_ARMS_INFLIGHT)

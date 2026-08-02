@@ -39,6 +39,8 @@
  * is free again.  pokey_serclock enables just this one and checks it NEVER
  * fires with the clock stopped. */
 #define POKEY_IRQ_SEROR  0x10
+/* Serial input data ready: a byte has come off the line into SERIN. */
+#define POKEY_IRQ_SERIN  0x20
 
 typedef struct {
     uint8_t  audf[4];      /* $D200/2/4/6 */
@@ -98,6 +100,21 @@ typedef struct {
     uint8_t  st_armed[8];          /* was this in-flight status bit ENABLED at any
                                     * point during its flight?  An enable arms
                                     * one; a disable never disarms it */
+    /* ---- the RECEIVER.  See rx_tick() in the .c ---------------------------
+     * Async receive mode holds timers 3+4 in reset until a START BIT, and then
+     * the pair IS the bit-time divider: two underflows to a bit, twenty to a
+     * byte.  So reception is not a separate clock -- it is the hold coming off. */
+    uint8_t  serin;                /* $D20D */
+    uint8_t  serin_full;           /* a byte nobody has read yet */
+    uint8_t  rx_line;              /* the serial input line, 1 = mark */
+    uint8_t  rx_active;            /* a byte is coming in */
+    uint8_t  rx_n;                 /* half-bit ticks since the start edge */
+    uint8_t  rx_shift;
+    uint8_t  rx_busy;              /* SKSTAT bit 1, which reads ACTIVE LOW */
+    uint8_t  sk_frame_err;         /* SKSTAT bit 7, likewise */
+    uint8_t  sk_overrun;           /* SKSTAT bit 5, likewise */
+    void   (*ser_tx)(void *ctx, uint8_t b);   /* a byte finished shifting OUT */
+    void    *ser_ctx;
     unsigned long long ticks;      /* free-running tick count, for probes */
     unsigned long long stimer_at;  /* tick of the last STIMER write */
 } pokey_timer;
@@ -114,5 +131,10 @@ void    pokey_timer_tick(pokey_timer *p);          /* one machine cycle */
 void    pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val);
 uint8_t pokey_timer_irqst(const pokey_timer *p);
 uint8_t pokey_timer_irqst_probe(const pokey_timer *p);
+/* The serial input line, sampled every machine cycle.  A falling edge is a
+ * START BIT, which is what releases the receive divider. */
+void    pokey_timer_serin_line(pokey_timer *p, int level);
+uint8_t pokey_timer_skstat(const pokey_timer *p);
+uint8_t pokey_timer_serin(pokey_timer *p);
 
 #endif /* POKEY_TIMER_H */

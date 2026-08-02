@@ -31,9 +31,11 @@
 #include <dirent.h>
 #include "../system.h"
 
-/* Whether a disk drive answers on the serial line -- see the DSKINV stub. */
+/* Whether a disk drive answers on the serial line -- see the DSKINV stub and
+ * sio.c.  ON, because there IS one: sio.c decodes the command frame and shifts
+ * its reply back a bit at a time.  Build -DSIO_DEVICE=0 to unplug it. */
 #ifndef SIO_DEVICE
-#define SIO_DEVICE 0
+#define SIO_DEVICE 1
 #endif
 
 
@@ -211,6 +213,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     /* RAMTOP.  mmu_xlbanking's FIRST action is `lda ramtop / cmp #$41` and it
      * skips below that, so a bare XEX run with the OS variables at zero can
      * never reach the banking checks.  $C0 is what an XL kernel leaves. */
+    sio_probe = getenv("ACID_SIOPROBE") != NULL;
     s.ram[0x006A] = 0xC0;
     if (!s.ram[0x0217]) { s.ram[0x0216] = 0x40; s.ram[0x0217] = 0xFF; }  /* VIMIRQ */
 
@@ -248,20 +251,27 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
      * lie if no device answered.  CIOV ($E456) and SIOV ($E459) keep the
      * no-device answer.
      *
-     * OFF BY DEFAULT UNTIL THE DEVICE EXISTS.  With no drive on the line, "no
-     * device -> skip" is the CORRECT answer, and opening the gate would have the
-     * emulator claim a drive that is not there -- pokey_skstat then stops
-     * skipping and starts LOOPING, waiting for a response nobody sends.  Build
-     * with -DSIO_DEVICE=1 to work on it.
-     *
-     * Measured with it on: pokey_skstat gets past the gate and hangs on the
-     * line; pokey_serdirect gets past it and reaches its SECOND gate at 58230
-     * cycles -- "Unable to find NAKed command on D1:" -- so both are then
-     * blocked on the device itself and nothing else. */
+     * This was OFF while the drive did not exist, because "no device -> skip" is
+     * then the CORRECT answer and opening the gate would have had the emulator
+     * claim hardware it did not have.  sio.c is that hardware. */
+    /* And it answers as the DRIVE would, not as an unconditional success: a
+     * STATUS ($53) completes, and anything else comes back $8B -- DEVICE NAK.
+     * pokey_serdirect needs BOTH.  It has two gates, not one: the first wants
+     * the status command to succeed, and the second issues a deliberately
+     * invalid read of sector 0 and requires Y = $8B, skipping if no command it
+     * tries is refused.  A stub that always succeeds passes the first and
+     * skips at the second. */
     static const uint8_t dskok[] = {
-        0xA9, 0x01,              /* LDA #$01   — N clear: operation succeeded */
+        0xAD, 0x02, 0x03,        /* LDA DCOMND                                */
+        0xC9, 0x53,              /* CMP #$53                                  */
+        0xF0, 0x07,              /* BEQ ok                                    */
+        0xA9, 0x8B,              /* LDA #$8B                                  */
         0x8D, 0x03, 0x03,        /* STA DSTATS                                */
-        0xA0, 0x01,              /* LDY #$01   — success                      */
+        0xA0, 0x8B,              /* LDY #$8B   -- device NAK                  */
+        0x60,                    /* RTS                                       */
+        0xA9, 0x01,              /* LDA #$01               ok:                */
+        0x8D, 0x03, 0x03,        /* STA DSTATS                                */
+        0xA0, 0x01,              /* LDY #$01   -- N clear: it succeeded       */
         0x60,                    /* RTS                                       */
     };
     if (SIO_DEVICE) {
@@ -328,7 +338,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
                                      * hid the entry and reported the exit. */
                                     || (pc >= 0xE453 && pc <= 0xE45B)
                                     || (pc >= 0xE480 && pc <= 0xE493)
-                                    || (pc >= 0xE4A0 && pc <= 0xE4A7);
+                                    || (pc >= 0xE4A0 && pc <= 0xE4B7);
             if (!inside) {
                 trapped = 1;
                 int n = hcount < 40 ? hcount : 40;

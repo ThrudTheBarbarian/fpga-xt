@@ -20,6 +20,7 @@
 #include "pokey_rand.h"
 #include "pokey_timer.h"
 #include "pia.h"
+#include "sio.h"
 
 typedef struct {
     uint8_t    ram[65536];
@@ -34,6 +35,7 @@ typedef struct {
                               * not ANTIC, so a CPU cycle counts (see below). */
     int         pending_render;  /* cycle+1 whose colour clocks are deferred */
     pia        pia;
+    sio        sio;      /* the drive on the serial bus */
     uint8_t    pm_prev_p[4], pm_prev_m;  /* one fetch back, for VDELAY */
     unsigned long long ser_mark;
     int        col_probe;

@@ -30,7 +30,7 @@ CFLAGS := -std=c11 $(WARN) -O2 -g
 CORE := xt6502.c
 # every header, listed against every target: a stale binary silently reports the
 # PREVIOUS run's score, which reads exactly like a change that did nothing
-HDRS := xt6502.h antic.h antic_dma.h gtia.h pokey_rand.h pokey_timer.h pia.h system.h acid_dmatable.h
+HDRS := xt6502.h antic.h antic_dma.h gtia.h pokey_rand.h pokey_timer.h pia.h sio.h system.h acid_dmatable.h
 
 .PHONY: all test harte klaus irq pokey ptimer dma antic gtia pia sys acid bench arm clean
 all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/ptimer $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia $(BUILD)/pia $(BUILD)/sys
@@ -65,7 +65,7 @@ $(BUILD)/pia: test/pia.c pia.c pia.h | $(BUILD)
 $(BUILD)/gtia: test/gtia.c gtia.c gtia.h | $(BUILD)
 	$(CC) $(CFLAGS) test/gtia.c gtia.c -o $@
 
-SYS := system.c xt6502.c antic.c antic_dma.c gtia.c pokey_rand.c pokey_timer.c pia.c
+SYS := system.c xt6502.c antic.c antic_dma.c gtia.c pokey_rand.c pokey_timer.c pia.c sio.c
 $(BUILD)/acid: test/acid.c $(SYS) $(HDRS) | $(BUILD)
 	$(CC) $(CFLAGS) test/acid.c $(SYS) -o $@
 

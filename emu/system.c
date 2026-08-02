@@ -139,6 +139,19 @@ static void pm_latch(atari *s)
     s->pm_prev_m = s->an.pm_m;
 }
 
+/* One machine cycle of the serial bus.  The command line is PIA port B's CB2,
+ * which PBCTL bit 3 drives LOW to assert, and the drive's reply reaches POKEY as
+ * a line LEVEL -- POKEY's receiver assembles it, and pokey_serdirect reads the
+ * very same level out of SKSTAT bit 4 and assembles it in software instead. */
+static void sio_tx(void *ctx, uint8_t b) { sio_recv((sio *)ctx, b); }
+
+static void sio_cycle(atari *s)
+{
+    sio_cmd(&s->sio, !s->pia.c2[1]);
+    sio_tick(&s->sio);
+    pokey_timer_serin_line(&s->pt, sio_line(&s->sio));
+}
+
 /* ACID_IRQPROBE=1: every IRQST transition with the cycle it happened on.  The
  * POKEY timing tests bracket an interrupt between two reads one machine cycle
  * apart, so "which cycle did it fire on" is the whole question and instruction
@@ -275,6 +288,7 @@ static void sys_cycle(atari *s)
             return;
         }
         pokey_rand_tick(&s->pk); s->pk_ticks++;   /* ANTIC's cycles advance it here */
+        sio_cycle(s);
         pokey_timer_tick(&s->pt);
         s->cpu.irq = (uint8_t)(s->pt.irq | s->pia.irq);
         irq_note(s);
@@ -294,6 +308,7 @@ static void cpu_cycle_done(atari *s)
         s->pending_render = 0;
     }
     pokey_rand_tick(&s->pk); s->pk_ticks++;
+    sio_cycle(s);
     pokey_timer_tick(&s->pt);
     s->cpu.irq = (uint8_t)(s->pt.irq | s->pia.irq);
     irq_note(s);
@@ -325,6 +340,8 @@ static uint8_t io_read(atari *s, uint16_t a)
             if (!s->dbg_rand_seen) { s->dbg_rand_at = s->pk_ticks; s->dbg_rand_seen = 1; }
             return pokey_rand_read(&s->pk);
         }
+        if ((a & 0x0F) == 0x0D) return pokey_timer_serin(&s->pt);
+        if ((a & 0x0F) == 0x0F) return pokey_timer_skstat(&s->pt);
         return 0xFF;
     case 0xD300: return pia_read(&s->pia, a);
     case 0xD400:
@@ -472,6 +489,10 @@ void atari_init(atari *s)
     gtia_init(&s->gt);
     pokey_rand_reset(&s->pk);
     pokey_timer_reset(&s->pt);
+    sio_reset(&s->sio);
+    /* AFTER the timer reset, which clears the hook field by field. */
+    s->pt.ser_tx  = sio_tx;
+    s->pt.ser_ctx = &s->sio;
     pia_reset(&s->pia);
     s->cycles = 0;
 }
