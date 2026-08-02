@@ -152,6 +152,11 @@ typedef struct {
      * ACCESSES whatever DMA does in between -- /RDY cannot stop a write cycle --
      * so adjacency has to be judged in this frame and not in `ticks`. */
     unsigned long cpu_acc;
+    /* Where the LAST WSYNC write landed, in ANTIC's own frame.  An RMW writes
+     * twice, and whether the second re-arms the halt turns on whether it
+     * follows the first IMMEDIATELY -- a stolen cycle in between and it does
+     * not.  See antic_write's $D40A case. */
+    int wsync_wr_cyc, wsync_wr_sl;
     unsigned long wsync_wr_at; /* `ticks` of the last WSYNC write.  An RMW's two
                             * writes are only ADJACENT when no DMA falls between
                             * them, and the pair can straddle a line boundary —

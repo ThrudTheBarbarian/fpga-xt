@@ -139,6 +139,29 @@
 #ifndef WSYNC_RMW_ADJACENT
 #define WSYNC_RMW_ADJACENT 1
 #endif
+/* ...and in WHOSE frame "adjacent" is judged.  In CPU ACCESSES the two writes
+ * of an RMW are always consecutive, so WSYNC_RMW_ADJACENT is a no-op there and
+ * both tests get the extra.  ANTIC's OWN cycles do separate them --
+ *     antic_wsync   sl 253 cyc 2,3   and  sl 260 cyc 104,105  -- adjacent
+ *     gtia_pmresize sl  16 cyc 33,35 -- a refresh slot BETWEEN them
+ * -- but DISPROVED as the discriminator, and by pmresize itself: the SAME `inc
+ * wsync` at $233B lands (33,35) on one iteration and (31,32) on the next, purely
+ * from where the previous iteration left the CPU, while runtest's annotation
+ * wants 104 on EVERY iteration.  Kept at 0; scores 56/63 either way, and
+ * pmresize fails at 4x-to-1x under both.
+ *
+ * What DOES move pmresize is dropping the extra outright: WSYNC_RMW_EXTRA=0
+ * carries it from its FIRST section to 2x-to-1xalt, 32k cycles to 74k.  So the
+ * release of 104 that runtest annotates is right for pmresize and the several
+ * sections in between were failing on it.  It costs antic_wsync's d2, which is
+ * an ASSERTION on RANDOM and outranks an annotation -- so the two want different
+ * releases from the same instruction and the discriminator is still open.  Both
+ * tests run with the screen off, so it is not DMA; the one structural difference
+ * left is that antic_wsync's INC straddles the line boundary (opcode fetch at
+ * 111-113, read and both writes at 0,1,2) while pmresize's sits mid-line. */
+#ifndef WSYNC_RMW_ADJ_CYCLE
+#define WSYNC_RMW_ADJ_CYCLE 0
+#endif
 #include <stdio.h>
 int antic_glyph_probe;
 #include <string.h>
@@ -1341,9 +1364,14 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         /* WSYNC.  Arms on the FIRST write — an RMW writes it twice and the
          * halt must not re-arm on the second (antic_wsync, d5). */
         if (!a->wsync_halt) a->wsync_halt = 1;
-        else if (!WSYNC_RMW_ADJACENT || a->wsync_wr_at + 1 == a->cpu_acc)
+        else if (WSYNC_RMW_ADJ_CYCLE
+                     ? (a->wsync_wr_sl == a->scanline
+                        && a->wsync_wr_cyc + 1 == a->cycle)
+                     : (!WSYNC_RMW_ADJACENT || a->wsync_wr_at + 1 == a->cpu_acc))
             a->wsync_extra = WSYNC_RMW_EXTRA;
-        a->wsync_wr_at = a->cpu_acc;
+        a->wsync_wr_at  = a->cpu_acc;
+        a->wsync_wr_cyc = a->cycle;
+        a->wsync_wr_sl  = a->scanline;
         break;
     case 0x0E:
         a->nmien = val;
