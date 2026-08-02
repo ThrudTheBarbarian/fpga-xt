@@ -2854,3 +2854,39 @@ those constants.
 Do not re-derive the 4-cycle status lag: it is measured from the test's own two
 tables, and the probe confirms it end to end.  What is missing is what else was
 absorbing it.
+
+
+## pokey_timertiming's 16-bit HI loop: the bracket, and a disproved premise
+
+THE BRACKET, from the test itself (.lst 339-364).  STIMER at +0, IRQEN bit 1
+enabled at +12, then a delay and a read:
+
+    read at +22  must be $02  -- NOT fired
+    read at +23  must be $00  -- fired
+
+so the HI status must become readable at EXACTLY +23.  That agrees with the
+test's own 16-bit HI table (.lst ~628): AUDF1=13 gives 22c/23c.
+
+WHAT WE ACTUALLY DO, measured with ACID_PTPROBE (which prints at the raise, so
+add IRQST_LAG for the readable cycle):
+
+    T1 underflow  at +20
+    T2 pair-IRQ   at +26
+
+A DISPROVED PREMISE, recorded so it is not tried again.  Reasoning from the
+constants said the pair should underflow at 13 + LINK_FAST = +20 and that
+PAIR_IRQ_LAG = 3 would put its raise at +23 -- so the pair's lag looked like it
+should REPLACE the tap's IRQST_LAG rather than add to it (20 + 3 = 23 exactly).
+Implementing that keeps the suite at 50 with green gates, but the probe shows
+the pair-IRQ at +26, not +23: the pair path is adding SIX to the low half's
+underflow, not three.  The arithmetic that motivated the change does not
+describe what the code does, so the change was reverted rather than kept for
+landing on a plausible number.
+
+THE REAL QUESTION, for next time: where do those six cycles come from?  The low
+half underflows at +20 where locnt would predict 13 + 4 + LO_EXTRA(0) = 17, so
+the low half is already three late against its own formula, and the pair adds
+three more.  Find the first discrepancy (is the LO underflow really at 17, and
+is the pair's counter reloading from the same event?) before touching
+PAIR_IRQ_LAG again -- sweeping it moved nothing earlier, which already said the
+error is upstream of it.
