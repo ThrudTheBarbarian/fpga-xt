@@ -16,6 +16,15 @@
  * this is the exact set common to ALL 50 rows of the ACID table, and 9 per line
  * is 18 per two scanlines, which is precisely the budget cpu_illtiming states
  * ("228 cycles - 18 refresh cycles").  Two independent sources agreeing. */
+/* The Altirra-shaped playfield model — see "the Altirra-shaped model" below.
+ * Declared up here because antic_pf_start has to answer from the same window
+ * the schedule is built from. */
+#ifndef PF_SPEC_MODEL
+#define PF_SPEC_MODEL 1
+#endif
+static void spec_window(uint8_t mode, antic_width w, int scrolled, int hscrol,
+                        int *start, int *vend);
+
 #ifndef REFRESH_FIRST
 #define REFRESH_FIRST 25
 #endif
@@ -131,12 +140,14 @@ int antic_pf_nominal(antic_width w, int hscrol)
 /* Where the fetch stream begins, relative to the window.  Bitmap modes start
  * one cycle early; character modes issue a prefetch three cycles early on a
  * row's first line and otherwise sit on the window itself. */
+#if !PF_SPEC_MODEL
 static int pf_start(uint8_t mode, antic_width w, int first, int hscrol)
 {
     int nom = pf_nominal(w, hscrol);
     if (mode >= 8) return nom - 1;
     return first ? nom - 3 : nom;
 }
+#endif
 
 void antic_dma_line(uint8_t mode, antic_width width, int first_line,
                     int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES])
@@ -146,7 +157,20 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
 
 int antic_pf_start(uint8_t mode, antic_width w, int first, int hscrol)
 {
+#if PF_SPEC_MODEL
+    /* One window, one answer.  antic.c counts the bytes fetched before the
+     * window opens to work out how far the display lags the buffer, so it has
+     * to ask the SAME geometry the schedule was built from -- deriving it a
+     * second time from the old nominal put the boundary two cycles out on a
+     * wide row and shifted the whole line by a byte. */
+    int s = 0, e = 0;
+    (void)first;
+    spec_window((uint8_t)(mode & 0x0F), w, (mode & 0x10) != 0 || hscrol != 0,
+                hscrol, &s, &e);
+    return s;
+#else
     return pf_start(mode, w, first, hscrol);
+#endif
 }
 
 int antic_pf_grid(uint8_t mode, int first)
@@ -232,10 +256,6 @@ static void name_slot(int8_t *name_at, int c, int i, int chars)
  *
  * Re-implemented from the behaviour, not copied: Altirra is GPL and none of
  * its code is in this repo. */
-#ifndef PF_SPEC_MODEL
-#define PF_SPEC_MODEL 0
-#endif
-
 /* every 2, every 4 or every 8 cycles, by mode */
 static const uint8_t spec_rate[16] =
     { 0,0,3,3,3,3,2,2,1,1,2,2,2,3,3,3 };
@@ -277,8 +297,6 @@ static int spec_line(uint8_t mode_in, antic_width width, int first_line,
 
     memset(blocked, 0, ANTIC_LINE_CYCLES);
     if (name_at) memset(name_at, -1, ANTIC_LINE_CYCLES);
-    for (int i = 0, c = REFRESH_FIRST; i < REFRESH_COUNT; i++, c += REFRESH_STEP)
-        blocked[c] = 1;
     if (first_line) { blocked[1] = 1; blocked[6] = blocked[7] = 1; }
 
     /* TWO DIFFERENT THINGS, which the first cut of this conflated.
@@ -304,46 +322,105 @@ static int spec_line(uint8_t mode_in, antic_width width, int first_line,
         clock &= (uint8_t)~spec_clock[rate][vend & 7];
     }
 
+    /* A BITMAP row reads its bytes on the FIRST scanline of the row only; the
+     * remaining scanlines of a mode 8/9/10/11/13/14/15 row take no playfield
+     * DMA at all, which is why ACID's later-line rows for those modes are pure
+     * refresh.  A CHARACTER row re-reads the character DATA every line and the
+     * NAMES only on the first. */
+    int fetches = (mode < 8) || first_line;
+
     int idx = 0;
-    for (int c = 0; c < ANTIC_LINE_CYCLES; c++) {
-        /* Exclusive of the stop cycle for the stream generally -- making it
-         * inclusive breaks every later-line row -- but a first line takes ONE
-         * MORE name fetch, at vend itself.  That is the character PREFETCH:
-         * a row's first line reads one name beyond the data it will use, which
-         * is why ACID's first-line rows want a fetch at 90 on a narrow char
-         * window of 26..90 while its later-line rows stop at 88. */
-        int last = (mode < 8 && first_line) ? vend : vend - 1;
-        int in_window = step && c >= start && c <= last
-                     && ((c - start) % step) == 0;
-        int carried   = (clock & (1u << (c & 7))) != 0;
-        if (!in_window && !carried) continue;
-        int fetch = -1;
-        if (mode >= 8)            fetch = c + 2;
-        else if (first_line)      fetch = c;            /* name; data at c+3 */
-        else                      fetch = c + 3;        /* data only */
-        /* REFRESH HAS PRIORITY: a playfield fetch landing on a refresh slot
-         * slips one cycle.  That is what makes ACID's later-line rows read as
-         * triples -- 29 is the refresh, 30 the fetch it displaced, 31 the next
-         * fetch -- rather than an even stride. */
-        if (is_refresh(fetch)) fetch++;
-        if (fetch < ANTIC_LINE_CYCLES) {
-            /* cycles from PF_HBLANK_FIRST on still FETCH but steal nothing */
-            if (fetch < PF_HBLANK_FIRST) blocked[fetch] = 1;
-            if (name_at && idx < 128) name_at[fetch] = (int8_t)idx;
-            idx++;
+    if (step && fetches) {
+        for (int c = 0; c < ANTIC_LINE_CYCLES; c++) {
+            /* Half-open: the stop cycle itself does not fetch.  There is NO
+             * character prefetch -- an earlier reading of ACID saw a fetch at
+             * 90 on a narrow char first line and called it one, but that cycle
+             * is a REFRESH that slipped there, and the character windows are
+             * both exactly [start, vend). */
+            int in_window = c >= start && c < vend && ((c - start) % step) == 0;
+            int carried   = (clock & (1u << (c & 7))) != 0;
+            if (!in_window && !carried) continue;
+
+            /* The window start already carries the two-cycle offset that the
+             * bitmap modes need (28/20/12 against the character modes' 26/18/
+             * 10), so a bitmap byte is read ON its clock cycle, not two after
+             * it -- adding the +2 again double-counts and shifts every bitmap
+             * row late by two, which is exactly what ACID showed. */
+            int fetch = (mode >= 8 || first_line) ? c : c + 3;
+            if (fetch < ANTIC_LINE_CYCLES) {
+                /* cycles from PF_HBLANK_FIRST on still FETCH but steal nothing */
+                if (fetch < PF_HBLANK_FIRST) blocked[fetch] = 1;
+                /* name_at indexes bytes read from the PLAYFIELD SCAN ADDRESS.
+                 * A character row's later lines re-read only the GLYPH, from
+                 * the character base, replaying names out of the line buffer --
+                 * so they advance no scan address and take no index. */
+                /* name_at indexes bytes read from the PLAYFIELD SCAN ADDRESS.
+                 * A character row's later lines re-read only the GLYPH, from
+                 * the character base, replaying names out of the line buffer --
+                 * so they advance no scan address and take no index.  Anything
+                 * that wants the last DMA SLOT of such a line (the virtual-slot
+                 * rule) has to ask antic_pf_last, not this map. */
+                if (name_at && idx < 128 && (mode >= 8 || first_line))
+                    name_at[fetch] = (int8_t)idx;
+                idx++;
+            }
+            /* A character first line ALSO takes the character data three
+             * cycles later: the name window is [start, vend) and the data
+             * window is the same window shifted by three. */
+            if (mode < 8 && first_line) {
+                int d = c + 3;
+                if (d < ANTIC_LINE_CYCLES && d < PF_HBLANK_FIRST) blocked[d] = 1;
+            }
         }
-        /* ...and the prefetch reads a NAME only: no character data goes with
-         * the extra clock at vend, or the row takes a fetch at 93 that ACID
-         * does not have. */
-        if (mode < 8 && first_line && c < vend) {
-            int d = c + 3;
-            if (is_refresh(d)) d++;
-            if (d < ANTIC_LINE_CYCLES && d < PF_HBLANK_FIRST) blocked[d] = 1;
-        }
+    }
+
+    /* REFRESH IS THE LOWEST PRIORITY DMA -- the opposite of what the first cut
+     * of this assumed.  Nine slots every fourth cycle from 25; a slot the
+     * playfield has already taken slips forward one cycle at a time until it
+     * finds a free one, no later than 106.  And if it has not run by the time
+     * the NEXT slot falls due, that next slot is simply dropped -- refresh
+     * never queues up.  A fully saturated narrow mode 2 first line therefore
+     * takes exactly two refresh cycles, 25 and the one that slips into the
+     * single hole at 90, and loses the other seven.
+     *
+     * This is also what makes ACID's rows read as triples: 29 playfield, 30
+     * the refresh it displaced, 31 the next playfield. */
+    for (int i = 0, x = REFRESH_FIRST, r = REFRESH_FIRST - 1;
+         i < REFRESH_COUNT; i++, x += REFRESH_STEP) {
+        if (r >= x) continue;              /* still busy -- this slot is lost */
+        for (r = x; r < PF_HBLANK_FIRST + 1; r++)
+            if (!blocked[r]) { blocked[r] = 1; break; }
+        r++;                               /* the cycle after the one taken */
     }
 
     if (clock_io) *clock_io = (uint8_t)((clock << 6) | (clock >> 2));
     return 0;
+}
+
+/* The LAST playfield DMA slot of the line, and the buffer index it fills, or
+ * -1 if the line fetches nothing.  A character row's later lines take glyph
+ * slots that carry no scan-address index, so this cannot be recovered by
+ * scanning the name map -- and the virtual-slot rule needs exactly that slot. */
+int antic_pf_last(uint8_t mode, antic_width w, int first, int hscrol, int *idx)
+{
+    if (idx) *idx = -1;
+#if PF_SPEC_MODEL
+    uint8_t m = (uint8_t)(mode & 0x0F);
+    if (m < 2 || (m >= 8 && !first)) return -1;
+    int rate = spec_rate[m];
+    if (!rate) return -1;
+    int start = 0, vend = 0;
+    spec_window(m, w, (mode & 0x10) != 0 || hscrol != 0, hscrol, &start, &vend);
+    if (start >= vend) return -1;
+    int step = 8 >> (rate - 1);
+    int n    = (vend - 1 - start) / step;
+    int c    = start + step * n;
+    if (idx) *idx = n;
+    return (m < 8) ? c + 3 : c;
+#else
+    (void)mode; (void)w; (void)first; (void)hscrol;
+    return -1;
+#endif
 }
 
 static int build(uint8_t mode, antic_width width, int first_line, int hscrol,

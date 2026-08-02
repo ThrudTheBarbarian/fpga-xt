@@ -69,15 +69,16 @@ int main(int argc, char **argv)
          * a naive "first blocked cycle" finds refresh rather than the playfield
          * whenever the window starts after 25. */
         int fn = first_fetch(n), fm = first_fetch(m), fw = first_fetch(w);
-        /* narrow->normal is 8, and THAT one the table proves: antic_dmapattern
-         * tabulates both widths.  normal->wide is NOT 8, and the 8 that used to
-         * be asserted here was a derivation by symmetry, not a measurement —
-         * the table has no wide rows at all.  antic_virtdma measures it, from
-         * two independent sides: it puts colour clock $da on the first pixel of
-         * the character its missiles read, and it puts a row's later-line glyph
-         * slots exactly where the map in its own comment has them.  Six. */
+        /* Both steps are 8, and BOTH windows are involved -- which is what the
+         * 6 that used to be asserted here was really about.  The FETCH window
+         * starts at 26/18/10 (28/20/12 for the bitmap modes), so each DMACTL
+         * width step moves the fetch by 8; the DISPLAY window starts at
+         * 32/24/22, so narrow->normal moves the picture by 8 but normal->wide
+         * moves it by only 2.  first_fetch() measures the FETCH window, so 8
+         * is the right answer on both steps.  antic_virtdma's six came from
+         * reading a display-side observation as a fetch-side one. */
         if (fn - fm != 8) { printf("  FAIL width step: narrow-normal = %d, want 8\n", fn - fm); extra++; }
-        if (fm - fw != 6) { printf("  FAIL width step: normal-wide  = %d, want 6\n", fm - fw); extra++; }
+        if (fm - fw != 8) { printf("  FAIL width step: normal-wide  = %d, want 8\n", fm - fw); extra++; }
 
         /* Both rows SCROLLED (mode bit 4), so this measures HSCROL alone.  A
          * scrolled row runs the next width up, so comparing an unscrolled
@@ -87,9 +88,13 @@ int main(int argc, char **argv)
         antic_dma_line(8 | 0x10, ANTIC_NORMAL, 1, 0, h0);
         antic_dma_line(8 | 0x10, ANTIC_NORMAL, 1, 8, h8);
         int a = first_fetch(h0), b = first_fetch(h8);
-        if (a - b != 4) { printf("  FAIL hscrol=8 shift: %d cycles, want 4\n", a - b); extra++; }
+        /* HSCROL DELAYS the fetch: the window start takes += (HSCROL & 14) >> 1,
+         * so HSCROL=8 starts FOUR CYCLES LATER and a - b is -4.  The +4 that
+         * used to be asserted here had the sign of the derivation backwards --
+         * scrolling the picture right is done by fetching later, not earlier. */
+        if (a - b != -4) { printf("  FAIL hscrol=8 shift: %d cycles, want -4\n", a - b); extra++; }
     }
-    if (!extra) printf("dma: window derivation ok (width step 8 narrow->normal, 6 normal->wide, HSCROL half-cycle per clock)\n");
+    if (!extra) printf("dma: window derivation ok (fetch window steps 8 per DMACTL width, HSCROL delays it half a cycle per colour clock)\n");
 
     printf("dma: %d/%d ACID800 DMA rows match\n", pass, ACID_DMA_NROWS);
     return (pass == ACID_DMA_NROWS && !extra) ? 0 : 1;

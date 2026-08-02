@@ -72,6 +72,11 @@ int antic_pf_start(uint8_t mode, antic_width w, int first, int hscrol);
  * LAST fetch the window could still schedule would land. */
 int antic_pf_grid(uint8_t mode, int first);
 
+/* The line's LAST playfield DMA slot and the buffer index it fills (-1 if the
+ * line fetches nothing).  Not recoverable from name_at: a character row's later
+ * lines fetch glyphs, which take no scan-address index. */
+int antic_pf_last(uint8_t mode, antic_width w, int first, int hscrol, int *idx);
+
 /* The same schedule with the grid PINNED to `nom_start` while the stream still
  * ends where `width`'s own last fetch cycle is (-1 = derive both, i.e. plain
  * antic_dma_line_map).  ANTIC commits the START of the fetch a cycle or two

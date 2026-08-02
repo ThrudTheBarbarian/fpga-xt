@@ -444,9 +444,10 @@ static void line_start(antic *a)
          * has to skip them.  That is antic_hscrolbug's "shifted left by 17
          * bytes": the bytes go into the buffer, the window shows the ones
          * after them. */
-        int wnom = antic_pf_nominal_s(width_of(a->dmactl), hscrol_of(a),
-                                      scrolled_of(a));
-        int wstart = (mode >= 8) ? wnom - 1 : (a->row_first ? wnom - 3 : wnom);
+        /* From the SAME window the schedule was built from -- deriving it a
+         * second time here is how the two came to disagree. */
+        int wstart = antic_pf_start(dma_mode(a, mode), width_of(a->dmactl),
+                                    a->row_first, hscrol_of(a));
         int skipped = 0;
         for (int c = 0; c < wstart && c < ANTIC_LINE_CYCLES; c++)
             if (a->pf_at[c] >= 0) skipped++;
@@ -466,10 +467,10 @@ static void line_start(antic *a)
          * because a wide scrolled row asks for one more byte than the row has
          * — the geometry antic_virtdma runs. */
         if (VIRT_DMA && width_of(a->dmactl) == ANTIC_WIDE) {
-            for (int c = ANTIC_LINE_CYCLES - 1; c >= 0; c--)
-                if (a->pf_at[c] >= 0) {
-                    a->virt_cyc = c; a->virt_idx = (uint8_t)a->pf_at[c]; break;
-                }
+            int vi = -1;
+            int vc = antic_pf_last(dma_mode(a, mode), width_of(a->dmactl),
+                                   a->row_first, hscrol_of(a), &vi);
+            if (vc >= 0 && vi >= 0) { a->virt_cyc = vc; a->virt_idx = (uint8_t)vi; }
             /* A row's LATER lines have no name fetches at all — the map's `b`
              * variant is glyph slots only — so the virtual slot has to be found
              * from those instead.  Refresh is long finished by then, so the
