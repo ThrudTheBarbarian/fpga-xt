@@ -93,6 +93,8 @@ typedef struct {
     uint8_t  lo_age[2];            /* cycles since the low half reloaded */
     uint8_t  ch_age[4];            /* cycles since an UNLINKED channel reloaded */
     uint8_t  ch_first[4];          /* still in the FIRST period after STIMER */
+    int      tt_resync;            /* ticks until timer 2's two-tone resync
+                                    * reaches timer 1 -- see TWOTONE_RESYNC */
     uint8_t  st_armed[8];          /* was this in-flight status bit ENABLED at any
                                     * point during its flight?  An enable arms
                                     * one; a disable never disarms it */

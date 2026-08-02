@@ -106,6 +106,21 @@ static uint8_t af(const pokey_timer *p, int ch)
 #define TWOTONE_EXTRA 2
 #endif
 
+/* IN TWO-TONE, TIMER 2'S UNDERFLOW RESYNCS TIMER 1 -- and the reset arrives TWO
+ * cycles behind it.  pokey_timertiming's last section schedules timer 1 one,
+ * two and three cycles after timer 2 (AUDF1 98/99/100 against AUDF2 3 on the
+ * 64 kHz clock) and requires timer 1 to FIRE at +1 and to be CANCELLED at both
+ * +2 and +3.  A reset landing with the underflow would cancel all three; one
+ * landing two cycles later cancels exactly the last two, provided it is applied
+ * before that tick's decrement.
+ *
+ * Note the third sub-test's failure string reads "did not fire at +3c" while
+ * its assertion requires A == 1, which is timer 1 NOT fired.  The assertion is
+ * the authority; the string is the author's earlier intent. */
+#ifndef TWOTONE_RESYNC
+#define TWOTONE_RESYNC 2
+#endif
+
 static int period_of(const pokey_timer *p, int ch)
 {
     /* The divider reloads with AUDF+1 of its input ticks — except off the 1.79
@@ -361,6 +376,7 @@ void pokey_timer_reset(pokey_timer *p)
     p->lo_age[0] = p->lo_age[1] = 0;
     for (int i = 0; i < 4; i++) p->ch_age[i] = p->ch_first[i] = 0;
     for (int i = 0; i < 8; i++) p->st_armed[i] = 0;
+    p->tt_resync = 0;
     p->ticks = p->stimer_at = 0;
     for (int i = 0; i < 4; i++) { p->audf[i] = 0; p->cnt[i] = 1; }
     p->audctl = 0;
@@ -520,6 +536,14 @@ static void ser_tick(pokey_timer *p)
  * (always 1) — and an idle line sits at mark. */
 static int ser_out_bit(const pokey_timer *p)
 {
+    /* FORCE BREAK (SKCTL bit 7) drives the output to SPACE, and in two-tone
+     * that is what decides which timer runs: with the bit at 0 timer 2 is not
+     * held, which is exactly how pokey_timertiming's last two sections describe
+     * themselves -- "with force break activated (resync 1+2 triggered only by
+     * timer 2)".  Without this, SKCTL $8B left the line idle-MARK, timer2_held()
+     * held timer 2 for ever and it never underflowed at all: the probe shows
+     * only T1 and T4 events across the whole section. */
+    if (p->skctl & 0x80) return 0;             /* force break: space */
     if (!p->ser_bits) return 1;                /* idle: mark */
     int i = (20 - p->ser_bits) / 2;
     if (i == 0) return 0;                      /* start bit */
@@ -561,6 +585,8 @@ static void underflow(pokey_timer *p, int ch)
      * the LOW one -- so that is the first-period flag to clear. */
     p->ch_first[ch] = 0;
     if (ch == 1 && (p->audctl & 0x10)) p->ch_first[0] = 0;
+    /* Timer 2 underflowing in two-tone resyncs timer 1, after a delay. */
+    if (ch == 1 && (p->skctl & 0x08)) p->tt_resync = TWOTONE_RESYNC;
     if (ch == 3 && (p->audctl & 0x08)) p->ch_first[2] = 0;
 
     if (ch == ser_clock_ch(p)) ser_tick(p);
@@ -755,6 +781,9 @@ void pokey_timer_tick(pokey_timer *p)
             p->lo_age[0]++;
         }
     }
+    /* BEFORE the decrement: a resync landing on the same tick as timer 1's
+     * underflow must cancel it, which is the +2 sub-test. */
+    if (p->tt_resync && --p->tt_resync == 0) reload(p, 0);
     if (fast1 && --p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
     if (!held34 && fast3 && --p->cnt[2] <= 0) underflow(p, linked3 ? 3 : 2);
 
