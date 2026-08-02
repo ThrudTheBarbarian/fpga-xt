@@ -209,13 +209,32 @@
  * So this is not a modelling error to be argued away -- the hardware really
  * does both, and the annotations in the two tests are each correct.
  *
- * WHAT IS STILL UNMEASURED, and is the next thing to run: antic_dmapattern's
- * $2359.  Its own fetch is HALTED (the `sta wsync` at $2356 writes at line 107,
- * after the release, so it arms a fresh halt), it resumes at 105, and its two
- * writes land at lines 108 and 109.  antic_wsync's inc was NOT halted at its
- * fetch; pmresize's was not either.  If Altirra shows $235C starting at 105
- * rather than 104, then what distinguishes the cases is whether the RMW ITSELF
- * ran out of a WSYNC release -- which is a mechanism, not a position. */
+ * antic_dmapattern's $2359 is now traced on Altirra too, and it CONFIRMS the
+ * one structural difference.  Calibrated inside its own run (offset +22, cross-
+ * checked against three independent instructions), profileDelay1 runs:
+ *
+ *   $2347 sta wsync   line  20, not halted, writes at 23 -> arms
+ *   $234A ldx random  line  24, HALTED at its fetch, resumes 105/106/107
+ *   $234D sta wsync   line 108, not halted, writes at 111 -> arms
+ *   $2350 ldy random  line 112, HALTED, resumes 105/106/107
+ *   $2353 sta wsync   line 108, writes at 111 -> arms
+ *   $2356 sta wsync   line 112, HALTED, resumes 105/106/107, writes at 107 --
+ *                     AFTER the release, so this one arms a FRESH halt
+ *   $2359 inc wsync   line 108, HALTED AT ITS OWN FETCH
+ *
+ * That is the difference: antic_wsync's inc ran unhalted from line 111, and
+ * pmresize's ran unhalted from line 26.  Only dmapattern's is itself waiting on
+ * /RDY when it starts.  So the candidate rule is "an RMW that came out of a
+ * WSYNC release re-arms; one that did not, does not" -- a mechanism rather than
+ * a position in the line, and the first predicate here that is not curve-fitted.
+ *
+ * NOT YET PROVEN, and the gap is worth stating precisely: $235C is recorded 225
+ * cycles after $2359.  111 (halt to line 105) + 5 (the inc's remaining cycles)
+ * + 109 (a second halt, released at 105) accounts for it EXACTLY, which reads as
+ * the extra -- but only if Altirra timestamps a halted instruction at its
+ * RESUMED cycle, whereas $234A above is plainly timestamped at its ATTEMPTED
+ * fetch.  One of those two readings is wrong.  Settle it by tracing an
+ * instruction that is definitely NOT halted immediately after the jmp lands. */
 #ifndef WSYNC_RMW_EARLY
 #define WSYNC_RMW_EARLY 0
 #endif
