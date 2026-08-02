@@ -912,6 +912,26 @@ Two register-semantics bugs fell out of the same test:
   bitmap row would fetch nothing anyway; the row bookkeeping has to be got right
   before that flag means much.
 
+### BROKEN TOOL: ACID_PCWATCH reports zero hits for everything
+
+`ACID_PCWATCH=<hex>` prints `[pc %04X] line %d cycle %d` when the CPU reaches an
+address. It reports **zero hits for addresses the test provably executes** —
+including `$2000`, which is the module's own `main`, and `$2140`, the very
+assertion whose failure message the run prints. Checked against six addresses;
+all zero.
+
+The check in `test/acid.c` looks unconditional inside the run loop, so the cause
+is not obvious from reading it. Until it is fixed, DO NOT USE IT and do not
+believe a negative result from it: a probe that silently answers "never happens"
+for everything is worse than no probe, because it reads as evidence. This one was
+in the recommended tool list for many iterations.
+
+`ACID_PFPROBE`, `ACID_COLPROBE`, `ACID_GLYPHPROBE` and `ACID_BUSTRACE` have all
+produced correct, cross-checked output this session and are trustworthy; the
+hand-rolled `fprintf` recipe (probe at the top of `line_start`, print enough to
+identify which line's state you are seeing) is what actually cracked the
+run-on mechanism.
+
 ### PARKED: antic_hscrolbug's test #2
 
 Its second case reads ALL ZEROS where it wants `d0..d3 = 02 00 04 04`. The
