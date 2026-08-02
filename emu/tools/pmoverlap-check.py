@@ -100,9 +100,25 @@ def m_union_realign(width, Y, write_cc):
     Y mod width — the running emission's boundaries shift to line up with the
     newly written position while its bit counter keeps counting.
 
-    Residual 12: pass 3 sp $78 at Y $7d..$7f (we light, hardware does not) and
-    pass 7 sp $6c at odd Y (we light one clock too many).  Both are us lighting
-    MORE than hardware, so whatever is missing SUPPRESSES rather than adds."""
+    Residual 12, DECODED from the 4-bit missile patterns rather than described:
+    pass 7 (width 2) sp $6c at odd Y wants 3 = lit at $6e,$6f and we give 6 =
+    lit at $6d,$6e -- a boundary ONE COLOUR CLOCK EARLY, not one clock too many.
+    Pass 3 (width 4) sp $78 at Y $7d..$7f wants nothing lit there and we light a
+    tail, which is the OLD emission's last pixel realigned where hardware leaves
+    it alone.
+
+    NARROWED: only 2 of the 12 passes fail, and each at only ONE of its two
+    missile phases -- pass 3 at sp $78, pass 7 at sp $6c.  Every SIZEP-0 pass
+    passes, so it is a width>1 effect, and it is specific to where the emission
+    boundary falls rather than general.
+
+    DISPROVED as the cause: a global off-by-one in the realign amount.  Sweeping
+    the offset -2..+2 gives 616, 606, [660], 606, 616 -- symmetric and worse
+    either way, so the alignment is right at 0 and the error is upstream of it.
+
+    Also DISPROVED: realign_capped (a run may not outlast start + 8*width)
+    scored 660 on the IDENTICAL 12 cells, so a length cap is a no-op here and
+    the residual is not a run ending late.  Removed rather than kept."""
     em, lit = [], set()
     for cc in range(0x50, 0xB0):
         hp = 0x60 if cc < write_cc else Y
@@ -122,12 +138,11 @@ def m_union_realign(width, Y, write_cc):
     return lit
 
 
-@_reg("realign_capped")
-def m_realign_capped(width, Y, write_cc):
-    """union_realign, but an emission stops at its ORIGINAL end -- start plus
-    eight pixel-widths -- so the re-align may move its internal boundaries but
-    cannot lengthen the run.  Tests the residual's shape directly: "we light
-    one clock too many" is a run ending one clock late, not a whole extra run."""
+@_reg("realign_off_m2")
+def m_realign_off_m2(width, Y, write_cc):
+    """union_realign with the realign amount shifted by -2.  The residual is a
+    boundary ONE CLOCK out (pass 7 wants $6e,$6f and we give $6d,$6e), so the
+    alignment offset is the single parameter that could produce it."""
     em, lit = [], set()
     for cc in range(0x50, 0xB0):
         hp = 0x60 if cc < write_cc else Y
@@ -136,14 +151,84 @@ def m_realign_capped(width, Y, write_cc):
             if e[1] >= width:
                 e[1], e[0] = 0, e[0] + 1
         if cc == write_cc:
-            d = (Y - cc) % width or width
+            d = (Y - cc + (-2)) % width or width
             for e in em:
                 e[1] = width - d
         if cc == hp:
-            em.append([0, 0, cc])
+            em.append([0, 0])
         for e in em:
-            if cc >= e[2] + 8 * width:
-                continue
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_off_m1")
+def m_realign_off_m1(width, Y, write_cc):
+    """union_realign with the realign amount shifted by -1.  The residual is a
+    boundary ONE CLOCK out (pass 7 wants $6e,$6f and we give $6d,$6e), so the
+    alignment offset is the single parameter that could produce it."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc + (-1)) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_off_p1")
+def m_realign_off_p1(width, Y, write_cc):
+    """union_realign with the realign amount shifted by 1.  The residual is a
+    boundary ONE CLOCK out (pass 7 wants $6e,$6f and we give $6d,$6e), so the
+    alignment offset is the single parameter that could produce it."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc + (1)) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_off_p2")
+def m_realign_off_p2(width, Y, write_cc):
+    """union_realign with the realign amount shifted by 2.  The residual is a
+    boundary ONE CLOCK out (pass 7 wants $6e,$6f and we give $6d,$6e), so the
+    alignment offset is the single parameter that could produce it."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc + (2)) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
             if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
                 lit.add(cc)
     return lit
