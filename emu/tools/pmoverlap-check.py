@@ -138,6 +138,89 @@ def m_union_realign(width, Y, write_cc):
     return lit
 
 
+@_reg("realign_polarity")
+def m_realign_polarity(width, Y, write_cc):
+    """union_realign with the realigned phase set to d rather than width - d.
+
+    Distinct from the offset sweep in union_realign's docstring: that shifted
+    the alignment POINT by a constant, which is symmetric.  This flips which
+    side of the boundary the phase lands on, which is not."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = d % width
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_not_last")
+def m_realign_not_last(width, Y, write_cc):
+    """union_realign, except an emission already on its LAST bit is NOT
+    realigned.  union_realign's own docstring names this as the shape of the
+    pass 3 residual -- "the OLD emission's last pixel realigned where hardware
+    leaves it alone" -- so it is the hypothesis that text was pointing at."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                if e[0] < 7:
+                    e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("hpos_late2")
+def m_hpos_late2(width, Y, write_cc):
+    """union_realign, but the HPOS write takes effect TWO COLOUR CLOCKS LATER
+    than a size/graphics write issued on the same cycle.
+
+    Measured from Altirra (gtia.cpp ~3340-3363), not guessed: HPOSP/HPOSM are
+    scheduled at xpos + 5 while SIZEP/SIZEM/GRAFP/GRAFM go at xpos + 3, and xpos
+    is in colour clocks.  The docstring above records that sweeping the realign
+    offset globally is symmetric and worse either way -- but that sweep moved
+    the realign AND the position switch together.  This moves only the
+    position-driven half, which is what the hardware actually does."""
+    em, lit = [], set()
+    hpos_cc = write_cc + 2
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < hpos_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == hpos_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
 @_reg("realign_off_m2")
 def m_realign_off_m2(width, Y, write_cc):
     """union_realign with the realign amount shifted by -2.  The residual is a
