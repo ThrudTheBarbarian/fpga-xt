@@ -947,6 +947,18 @@ Nine. For a restore at cycle 28 — a line that is normal-width for 85 of its 11
 cycles. The curve is non-monotonic and dips far below the narrow total, so this
 is a real defect in the mid-line rebuild, not a boundary being a cycle out.
 
+DISPROVED as the cause: "the window is a LEVEL the counter can already be
+inside". Modelling that — when a mid-line write moves the window's start to
+before the write cycle, begin fetching at once rather than never — changes the
+curve NOT AT ALL, because in the failing region `rebuild_line` already finds a
+running phase: the old NARROW window opens at cycle 26, before the restore at
+28, so the "no start was ever reached" branch is never taken. Reverted.
+
+That is itself informative. The stream IS running and IS re-phased correctly at
+the restore; something downstream still cuts it to 9. The next step is to
+instrument `build()` for ONE case — narrow at 13, restore at 28 — and print
+which loop bound terminates it: `stop`, `pstop`, `left`, or `chars`.
+
 It explains the test exactly. Measured write positions:
 
 | | narrow write | restore | our fetches | wanted |
