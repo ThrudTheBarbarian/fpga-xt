@@ -115,15 +115,20 @@ static int period_of(const pokey_timer *p, int ch)
  * the delay could not have mattered. */
 /* How long the low half's reload value stays open to a late AUDF write, in
  * cycles after the underflow.  Measured, not chosen -- see audf_prime. */
+/* A linked pair's INTERRUPT edge runs its own divider beside the counter its
+ * SERIAL clock uses -- see underflow() and the STIMER case.  The two constants
+ * say the first period after STIMER is AUDF + 5 and every period after it is
+ * AUDF + 7, and AUDF + 7 is AUDF + LINK_FAST, the SAME period the serial edge
+ * runs: only the FIRST period differs between the two edges. */
 #ifndef PAIR_FIRST_IRQ
-#define PAIR_FIRST_IRQ 0
+#define PAIR_FIRST_IRQ 1
 #endif
 #ifndef PAIR_FIRST_ADD
-#define PAIR_FIRST_ADD 4
+#define PAIR_FIRST_ADD 5
 #endif
 
 #ifndef PAIR_REARM_ADD
-#define PAIR_REARM_ADD 6
+#define PAIR_REARM_ADD 7
 #endif
 
 #ifndef STIMER_PAIR_ADD
@@ -532,7 +537,23 @@ void pokey_timer_tick(pokey_timer *p)
     int linked3 = (p->audctl & 0x08) != 0;
 
     int held34  = timer34_held(p);
-    if (held34) { reload(p, 2); reload(p, 3); }
+    if (held34) {
+        reload(p, 2); reload(p, 3);
+        /* The pair's INTERRUPT divider is held in reset by async receive too.
+         * It is a second divider on the same pair, not a bookkeeping variable:
+         * pokey_asyncrecv's skiptest is a RESET test, not a period test -- it
+         * turns the mode on at stimer+6 lines and off at +8, then requires the
+         * next interrupt a full 4-line period later at +12 rather than at +8
+         * where the uninterrupted count would have put it.  Holding cnt[] and
+         * letting this one free-run fires at +8 and trips sub-case 3, which is
+         * exactly how PAIR_FIRST_IRQ cost this test while passing both of
+         * pokey_timertiming's 16-bit HI loops. */
+        if (PAIR_FIRST_IRQ && p->hi_first_armed[1]) {
+            p->hi_first[1] = ((p->audf[3] << 8) | p->audf[2]) + PAIR_REARM_ADD;
+            p->hi_skip[1]  = 0;
+            p->hi_lag[1]   = 0;
+        }
+    }
 
     if (LINK_TWO_COUNTERS && linked1 && fast1) {
         if (LO_UPCOUNT) {
@@ -652,8 +673,15 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         if (PAIR_FIRST_IRQ) {
             for (int i = 0; i < 2; i++) {
                 int linked = (i == 0) ? (p->audctl & 0x10) : (p->audctl & 0x08);
+                /* The one-shot counts MACHINE cycles, so it models the 1.79 MHz
+                 * tap and nothing else.  A pair clocked off the 64 kHz base
+                 * divider still gets its interrupt from cnt[], which counts BASE
+                 * ticks: arming this for it fires after AUDF machine cycles
+                 * instead of AUDF*28, which is what the ptimer gate's
+                 * "linked 1+2 counts 16 bits" caught (262 against 7168). */
+                int fast   = (i == 0) ? (p->audctl & 0x40) : (p->audctl & 0x20);
                 p->hi_first_armed[i] = 0; p->hi_skip[i] = 0;
-                if (linked) {
+                if (linked && fast) {
                     p->hi_first[i] = ((p->audf[2 * i + 1] << 8) | p->audf[2 * i])
                                    + PAIR_FIRST_ADD;
                     p->hi_first_armed[i] = 1;
