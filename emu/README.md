@@ -912,6 +912,47 @@ Two register-semantics bugs fell out of the same test:
   bitmap row would fetch nothing anyway; the row bookkeeping has to be got right
   before that flag means much.
 
+### THE RIGHT SHAPE, from Altirra: playfield DMA is a PHASE MASK
+
+Every "dead end" recorded below was a consequence of one architectural mistake,
+found by reading Altirra's `antic.cpp` (it passes ACID800, so it is the
+authority on Avery Lee's own suite). We build a per-line MAP of fetch cycles.
+Altirra keeps an 8-bit **CLOCK PATTERN MASK**:
+
+```
+rate 1 (every 8 cycles):  0x01 0x02 0x04 0x08 0x10 0x20 0x40 0x80   indexed by phase
+rate 2 (every 4 cycles):  0x11 0x22 0x44 0x88 0x11 0x22 0x44 0x88
+rate 3 (every 2 cycles):  0x55 0xAA 0x55 0xAA 0x55 0xAA 0x55 0xAA
+```
+
+Bit k set means "fetch on every cycle congruent to k mod 8". Then:
+
+* **start**: `pattern |= kClockPattern[rate][start & 7]`
+* **end**: `pattern &= ~kClockPattern[rate][vend & 7]`
+* **per scanline**: `pattern = (pattern << 6) | (pattern >> 2)` — rotate by two,
+  because 114 cycles is not divisible by 8.
+
+Three things we have been chasing separately fall out of this for free:
+
+1. **The missable stop.** If HSCROL moves the end to a phase whose bit is not
+   the one that is set, the AND clears NOTHING and the pattern keeps running.
+   That is `antic_hscrolbug`'s "abnormal DMA" exactly — and Altirra names it
+   that, in `mAbnormalDMAPattern`.
+2. **The cross-line carry.** The mask simply persists, rotated. No `pf_carry`
+   bookkeeping needed.
+3. **Mid-line DMACTL changes.** Start and end are independent OR/AND
+   operations on a live mask, so a narrow-then-normal line cannot lose fetches;
+   our truncation-below-both-widths bug is structurally impossible.
+
+Altirra also carries `mEndingDMAPattern` for a related case: IR modes 8 and 9
+cannot themselves trigger the bug, modes 6/7/A/B/C trigger it via HSCROL 14-15,
+and modes 2/3/4/5/D/E/F via HSCROL 12-15.
+
+**This supersedes the per-line map in `antic_dma.c`.** The parked items below
+are not dead ends; they are symptoms of building a map where the hardware keeps
+a phase mask. Re-implementing on the mask is the work. (Understanding only —
+Altirra is GPL and no code from it goes in this repo.)
+
 ### RETRACTED: ACID_PCWATCH is NOT broken — the binary was missing
 
 An earlier revision of this file claimed `ACID_PCWATCH` reported zero hits for
