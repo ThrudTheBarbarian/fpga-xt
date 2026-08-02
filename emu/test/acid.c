@@ -243,6 +243,14 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     s.ram[0xE490] = 0xA0; s.ram[0xE491] = 0x01;      /* LDY #1  (success)      */
     s.ram[0xE492] = 0x60;                            /* RTS                    */
     s.ram[0x0346] = 0x8F; s.ram[0x0347] = 0xE4;      /* ICPTL/H = $E490 - 1    */
+    /* The OS ENTRY POINTS have to reach ROM too, and only once they EXIST —
+     * the $FF00 mirror above runs before these are written, so copying there
+     * would copy zeros.  Without this they are invisible the moment a test
+     * leaves the OS ROM enabled: `jsr dskinv` reads $E453 from rom_os, finds a
+     * zero, and BRK-walks through the vector table until it falls out the far
+     * end.  That is exactly how pokey_skstat and pokey_serdirect died — not a
+     * POKEY bug, and not the interrupt storm the $FF20/$FF40 spins suggested. */
+    memcpy(&s.rom_os[0xE400 - 0xC000], &s.ram[0xE400], 0x100);
     /* and POKEY itself: a booted OS has already taken the poly counters OUT of
      * init.  antic_dmapattern never writes SKCTL at all — the library call that
      * would is on a path it does not take — so left at the hardware reset value
@@ -277,7 +285,14 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
              * runner's own stubs.  Deriving it from the load map rather than
              * hardcoding a range is what makes this usable on any test. */
             int inside = loaded[pc] || (pc >= 0xFF00 && pc <= 0xFF4F)
-                                    || (pc >= 0xE453 && pc <= 0xE488);
+                                    /* only the OS entry points the runner
+                                     * actually FILLS: $E453/$E456/$E459 are
+                                     * JMP $E480 and $E480+ is the nodev stub.
+                                     * Everything between is zeroed, so calling
+                                     * it BRK-walks; counting that as "inside"
+                                     * hid the entry and reported the exit. */
+                                    || (pc >= 0xE453 && pc <= 0xE45B)
+                                    || (pc >= 0xE480 && pc <= 0xE493);
             if (!inside) {
                 trapped = 1;
                 int n = hcount < 40 ? hcount : 40;
