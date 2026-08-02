@@ -944,6 +944,44 @@ reports zero fetches only because a bitmap mode's `stride_rest` is 0 and
 one iteration, on a probe that had not printed enough columns to say which
 line's state it was showing.
 
+### The trio MOVED: pfstarttiming and pfstoptiming now fail elsewhere
+
+Worth re-reading a failure before trusting any summary of it. Both tests used to
+fail on their HSCROL assertions — the "one byte per one cycle of write delay"
+boundary tabulated below. The run-on rework carried them PAST those, and they
+now fail on their **character-mode DMACTL** assertions instead:
+
+| test | assertion | want | got |
+|---|---|---|---|
+| `pfstarttiming` | DMACTL early | 16 | 16 ✓ |
+| `pfstarttiming` | DMACTL **late** | 18 | 12 |
+| `pfstoptiming` | DMACTL **early** | 18 | 16 |
+| `pfstoptiming` | DMACTL late | 16 | — |
+
+Both now want **18**, the hybrid count belonging to neither width, and both are
+SHORT — so the missing mechanism ADDS.
+
+`PF_PIN_COMPARATOR` brackets the answer from opposite sides, which is the
+interesting part:
+
+| | pfstarttiming late | pfstoptiming early |
+|---|---|---|
+| comparator ON (1) | 12 | 16 |
+| comparator OFF (0) | 15 | 20 |
+| wanted | 18 | 18 |
+
+With it off the STOP test overshoots (20) while the START test still undershoots
+(15). No single setting satisfies both — rule (q), two tests forcing
+incompatible values out of one constant means the shape is wrong.
+
+DISPROVED: an additive adjustment on the pinned stream's stop. Swept 0..8 on
+BOTH the shared bound and the character-mode branch's own separate `pstop`
+(which is a distinct expression — adjusting only the shared one does nothing at
+all for these two tests, and that flat curve was nearly mistaken for a result).
+The response saturates: `pfstarttiming` moves 12 -> 13 and stops, `pfstoptiming`
+never moves. So the count is bounded upstream of the stop, in the pair branch's
+own byte budget, and the knob was reverted.
+
 ### Still open: the last HSCROL cycle, and antic_hscrolbug
 
 What remains is a **one byte per one cycle of write delay** boundary, and both
