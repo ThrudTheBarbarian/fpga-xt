@@ -115,6 +115,17 @@ static int period_of(const pokey_timer *p, int ch)
  * the delay could not have mattered. */
 /* How long the low half's reload value stays open to a late AUDF write, in
  * cycles after the underflow.  Measured, not chosen -- see audf_prime. */
+#ifndef PAIR_FIRST_IRQ
+#define PAIR_FIRST_IRQ 0
+#endif
+#ifndef PAIR_FIRST_ADD
+#define PAIR_FIRST_ADD 4
+#endif
+
+#ifndef PAIR_REARM_ADD
+#define PAIR_REARM_ADD 6
+#endif
+
 #ifndef STIMER_PAIR_ADD
 #define STIMER_PAIR_ADD 0
 #endif
@@ -195,6 +206,9 @@ void pokey_timer_reset(pokey_timer *p)
      * (which is what the ptimer gate uses, where the ACID harness has a zeroed
      * static) otherwise starts with garbage ages that fire a latch immediately
      * and garbage countdowns that clear IRQST bits nothing ever set. */
+    p->hi_first[0] = p->hi_first[1] = 0;
+    p->hi_first_armed[0] = p->hi_first_armed[1] = 0;
+    p->hi_skip[0] = p->hi_skip[1] = 0;
     for (int i = 0; i < 8; i++) p->st_lag[i] = 0;
     p->hi_age[0] = p->hi_age[1] = 0;
     p->lo_age[0] = p->lo_age[1] = 0;
@@ -398,6 +412,10 @@ static void underflow(pokey_timer *p, int ch)
      * lag, which is where the STIMER first-period extra lives for the pair. */
     int pair   = (ch == 1) ? 0 : 1;
     int linked = (ch == 1) ? (p->audctl & 0x10) : (p->audctl & 0x08);
+    if (PAIR_FIRST_IRQ && linked && p->hi_skip[pair]) {
+        p->hi_skip[pair] = 0;      /* the one-shot already raised this one */
+        return;
+    }
     if (PAIR_IRQ_LAG && linked && (ch == 1 || ch == 3)) {
         p->hi_lag[pair] = PAIR_IRQ_LAG;
         return;
@@ -465,6 +483,18 @@ void pokey_timer_tick(pokey_timer *p)
                 fprintf(stderr, "    -> IRQST bit %d readable at +%llu\n", i,
                         (unsigned long long)(p->ticks - p->stimer_at));
         }
+    if (PAIR_FIRST_IRQ)
+        for (int i = 0; i < 2; i++)
+            if (p->hi_first_armed[i] && --p->hi_first[i] <= 0) {
+                /* ...and it RE-ARMS: the interrupt edge runs its own divider
+                 * for every period, not just the first.  Covering only the
+                 * first period passes the 16-bit HI loop #1 and then fails
+                 * loop #2 late, which is the same gap one period further on. */
+                p->hi_first[i] = ((p->audf[2 * i + 1] << 8) | p->audf[2 * i])
+                               + PAIR_REARM_ADD;
+                p->hi_skip[i] = 1;
+                p->hi_lag[i] = PAIR_IRQ_LAG;
+            }
     if (p->hi_age[0] < 255) p->hi_age[0]++;
     if (p->hi_age[1] < 255) p->hi_age[1]++;
     if (p->init) return;                       /* held in init */
@@ -612,6 +642,24 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
             fprintf(stderr, "    STIMER loads cnt[0]=%d locnt[0]=%d\n",
                     p->cnt[0], p->locnt[0]);
         p->hi_lag[0] = p->hi_lag[1] = 0;
+        /* THE PAIR'S FIRST INTERRUPT AFTER STIMER GETS ITS OWN COUNTDOWN.
+         * Its counter is shared with the SERIAL clock, and the two edges are
+         * not the same event: pokey_sertiming wants the serial tick at
+         * AUDF + LINK_FAST, pokey_timertiming wants the interrupt at AUDF + 4
+         * (measured — see emu/README.md; sweeping the shared value gives 4 for
+         * one test and 7 for the other and nothing for both).  So the serial
+         * edge keeps cnt[] and the interrupt runs a one-shot beside it. */
+        if (PAIR_FIRST_IRQ) {
+            for (int i = 0; i < 2; i++) {
+                int linked = (i == 0) ? (p->audctl & 0x10) : (p->audctl & 0x08);
+                p->hi_first_armed[i] = 0; p->hi_skip[i] = 0;
+                if (linked) {
+                    p->hi_first[i] = ((p->audf[2 * i + 1] << 8) | p->audf[2 * i])
+                                   + PAIR_FIRST_ADD;
+                    p->hi_first_armed[i] = 1;
+                }
+            }
+        }
         /* EXPERIMENT: the first period after STIMER runs long.  pokey_timertiming
          * tabulates it: with AUDF1 = 0 on the 1.79 MHz clock the first interrupt
          * lands 7-8 cycles after the STIMER write and the second 11-12, so the

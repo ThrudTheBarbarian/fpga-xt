@@ -3129,3 +3129,34 @@ cannot carry both.
 Next attempt should give the serial tick its own first-period accounting rather
 than sweeping a shared constant — and should re-read that header comment first,
 because it named the answer before the sweep found it.
+
+
+### The two edges, implemented: it clears both HI loops and costs pokey_asyncrecv
+
+`PAIR_FIRST_IRQ` (default OFF) gives the pair's INTERRUPT its own divider beside
+the counter the SERIAL clock uses: a countdown armed at STIMER, firing through
+the same `hi_lag` path, with `hi_skip` suppressing the raise the cnt[] underflow
+would otherwise make.  Two constants, both swept:
+
+    PAIR_FIRST_ADD   the first interrupt period after STIMER
+    PAIR_REARM_ADD   every one after it
+
+    FIRST=4                     HI loop #1 too early
+    FIRST=5, no re-arm          loop #1 PASSES, loop #2 too late
+    FIRST=5, REARM=5            loop #2 too early
+    FIRST=5, REARM=6            loop #2 too early
+    FIRST=5, REARM=7            BOTH HI loops pass; timertiming reaches 32157
+                                cycles against 30998, far into a later section
+
+So only the FIRST period differs — the repeat is AUDF + LINK_FAST, exactly what
+the serial edge uses.  That is a much smaller claim than "the two edges have
+different periods", and it matches the header comment's framing.
+
+BUT IT COSTS pokey_asyncrecv, which passes today.  Net 51 against 52, so it is
+off.  pokey_sertiming — the test the whole two-edge idea came from — SURVIVES
+this version, where the earlier shared-constant attempt broke it.  So the
+separation is right and the residual is narrower: asyncrecv depends on the
+pair's interrupt tracking the serial edge in a way the permanent 2-cycle offset
+breaks.  Look at what asyncrecv watches before touching the constants again;
+three tests now bracket this (sertiming, timertiming, asyncrecv) and any answer
+has to satisfy all three.

@@ -82,6 +82,11 @@ typedef struct {
     uint8_t  ser_byte;     /* the byte in the shift register, for two-tone mode */
     int      ser_bits;     /* bits left to shift out: start + 8 data + stop */
     uint8_t  st_lag[8];            /* status-bit countdown, per IRQ bit */
+    /* The pair's FIRST interrupt after STIMER runs on its own countdown — see
+     * underflow() and pokey_timer.c's header on the two edges. */
+    int      hi_first[2];
+    uint8_t  hi_first_armed[2];
+    uint8_t  hi_skip[2];
     uint8_t  hi_age[2];            /* cycles since the pair reloaded */
     uint8_t  lo_age[2];            /* cycles since the low half reloaded */
     unsigned long long ticks;      /* free-running tick count, for probes */
