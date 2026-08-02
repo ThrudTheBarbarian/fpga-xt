@@ -278,6 +278,12 @@ static void raise(pokey_timer *p, uint8_t bit)
     int lag = fast_for_bit(p, bit) ? IRQST_LAG : 0;
     if (lag) p->st_lag[bit_index(bit)] = (uint8_t)lag;
     else     p->irqst = (uint8_t)(p->irqst & ~bit);
+    if (pokey_timer_probe == 2) {
+        static int n;
+        if (n < 20) { n++;
+            fprintf(stderr, "  /IRQ raised by bit $%02X (irqen $%02X irqst $%02X)\n",
+                    bit, p->irqen, p->irqst); }
+    }
     if (IRQ_LINE_LAG + lag) p->irq_arm = (uint8_t)(IRQ_LINE_LAG + lag);
     else                    p->irq = 1;
 }

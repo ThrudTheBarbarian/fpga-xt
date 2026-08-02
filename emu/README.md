@@ -3030,3 +3030,34 @@ twelve problems:
 One shape is a position error and the other is a duration error, which is
 suggestively close to the two delays above being different.  That is the lead:
 find what currently compensates for the missing delay before adding it.
+
+
+## pokey_serdirect / pokey_skstat: not a POKEY bug — a derail in the REPORTING path
+
+Both have JAMmed since XL banking stopped them self-skipping on RAMTOP, and
+nobody had looked at WHERE.  Measured this turn:
+
+    jammed at $0014 on opcode $02
+    spin $FF20  28882 hits      spin $FF40  28882 hits
+    spin $1D36..$1D3F  42-44 hits
+    spin $0000  2 hits
+
+MISREAD FIRST, CORRECTED: $FF20 is the harness's IRQ/BRK dispatcher and $FF40 a
+bare RTI, so ~29000 hits at both looked exactly like an interrupt storm.  It is
+not.  A probe on the /IRQ line shows it is NEVER ASSERTED — neither POKEY nor
+PIA raises it once in the whole run.  $FFFE points at $FF20, so those hits are
+BRK: the CPU is grinding through empty memory executing $00 bytes, each one
+dispatching to a bare RTI and returning to the next, until it reaches $02 at
+$0014 and jams.  A classic derail, and the interrupt path is innocent.
+
+WHERE IT DERAILS FROM.  The last sane code is $1D36-$1D3F, hit 42-44 times.
+That is `skiploop` in the test framework — `lda (a1),y / beq skipdone / iny /
+sne:inc a1+1 / jmp skiploop`, the loop that walks past an inline zero-terminated
+message.  Forty-two iterations is a forty-two byte string.  So these tests REACH
+A REPORTING PATH, scan its message, and derail on the way out of it.
+
+WHAT THAT MEANS: the failure may have nothing to do with POKEY behaviour.  They
+are getting far enough to report something, and the report is what breaks.  The
+next step is to find WHICH call site — put a watch on $1D36 and print the return
+address and `a1` when it is entered, then look up that address in the .lst.  Do
+that before touching serial-port modelling.
