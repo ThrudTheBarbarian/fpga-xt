@@ -142,6 +142,25 @@ static uint8_t af(const pokey_timer *p, int ch)
 #define TWOTONE_RESYNC 2
 #endif
 
+/* EXPERIMENT: with FORCE BREAK as well as two-tone, channel 1's first period
+ * after STIMER runs longer.  pokey_timertiming's cancellation section needs
+ * timer 1 at AUDF + 9 for its three sub-tests to land 1, 2 and 3 cycles after
+ * timer 2 (which the base clock pins at +106).  The plain two-tone sections use
+ * SKCTL $0B and require AUDF + 4, so if this is real it belongs to force break,
+ * not to two-tone.
+ *
+ * AT 5 IT PRODUCES EXACTLY THE ORDERING THE SECTION DESCRIBES -- probed, timer 2
+ * at +106 and timer 1 at +107, one cycle later, where the default puts timer 1
+ * three cycles EARLIER -- and sub-test 1 then FAILS anyway, at 42985 cycles
+ * against 43327.  Both underflows happen and both status bits are raised (+110
+ * and +111), so what breaks is DELIVERY, not order: the test reads IRQST after
+ * a WSYNC and the bits surface too late for that read.  Off until that is
+ * understood, because a constant that fixes the order and loses the test is
+ * fitting the wrong thing. */
+#ifndef TWOTONE_FB_FIRST
+#define TWOTONE_FB_FIRST 0
+#endif
+
 static int period_of(const pokey_timer *p, int ch)
 {
     /* The divider reloads with AUDF+1 of its input ticks — except off the 1.79
@@ -158,7 +177,9 @@ static int period_of(const pokey_timer *p, int ch)
         return ((af(p, 3) << 8) | af(p, 2)) + (fast3 ? LINK_FAST : 1);
     if (ch == 0 && fast1)
         return af(p, 0) + 4
-             + (((p->skctl & 0x08) && !p->ch_first[0]) ? TWOTONE_EXTRA : 0);
+             + (((p->skctl & 0x08) && !p->ch_first[0]) ? TWOTONE_EXTRA : 0)
+             + (((p->skctl & 0x88) == 0x88 && p->ch_first[0])
+                ? TWOTONE_FB_FIRST : 0);
     if (ch == 2 && fast3) return af(p, 2) + 4;
     return af(p, ch) + 1;
 }
