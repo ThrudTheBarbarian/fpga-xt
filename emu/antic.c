@@ -236,6 +236,12 @@ static int scrolled_of(const antic *a)
  *
  * DMACTL = 0 turns both off, so the case the rest of the suite exercises is
  * unaffected. */
+/* Whether a row whose instruction is REUSED (DL DMA off at its start) still
+ * fetches its playfield. */
+#ifndef DL_REUSE_KEEPS_PF
+#define DL_REUSE_KEEPS_PF 1
+#endif
+
 #ifndef PF_DMA_WIDTH_GATE
 #define PF_DMA_WIDTH_GATE 1
 #endif
@@ -397,10 +403,20 @@ static void line_start(antic *a)
      * from under it. */
     if (a->row_ends) {
         a->row_ends = 0;
-        if (!(a->dmactl & 0x20) ||
-            a->scanline < ANTIC_DISPLAY_TOP || a->scanline >= ANTIC_DISPLAY_BOTTOM)
+        if (a->scanline < ANTIC_DISPLAY_TOP || a->scanline >= ANTIC_DISPLAY_BOTTOM)
             return;
-        antic_dl_exec(a);
+        if (a->dmactl & 0x20)
+            antic_dl_exec(a);
+        /* With DL DMA off there is no new instruction, so the CURRENT one is
+         * REUSED and the row runs again — the playfield goes on being fetched
+         * from it.  Returning here skipped the playfield build below along with
+         * the instruction fetch, and the two are independent (the same
+         * distinction as pf_dma_on's).  antic_hscrolbug's second test arranges
+         * exactly this, writing DMACTL = $01 mid-line "so that the $5e byte is
+         * reused"; with the return in place its row fetched nothing at all and
+         * no collision registered anywhere. */
+        else if (!DL_REUSE_KEEPS_PF)
+            return;
     }
 
     /* The DLI belongs to the LAST scanline of the row — including a BLANK-LINE
