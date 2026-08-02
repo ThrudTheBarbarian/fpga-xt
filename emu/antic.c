@@ -42,6 +42,12 @@
 #define WSYNC_RMW_EXTRA 1
 #endif
 /* Whether a READ of WSYNC arms the halt — see antic_read. */
+/* Whether a mid-line rebuild keeps the RUNNING fetch phase (see rebuild_line)
+ * or re-derives it from the new window's nominal. */
+#ifndef PF_KEEP_PHASE
+#define PF_KEEP_PHASE 1
+#endif
+
 #ifndef WSYNC_READ_ARMS
 #define WSYNC_READ_ARMS 0
 #endif
@@ -537,12 +543,27 @@ static void rebuild_line(antic *a, int old_nom, int old_span, int lead)
      * both ask for, from opposite directions. */
     int pin = (from >= old_start) ? old_nom : -1;
 
-    /* A rebuild can leave the stream RUNNING past the end of the line — a
-     * mid-line HSCROL write that moves the stop out of the grid's parity, which
-     * is antic_hscrolbug's whole mechanism.  The carry replaces whatever the
-     * line's original build reported. */
+    /* A rebuild must NOT RE-PHASE a stream that is already running.  ANTIC's
+     * playfield fetch clock free-runs; a register write moves the COMPARATOR,
+     * not the phase.  Rebuilding from the new window's nominal instead flips the
+     * grid's parity whenever HSCROL moves by an odd number of colour clocks, and
+     * antic_hscrolbug catches it exactly: its first write (HSCROL 0 -> 2 at
+     * cycle 78) already produced the test's own map — 47 fetches, last at 112 —
+     * and its second (restoring HSCROL at 107) then shifted the grid by one and
+     * carried into cycle 1 instead of 0.  So the running phase is handed back in
+     * as carry_in: the next cycle at or after `from` that the CURRENT map
+     * already fetches on.
+     *
+     * A rebuild can also leave the stream running past the end of the line —
+     * that IS the mechanism — so the carry replaces whatever the line's original
+     * build reported. */
+    int phase = -1;
+    if (PF_KEEP_PHASE)
+        for (int c = from; c < ANTIC_LINE_CYCLES; c++)
+            if (a->pf_at[c] >= 0) { phase = c; break; }
+
     antic_dma_line_map_at(on ? dma_mode(a, mode) : 0, width_of(a->dmactl),
-                          a->row_first, hscrol_of(a), pin, blk, map,
+                          a->row_first, hscrol_of(a), pin, phase, blk, map,
                           &a->pf_carry);
 
     /* Turning playfield DMA OFF part way down a line does not stall the line

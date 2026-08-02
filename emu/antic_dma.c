@@ -403,7 +403,7 @@ void antic_dma_line_map_carry(uint8_t mode, antic_width width, int first_line,
 }
 
 void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
-                           int hscrol, int nom_start,
+                           int hscrol, int nom_start, int carry_in,
                            uint8_t blocked[ANTIC_LINE_CYCLES],
                            int8_t name_at[ANTIC_LINE_CYCLES],
                            int *carry_out)
@@ -427,9 +427,10 @@ void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
             if (m2[c] >= 0) bound = c;
     }
     if (bound < 0) {
-        build(mode, width, first_line, hscrol, -1, -1, -1, carry_out, blocked, name_at);
+        build(mode, width, first_line, hscrol, -1, -1, carry_in, carry_out,
+              blocked, name_at);
         return;
     }
-    build(mode, width, first_line, hscrol, nom_start, bound, -1, carry_out,
+    build(mode, width, first_line, hscrol, nom_start, bound, carry_in, carry_out,
           blocked, name_at);
 }
