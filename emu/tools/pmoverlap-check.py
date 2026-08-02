@@ -162,6 +162,39 @@ def m_realign_off_m2(width, Y, write_cc):
     return lit
 
 
+@_reg("shared_divider")
+def m_shared_divider(width, Y, write_cc):
+    """ONE size divider per player, free-running, shared by every emission.
+    A re-trigger reloads the BIT COUNTER but does not reset the divider -- the
+    same shape as ANTIC's free-running fetch clock, where a register write moves
+    the comparator and not the phase.
+
+    Motivated by the residual rather than guessed: in BOTH failing groups
+    hardware's lit pixel sits exactly where the UNREALIGNED old emission's k=7
+    falls ($6e,$6f at width 2; $7c-$7f at width 4), so hardware is not
+    re-phasing the old run.  union alone (no realign at all) scores only 634,
+    so the realign is standing in for something -- a shared divider is what
+    makes the NEW emission land on the old one's boundaries without moving
+    them."""
+    em, lit = [], set()
+    div = 0                                   # the one divider, free-running
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        div += 1
+        rolled = div >= width
+        if rolled:
+            div = 0
+        for e in em:
+            if rolled:
+                e[0] += 1
+        if cc == hp:
+            em.append([0])                    # bit counter reloads; divider does not
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
 @_reg("realign_off_m1")
 def m_realign_off_m1(width, Y, write_cc):
     """union_realign with the realign amount shifted by -1.  The residual is a

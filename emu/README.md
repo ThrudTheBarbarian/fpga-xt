@@ -2329,7 +2329,56 @@ disproved. The bug was in the simulation, not the model — running emissions we
 not advanced on the clock where a new one started. A model that contradicts a
 hand derivation is worth re-reading the simulator for before it is discarded.
 
-### PARKED at 660/672
+### PARKED at 660/672 — what the source says, and what is disproved
+
+Read gtia_pmoverlap's SOURCE (which had never been read; only the scorer had
+been run). Player 0 sits at `$60` with `GRAFP0 = $81` — bits 7 and 0 lit — and
+`SIZEP0` from a 12-entry pass table; mid-scanline `sty hposp0` rewrites HPOSP0
+to Y (`$64..$7f`); four missiles parked at sp..sp+3 read back `m0pl..m3pl`,
+packed `lda m0pl / asl / ora m1pl / asl / ora m2pl / asl / ora m3pl` so bit 3 is
+the missile at sp. 12 passes x 28 Y x 2 phases = the 672 cells. It skips its
+first four lines deliberately, "to avoid tripping on a one-cycle delta in HPOSPx
+deadline on different machines".
+
+The residual is 12 cells, and the SAME 12 for every model that reaches 660.
+DECODED from the packed patterns rather than described — which mattered, because
+the earlier note in the tool said "one clock too many" and that was the wrong
+sign:
+
+* pass 7 (SIZEP 1, width 2) at sp `$6c`, odd Y: wants 3 = lit at `$6e,$6f`, we
+  give 6 = lit at `$6d,$6e` — a boundary ONE COLOUR CLOCK EARLY;
+* pass 3 (SIZEP 3, width 4) at sp `$78`, Y `$7d..$7f`: wants nothing lit there,
+  we light a tail.
+
+In BOTH, hardware's lit pixel is exactly where the UNREALIGNED old emission's
+k=7 falls (`$6e,$6f` at width 2, `$7c-$7f` at width 4) — so hardware is not
+re-phasing the old run in these cells. But plain `union`, with no realign at
+all, scores only 634, so the realign is standing in for something real
+elsewhere. Only 2 of 12 passes fail, each at only ONE of its two missile phases,
+and no SIZEP-0 pass fails: a width>1 effect tied to where the boundary lands.
+
+DISPROVED, with scores, so none of these is retried:
+
+| model | cells | what it says |
+|---|---|---|
+| `noreload` | 322 | never reloads the shift register |
+| `shared_divider` | 476 | one free-running divider per player, bit counter reloads |
+| `realign_stopatwrite` | 580 | old run ends at the HPOS write |
+| `realign_off_±1/±2` | 606/616 | a global off-by-one in the realign amount |
+| `realign_killold` | 612 | old run ends when the new one triggers |
+| `restart` | 624 | what gtia.c does today |
+| `union` | 634 | both runs, no realign |
+| `union_realign` | **660** | best known |
+
+Two of those are worth keeping in mind. `realign_killold` and
+`realign_stopatwrite` are both clearly WORSE than union, so **the old emission
+genuinely survives the re-trigger** — "one shift register per player" is the
+wrong picture. And the offset sweep is symmetric (616, 606, [660], 606, 616), so
+by rule (v) the alignment is right at 0 and the error is upstream of it.
+
+Three iterations went in without beating 660. Parked in favour of
+`pokey_timertiming`, whose source has never been read — and reading a test's
+source has now twice produced more than any sweep did.
 
 Searched the suppressing family the residual pointed at — a cap on how many
 emissions can be live (1, 2, 3, unlimited), killing the running one when a new
