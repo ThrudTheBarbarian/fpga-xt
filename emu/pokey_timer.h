@@ -85,6 +85,8 @@ typedef struct {
     /* The pair's FIRST interrupt after STIMER runs on its own countdown — see
      * underflow() and pokey_timer.c's header on the two edges. */
     int      hi_first[2];
+    int      hi_first_per[2];      /* what hi_first was armed with, so a mid-count
+                                    * AUDF rewrite can work out how far it got */
     uint8_t  hi_first_armed[2];
     uint8_t  hi_skip[2];
     uint8_t  hi_age[2];            /* cycles since the pair reloaded */

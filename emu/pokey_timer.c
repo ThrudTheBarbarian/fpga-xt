@@ -157,6 +157,19 @@ static int period_of(const pokey_timer *p, int ch)
 #define HI_LATCH_LAG 3
 #endif
 
+/* ...and the window for the pair's INTERRUPT divider, which is a SECOND counter
+ * on the same pair and needs the rewrite routed to it too.  Splitting the two
+ * edges without this left every AUDF rewrite reaching only cnt[], so the 16-bit
+ * hi section saw its write land on the serial edge and vanish from the
+ * interrupt: widening HI_LATCH_LAG to 9 changed nothing at all, which is what
+ * says the branch was not the one deciding. */
+#ifndef PAIR_LATCH_LAG
+#define PAIR_LATCH_LAG 5
+#endif
+#ifndef PAIR_LATCH_ADJ
+#define PAIR_LATCH_ADJ 0
+#endif
+
 /* ...and for an UNLINKED channel, which had no window at all.  Same shape, same
  * width, and pokey_timertiming brackets it in four consecutive sub-tests rather
  * than in prose: AUDCTL $40, AUDF1 $10 (period 20), STIMER, then AUDF1 := $12
@@ -220,6 +233,24 @@ static void audf_prime(pokey_timer *p, int ch)
         }
     }
 
+    /* The pair's INTERRUPT divider takes the rewrite too -- it counts the same
+     * period on its own, so a write that reaches cnt[] and not this one changes
+     * the serial edge and leaves the interrupt where it was. */
+    if (PAIR_FIRST_IRQ) {
+        int pair   = ch >> 1;
+        int linked = (pair == 0) ? (p->audctl & 0x10) : (p->audctl & 0x08);
+        int fast   = (pair == 0) ? (p->audctl & 0x40) : (p->audctl & 0x20);
+        if (linked && fast && p->hi_first_armed[pair]) {
+            int elapsed = p->hi_first_per[pair] - p->hi_first[pair];
+            if (elapsed >= 0 && elapsed < PAIR_LATCH_LAG) {
+                int per = ((p->audf[2 * pair + 1] << 8) | p->audf[2 * pair])
+                        + PAIR_REARM_ADD;
+                p->hi_first[pair]     = per - elapsed + PAIR_LATCH_ADJ;
+                p->hi_first_per[pair] = per;
+            }
+        }
+    }
+
     if ((ch == 1 || ch == 3)) {
         int pair = (ch == 1) ? 0 : 1;
         int lo   = 2 * pair;
@@ -253,6 +284,7 @@ void pokey_timer_reset(pokey_timer *p)
      * static) otherwise starts with garbage ages that fire a latch immediately
      * and garbage countdowns that clear IRQST bits nothing ever set. */
     p->hi_first[0] = p->hi_first[1] = 0;
+    p->hi_first_per[0] = p->hi_first_per[1] = 0;
     p->hi_first_armed[0] = p->hi_first_armed[1] = 0;
     p->hi_skip[0] = p->hi_skip[1] = 0;
     for (int i = 0; i < 8; i++) p->st_lag[i] = 0;
@@ -539,6 +571,7 @@ void pokey_timer_tick(pokey_timer *p)
                  * loop #2 late, which is the same gap one period further on. */
                 p->hi_first[i] = ((p->audf[2 * i + 1] << 8) | p->audf[2 * i])
                                + PAIR_REARM_ADD;
+                p->hi_first_per[i] = p->hi_first[i];
                 p->hi_skip[i] = 1;
                 p->hi_lag[i] = PAIR_IRQ_LAG;
             }
@@ -727,6 +760,7 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
                 if (linked && fast) {
                     p->hi_first[i] = ((p->audf[2 * i + 1] << 8) | p->audf[2 * i])
                                    + PAIR_FIRST_ADD;
+                    p->hi_first_per[i] = p->hi_first[i];
                     p->hi_first_armed[i] = 1;
                 }
             }
