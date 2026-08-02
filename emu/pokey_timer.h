@@ -81,6 +81,7 @@ typedef struct {
     uint8_t  serout_val;   /* the byte sitting in SEROUT */
     uint8_t  ser_byte;     /* the byte in the shift register, for two-tone mode */
     int      ser_bits;     /* bits left to shift out: start + 8 data + stop */
+    uint8_t  hi_age[2];            /* cycles since the pair reloaded */
     uint8_t  lo_age[2];            /* cycles since the low half reloaded */
     unsigned long long ticks;      /* free-running tick count, for probes */
     unsigned long long stimer_at;  /* tick of the last STIMER write */

@@ -119,6 +119,11 @@ static int period_of(const pokey_timer *p, int ch)
 #define LO_LATCH_LAG 2
 #endif
 
+/* The same window for a linked pair's HIGH half -- see audf_prime. */
+#ifndef HI_LATCH_LAG
+#define HI_LATCH_LAG 3
+#endif
+
 static void audf_prime(pokey_timer *p, int ch)
 {
     if (p->cnt[ch] > AUDF_PIPE)
@@ -144,6 +149,23 @@ static void audf_prime(pokey_timer *p, int ch)
      * cycle satisfies both. */
     if ((ch == 0 || ch == 2) && p->lo_age[ch / 2] < LO_LATCH_LAG)
         p->locnt[ch / 2] = p->audf[ch] + LINK_FAST - p->lo_age[ch / 2];
+
+    /* ...and the HIGH half of a linked pair has the same shape with its own
+     * width.  pokey_timertiming states both boundaries in prose: an AUDF2 write
+     * up to 18 cycles past STIMER still lengthens the period already loaded --
+     * bit 2 then asserts at 300 (4 + 20 + 276) -- and at 19 cycles it does not,
+     * leaving 44 (4 + 20 + 20).  The pair reloads at +20, so the window admits
+     * an age of 2 and rejects 3. */
+    if ((ch == 1 || ch == 3)) {
+        int pair = (ch == 1) ? 0 : 1;
+        int lo   = 2 * pair;
+        int linked = (ch == 1) ? (p->audctl & 0x10) : (p->audctl & 0x08);
+        if (linked && p->hi_age[pair] < HI_LATCH_LAG) {
+            int fast = (ch == 1) ? (p->audctl & 0x40) : (p->audctl & 0x20);
+            int per  = ((p->audf[ch] << 8) | p->audf[lo]) + (fast ? LINK_FAST : 1);
+            p->cnt[lo] = per - p->hi_age[pair];
+        }
+    }
 }
 
 /* AUDF for a linked pair's LOW half, through its own delay line. */
@@ -189,8 +211,10 @@ int pokey_timer_probe;
 
 static void raise(pokey_timer *p, uint8_t bit)
 {
-    if (pokey_timer_probe && (bit & POKEY_IRQ_TIMER1))
-        fprintf(stderr, "  T1 underflow at +%llu (irqen $%02X)\n",
+    if (pokey_timer_probe)
+        fprintf(stderr, "  T%d IRQ at +%llu (irqen $%02X)\n",
+                bit == POKEY_IRQ_TIMER1 ? 1 : bit == POKEY_IRQ_TIMER2 ? 2 :
+                bit == POKEY_IRQ_TIMER4 ? 4 : 0,
                 (unsigned long long)(p->ticks - p->stimer_at), p->irqen);
 
     if (!(p->irqen & bit)) return;             /* masked: no request at all */
@@ -290,8 +314,8 @@ static void underflow(pokey_timer *p, int ch)
      * pair's reload does NOT restart its low half — tried, and it puts
      * pokey_timertiming's 16-bit lo back to failing loop #1; the low half keeps
      * its own phase. */
-    if (ch == 1 && (p->audctl & 0x10))      reload(p, 0);
-    else if (ch == 3 && (p->audctl & 0x08)) reload(p, 2);
+    if (ch == 1 && (p->audctl & 0x10))      { reload(p, 0); p->hi_age[0] = 0; }
+    else if (ch == 3 && (p->audctl & 0x08)) { reload(p, 2); p->hi_age[1] = 0; }
     else                                    reload(p, ch);
     /* A linked pair's INTERRUPT edge and its SERIAL-CLOCK edge are not the same
      * event.  pokey_timertiming and pokey_sertiming sit in the SAME timer
@@ -357,6 +381,8 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
 void pokey_timer_tick(pokey_timer *p)
 {
     p->ticks++;
+    if (p->hi_age[0] < 255) p->hi_age[0]++;
+    if (p->hi_age[1] < 255) p->hi_age[1]++;
     if (p->init) return;                       /* held in init */
 
     /* the line catching up with the status bit — see raise() */
