@@ -930,50 +930,41 @@ before "is the thing broken?". Two consecutive iterations were spent on a
 phantom. Worse, the false claim was committed here, where the next iteration
 would have believed it.
 
-### pfstarttiming: a ONE-CYCLE later DMACTL write costs us FIVE bytes
+### A mid-line DMACTL restore can drop the fetch count BELOW BOTH WIDTHS
 
-The sharpest statement of this failure, all measured:
+`tools/dmactl-curve.c` drives a mode 6 + LMS + VSCROL=7 row, writes DMACTL
+narrow at one cycle and restores it to normal at another, and prints the
+resulting fetch count. A row that spends part of its line narrow (16 bytes) and
+part normal (20) must land BETWEEN 16 and 20. Ours does not:
 
-| | DMACTL narrow write | our fetches on that row | wanted |
-|---|---|---|---|
-| `dli1` "early" | line 33, **cycle 13** | 16 | 16 ✓ |
-| `dli2` "late"  | line 51, **cycle 14** | **11** | 18 |
+```
+no write:                                    20
+narrow at 13, restored at  21 -> 19    at  28 ->  9    at  56 ->  9
+                          63 -> 10        70 -> 11        91 -> 16
+```
 
-One cycle later collapses the row's fetch count from 16 to 11. Hardware steps
-the other way and by a different size: 16 to **18**. So our response to the write
-position has a CLIFF where hardware has a smooth two-byte step, and the cliff
-points the wrong way.
+Nine. For a restore at cycle 28 — a line that is normal-width for 85 of its 114
+cycles. The curve is non-monotonic and dips far below the narrow total, so this
+is a real defect in the mid-line rebuild, not a boundary being a cycle out.
 
-The chain to the assertion, established with `ACID_COLPROBE` and a `line_start`
-probe:
+It explains the test exactly. Measured write positions:
 
-* each `$66` row is mode 6 with **LMS**, so its own fetch count sets where the
-  following `$0a` mode 10 row's content begins — 16 versus 11 puts the two mode
-  10 rows five bytes out of step;
-* both mode 10 rows fetch 20 bytes regardless; it is their CONTENT that differs;
-* the players sit at `$80-$83` and `$84-$87` over the mode 10 row, so the
-  five-byte shift is exactly why scanline 34 collides and scanline 52 does not.
+| | narrow write | restore | our fetches | wanted |
+|---|---|---|---|---|
+| `dli1` | line 33 cycle 13 | cycle **21** | 16 | 16 ✓ |
+| `dli2` | line 51 cycle 14 | cycle **25** | 11 | 18 |
 
-`ACID_COLPROBE=1` over the whole run prints exactly ONE line —
-`COLLIDE sl 34 cc $82 mode 10 ppf 1000` — which is the early case's wanted bits
-4, and nothing at all for the late case.
+The two differ by ONE cycle in the narrow write and FOUR in the restore, and our
+count swings 16 -> 11 across that gap where hardware steps 16 -> 18. An earlier
+note here blaming the one-cycle difference in the NARROW write was wrong: swept
+alone, that write gives 16 for every cycle from 6 to 17 and only cliffs at 18.
+It is the RESTORE that these two cases separate on.
 
-Two earlier readings recorded here were wrong and are superseded: the measured
-row is the `$0a` MODE 10 row, not the `$66` mode 6 row (the `$66` rows are the
-LMS/VSCROL setup), and the two cases differ by ONE cycle in the write position,
-not three — the three-cycle `pha:pla`/`nop:nop:nop` difference is a BUILD flag
-(`EARLY_TIMING`) that this build does not set, and it is not what separates
-dli1 from dli2.
-
-Next: characterise our fetch count as a function of the mid-line DMACTL write
-cycle directly, in a scratch harness over `rebuild_line`, and find where the
-cliff comes from. A count that jumps by five for a one-cycle move is a bound
-being crossed, not a boundary sliding.
-
-SUSPECT TOOL, unresolved: `ACID_PFPROBE` prints nothing even for scanline 34,
-where COLPROBE proves a lit player and a playfield class at that colour clock.
-The binary existed, so this is not the earlier "binary was deleted" failure. Not
-declared broken — the wiring check has not been done. Use COLPROBE.
+The chain to the assertion is unchanged and still holds: each `$66` row is mode
+6 with LMS, so its fetch count sets where the following `$0a` mode 10 row's
+content begins; the players at `$80-$87` sit over that row; five bytes out of
+step is why scanline 34 collides and 52 does not. `ACID_COLPROBE=1` prints
+exactly one collision for the whole run.
 
 ### PARKED: antic_hscrolbug's test #2
 
