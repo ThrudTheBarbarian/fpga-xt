@@ -948,6 +948,67 @@ PORTB bit polarities does NOT reconcile with the assertion `d0 == $02` for
 BASIC. Take the bit semantics from Altirra's memory manager rather than from
 folklore; guessing them is how the last several days of this file were spent.
 
+### THE COMPLETE ANTIC PLAYFIELD SPEC (from Altirra, re-implement against this)
+
+Everything needed to replace our per-line map, in one place.
+
+**Two SEPARATE windows.** This is the structural error in our code: we have one.
+
+```
+FETCH width = display width, stepped UP one if horizontal scrolling is enabled
+              (and not already wide).  DISPLAY width is NOT stepped.
+```
+
+**Display window**, from the DISPLAY width:
+
+| width | start | end |
+|---|---|---|
+| narrow | 32 | 96 |
+| normal | 24 | 104 |
+| wide | 22 | 112 |
+
+(wide is clipped — 22, not 16, because it exceeds the visible region.)
+
+**Fetch window**, from the FETCH width. The span is a CYCLE COUNT, not a byte
+count, and is the same for character and bitmap modes:
+
+| width | start (mode<8 / mode>=8) | span |
+|---|---|---|
+| narrow | 26 / 28 | +64 |
+| normal | 18 / 20 | +80 |
+| wide | 10 / 12 | +96 |
+
+then `start += hscrollOffset; end += hscrollOffset; vend = end;` and finally
+`end` is CLAMPED to 106 while **`vend` is left unclamped**. That distinction is
+what makes a stop missable.
+
+**Fetch rate** by mode — 3 = every 2 cycles, 2 = every 4, 1 = every 8:
+
+```
+mode:  0 1 2 3 4 5 6 7 8 9 A B C D E F
+rate:  0 0 3 3 3 3 2 2 1 1 2 2 2 3 3 3
+```
+
+Byte counts fall out: narrow mode 2 is 64/2 = 32, normal 80/2 = 40, wide
+96/2 = 48; mode 6 is 64/4 = 16, 20, 24; mode 8 is 64/8 = 8, 10, 12. No
+per-mode byte table is needed at all.
+
+**The clock** is an 8-bit phase mask, bit k = "fetch on cycles congruent to k
+mod 8": start does `clock |= kClockPattern[rate][start & 7]`, stop does
+`clock &= ~kClockPattern[rate][vend & 7]`, and each scanline it rotates
+`clock = (clock << 6) | (clock >> 2)`. Cycle kinds hang off the clock: a
+character NAME fetch IS the clock cycle, a BITMAP data fetch is clock+2, a
+CHARACTER data fetch is clock+3.
+
+**Cycles 105-113** block the stolen cycle only: the request still happens, the
+line buffer still loads from the bus, and both the scan and row counters still
+advance.
+
+WHAT THIS EXPLAINS. Our normal/narrow starts already match; WIDE does not,
+because `PF_WIDE_ADJ = 2` compensates for us stepping the DISPLAY window on a
+scrolled row when only the FETCH window should step. Correcting either alone
+regresses — they have to move together, which is the rewrite.
+
 ### Altirra's DMA timing table, and what it says about our constants
 
 `UpdateDMAPattern`'s comment block is a complete specification:
