@@ -226,6 +226,26 @@ static int scrolled_of(const antic *a)
     return (a->dl_insn & 0x10) != 0;
 }
 
+/* PLAYFIELD DMA is enabled by DMACTL's WIDTH bits (0-1), not by bit 5, which
+ * is the DISPLAY LIST DMA enable.  Clearing bit 5 stops ANTIC fetching new
+ * display-list INSTRUCTIONS -- the current one is reused -- but the playfield
+ * keeps being fetched at the programmed width.  antic_hscrolbug's second test
+ * is built on exactly that: it writes DMACTL = $01 mid-line "so that the $5e
+ * byte is reused", and with the two conflated the row fetches nothing at all
+ * and no collision registers anywhere.
+ *
+ * DMACTL = 0 turns both off, so the case the rest of the suite exercises is
+ * unaffected. */
+#ifndef PF_DMA_WIDTH_GATE
+#define PF_DMA_WIDTH_GATE 1
+#endif
+
+static int pf_dma_on(const antic *a)
+{
+    return PF_DMA_WIDTH_GATE ? (a->dmactl & 0x03) != 0
+                             : (a->dmactl & 0x20) != 0;
+}
+
 static uint8_t dma_mode(const antic *a, int mode)
 {
     return (uint8_t)(mode | (a->dl_insn & 0x10));
@@ -396,7 +416,7 @@ static void line_start(antic *a)
      * fetches nothing drops it. */
     int carry_in = a->pf_carry;
     a->pf_carry = -1;
-    if (mode >= 2 && (a->dmactl & 0x20)) {
+    if (mode >= 2 && pf_dma_on(a)) {
         antic_dma_line_map_carry(dma_mode(a, mode), width_of(a->dmactl),
                                  a->row_first, hscrol_of(a), carry_in,
                                  a->blocked, a->pf_at, &a->pf_carry);
@@ -539,7 +559,7 @@ static void rebuild_line(antic *a, int old_nom, int old_span, int lead)
     uint8_t blk[ANTIC_LINE_CYCLES];
     int8_t  map[ANTIC_LINE_CYCLES];
     int mode = a->dl_insn & 0x0F;
-    int on   = mode >= 2 && (a->dmactl & 0x20);
+    int on   = mode >= 2 && pf_dma_on(a);
 
     /* The window this line was running under: where it opened and where it
      * closes.  The commit point is the window's own earliest fetch — nom - 3,
@@ -819,7 +839,7 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
 {
     *hires_lit = 0;
     int mode = a->dl_insn & 0x0F;
-    if (mode < 2 || !(a->dmactl & 0x20))
+    if (mode < 2 || !pf_dma_on(a))
         return -1;
 
     /* Display starts a fixed THREE machine cycles after the nominal fetch
@@ -907,7 +927,7 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
  * data gives four colour classes instead of one.  See system.c. */
 int antic_pf_pair(const antic *a, int cc)
 {
-    if (!(a->dmactl & 0x20) || (a->dl_insn & 0x0F) != 0x0F)
+    if (!pf_dma_on(a) || (a->dl_insn & 0x0F) != 0x0F)
         return -1;
     antic_width w = width_of(a->dmactl);
     /* HSCROL moves the DISPLAY a full colour clock per unit, but the FETCH grid
@@ -933,7 +953,7 @@ int antic_pf_pair(const antic *a, int cc)
 
 int antic_pf_nibble(const antic *a, int cc, int shift)
 {
-    if (!(a->dmactl & 0x20) || (a->dl_insn & 0x0F) != 0x0F)
+    if (!pf_dma_on(a) || (a->dl_insn & 0x0F) != 0x0F)
         return -1;
     antic_width w = width_of(a->dmactl);
     /* HSCROL moves the DISPLAY a full colour clock per unit, but the FETCH grid
