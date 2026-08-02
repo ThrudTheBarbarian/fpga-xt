@@ -3061,3 +3061,36 @@ are getting far enough to report something, and the report is what breaks.  The
 next step is to find WHICH call site — put a watch on $1D36 and print the return
 address and `a1` when it is entered, then look up that address in the .lst.  Do
 that before touching serial-port modelling.
+
+
+### ...and they SKIP because there is no disk drive: they need an SIO device
+
+With the derail gone, both tests reach their own opening check and decline:
+
+    mva #$01 dunit / mva #$53 dcomnd / mva #$40 dstats
+    jsr dskinv
+    bpl disk_ok
+    _SKIP "D1: status command failed."
+
+They issue a STATUS command to D1: and skip unless a drive answers.  The
+harness's $E480 stub deliberately answers NO DEVICE — that is what the existing
+comment there means by "answering no device turns a derail into the skip the
+test intends" — so the skip is CORRECT behaviour for a machine with no drive,
+not a bug.
+
+What they do once a drive answers (pokey_skstat.lst from $204A) shows why the
+drive is a prerequisite rather than incidental: `sei`, deassert the command line
+via PBCTL, set AUDCTL $28 with AUDF3/AUDF4 as the serial clock, write SKCTL, and
+then read SKSTAT to check the serial-input-active bit is idle.  This is
+register-level POKEY serial testing against a real peer on the SIO bus.
+
+SO THESE TWO ARE NOT A POKEY MODELLING GAP.  They are gated on a peripheral the
+emulator does not have.  Passing them means adding an SIO device that (1)
+answers a $53 STATUS to D1: well enough for dskinv to return Y >= 0, and (2)
+behaves correctly on the serial line for the bit-level checks that follow.  The
+second half is the real work and cannot be shortcut with a paravirtual SIO,
+because the serial line's behaviour IS what is under test.
+
+Worth stating plainly in any score summary: "skipped" here is the honest result
+for the machine as configured, and turning it into a pass is a feature, not a
+fix.
