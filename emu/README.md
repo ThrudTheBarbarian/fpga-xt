@@ -912,25 +912,41 @@ Two register-semantics bugs fell out of the same test:
   bitmap row would fetch nothing anyway; the row bookkeeping has to be got right
   before that flag means much.
 
-### BROKEN TOOL: ACID_PCWATCH reports zero hits for everything
+### RETRACTED: ACID_PCWATCH is NOT broken — the binary was missing
 
-`ACID_PCWATCH=<hex>` prints `[pc %04X] line %d cycle %d` when the CPU reaches an
-address. It reports **zero hits for addresses the test provably executes** —
-including `$2000`, which is the module's own `main`, and `$2140`, the very
-assertion whose failure message the run prints. Checked against six addresses;
-all zero.
+An earlier revision of this file claimed `ACID_PCWATCH` reported zero hits for
+addresses the test provably executes, and concluded the tool was broken. **That
+was wrong.** `build/acid` had been deleted by an `rm -f build/acid` during a
+CFLAGS sweep and never rebuilt — `make test` builds the gate binaries, not that
+one — so every invocation was the shell failing to find the executable, with the
+error filtered out by the greps around it.
 
-The check in `test/acid.c` looks unconditional inside the run loop, so the cause
-is not obvious from reading it. Until it is fixed, DO NOT USE IT and do not
-believe a negative result from it: a probe that silently answers "never happens"
-for everything is worse than no probe, because it reads as evidence. This one was
-in the recommended tool list for many iterations.
+Rebuilt, it works: one hit each for `$2000`, `$210b` and `$2140`.
 
-`ACID_PFPROBE`, `ACID_COLPROBE`, `ACID_GLYPHPROBE` and `ACID_BUSTRACE` have all
-produced correct, cross-checked output this session and are trustworthy; the
-hand-rolled `fprintf` recipe (probe at the top of `line_start`, print enough to
-identify which line's state you are seeing) is what actually cracked the
-run-on mechanism.
+The lesson is the one this file already states, turned on itself: a tool that
+reports "nothing happened" must be checked against a case known to produce
+output BEFORE the conclusion is drawn — and "did the thing even run?" comes
+before "is the thing broken?". Two consecutive iterations were spent on a
+phantom. Worse, the false claim was committed here, where the next iteration
+would have believed it.
+
+### pfstarttiming: the DMACTL write lands on scanline 51, and we draw nothing
+
+Now measured with a working probe. `dli2` is entered at **line 49**, and its
+`sta dmactl` (narrow) executes at **line 51, cycle 14** — exactly the source's
+own annotation "14, 15, 16, 17", so the test's cycle budget and ours agree.
+
+The display list confirms it independently: `$70,$70` cover scanlines 8-23,
+`$f0` (blank + DLI) 24-31, `$00` 32, `$66` (mode 6, LMS, VSCROL) 33, `$0a`
+34-41, then the pattern repeats — `$f0` 42-49, `$00` 50, `$66` **51**. Each
+`$66` row is mode 6 truncated to a single scanline by the DLI's `VSCROL = 7`,
+which is why an 8-line mode occupies one line.
+
+`ACID_PFPROBE=51` prints NOTHING: our ANTIC renders no playfield whatever on
+that line. That is the direct cause of the failure — the test wants P0 over PF0
+at `$80-$83` and P1 over PF1 at `$84-$87`, and we give it a blank line, hence
+bits 0. The question for the next iteration is why a mode 6 row with LMS and
+VSCROL = 7 produces no display at all.
 
 ### PARKED: antic_hscrolbug's test #2
 
