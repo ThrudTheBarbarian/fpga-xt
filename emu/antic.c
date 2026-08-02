@@ -79,7 +79,19 @@
  * victim.  antic_wsync is anchored ON the release, so moving the release moves
  * what it measures -- exactly the compensation shape where a provably-wrong
  * constant cannot simply be corrected.  Left at 1 until the pair can be
- * satisfied together; the numbers are here so this is not re-run blind. */
+ * satisfied together; the numbers are here so this is not re-run blind.
+ *
+ * AND THE PAIR CANNOT BE SATISFIED BY MOVING pmresize's MODEL EITHER, which was
+ * the remaining hope.  With a release of 105 its SIZEP store lands at colour
+ * clock $64 instead of $62, and no positive SIZEP_DELAY reaches backwards:
+ * tools/pmresize-check.py scores carry_lock 112/112 at $62 and 54/28/19/14 at
+ * $63/$64/$65/$66.  So gtia_pmresize REQUIRES 104 and antic_wsync's RANDOM
+ * assertion REQUIRES 105, both after `inc wsync`, and neither can bend.
+ *
+ * The only structural difference found: antic_wsync's INC STRADDLES the line
+ * boundary -- annotated 111, 112, 113, 0, 1, 2, so its writes land on cycles 1
+ * and 2 of the NEXT line -- while gtia_pmresize's sits mid-line.  Test that
+ * first if this is picked up again. */
 #ifndef DMA_SPARES_WRITE
 #define DMA_SPARES_WRITE 0
 #endif
