@@ -317,7 +317,13 @@ static int spec_edges(uint8_t mode_in, int first_line, int start, int vend,
      * cycle 1 is `D` and cycles 6 and 7 are free.  Charging every row for them
      * steals two CPU cycles a line that the hardware does not, which derails
      * anything counting cycles to a mid-line register write. */
-    if (first_line) {
+    /* ...and only while DISPLAY LIST DMA is actually enabled.  With DMACTL bit
+     * 5 clear ANTIC re-uses the instruction byte it already has and fetches
+     * nothing -- antic_hscrolbug's second unstopped-DMA case turns DL DMA off
+     * for exactly that reason, so that its abnormal pattern (which lands on the
+     * ODD cycles this time, over the top of the display-list fetch) leaves the
+     * `$5E` in place with, as the test puts it, "the LMS part safely ignored". */
+    if (first_line && (mode_in & 0x20)) {
         blocked[1] = 1;
         if (!DL_OPERAND_LMS || (mode_in & 0x40)) blocked[6] = blocked[7] = 1;
     }

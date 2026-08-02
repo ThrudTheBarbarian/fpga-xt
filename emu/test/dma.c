@@ -44,8 +44,9 @@ int main(int argc, char **argv)
          * as well as the instruction fetch at 1.  antic_hscrolbug's plain `$0E`
          * row takes only cycle 1, and the two tests together are what prove the
          * operand fetches belong to the INSTRUCTION rather than to every first
-         * line.  Bit 6 says so here. */
-        antic_dma_line((uint8_t)(row->mode | 0x40), w, first, 0, got);
+         * line.  Bit 6 says so here, and bit 5 says display-list DMA is on --
+         * without which ANTIC fetches no instruction at all. */
+        antic_dma_line((uint8_t)(row->mode | 0x60), w, first, 0, got);
 
         int bad = -1, ndiff = 0;
         for (int c = 0; c < ANTIC_DMA_CHECKED; c++)

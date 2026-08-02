@@ -262,8 +262,10 @@ static int pf_dma_on(const antic *a)
 
 static uint8_t dma_mode(const antic *a, int mode)
 {
-    /* bit 4 = horizontal scroll, bit 6 = LMS/jump (the operand fetches) */
-    return (uint8_t)(mode | (a->dl_insn & 0x50));
+    /* bit 4 = horizontal scroll, bit 6 = LMS/jump (the operand fetches), and
+     * bit 5 = display-list DMA is enabled at all (DMACTL bit 5) -- with it off
+     * ANTIC re-uses the instruction it has and fetches nothing. */
+    return (uint8_t)(mode | (a->dl_insn & 0x50) | (a->dmactl & 0x20));
 }
 
 static antic_width width_of(uint8_t dmactl)
@@ -379,6 +381,16 @@ static void pm_dma(antic *a)
 
 static void line_start(antic *a)
 {
+    /* The PREVIOUS line's map, as the hardware finished it -- after every
+     * mid-line rebuild, not as it was first built.  Diffing the line_start map
+     * against a reference compares two different things. */
+    if (antic_glyph_probe == 9 && a->scanline >= 31 && a->scanline <= 34) {
+        fprintf(stderr, "  END sl %3d insn $%02X clk $%02X ", a->scanline - 1, a->dl_insn, a->pf_clock);
+        for (int k = 0; k < ANTIC_LINE_CYCLES; k++)
+            fputc(a->blocked[k] ? '#' : '.', stderr);
+        fputc('\n', stderr);
+    }
+
     a->hscrol_line = a->hscrol;           /* the clamp is per-line */
     a->virt_cyc = -1;                     /* no virtual slot unless one is built */
     a->virt_idx = 0;
