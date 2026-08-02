@@ -52,6 +52,7 @@ def load(path):
 
 
 MODELS = {}
+TRACE = False
 
 
 def _reg(name):
@@ -220,6 +221,8 @@ def m_carry_lock(hpos, old, new, wcc):
     lit, bit, ph, live, locked = set(), 0, 0, False, False
     nw = scale(new)
     alt = (new & 3) == 2
+    if TRACE:
+        print("  ORACLE hpos $%02X old %d new %d wcc $%02X" % (hpos, old, new, wcc))
     for cc in range(0x40, 0xA0):
         w = scale(old) if cc < wcc else nw
         if cc == hpos:
@@ -240,6 +243,10 @@ def m_carry_lock(hpos, old, new, wcc):
                 live = False
         if live and (GRAFP >> (7 - bit)) & 1:
             lit.add(cc)
+        if TRACE and 0x54 <= cc <= 0x70:
+            print("    cc $%02X live %d bit %d ph %d locked %d%s"
+                  % (cc, live, bit, ph, locked,
+                     "  <-- WRITE" if cc == wcc else ""))
     return lit
 
 
@@ -252,7 +259,25 @@ def main():
     ap.add_argument("--model", default=None, choices=sorted(MODELS))
     ap.add_argument("--sweep", action="store_true",
                     help="score every write-cc from $50 to $68")
+    ap.add_argument("--trace", default=None,
+                    help="T,I -- dump per-clock state for one cell, e.g. 5,3")
     a = ap.parse_args()
+
+    if a.trace:
+        global TRACE
+        TRACE = True
+        t, i = (int(x) for x in a.trace.split(","))
+        old, new = PAIRS[t]
+        hpos = HPOS0[t] + i
+        lit = MODELS[a.model or "carry_lock"](hpos, old, new, a.write_cc)
+        mem = load(a.lst)
+        got = 0
+        for b, cc in enumerate(PROBE):
+            if cc in lit:
+                got |= 0x80 >> b
+        print("  %s hpos $%02X -> got $%02X want $%02X"
+              % (NAMES[t], hpos, got, mem.get(TABS[t] + i, 0)))
+        return 0
 
     mem = load(a.lst)
     if not mem:

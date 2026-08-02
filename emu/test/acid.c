@@ -214,6 +214,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
      * skips below that, so a bare XEX run with the OS variables at zero can
      * never reach the banking checks.  $C0 is what an XL kernel leaves. */
     sio_probe = getenv("ACID_SIOPROBE") != NULL;
+    gtia_probe = getenv("ACID_PMPROBE") != NULL;
     s.ram[0x006A] = 0xC0;
     if (!s.ram[0x0217]) { s.ram[0x0216] = 0x40; s.ram[0x0217] = 0xFF; }  /* VIMIRQ */
 

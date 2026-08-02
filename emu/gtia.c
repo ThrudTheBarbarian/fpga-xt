@@ -33,6 +33,8 @@ static int size_scale(uint8_t s)
     }
 }
 
+int gtia_probe;
+
 int gtia_player_lit(const gtia *g, int i)
 {
     for (int r = 0; r < g->p_n[i]; r++)
@@ -57,6 +59,17 @@ int gtia_missile_lit(const gtia *g, int i)
  * (gtia_pmresize's "alt" cases). */
 static void obj_step(gtia *g, int hpos)
 {
+    /* A NEW SCANLINE RETIRES EVERY RUN.  The shift register reloads from GRAFP
+     * each line and re-triggers on the HPOS match, so nothing carries across
+     * the boundary.  It only shows up through the 1xalt LOCKUP: an ordinary run
+     * retires by reaching bit 8, but a LOCKED one never advances its bit and so
+     * never retires -- it survived into every later scanline, emitting for ever,
+     * which is the $FE ("player lit at every probe") gtia_pmresize saw at
+     * 2x-to-1xalt where $40 was wanted.  The run being measured was fine; the
+     * one left over from the previous iteration was not. */
+    if (hpos == 0)
+        for (int i = 0; i < 4; i++) g->p_n[i] = 0;
+
     for (int i = 0; i < 4; i++) {
         /* A SIZEP write reaching the object THIS clock replaces the ordinary
          * advance, and what it does is not "roll if the phase has reached the
@@ -95,6 +108,14 @@ static void obj_step(gtia *g, int hpos)
             g->p_locked[i][keep] = (uint8_t)lk; keep++;
         }
         g->p_n[i] = keep;
+
+        if (gtia_probe && i == 0 && (g->p_n[0] || resize))
+            fprintf(stderr, "    EMU cc $%02X n %d bit %d ph %d locked %d"
+                            " sizep %d cnt %d%s\n",
+                    hpos, g->p_n[0], g->p_n[0] ? g->p_bit[0][0] : -1,
+                    g->p_n[0] ? g->p_phase[0][0] : -1,
+                    g->p_n[0] ? g->p_locked[0][0] : -1,
+                    g->sizep[0], g->sizep_cnt[0], resize ? "  <-- RESIZE" : "");
 
         if (hpos == g->hposp[i]) {
             /* The match RE-ANCHORS every run still emitting: its divider phase

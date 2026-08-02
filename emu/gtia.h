@@ -85,6 +85,10 @@ void    gtia_write(gtia *g, uint16_t addr, uint8_t val);
 
 /* Is player/missile `i` lit right now?  A query of the live divider state, so
  * it is only meaningful between gtia_clock() calls. */
+/* ACID_PMPROBE=1: player 0's run state at every colour clock, for diffing
+ * against tools/pmresize-check.py --trace.  See obj_step. */
+extern int gtia_probe;
+
 int     gtia_player_lit(const gtia *g, int i);
 int     gtia_missile_lit(const gtia *g, int i);
 
