@@ -1005,6 +1005,19 @@ rather than different. The offset is real.
 derivation rather than this measurement — rule (bb) again, the third time this
 session.
 
+**PARKED.** `LO_EXTRA = 6` makes the documented plain-case curve EXACTLY right —
+every AUDF1 from 0 to 16 lands on `AUDF1 + 10`, matching the test's own table —
+and it breaks an EARLIER assertion, "1.79MHz 16-bit lo timer triggered too late
+(loop #1)". The `ptimer` gate passes at 4 and at 6 alike, so it does not
+constrain the value in either direction, which confirms it encodes a derivation
+rather than this measurement.
+
+So the test's documented single-shot table and its loop assertion force
+INCOMPATIBLE values out of one constant: rule (q), the SHAPE of the linked-pair
+model is wrong, not the number. Reverted to the default of 4. Three iterations
+went in; the next person needs a different model of how the low half reloads
+across a loop boundary, not another constant.
+
 CAUTION on the obvious next move: the failing assertion is the REPROGRAMMED case
 (AUDF1 rewritten mid-count at +23c), and there we fire one cycle LATE, not
 early. Two residuals of opposite sign, so a single constant will not satisfy
