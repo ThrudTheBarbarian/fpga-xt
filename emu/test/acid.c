@@ -193,6 +193,18 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     memcpy(&s.ram[0xFF30], dflt,     sizeof dflt);
     s.ram[0xFFFA] = 0x00; s.ram[0xFFFB] = 0xFF;      /* NMI -> dispatcher */
     s.ram[0xFFFE] = 0x20; s.ram[0xFFFF] = 0xFF;      /* IRQ/BRK -> dispatcher */
+
+    /* Those stubs and vectors live at $FF00-$FFFF, which XL banking overlays
+     * with the OS ROM whenever PORTB bit 0 is set -- and it is set out of
+     * reset, because an undriven PIA line floats high.  Mirror them into the
+     * ROM image so the dispatcher answers under either mapping; a real machine
+     * has the equivalent code in its kernel. */
+    memcpy(&s.rom_os[0xFF00 - 0xC000], &s.ram[0xFF00], 0x100);
+
+    /* RAMTOP.  mmu_xlbanking's FIRST action is `lda ramtop / cmp #$41` and it
+     * skips below that, so a bare XEX run with the OS variables at zero can
+     * never reach the banking checks.  $C0 is what an XL kernel leaves. */
+    s.ram[0x006A] = 0xC0;
     if (!s.ram[0x0217]) { s.ram[0x0216] = 0x40; s.ram[0x0217] = 0xFF; }  /* VIMIRQ */
 
     /* OS SHADOW REGISTERS.  The library sets SKCTL = 3 at init but later

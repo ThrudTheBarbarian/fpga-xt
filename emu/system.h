@@ -38,6 +38,19 @@ typedef struct {
     unsigned long long ser_mark;
     int        col_probe;
     int        pf_probe;   /* debug: dump the pixel stream on this scanline */
+
+    /* XL/XE memory banking.  PORTB ($D301) overlays ROM on RAM: bit 0 enables
+     * the OS ROM ($C000-$CFFF and $D800-$FFFF), bit 1 DISABLES BASIC
+     * ($A000-$BFFF), and bit 7 DISABLES the self-test window ($5000-$57FF),
+     * which is a view of the OS ROM at $1000 and needs the OS ROM enabled to
+     * appear at all.  Writes through an overlay are dropped; the RAM beneath
+     * keeps its value, which is exactly what mmu_xlbanking checks.
+     *
+     * Contents are synthetic — the test reads a byte, writes its complement
+     * back and asks only whether the write STUCK, so no real ROM image is
+     * needed. */
+    uint8_t    rom_os[0x4000];    /* $C000-$FFFF, I/O punched out at $D000 */
+    uint8_t    rom_basic[0x2000]; /* $A000-$BFFF */
     int        bus_probe;  /* debug: trace every bus cycle of this scanline */
     int        irq_probe;  /* debug: report every IRQST change with its cycle */
     uint8_t    irq_shadow; /* previous IRQST, for the probe */

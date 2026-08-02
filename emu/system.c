@@ -396,12 +396,48 @@ static void dbg(atari *s, uint16_t a, int wr)
            (unsigned long long)(s->pk_ticks - s->dbg_skctl_at));
 }
 
+/* Whether XL banking is modelled at all.  A plain 800 has none, and every
+ * other test in the suite ran against flat RAM before this existed. */
+#ifndef XL_BANKING
+#define XL_BANKING 1
+#endif
+
+/* PORTB as the MMU sees it: an output bit reads its latch, an input bit floats
+ * high on the pull-ups, and after reset every bit is an input — so the machine
+ * powers up with the OS ROM in and BASIC and self-test out, which is right. */
+static uint8_t portb_of(const atari *s)
+{
+    return (uint8_t)((s->pia.out[1] & s->pia.ddr[1]) | (uint8_t)~s->pia.ddr[1]);
+}
+
+/* The ROM byte overlaying `a`, or NULL when RAM shows through. */
+static const uint8_t *rom_at(const atari *s, uint16_t a)
+{
+    if (!XL_BANKING) return NULL;
+    uint8_t pb = portb_of(s);
+
+    if (pb & 0x01) {                       /* OS ROM enabled */
+        if (a >= 0xC000 && a < 0xD000) return &s->rom_os[a - 0xC000];
+        if (a >= 0xD800)               return &s->rom_os[a - 0xC000];
+        /* the self-test window is a view of the OS ROM at $1000, and only
+         * appears when the OS ROM itself is in */
+        if (!(pb & 0x80) && a >= 0x5000 && a < 0x5800)
+            return &s->rom_os[0x1000 + (a - 0x5000)];
+    }
+    if (!(pb & 0x02) && a >= 0xA000 && a < 0xC000)
+        return &s->rom_basic[a - 0xA000];
+    return NULL;
+}
+
 static uint8_t bus_rd(void *ctx, uint16_t a)
 {
     atari *s = ctx;
     sys_cycle(s);
     dbg(s, a, 0);
-    uint8_t v = (a >= 0xD000 && a < 0xD800) ? io_read(s, a) : s->ram[a];
+    const uint8_t *rp;
+    uint8_t v = (a >= 0xD000 && a < 0xD800) ? io_read(s, a)
+              : (rp = rom_at(s, a)) != NULL ? *rp
+              : s->ram[a];
     bus_note(s, s->pending_render - 1, "CPU-R", a, v);
     cpu_cycle_done(s);
     return v;
@@ -415,7 +451,8 @@ static void bus_wr(void *ctx, uint16_t a, uint8_t v)
     s->an.cpu_writing = 0;
     dbg(s, a, 1);
     if (a >= 0xD000 && a < 0xD800) io_write(s, a, v);
-    else                           s->ram[a] = v;
+    else if (!rom_at(s, a))        s->ram[a] = v;   /* a write through ROM is
+                                                     * dropped, RAM untouched */
     bus_note(s, s->pending_render - 1, "CPU-W", a, v);
     cpu_cycle_done(s);
 }
