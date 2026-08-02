@@ -15,8 +15,12 @@ void gtia_init(gtia *g)
  * against gtia_pmresize through tools/pmresize-check.py, which pins the effect
  * at colour clock $62 and scores 112/112 there against 35/56/54/28 on the clocks
  * either side. */
+/* ONE, now that the WSYNC release is right: the store lands on colour clock $62
+ * and the effect belongs on the next clock rendered after it.  3 overshot while
+ * the release was a cycle late; 0 is not the low end of a sweep at all, it takes
+ * the direct-write branch below and never runs the resize rule. */
 #ifndef SIZEP_DELAY
-#define SIZEP_DELAY 3
+#define SIZEP_DELAY 1
 #endif
 
 /* SIZEP/SIZEM: 0 and 2 are 1x, 1 is 2x, 3 is 4x. */

@@ -103,8 +103,25 @@
  * antic_wsync's INC lands its pair at scanline cycles 1 and 2, gtia_pmresize's
  * at 32 and 34 with a memory refresh at 33.  That is the only structural
  * difference between the two, and they want different releases. */
+/* ...but ONLY when the RMW's two writes are ADJACENT cycles.
+ *
+ * antic_wsync pins the extra and pmresize pins its absence, and both are `inc
+ * wsync`, so for a while they looked like a straight contradiction.  They are
+ * not: antic_wsync annotates its own cycles and the two forms differ inside ONE
+ * test, in one DMA environment --
+ *     sta wsync ... lda random   ;*, 105, 106, 107   -> released 104, 104 stolen
+ *     inc wsync ... lda random   ;105, 106, 107, 108 -> released 105
+ * -- so the second write really does re-arm.  Its INC writes on cycles 1 and 2,
+ * back to back.  gtia_pmresize's INC has a refresh slot BETWEEN its two writes
+ * (probed: they land two cycles apart), and there the release is 104, which is
+ * what its `sta hitclr ;104,105,106,107` annotation requires.
+ *
+ * So the re-arm needs the second write to follow the first immediately.  With
+ * this at 1 both tests hold: antic_wsync passes and pmresize's release moves to
+ * 104, its first case going green.  53 pass either way -- no regression, and the
+ * release is now right where two independent tests say it should be. */
 #ifndef WSYNC_RMW_ADJACENT
-#define WSYNC_RMW_ADJACENT 0
+#define WSYNC_RMW_ADJACENT 1
 #endif
 #include <stdio.h>
 int antic_glyph_probe;
