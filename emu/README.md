@@ -3094,3 +3094,38 @@ because the serial line's behaviour IS what is under test.
 Worth stating plainly in any score summary: "skipped" here is the honest result
 for the machine as configured, and turning it into a pass is a feature, not a
 fix.
+
+
+## pokey_timertiming vs pokey_sertiming: the pair's FIRST period, two edges
+
+The 16-bit HI loop #1 wants IRQST bit 1 readable at +23 where we give +30.  The
+gap is exactly the pair's first period after STIMER, which we load as
+`((AUDF2<<8)|AUDF1) + LINK_FAST` = 23 for AUDF 16/0.  Swept that first period as
+`raw + k` (STIMER_PAIR_RAW / STIMER_PAIR_ADD, both now OFF):
+
+    k = 0,1,2,3   16-bit HI loop #1: triggered too early
+    k = 4         loop #1 PASSES, test advances to a later assertion
+    k = 5,6       triggered too late
+    k = 7         the current default (== + LINK_FAST), too late
+
+So the interrupt edge wants k = 4 — i.e. the pair's first period after STIMER is
+AUDF + 4, the SAME first-period rule the unlinked and low-half counters already
+use, with LINK_FAST applying only to periods after it.  That is a tidier rule
+than the one we have, not an uglier one.
+
+BUT k = 4 BREAKS pokey_sertiming, which passes at k = 7.  One constant, two
+incompatible values, so the shape is wrong rather than the number.
+
+WHAT DISTINGUISHES THEM, and it is already written in pokey_timer.c's own
+header: "a linked pair's INTERRUPT edge and its SERIAL-CLOCK edge are not the
+same event... pokey_timertiming and pokey_sertiming sit in the SAME timer
+configuration -- both AUDF2 = 0, both fast, both linked -- and want different
+timing, and the only thing that differs is which edge they watch."  That comment
+was written about the ONGOING period; the sweep says it applies to the FIRST
+period too.  So the pair's first period after STIMER is AUDF + 4 as seen by the
+interrupt and AUDF + LINK_FAST as seen by the serial clock, and a single cnt[]
+cannot carry both.
+
+Next attempt should give the serial tick its own first-period accounting rather
+than sweeping a shared constant — and should re-read that header comment first,
+because it named the answer before the sweep found it.

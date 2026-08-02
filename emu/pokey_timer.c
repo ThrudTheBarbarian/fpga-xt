@@ -115,6 +115,14 @@ static int period_of(const pokey_timer *p, int ch)
  * the delay could not have mattered. */
 /* How long the low half's reload value stays open to a late AUDF write, in
  * cycles after the underflow.  Measured, not chosen -- see audf_prime. */
+#ifndef STIMER_PAIR_ADD
+#define STIMER_PAIR_ADD 0
+#endif
+
+#ifndef STIMER_PAIR_RAW
+#define STIMER_PAIR_RAW 0
+#endif
+
 #ifndef LO_LATCH_LAG
 #define LO_LATCH_LAG 2
 #endif
@@ -585,6 +593,17 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         for (int i = 0; i < 2; i++)
             for (int k = 0; k < AUDF_PIPE; k++) p->audf_lo_d[i][k] = p->audf[2 * i];
         for (int i = 0; i < 4; i++) reload(p, i);
+        /* A LINKED PAIR'S FIRST PERIOD AFTER STIMER IS THE RAW 16-BIT VALUE,
+         * with none of the propagation LINK_FAST adds to every period after it.
+         * pokey_timertiming's 16-bit HI loop #1 pins it: with AUDF 16/0 it
+         * wants IRQST bit 1 readable at +23, and 16 + PAIR_IRQ_LAG(3) +
+         * IRQST_LAG(4) is 23 exactly, where 16 + LINK_FAST puts it at 30. */
+        if (STIMER_PAIR_RAW) {
+            if (p->audctl & 0x10)
+                p->cnt[0] = ((p->audf[1] << 8) | p->audf[0]) + STIMER_PAIR_ADD;
+            if (p->audctl & 0x08)
+                p->cnt[2] = ((p->audf[3] << 8) | p->audf[2]) + STIMER_PAIR_ADD;
+        }
         p->locnt[0] = p->audf[0] + ((p->audctl & 0x40) ? 4 : 1) + LO_EXTRA;
         p->lo_el[0] = p->lo_el[1] = 0;
         p->lo_first[0] = p->lo_first[1] = 1;
