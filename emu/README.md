@@ -2758,3 +2758,59 @@ Worth being plain about the economics: `gtia_pmoverlap` needs all 672 cells, so
 and the last one bought nothing. The remaining open work — this, the HSCROL trio,
 `pokey_timertiming` — is all in the same condition: understood in outline,
 resistant in detail, and expensive per unit of score.
+
+## Display-side and POKEY findings (2026-08-02)
+
+### The display window is NOT the fetch window, but replacing it is not a
+### one-constant change
+
+`antic_hscrolbug` measures the display-side HSCROL sign directly, at two values
+from one setup: restore HSCROL to 0 and the marker byte must land at $78,
+restore 2 and the same byte must land at $7a.  Two colour clocks LATER for
+HSCROL=2, so the display start ADDS the HSCROL term.  `HSCROL_DISPLAY_SIGN`
+is +1 and antic_hscrolbug passes.
+
+That costs `antic_virtdma`, which had been compensating.  Two things are known
+to be wrong on the display side, both wide-specific:
+
+  * the DISPLAY window is derived from the FETCH window's nominal, when it
+    should be machine cycle 32/24/22 and NOT stepped up for a scrolled row
+    (`PF_DISPLAY_SPEC`);
+  * `lb_origin` counts bytes fetched before the FETCH window opens, where a
+    scrolled row consumes bytes between its fetch window and its display window
+    even with no abnormal DMA -- six on a scrolled narrow row, exactly the
+    "line buffer advanced by six additional locations" antic_hscrolbug states
+    (`LB_ORIGIN_DISPLAY`).
+
+MEASURED, both directions: PF_DISPLAY_SPEC=1 scores 49 under BOTH signs, and
+LB_ORIGIN_DISPLAY=1 scores 44.  No setting separates the cases, so the error is
+upstream of both constants and they stay OFF.
+
+What virtdma actually pins: it is a SCROLLED WIDE mode 7 row (DMACTL $23, DL
+$57, HSCROL 2) with missiles at colour clocks $DA-$DD, and it wants those over
+the FIRST PIXEL OF CHARACTER 23.  At 8 colour clocks per mode 7 character that
+needs the display to start at 34 colour clocks -- which the true wide display
+window (22 machine cycles = 44) does not give.  Either the display start is not
+simply the display window, or the character index is not 23.  Unresolved; do not
+guess at it.
+
+### pokey_timertiming: the reload is right, the LATCH is late
+
+The test states its own arithmetic: "AUDF1/2 setting is $000D, for a period of
+13 + 7 = 20 cycles".  A linked pair's period is AUDF+7 and we already use that.
+The FIRST period after STIMER is separate (`LO_EXTRA`), and sweeping it BOTH
+WAYS brackets the answer exactly:
+
+    LO_EXTRA=2  16-bit lo loop #1: too early
+    LO_EXTRA=3  16-bit lo loop #1: too early
+    LO_EXTRA=4  loop #1 PASSES, later assertion fails ">41c"
+    LO_EXTRA=5  16-bit lo loop #1: too late
+
+So loop #1 requires exactly 4 and a later sub-test then fails: ONE CONSTANT
+CANNOT SATISFY BOTH, which means the shape is wrong rather than the value.
+With AUDF1 = 13 the underflows fall at 21 and 41; the test clears IRQEN at +27,
+re-arms at +31 and reads IRQST at +41 expecting the timer to have ALREADY fired
+("should be first cycle fired").  We are one cycle late making the underflow
+visible.  The defect is the interrupt latch's timing relative to the underflow,
+not the reload -- and pokey_timer.c's own header already notes that a linked
+pair's INTERRUPT edge lags its SERIAL-CLOCK edge.  That is where to look.
