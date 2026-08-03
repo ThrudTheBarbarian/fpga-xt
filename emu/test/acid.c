@@ -30,6 +30,99 @@
 #include <string.h>
 #include "../system.h"
 
+/* Emulation-only clock.
+ *
+ * Dividing total emulated cycles by total WALL time does not measure the
+ * emulator: it measures FatFs. Each test loads a .xex and a .lab off the card
+ * before a single 6502 cycle is executed, and antic_default is 37 cycles of
+ * emulation behind a full file-load round trip -- so the end-to-end figure is
+ * mostly SDIO, and the short tests dominate it. Time the run loop alone.
+ *
+ * On xtos this reads the kernel's three words directly rather than going
+ * through libc's struct timeval: time_t is 64-bit there, so seconds occupy
+ * words [0..1] and microseconds word [2] (the same reason progs/wsweep.c
+ * bypasses libc).
+ *
+ * INTEGER ONLY: the xtos build links against libc.so with an undefined-symbol
+ * guard, and double arithmetic here drags in __aeabi_dadd/ddiv/... which are not
+ * resolvable at load. Microseconds in a uint64 are exact and cost nothing. */
+#ifdef __XTOS__
+#include "usys.h"
+static unsigned long long now_us(void)
+{
+    unsigned tv[3] = {0, 0, 0};
+    __syscall(SYS_gettimeofday, (long)tv, 0, 0);
+    return (unsigned long long)tv[0] * 1000000ull + tv[2];
+}
+#else
+#include <sys/time.h>
+static unsigned long long now_us(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, 0);
+    return (unsigned long long)tv.tv_sec * 1000000ull + (unsigned)tv.tv_usec;
+}
+#endif
+
+static unsigned long long g_emu_t0;   /* set when a test's run loop starts */
+static unsigned long long g_emu_us;   /* emulation-only time of the last run_one */
+
+/* A9 PMU, read straight from PL0 (the kernel sets PMUSERENR — see zynq.c).
+ *
+ * Cycles vs instructions-retired is the whole point: it says whether the A9 is
+ * STALLED or is simply executing far more instructions than the same C does on
+ * the host, and those two want completely different fixes. L1D access/refill
+ * come along because if it IS stalls, the next question is immediately "how many
+ * touches, and how many of them miss".
+ *
+ * The counters are 32-bit and PMCCNTR wraps in ~6.4 s at 667 MHz, so sample and
+ * RESET periodically into 64-bit accumulators rather than reading once across a
+ * 53-second run — a single reading would silently alias. */
+#ifdef __XTOS__
+static unsigned long long pmu_cyc, pmu_ins, pmu_ref, pmu_acc, pmu_iref, pmu_bmiss, pmu_bexec;
+
+static unsigned pmu_rd_ctr(unsigned i)
+{
+    unsigned v;
+    __asm__ volatile("mcr p15,0,%0,c9,c12,5" :: "r"(i));    /* PMSELR */
+    __asm__ volatile("isb");
+    __asm__ volatile("mrc p15,0,%0,c9,c13,2" : "=r"(v));    /* PMXEVCNTR */
+    return v;
+}
+
+static void pmu_sample(void)          /* accumulate, then zero the counters */
+{
+    unsigned c;
+    __asm__ volatile("mrc p15,0,%0,c9,c13,0" : "=r"(c));    /* PMCCNTR */
+    pmu_cyc += c;
+    pmu_ins   += pmu_rd_ctr(0);
+    pmu_ref   += pmu_rd_ctr(1);
+    pmu_acc   += pmu_rd_ctr(2);
+    pmu_iref  += pmu_rd_ctr(3);
+    pmu_bmiss += pmu_rd_ctr(4);
+    pmu_bexec += pmu_rd_ctr(5);
+    unsigned v;                                              /* PMCR: reset both */
+    __asm__ volatile("mrc p15,0,%0,c9,c12,0" : "=r"(v));
+    __asm__ volatile("mcr p15,0,%0,c9,c12,0" :: "r"(v | (1u << 1) | (1u << 2)));
+    __asm__ volatile("isb");
+}
+static void pmu_reset(void)           /* zero WITHOUT accumulating: drops the load phase */
+{
+    unsigned v;
+    __asm__ volatile("mrc p15,0,%0,c9,c12,0" : "=r"(v));
+    __asm__ volatile("mcr p15,0,%0,c9,c12,0" :: "r"(v | (1u << 1) | (1u << 2)));
+    __asm__ volatile("isb");
+}
+/* PMCCNTR wraps every ~6.4 s at 667 MHz. The board runs ~50 K emulated cycles/s,
+ * so 1e6 emulated cycles is ~19 s -- THREE wraps, and the first reading aliased
+ * to an impossible 178 MHz. 25 K emulated cycles is ~0.5 s: comfortably inside. */
+#define PMU_SAMPLE_EVERY 25000ull
+#else
+#define pmu_sample() ((void)0)
+#define pmu_reset()  ((void)0)
+#define PMU_SAMPLE_EVERY 25000ull
+#endif
+
 /* Whether a disk drive answers on the serial line -- see the DSKINV stub and
  * sio.c.  ON, because there IS one: sio.c decodes the command frame and shifts
  * its reply back a bit at a time.  Build -DSIO_DEVICE=0 to unplug it. */
@@ -346,7 +439,11 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     uint16_t hist[8192] = {0}; int hn = 0, hcount = 0, trapped = 0;
 
     int armed = 0;
+    g_emu_t0 = now_us();     /* everything above is load + setup, not emulation */
+    pmu_reset();             /* ...and so the counters must start here too */
+    unsigned long long pmu_next = PMU_SAMPLE_EVERY;
     while (s.cycles < MAX_CYCLES) {
+        if (s.cycles >= pmu_next) { pmu_sample(); pmu_next = s.cycles + PMU_SAMPLE_EVERY; }
         if (trapout && !trapped) {
             /* The first PC outside the loaded code — the moment of the derail
              * itself, rather than anywhere along the BRK-walk through zeroed
@@ -591,9 +688,13 @@ int main(int argc, char **argv)
     }
 
     int pass = 0, fail = 0, jam = 0, loop = 0, skip = 0; int ret = 0;
+    unsigned long long emu_us_total = 0, emu_cyc_total = 0;
     for (int i = 0; i < n; i++) {
         unsigned long long cyc = 0;
         int r = run_one(dir, names[i], &cyc);
+        g_emu_us = now_us() - g_emu_t0;    /* run loop only; excludes the .xex/.lab load */
+        pmu_sample();                      /* catch the tail since the last periodic sample */
+        emu_us_total += g_emu_us; emu_cyc_total += cyc;
         const char *tag = r == R_PASS ? "PASS" : r == R_FAIL ? "fail"
                         : r == R_JAM  ? "JAM " : r == R_TIMEOUT ? "LOOP"
                         : r == R_RET  ? "ran " : "skip";
@@ -615,5 +716,43 @@ int main(int argc, char **argv)
     }
     printf("acid800: %d pass, %d fail, %d jammed, %d looping, %d ran, %d skipped"
            " (of %d)\n", pass, fail, jam, loop, ret, skip, n);
+    /* Emulation only. Compare this with wall-clock to see how much of a run is
+     * actually the file loads -- on the board they are the larger half. */
+    if (emu_us_total > 0) {
+        unsigned long long cps = emu_cyc_total * 1000000ull / emu_us_total;
+        unsigned long long permille = cps * 1000ull / 1789773ull;   /* vs realtime */
+        printf("acid800: %llu emulated cycles in %llu.%03llu s of emulation"
+               " = %llu cycles/s (%llu.%llu%% of realtime 1.79 MHz)\n",
+               emu_cyc_total, emu_us_total / 1000000ull,
+               (emu_us_total % 1000000ull) / 1000ull,
+               cps, permille / 10ull, permille % 10ull);
+    }
+#ifdef __XTOS__
+    /* IPC is the discriminator. ~0.1 => the core is STALLED, so the per-cycle
+     * design's memory traffic is the problem and the event-scheduled rewrite is
+     * the right fix. ~1.0 => it is retiring far more instructions than the same C
+     * does on the host, which is a codegen problem and a completely different
+     * job. Everything else here is only useful once that is settled. */
+    if (pmu_cyc && emu_cyc_total) {
+        printf("acid800: PMU  cycles=%llu insns=%llu  L1D acc=%llu refill=%llu\n",
+               pmu_cyc, pmu_ins, pmu_acc, pmu_ref);
+        printf("acid800: PMU  L1I refill=%llu  branches=%llu mispred=%llu\n",
+               pmu_iref, pmu_bexec, pmu_bmiss);
+        printf("acid800: PMU  IPC=%llu.%02llu  host-cyc/emu-cyc=%llu"
+               "  L1D-acc/emu-cyc=%llu  L1D-miss=%llu.%llu%%\n",
+               pmu_ins / pmu_cyc, (pmu_ins * 100ull / pmu_cyc) % 100ull,
+               pmu_cyc / emu_cyc_total,
+               pmu_acc / emu_cyc_total,
+               pmu_acc ? (pmu_ref * 1000ull / pmu_acc) / 10ull : 0ull,
+               pmu_acc ? (pmu_ref * 1000ull / pmu_acc) % 10ull : 0ull);
+        /* stall budget: how many host cycles each miss class could account for.
+         * A9 L1I refill ~ tens of cycles; a mispredict ~8. If neither times its
+         * count comes near host-cyc/emu-cyc, the stall is somewhere else again. */
+        printf("acid800: PMU  L1I-refill/emu-cyc=%llu  mispred/emu-cyc=%llu"
+               "  mispred-rate=%llu%%\n",
+               pmu_iref / emu_cyc_total, pmu_bmiss / emu_cyc_total,
+               pmu_bexec ? pmu_bmiss * 100ull / pmu_bexec : 0ull);
+    }
+#endif
     return 0;
 }

@@ -408,7 +408,13 @@ EMUSRC  := $(EMU)/system.c $(EMU)/xt6502.c $(EMU)/antic.c $(EMU)/antic_dma.c \
 $(BUILD)/acid.so: $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so | $(BUILD)
 	@# -O2 overrides ARMCFLAGS' -Os on purpose: this one is COMPUTE-BOUND and the
 	@# point of running it on the A9 is partly to find out what a frame costs.
-	$(ARMCC) $(ARMCFLAGS) -O2 -D__XTOS__ -Ilibc-compat -Itest/qemu -Ikernel -I$(EMU) \
+	@# -mcpu=cortex-a9: ARMCFLAGS does NOT set a CPU, so this defaults to the
+	@# toolchain's baseline ARM -- no movw/movt (every 32-bit constant becomes a
+	@# literal-pool LOAD rather than two immediates) and generic scheduling. For an
+	@# interpreter that is a real cost, and it is also what makes `isb` assemble
+	@# for the PMU reads. Measure before assuming the same is right for everything
+	@# else ARMCFLAGS builds.
+	$(ARMCC) $(ARMCFLAGS) -mcpu=cortex-a9 -O2 -D__XTOS__ -Ilibc-compat -Itest/qemu -Ikernel -I$(EMU) \
 	    -Inewlib-pic/include -fpic -shared -nostdlib \
 	    -Wl,--hash-style=sysv -Wl,-soname,acid.so \
 	    $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so -o $@

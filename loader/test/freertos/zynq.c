@@ -114,6 +114,96 @@ void vApplicationIRQHandler(uint32_t ulICCIAR)
     else if (id == 62) { extern void mathcop_isr(void); mathcop_isr(); }     /* math-cop doorbell (IRQ_F2P[1]) */
 }
 
+/* ---- A9 performance monitors (PMUv2) --------------------------------------
+ *
+ * The question this exists to answer: the software Atari runs ~12,900 A9 cycles
+ * per emulated 6502 cycle against the Mac's ~384, and clock x IPC does not come
+ * close to explaining the gap. Two very different causes look identical from
+ * outside — the core could be STALLED (memory-bound, so the per-cycle design's
+ * ~180 touches per emulated cycle is the problem) or it could be RETIRING far
+ * more instructions than the same C does elsewhere (a codegen problem). Cycles
+ * and instructions-retired separate them outright, and guessing between them
+ * would send the next month of work in the wrong direction.
+ *
+ * PMUSERENR.EN is set so PL0 can read the counters directly: the measurement
+ * belongs around the emulator's inner loop, in the program, not behind a
+ * syscall whose own cost would land inside the window being measured.
+ *
+ * NOTE the counters are 32-bit and PMCCNTR wraps in ~6.4 s at 667 MHz, so a
+ * reader must accumulate and reset rather than take one reading across a
+ * 53-second run. */
+/* 0x08 (INST_RETIRED) reads ZERO on this A9 -- it is optional in ARMv7 and this
+ * part does not implement it. 0x68 is the A9's own "instructions coming out of
+ * the rename stage", which is the usable instruction count here.
+ *
+ * The A9 has SIX event counters, so take all of them in one run: with IPC at
+ * 0.19 and the D-cache missing only 0.1%, the remaining suspects are the
+ * INSTRUCTION side (a per-cycle design runs CPU+ANTIC+GTIA+POKEY every cycle,
+ * which is a lot of code through a 32 KB L1I) and BRANCHES (interpreter dispatch
+ * is an indirect branch the A9 predicts poorly). Measuring both at once avoids
+ * another build-load cycle per hypothesis. */
+#define PMU_EVT_INST         0x68u   /* instructions renamed          */
+#define PMU_EVT_L1D_REFILL   0x03u   /* data cache refill             */
+#define PMU_EVT_L1D_ACCESS   0x04u   /* data cache access             */
+#define PMU_EVT_L1I_REFILL   0x01u   /* INSTRUCTION cache refill      */
+#define PMU_EVT_BR_MISS      0x10u   /* branch mispredicted           */
+#define PMU_EVT_BR_EXEC      0x12u   /* predictable branches executed */
+
+static void pmu_set_event(uint32_t ctr, uint32_t ev)
+{
+    __asm__ volatile("mcr p15,0,%0,c9,c12,5" :: "r"(ctr));   /* PMSELR */
+    __asm__ volatile("isb");
+    __asm__ volatile("mcr p15,0,%0,c9,c13,1" :: "r"(ev));    /* PMXEVTYPER */
+    __asm__ volatile("isb");
+}
+
+/* Report the ACTUAL CPU clock from the PLL, because everything timed on this
+ * board is scaled by it: gtimer_timeofday() divides the global-timer count by
+ * configCPU_CLOCK_HZ/2, so if that constant is wrong every measured duration is
+ * wrong by the same ratio -- silently, and in a way no amount of repeating the
+ * measurement reveals. The Zynq-7020 -2 part on this carrier is rated well above
+ * the 666.67 MHz the config assumes.
+ *
+ *   CPU_6x4x = PS_CLK * ARM_PLL_FDIV / ARM_CLK_DIVISOR
+ *
+ * PS_CLK is the board crystal (33.333 MHz on this carrier). */
+void clk_report(void)
+{
+    uint32_t pll = REG(0xF8000100u);          /* ARM_PLL_CTRL */
+    uint32_t ctl = REG(0xF8000120u);          /* ARM_CLK_CTRL */
+    uint32_t fdiv = (pll >> 12) & 0x7Fu;
+    uint32_t div  = (ctl >> 8)  & 0x3Fu;
+    extern void klog(const char *) __attribute__((weak));
+    extern void klog_u(unsigned) __attribute__((weak));
+    if (klog && klog_u) {
+        uint32_t hz = div ? (uint32_t)((33333333ull * fdiv) / div) : 0u;
+        klog("[clk] ARM_PLL fdiv="); klog_u(fdiv);
+        klog(" div=");               klog_u(div);
+        klog(" cpu_hz=");            klog_u(hz);
+        klog(" configCPU_CLOCK_HZ="); klog_u(configCPU_CLOCK_HZ);
+        klog("\n");
+    }
+}
+
+void pmu_init(void)
+{
+    uint32_t v;
+    __asm__ volatile("mrc p15,0,%0,c9,c12,0" : "=r"(v));     /* PMCR */
+    v |=  (1u << 0) | (1u << 1) | (1u << 2);                 /* E | reset events | reset cycles */
+    v &= ~(1u << 3);                                         /* D=0: count every cycle, not /64 */
+    __asm__ volatile("mcr p15,0,%0,c9,c12,0" :: "r"(v));
+    pmu_set_event(0, PMU_EVT_INST);
+    pmu_set_event(1, PMU_EVT_L1D_REFILL);
+    pmu_set_event(2, PMU_EVT_L1D_ACCESS);
+    pmu_set_event(3, PMU_EVT_L1I_REFILL);
+    pmu_set_event(4, PMU_EVT_BR_MISS);
+    pmu_set_event(5, PMU_EVT_BR_EXEC);
+    /* enable cycle counter (bit 31) + counters 0..5 */
+    __asm__ volatile("mcr p15,0,%0,c9,c12,1" :: "r"(0x8000003Fu));  /* PMCNTENSET */
+    __asm__ volatile("mcr p15,0,%0,c9,c14,0" :: "r"(1u));           /* PMUSERENR: PL0 may read */
+    __asm__ volatile("isb");
+}
+
 /* Fault output goes to the console AND the kernel log. Console-only was a
  * half-instrument: the person at the screen can read a crash dump but nobody
  * over the network can, so `dmesg` showed a task had vanished with no reason
