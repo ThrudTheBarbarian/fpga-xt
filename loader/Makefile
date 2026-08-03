@@ -423,7 +423,7 @@ $(BUILD)/acid.so: $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so | $(BUILD)
 	@# interpreter that is a real cost, and it is also what makes `isb` assemble
 	@# for the PMU reads. Measure before assuming the same is right for everything
 	@# else ARMCFLAGS builds.
-	$(ARMCC) $(ARMCFLAGS) -mcpu=cortex-a9 -O2 -D__XTOS__ -Ilibc-compat -Itest/qemu -Ikernel -I$(EMU) \
+	$(ARMCC) $(ARMCFLAGS) $(XTRACFLAGS) -mcpu=cortex-a9 -O2 -D__XTOS__ -Ilibc-compat -Itest/qemu -Ikernel -I$(EMU) \
 	    -Inewlib-pic/include -fpic -shared -nostdlib \
 	    -Wl,--hash-style=sysv -Wl,-soname,acid.so \
 	    $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so -o $@

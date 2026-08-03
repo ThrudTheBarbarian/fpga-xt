@@ -2,6 +2,7 @@
  * gtia.c — GTIA collisions and object rendering.  See gtia.h.
  */
 #include "gtia.h"
+#include "prof.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -35,17 +36,33 @@ static int size_scale(uint8_t s)
 
 int gtia_probe;
 
-int gtia_player_lit(const gtia *g, int i)
+/* Internal forms used by the hot path; the extern symbols forward here for
+ * system.c's P/M probe.
+ *
+ * NEGATIVE RESULT, recorded so it is not retried: making these `static inline`
+ * changed NOTHING on the board (99,993 vs 100,010 cycles/s). They are extern but
+ * live in the SAME translation unit as gtia_clock, so -O2 already inlined them
+ * and still emitted the symbols. Call overhead was never the cost.
+ *
+ * What IS measured: in antic_dmapattern nothing is ever lit -- gtia_clock takes
+ * its early return on all 5,009,672 non-vblank calls and the "something lit"
+ * path runs ZERO times -- and obj_step takes its idle path 96.1% of the time
+ * (21,008,448 of 21,871,800). So the emulator spends most of its life proving
+ * there is nothing to draw. */
+static inline int player_lit(const gtia *g, int i)
 {
     for (int r = 0; r < g->p_n[i]; r++)
         if ((g->grafp[i] >> (7 - g->p_bit[i][r])) & 1) return 1;
     return 0;
 }
 
-int gtia_missile_lit(const gtia *g, int i)
+static inline int missile_lit(const gtia *g, int i)
 {
     return g->m_active[i] && ((g->grafm >> (2 * i + (1 - g->m_bit[i]))) & 1);
 }
+
+int gtia_player_lit(const gtia *g, int i)  { return player_lit(g, i); }
+int gtia_missile_lit(const gtia *g, int i) { return missile_lit(g, i); }
 
 /* Advance every object by one colour clock.
  *
@@ -97,9 +114,11 @@ static void obj_step(gtia *g, int hpos)
          * p_active is still assigned below, unconditionally, so an object that
          * retired on an earlier clock cannot be left marked live. */
         if (!g->p_n[i] && hpos != g->hposp[i]) {
+            PROF_COUNT(PROFC_OBJ_IDLE);
             g->p_active[i] = 0;
             goto missile;
         }
+        PROF_COUNT(PROFC_OBJ_FULL);
 
         int w = size_scale(g->sizep[i]);
         int alt = (g->sizep[i] & 3) == 2;
@@ -177,6 +196,16 @@ missile:
 
 void gtia_clock(gtia *g, int hpos, int pf, int hires_lit)
 {
+    /* ABLATION HOOK, for measurement only -- never shipped enabled. The PROF
+     * timers wrap this call with two PMCCNTR reads, and a coprocessor read is
+     * not cheap, so the attributed share is an upper bound rather than a
+     * measurement. Building -DABLATE_GTIA removes the whole function's work and
+     * the throughput delta gives its TRUE cost, and therefore the ceiling on
+     * what optimising it can ever be worth. Results are wrong with this on. */
+#ifdef ABLATE_GTIA
+    (void)hpos; (void)pf; (void)hires_lit; (void)g;
+    return;
+#endif
     obj_step(g, hpos);
 
     /* No collisions of ANY kind during vertical blank — four separate
@@ -195,10 +224,11 @@ void gtia_clock(gtia *g, int hpos, int pf, int hires_lit)
      * path, not a micro-optimisation. */
     unsigned pm = 0, mm = 0;
     for (int i = 0; i < 4; i++) {
-        if (gtia_player_lit(g, i))  pm |= 1u << i;
-        if (gtia_missile_lit(g, i)) mm |= 1u << i;
+        if (player_lit(g, i))  pm |= 1u << i;
+        if (missile_lit(g, i)) mm |= 1u << i;
     }
-    if (!pm && !mm) return;      /* no object here: no collision of any kind */
+    if (!pm && !mm) { PROF_COUNT(PROFC_CLK_EARLY); return; }   /* no object here */
+    PROF_COUNT(PROFC_CLK_FULL);
 
     /* HBLANK is NOT a uniform "collisions off": missile/player still registers
      * there while player/player does not (gtia_collision). */

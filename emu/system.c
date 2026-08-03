@@ -261,6 +261,9 @@ static void render_cycle(atari *s, int cyc)
 #if defined(EMU_PROF) && defined(__XTOS__)
 unsigned long long prof_acc[PROF_N];
 unsigned long long prof_cnt[PROF_N];
+unsigned long long prof_c[PROFC_N];
+const char *const prof_cname[PROFC_N] =
+    { "obj_step idle", "obj_step full", "gtia_clock early", "gtia_clock full" };
 const char *const prof_name[PROF_N] =
     { "antic_tick", "render_cycle", "pm_latch", "pokey_rand",
       "pokey_timer", "sio_cycle", "irq_note", "phantom_latch",

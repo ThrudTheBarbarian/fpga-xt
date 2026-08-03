@@ -766,6 +766,8 @@ int main(int argc, char **argv)
                        prof_name[k], prof_acc[k],
                        pmu_cyc ? prof_acc[k] * 100ull / pmu_cyc : 0ull,
                        prof_acc[k] / emu_cyc_total, prof_cnt[k]);
+            for (int k = 0; k < PROFC_N; k++)
+                printf("acid800: PROF  count %-18s %12llu\n", prof_cname[k], prof_c[k]);
             unsigned long long cpu = pmu_cyc > parts ? pmu_cyc - parts : 0;
             printf("acid800: PROF  %-14s %12llu  %3llu%%  %6llu/emu-cyc  (derived)\n",
                    "6502+bus", cpu, pmu_cyc ? cpu * 100ull / pmu_cyc : 0ull,

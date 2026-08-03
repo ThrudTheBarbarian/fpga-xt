@@ -42,6 +42,18 @@
 #define PROF_GTIA    9   /* gtia_clock: players/missiles/priority */
 #define PROF_N       10
 
+/* Plain event counters, separate from the cycle timers: "how often does this
+ * path run" is a different question from "how long does it take", and the idle
+ * fast paths added to gtia.c are only worth anything if they actually FIRE. */
+#define PROFC_OBJ_IDLE  0   /* obj_step: player had no runs and no trigger */
+#define PROFC_OBJ_FULL  1   /* obj_step: full run-walk                     */
+#define PROFC_CLK_EARLY 2   /* gtia_clock: returned early, nothing lit     */
+#define PROFC_CLK_FULL  3   /* gtia_clock: something was lit               */
+#define PROFC_N         4
+extern unsigned long long prof_c[PROFC_N];
+extern const char *const prof_cname[PROFC_N];
+#define PROF_COUNT(i) (prof_c[i]++)
+
 extern unsigned long long prof_acc[PROF_N];
 extern unsigned long long prof_cnt[PROF_N];
 extern const char *const prof_name[PROF_N];
@@ -61,6 +73,7 @@ static inline unsigned prof_now(void)
 #else
 #define PROF_BEG(slot) do { } while (0)
 #define PROF_END(slot) do { } while (0)
+#define PROF_COUNT(i)  do { } while (0)
 #endif
 
 #endif /* EMU_PROF_H */
