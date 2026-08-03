@@ -87,6 +87,31 @@ module tb_acid;
                      dbg_pc, line, hcount, dut.reg_rdata);
     end
 
+    // The WSYNC resume gap, measured rather than argued.  The oracle's
+    // ANTIC_CYC_WSYNC is "the first cycle the CPU gets BACK"; the RTL's
+    // WSYNC_RELEASE is "the cycle /RDY comes back".  Print both the cycle /RDY
+    // deasserts and the first cycle the CPU actually retires after it, so the
+    // gap between the two semantics is a number and not an inference.
+    reg rdy_n_d;
+    reg awaiting_resume;
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            rdy_n_d <= 1'b0; awaiting_resume <= 1'b0;
+        end else if (tick) begin
+            rdy_n_d <= rdy_n;
+            if (rdy_n_d && !rdy_n) begin              // /RDY just came back
+                if (probe_on)
+                    $display("PROBE-RDY    released, hcount=%0d line=%0d", hcount, line);
+                awaiting_resume <= 1'b1;
+            end else if (awaiting_resume && sync) begin
+                if (probe_on)
+                    $display("PROBE-RESUME first CPU cycle, hcount=%0d line=%0d pc=%04h",
+                             hcount, line, dbg_pc);
+                awaiting_resume <= 1'b0;
+            end
+        end
+    end
+
     a8_core dut (
         .clk(clk), .rst(rst), .cold(cold),
         .tick(tick), .px_tick(px_tick), .tune(tune_v),
