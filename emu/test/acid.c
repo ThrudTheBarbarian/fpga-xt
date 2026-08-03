@@ -28,7 +28,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
 #include "../system.h"
 
 /* Whether a disk drive answers on the serial line -- see the DSKINV stub and
@@ -430,8 +429,65 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     return R_TIMEOUT;
 }
 
+/* Collect the base name of every .xex in `dir`.  THE ONE PLATFORM SPLIT IN THIS
+ * HARNESS, and it is not cosmetic: xtos's libc.so exports no opendir/readdir at
+ * all, and because a program links `-shared -nostdlib` those come out as
+ * UNDEFINED symbols that link cleanly and then kill the process at load.  The
+ * symptom is the whole suite exiting instantly with no output while a single
+ * named test runs fine, which is exactly what happened the first time this ran
+ * on the board.  Check with `arm-none-eabi-nm -u <prog>.so`.
+ *
+ * xtos has a better primitive anyway: SYS_getdents fills a buffer with packed
+ * {mode, size, mtime, reclen, namelen, name} records, so a whole directory
+ * arrives in one syscall rather than a readdir plus a stat per entry. */
+#ifdef __XTOS__
+#include "usys.h"
+
+static int list_xex(const char *dir, char names[][64], int *n)
+{
+    char buf[4096];
+    for (int index = 0; *n < 128; ) {
+        long got = sys_getdents(dir, index, buf);
+        if (got < 0) return -1;
+        if (got == 0) break;
+        const char *p = buf;
+        for (long i = 0; i < got && *n < 128; i++) {
+            unsigned short reclen  = *(const unsigned short *)(p + 12);
+            unsigned short namelen = *(const unsigned short *)(p + 14);
+            const char *nm = p + 16;
+            if (namelen > 4 && !strcmp(nm + namelen - 4, ".xex"))
+                snprintf(names[(*n)++], 64, "%.*s", namelen - 4, nm);
+            p += reclen;
+        }
+        index += (int)got;
+    }
+    return 0;
+}
+#else
+#include <dirent.h>
+
+static int list_xex(const char *dir, char names[][64], int *n)
+{
+    DIR *d = opendir(dir);
+    if (!d) return -1;
+    struct dirent *e;
+    while ((e = readdir(d)) && *n < 128) {
+        size_t l = strlen(e->d_name);
+        if (l > 4 && !strcmp(e->d_name + l - 4, ".xex"))
+            snprintf(names[(*n)++], 64, "%.*s", (int)(l - 4), e->d_name);
+    }
+    closedir(d);
+    return 0;
+}
+#endif
+
 int main(int argc, char **argv)
 {
+    /* LINE-BUFFER the results.  Piped (over ssh, or into a file) stdout is
+     * block-buffered, so a run that dies part-way loses every line still sitting
+     * in the 4 KB buffer and looks like it produced nothing at all -- which is
+     * exactly how the first on-board run presented, and it hid where it died. */
+    setvbuf(stdout, 0, _IOLBF, 0);
     const char *dir = (argc > 1) ? argv[1] : "../rsrc/acid800/Acid800/standalone";
     char names[128][64];
     int n = 0;
@@ -442,15 +498,9 @@ int main(int argc, char **argv)
     } else if (argc > 2) {
         snprintf(names[n++], 64, "%s", argv[2]);
     } else {
-        DIR *d = opendir(dir);
-        if (!d) { fprintf(stderr, "acid: cannot open %s\n", dir); return 2; }
-        struct dirent *e;
-        while ((e = readdir(d)) && n < 128) {
-            size_t l = strlen(e->d_name);
-            if (l > 4 && !strcmp(e->d_name + l - 4, ".xex"))
-                snprintf(names[n++], 64, "%.*s", (int)(l - 4), e->d_name);
+        if (list_xex(dir, names, &n) < 0) {
+            fprintf(stderr, "acid: cannot open %s\n", dir); return 2;
         }
-        closedir(d);
         for (int i = 0; i < n; i++)
             for (int j = i + 1; j < n; j++)
                 if (strcmp(names[j], names[i]) < 0) {

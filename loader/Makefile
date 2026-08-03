@@ -224,11 +224,20 @@ newlib-check:
 
 # libc.so — PIC newlib (loader/newlib-pic/, built by tools/build-newlib-pic.sh)
 # linked into a loadable shared object; goes in the romfs at /OS/Library/libc.so
-$(BUILD)/libc.so: newlib-pic/libc.a libc-hide.map | $(BUILD)
+# libc-dirent.o — opendir/readdir/closedir, which newlib simply does not have
+# (its <dirent.h> is a hard #error).  They live HERE, in libc.so, so that any
+# program gets them: only toybox and dropbear link the posix shim, so before this
+# a program that walked a directory linked cleanly with UNDEFINED opendir and
+# died at load with no diagnostic.
+$(BUILD)/libc-dirent.o: libc-dirent.c kernel/xtsys.h test/qemu/usys.h | $(BUILD)
+	$(ARMCC) $(ARMCFLAGS) -Ilibc-compat -Itest/qemu -Ikernel -c $< -o $@
+
+$(BUILD)/libc.so: newlib-pic/libc.a libc-hide.map $(BUILD)/libc-dirent.o | $(BUILD)
 	$(ARMCC) -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -shared -nostdlib \
 	    -Wl,-z,max-page-size=0x100000 \
 	    -Wl,--version-script=libc-hide.map \
 	    -Wl,--whole-archive newlib-pic/libc.a -Wl,--no-whole-archive \
+	    $(BUILD)/libc-dirent.o \
 	    -Wl,-soname,libc.so -o $@
 
 # --- romfs: build the programs as .so, pack them into a blob, embed it ---
@@ -399,10 +408,23 @@ EMUSRC  := $(EMU)/system.c $(EMU)/xt6502.c $(EMU)/antic.c $(EMU)/antic_dma.c \
 $(BUILD)/acid.so: $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so | $(BUILD)
 	@# -O2 overrides ARMCFLAGS' -Os on purpose: this one is COMPUTE-BOUND and the
 	@# point of running it on the A9 is partly to find out what a frame costs.
-	$(ARMCC) $(ARMCFLAGS) -O2 -Ilibc-compat -Itest/qemu -Ikernel -I$(EMU) \
+	$(ARMCC) $(ARMCFLAGS) -O2 -D__XTOS__ -Ilibc-compat -Itest/qemu -Ikernel -I$(EMU) \
 	    -Inewlib-pic/include -fpic -shared -nostdlib \
 	    -Wl,--hash-style=sysv -Wl,-soname,acid.so \
 	    $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so -o $@
+	@# GUARD, and it is load-bearing: `-shared -nostdlib` links UNDEFINED symbols
+	@# without complaint and they only bite when the program is loaded.  libc.so
+	@# exports no opendir/readdir, so the first board run exited instantly with no
+	@# output while a single named test ran fine.  Fail the BUILD instead.
+	@# Compare against every symbol libc.so DEFINES **or itself leaves undefined**:
+	@# the __aeabi_* compiler helpers are undefined in libc.so, toybox and lua too
+	@# and the runtime resolves them for everyone, so only a name that appears in
+	@# NEITHER set is genuinely missing.
+	@arm-none-eabi-nm -D $(BUILD)/libc.so | awk '{print $$NF}' | sort -u > $(BUILD)/.acid-libc-syms; \
+	 u=$$(arm-none-eabi-nm -u $@ | awk '{print $$NF}' | sort -u | \
+	      comm -23 - $(BUILD)/.acid-libc-syms); \
+	 rm -f $(BUILD)/.acid-libc-syms; \
+	 if [ -n "$$u" ]; then echo "acid.so: undefined at load:" $$u >&2; exit 1; fi
 
 # a program that uses libc (DT_NEEDED libc.so), compiled against the PIC newlib headers
 $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUILD)
@@ -772,7 +794,10 @@ sdstage: $(BUILD)/acid.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab
 	@# measured against the same 63 tests the Mac host build passes
 	cp $(BUILD)/acid.so    $(SDSTAGE)/OS/bin/acid
 	mkdir -p $(SDSTAGE)/OS/share/acid800
-	cp ../rsrc/acid800/Acid800/standalone/*.xex $(SDSTAGE)/OS/share/acid800/
+	@# .lab as well as .xex -- the harness reads the suite's own symbol table
+	@# beside each test to find _testPassed/_testFailed/_testSkipped, and without
+	@# it every test reports `skip  0 cycles` having never run at all
+	cp ../rsrc/acid800/Acid800/standalone/*.xex ../rsrc/acid800/Acid800/standalone/*.lab $(SDSTAGE)/OS/share/acid800/
 	cp $(BUILD)/regtest.so $(SDSTAGE)/OS/bin/regtest
 	cp $(BUILD)/httpd.so   $(SDSTAGE)/OS/bin/httpd
 	cp $(BUILD)/tnfs.so    $(SDSTAGE)/OS/bin/tnfs
