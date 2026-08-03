@@ -65,6 +65,17 @@ module tb_acid;
 
     reg [15:0] tune_v;
 
+    // VCOUNT-read probe.  The open question after the WSYNC sweep is whether
+    // the CPU reaches `lda $D40B` on the cycle the test's comments name, so
+    // report the beam position at each such read.  Off unless +PROBE=1, so
+    // ordinary runs are byte-identical.
+    reg probe_on;
+    always_ff @(posedge clk) begin
+        if (probe_on && tick && !rst && dut.c_rw && (dut.c_addr == 16'hD40B))
+            $display("PROBE vcount-read line=%0d hcount=%0d value=%02h",
+                     line, hcount, dut.reg_rdata);
+    end
+
     a8_core dut (
         .clk(clk), .rst(rst), .cold(cold),
         .tick(tick), .px_tick(px_tick), .tune(tune_v),
@@ -178,6 +189,7 @@ module tb_acid;
         // TUNE likewise a RUNTIME plusarg, and read HERE so it is stable before
         // reset is released a few lines below.
         if (!$value$plusargs("TUNE=%d", tune_v)) tune_v = 16'd0;
+        if (!$value$plusargs("PROBE=%d", probe_on)) probe_on = 1'b0;
         $readmemh("acid.mem", mem);
         $readmemh("acid_cfg.mem", cfg);
         test_end  = cfg[0];
