@@ -401,20 +401,6 @@ int xtld_load(const uint8_t *image, size_t image_len,
     for (int k = 0; k < ndeps; k++) obj->deps[k] = deps[k];   /* hold refs for transitive unload */
     obj->ndeps      = ndeps;
     if (g_nobjs < XTLD_MAX_OBJS) g_objs[g_nobjs++] = obj;   /* register for resolution + dedup */
-    /* Record where each object landed. A crash dump gives absolute addresses, and
-     * without the load base they cannot be turned back into a function — which is
-     * exactly what "[??+0x0248f638]" costs you. Weak so the portable/host builds,
-     * which have no kernel log, link unchanged. */
-    {
-        extern void klog(const char *) __attribute__((weak));
-        extern void klog_u(unsigned) __attribute__((weak));
-        if (klog && klog_u) {
-            klog("[xtld] "); klog(soname ? soname : "<prog>");
-            klog(" base="); klog_u((unsigned)xtld_base(obj));
-            klog(" span="); klog_u((unsigned)xtld_span(obj));
-            klog("\n");
-        }
-    }
     /* let the host protect this object (W^X / executable / PL0) now that it's fully
      * relocated, BEFORE anyone runs its constructors or calls into it. */
     if (host->on_loaded) host->on_loaded(obj, host->user);

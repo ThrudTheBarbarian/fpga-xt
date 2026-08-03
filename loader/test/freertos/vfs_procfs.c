@@ -402,6 +402,27 @@ static void pf_cpu_stanza(pfb *o, int n, uint32_t midr, uint32_t sctlr,
     pfb_s(o, "state\t\t: "); pfb_s(o, state); pfb_c(o, '\n');
 }
 
+/* /OS/proc/kfs — the kernel filesystem mailbox handshake, stage by stage.
+ * A stalled tftpd shows up here as one counter one behind its predecessor. */
+static int pf_gen_kfs(char *buf, int sz)
+{
+    extern volatile unsigned g_kfs_queued, g_kfs_picked, g_kfs_served, g_kfs_returned;
+    extern volatile long     g_kfs_lastres;
+    pfb o = { buf, 0, sz };
+    pfb_s(&o, "queued\t\t: ");   pfb_d(&o, (int)g_kfs_queued);   pfb_c(&o, '\n');
+    pfb_s(&o, "picked\t\t: ");   pfb_d(&o, (int)g_kfs_picked);   pfb_c(&o, '\n');
+    pfb_s(&o, "served\t\t: ");   pfb_d(&o, (int)g_kfs_served);   pfb_c(&o, '\n');
+    pfb_s(&o, "returned\t: ");    pfb_d(&o, (int)g_kfs_returned); pfb_c(&o, '\n');
+    pfb_s(&o, "last result\t: "); pfb_d(&o, (int)g_kfs_lastres);  pfb_c(&o, '\n');
+    pfb_s(&o, "stalled in\t: ");
+    if (g_kfs_queued != g_kfs_picked)        pfb_s(&o, "queue (fs task never dequeued)");
+    else if (g_kfs_picked != g_kfs_served)   pfb_s(&o, "vfs_write (blocked in fs task)");
+    else if (g_kfs_served != g_kfs_returned) pfb_s(&o, "completion signal (wakeup lost)");
+    else                                     pfb_s(&o, "-");
+    pfb_c(&o, '\n');
+    return o.n;
+}
+
 static int pf_gen_cpuinfo(char *buf, int sz)
 {
     pfb o = { buf, 0, sz };
@@ -654,6 +675,7 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     else if (!strcmp(rel, "/limits"))  len = pf_gen_limits(buf, PF_BUF);
     else if (!strcmp(rel, "/cpu1"))    len = pf_gen_cpu1(buf, PF_BUF);
     else if (!strcmp(rel, "/cpuinfo")) len = pf_gen_cpuinfo(buf, PF_BUF);
+    else if (!strcmp(rel, "/kfs")) len = pf_gen_kfs(buf, PF_BUF);
     else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
     else if (!strncmp(rel, "/net/", 5)) { extern int xt_procnet(const char *, char *, int); len = xt_procnet(rel + 5, buf, cap); }
     else if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
@@ -681,7 +703,7 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
         !strcmp(rel, "/video")  || !strcmp(rel, "/video-sii") || !strcmp(rel, "/video-kick") ||
         !strcmp(rel, "/video-sleep") ||
         !strcmp(rel, "/temp") || !strcmp(rel, "/limits") ||
-        !strcmp(rel, "/cpu1") || !strcmp(rel, "/cpuinfo")) { st->mode = XT_S_IFREG; return 0; }
+        !strcmp(rel, "/cpu1") || !strcmp(rel, "/cpuinfo") || !strcmp(rel, "/kfs")) { st->mode = XT_S_IFREG; return 0; }
     if (!strcmp(rel, "/net")) { st->mode = XT_S_IFDIR; return 0; }
     if (!strncmp(rel, "/net/", 5)) {
         for (int i = 0; xt_procnet_leaves[i]; i++)
@@ -719,7 +741,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp", "limits", "cpu1", "cpuinfo" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp", "limits", "cpu1", "cpuinfo", "kfs" };
         int fi = index - emitted;
         if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };

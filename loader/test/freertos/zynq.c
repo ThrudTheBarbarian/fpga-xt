@@ -242,8 +242,17 @@ void fault_report(unsigned code, unsigned addr, unsigned caller)
     /* A fault STORM (e.g. a corrupted server respawning + re-faulting) must not wedge
      * the console — the task still gets killed (xt_vectors.S), we just stop printing
      * after a cap so the board stays usable for diagnosis. */
+    /* RE-ENTRANCY GUARD. If anything below faults -- and fault_symbolize once did,
+     * walking the loader's object registry -- the abort re-enters here and the
+     * two recurse until the scheduler asserts. One report at a time; a fault
+     * raised while reporting is dropped rather than allowed to eat the system. */
+    static volatile int g_in_fault;
+    if (g_in_fault) return;
+    g_in_fault = 1;
+
     static unsigned g_faultn;
     if (++g_faultn > 24u) {
+        g_in_fault = 0;
         if (g_faultn == 25u) fr_puts("\n*** fault storm: suppressing further reports (tasks still killed) ***\n");
         return;
     }
@@ -276,6 +285,7 @@ void fault_report(unsigned code, unsigned addr, unsigned caller)
       if ((l1e & 3u) == 1u) { unsigned *l2 = (unsigned *)(l1e & 0xFFFFFC00u);
                               fr_hex("  L2[pg]=", l2[(va >> 12) & 0xFFu]); } }
     fr_puts("\n*** killing the faulting task; OS continues (T2-a) ***\n");
+    g_in_fault = 0;
     /* returns to xt_vectors.S, which redirects the task into xtos_task_fault_exit */
 }
 

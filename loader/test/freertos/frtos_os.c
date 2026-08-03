@@ -314,6 +314,8 @@ void frtos_free(void *p, void *u) { (void)p; (void)u; }  /* bump kernel heap: im
  * PC/return-addr in a crash dump maps to <object>+<hex offset> — feed that to
  * `arm-none-eabi-addr2line -e build/<object>` (or objdump) to name the function. */
 static proc_t *cur_proc(void);   /* fwd (defined below) */
+#define XTLD_FAULT_SCAN_MAX 16   /* == XTLD_MAX_OBJS; never unbounded in fault context */
+
 void fault_symbolize(unsigned addr, void (*emit)(const char *, unsigned))
 {
     proc_t *p = cur_proc();
@@ -331,10 +333,19 @@ void fault_symbolize(unsigned addr, void (*emit)(const char *, unsigned))
      * cannot be turned into a function without the load base, and the base is
      * not reported anywhere. A fault in libGEM.so is exactly as likely as one
      * in the program, so name it the same way. */
-    for (int i = 0; ; i++) {
+    /* BOUNDED and POINTER-CHECKED, because this runs in FAULT CONTEXT. Walking
+     * the registry here once turned a single data abort in 'hdmimon' into a
+     * fault storm and then a scheduler assert: the abort called fault_report,
+     * which called this, which faulted inside xtld_base on an object pointer
+     * that was not safe to dereference. A symbolizer that can itself fault
+     * destroys the very report it exists to produce, so validate first and give
+     * up quietly rather than chase a bad pointer. */
+    for (int i = 0; i < XTLD_FAULT_SCAN_MAX; i++) {
         xtld_obj *o = xtld_object_at(i);
         if (!o) break;
+        if ((uintptr_t)o < 0x00100000u || (uintptr_t)o >= 0x10000000u) break;
         uintptr_t b = xtld_base(o); size_t s = xtld_span(o);
+        if (!b || !s) continue;
         if (addr < b || addr >= b + s) continue;
         const char *nm = xtld_soname(o);
         if (nm) {
@@ -1844,6 +1855,17 @@ static SemaphoreHandle_t g_kfs_mtx;    /* serialize kernel callers of the single
  * single global because g_kfs_mtx already allows only one call in flight. */
 static SemaphoreHandle_t g_kfs_done;
 
+/* Four counters at the four points the kfs handshake can break, so a stall says
+ * WHICH stage hung instead of merely that one did. Read via /OS/proc/kfs after a
+ * transfer stalls -- the lwIP thread being blocked does not stop another task
+ * reading them:
+ *   queued == picked+1   -> the fs task never dequeued the job
+ *   picked == served+1   -> vfs_write() is blocked inside the fs task
+ *   served == returned+1 -> the completion signal was lost (the old bug)
+ * Cheap enough to leave in: four increments per block. */
+volatile unsigned g_kfs_queued, g_kfs_picked, g_kfs_served, g_kfs_returned;
+volatile long     g_kfs_lastres;
+
 /* Tear down every open fd of a dead proc: flush its dirty cache page, close the backing
  * file (free the FIL), free the cache page. MUST run in the fs task (the sole FatFs
  * driver post-3c-4), so reap routes here via KFS_CLOSEALL rather than doing FatFs from the
@@ -2073,7 +2095,10 @@ static void fs_task(void *arg)
             continue;
         }
         if (slot == FS_KERNEL_JOB) {                   /* kernel mailbox request */
+            g_kfs_picked++;
             g_kfs.result = kfs_serve();
+            g_kfs_lastres = g_kfs.result;
+            g_kfs_served++;
             xSemaphoreGive(g_kfs_done);
         } else {
             g_fs_ctl[slot]->result = fs_serve(slot);
@@ -2103,8 +2128,10 @@ static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **o
     g_kfs.op = op; g_kfs.path = path; g_kfs.buf = buf; g_kfs.len = len; g_kfs.result = -1;
     g_kfs.waiter = xTaskGetCurrentTaskHandle();
     int job = FS_KERNEL_JOB;
+    g_kfs_queued++;
     xQueueSend(g_fs_q, &job, portMAX_DELAY);
     xSemaphoreTake(g_kfs_done, portMAX_DELAY);
+    g_kfs_returned++;
     long r = g_kfs.result;
     if (out_buf) *out_buf = g_kfs.buf;
     xSemaphoreGive(g_kfs_mtx);

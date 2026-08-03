@@ -100,6 +100,17 @@ static struct tftp_state tftp_state;
 
 static void tftp_tmr(void *arg);
 
+/* XT DEBUG: a `curl -T` push stalls non-deterministically (1, 23, 73, 122 blocks
+ * across runs) with the file truncated and every later block answered
+ * "No connection". Every close path looks plausible from the outside, so say
+ * WHICH one fired rather than keep guessing. Remove once tftpd is fixed. */
+extern void klog(const char *) __attribute__((weak));
+extern void klog_u(unsigned) __attribute__((weak));
+void xt_tftp_close_why(int line)
+{
+  if (klog && klog_u) { klog("[tftp] close_handle line "); klog_u((unsigned)line); klog("\n"); }
+}
+
 static void
 close_handle(void)
 {
@@ -235,7 +246,7 @@ send_data(const ip_addr_t *addr, u16_t port)
   ret = tftp_state.ctx->read(tftp_state.handle, &payload[2], tftp_state.blksize);
   if (ret < 0) {
     send_error(addr, port, TFTP_ERROR_ACCESS_VIOLATION, "Error occurred while reading the file.");
-    close_handle();
+    xt_tftp_close_why(__LINE__); close_handle();
     return;
   }
 
@@ -385,13 +396,13 @@ tftp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr
         ret = tftp_state.ctx->write(tftp_state.handle, p);
         if (ret < 0) {
           send_error(addr, port, TFTP_ERROR_ACCESS_VIOLATION, "error writing file");
-          close_handle();
+          xt_tftp_close_why(__LINE__); close_handle();
         } else {
           send_ack(addr, port, blknum);
         }
 
         if (p->tot_len < tftp_state.blksize) {
-          close_handle();
+          xt_tftp_close_why(__LINE__); close_handle();
         } else {
           tftp_state.blknum++;
         }
@@ -438,7 +449,7 @@ tftp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr
         tftp_state.blknum++;
         send_data(addr, port);
       } else {
-        close_handle();
+        xt_tftp_close_why(__LINE__); close_handle();
       }
 
       break;
@@ -447,7 +458,7 @@ tftp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr
       if (tftp_state.handle != NULL) {
         pbuf_remove_header(p, TFTP_HEADER_LENGTH);
         tftp_state.ctx->error(tftp_state.handle, sbuf[1], (const char*)p->payload, p->len);
-        close_handle();
+        xt_tftp_close_why(__LINE__); close_handle();
       }
       break;
     default:
@@ -478,7 +489,7 @@ tftp_tmr(void *arg)
       tftp_state.retries++;
     } else {
       LWIP_DEBUGF(TFTP_DEBUG | LWIP_DBG_STATE, ("tftp: timeout\n"));
-      close_handle();
+      xt_tftp_close_why(__LINE__); close_handle();
     }
   }
 }
@@ -546,7 +557,7 @@ void tftp_cleanup(void)
 {
   LWIP_ASSERT("Cleanup called on non-initialized TFTP", tftp_state.upcb != NULL);
   udp_remove(tftp_state.upcb);
-  close_handle();
+  xt_tftp_close_why(__LINE__); close_handle();
   memset(&tftp_state, 0, sizeof(tftp_state));
 }
 

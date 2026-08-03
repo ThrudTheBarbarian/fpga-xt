@@ -16,6 +16,7 @@
 #include "lwip/tcpip.h"
 
 extern void klog(const char *);      /* -> /OS/var/log/system.log (not console) */
+extern void klog_u(unsigned);
 long frtos_net_writeopen(const char *path);
 long frtos_net_writeblock(const void *buf, unsigned len);
 long frtos_net_writeclose(void);
@@ -70,8 +71,28 @@ static int tf_read(void *h, void *buf, int bytes)
 static int tf_write(void *h, struct pbuf *p)
 {
     if (h != H_WRITE) return -1;
-    for (struct pbuf *q = p; q; q = q->next)
-        if (frtos_net_writeblock(q->payload, q->len) != (long)q->len) return -1;
+    /* lwIP treats a block SHORTER than blksize as end-of-file and closes the
+     * handle. So a block that arrives short mid-transfer silently truncates the
+     * file, and every later block then gets "No connection" (an ACCESS_VIOLATION)
+     * -- which is what a stalled `curl -T` actually reports. Log any short block
+     * so a truncated receive is distinguishable from a genuine last block. */
+    if (p->tot_len < 512u) {
+        klog("[tftp] short block: tot_len "); klog_u((unsigned)p->tot_len);
+        klog("\n");
+    }
+    for (struct pbuf *q = p; q; q = q->next) {
+        long w = frtos_net_writeblock(q->payload, q->len);
+        if (w != (long)q->len) {
+            /* lwIP turns a -1 from here into TFTP_ERROR_ACCESS_VIOLATION and
+             * tears the transfer down -- which is exactly what a stalled
+             * `curl -T` was hitting. Say what the write actually returned: a
+             * SHORT COUNT and an ERROR are different faults and the old code
+             * could not tell them apart. */
+            klog("[tftp] short write: asked "); klog_u((unsigned)q->len);
+            klog(" got "); klog_u((unsigned)w); klog("\n");
+            return -1;
+        }
+    }
     return 0;
 }
 
