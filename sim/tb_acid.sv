@@ -76,6 +76,17 @@ module tb_acid;
                      dbg_pc, line, hcount, dut.reg_rdata);
     end
 
+    // The SAME read, sampled where the CPU actually samples it: SUB_DATA,
+    // N-7 fabric clocks into the machine cycle.  If this disagrees with the
+    // boundary probe above on a given cycle, the register is changing MID
+    // machine cycle and the CPU sees the far side of that change.
+    always_ff @(posedge clk) begin
+        if (probe_on && !rst && dut.c_rw && (dut.c_addr == 16'hD40B)
+            && (dut.c_sub == 8'(dut.SUB_DATA)))
+            $display("PROBE-SUB    pc=%04h line=%0d hcount=%0d value=%02h",
+                     dbg_pc, line, hcount, dut.reg_rdata);
+    end
+
     a8_core dut (
         .clk(clk), .rst(rst), .cold(cold),
         .tick(tick), .px_tick(px_tick), .tune(tune_v),
@@ -84,7 +95,7 @@ module tb_acid;
         .antic_addr(antic_addr), .antic_rdata(antic_rdata),
         .irq_n(1'b1),
         .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
-        .pal_sense(8'h0E), .consol_keys(8'hFF),
+        .pal_sense(8'h0F), .consol_keys(8'hFF),
         .lb_wr(lb_wr), .lb_color(lb_color), .lb_line_start(lb_line_start),
         .dma_steal(dma_steal), .rdy_n(rdy_n), .nmi_n(nmi_n), .sync(sync),
         .dbg_pc(dbg_pc), .dbg_a(dbg_a), .dbg_x(dbg_x), .dbg_y(dbg_y),

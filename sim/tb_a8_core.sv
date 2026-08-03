@@ -54,7 +54,7 @@ module tb_a8_core;
         .antic_addr(antic_addr), .antic_rdata(antic_rdata),
         .irq_n(1'b1),
         .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
-        .pal_sense(8'h0E), .consol_keys(8'hFF),
+        .pal_sense(8'h0F), .consol_keys(8'hFF),
         .lb_wr(lb_wr), .lb_color(lb_color), .lb_line_start(lb_line_start),
         .dma_steal(dma_steal), .rdy_n(rdy_n), .nmi_n(nmi_n), .sync(sync),
         .dbg_pc(dbg_pc), .dbg_a(dbg_a), .dbg_x(dbg_x), .dbg_y(dbg_y),
