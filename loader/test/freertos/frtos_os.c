@@ -1829,6 +1829,20 @@ static struct {
     TaskHandle_t waiter;
 } g_kfs;
 static SemaphoreHandle_t g_kfs_mtx;    /* serialize kernel callers of the single mailbox */
+/* Completion signal for that mailbox.
+ *
+ * This was a TASK NOTIFICATION, and that is a lost-wakeup waiting to happen: a
+ * task has exactly ONE notification value, shared by every user of it, and
+ * ulTaskNotifyTake(pdTRUE,...) CLEARS it on return. So if any other notification
+ * lands on the caller while it is parked here -- or two arrive before the take --
+ * one wakeup is swallowed and the next take blocks for ever. The caller here is
+ * the lwIP thread, and the symptom was tftpd writing a block to disk and then
+ * never ACKing it ("Timeout waiting for block 23 ACK", 11776 bytes on the card):
+ * the data was written, the wakeup was not delivered.
+ *
+ * A dedicated binary semaphore cannot be consumed by anyone else. Safe as a
+ * single global because g_kfs_mtx already allows only one call in flight. */
+static SemaphoreHandle_t g_kfs_done;
 
 /* Tear down every open fd of a dead proc: flush its dirty cache page, close the backing
  * file (free the FIL), free the cache page. MUST run in the fs task (the sole FatFs
@@ -2060,7 +2074,7 @@ static void fs_task(void *arg)
         }
         if (slot == FS_KERNEL_JOB) {                   /* kernel mailbox request */
             g_kfs.result = kfs_serve();
-            xTaskNotifyGive(g_kfs.waiter);
+            xSemaphoreGive(g_kfs_done);
         } else {
             g_fs_ctl[slot]->result = fs_serve(slot);
             xTaskNotifyGive(g_fs_waiter[slot]);        /* wake the parked client */
@@ -2078,7 +2092,7 @@ static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **o
      * is mapped HERE but resolves to the wrong physical THERE — copy it into
      * this kernel-global buffer (serialized by g_kfs_mtx) like fs_meta does. */
     static char kpath[128];
-    if (!g_fs_q || !g_kfs_mtx) return -1;
+    if (!g_fs_q || !g_kfs_mtx || !g_kfs_done) return -1;
     xSemaphoreTake(g_kfs_mtx, portMAX_DELAY);
     if (path) {
         int i = 0;
@@ -2090,7 +2104,7 @@ static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **o
     g_kfs.waiter = xTaskGetCurrentTaskHandle();
     int job = FS_KERNEL_JOB;
     xQueueSend(g_fs_q, &job, portMAX_DELAY);
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    xSemaphoreTake(g_kfs_done, portMAX_DELAY);
     long r = g_kfs.result;
     if (out_buf) *out_buf = g_kfs.buf;
     xSemaphoreGive(g_kfs_mtx);
@@ -2370,6 +2384,10 @@ void frtos_fs_start(void)
     if (!g_fs_q) { if (g_console) g_console("[fs] queue create failed\n", 25); return; }
     g_kfs_mtx = xSemaphoreCreateMutex();
     if (!g_kfs_mtx) { if (g_console) g_console("[fs] kfs mutex failed\n", 22); vQueueDelete(g_fs_q); g_fs_q = 0; return; }
+    g_kfs_done = xSemaphoreCreateBinary();
+    if (!g_kfs_done) { if (g_console) g_console("[fs] kfs done-sem failed\n", 25);
+                       vSemaphoreDelete(g_kfs_mtx); g_kfs_mtx = 0;
+                       vQueueDelete(g_fs_q); g_fs_q = 0; return; }
     if (xTaskCreate(fs_task, "fs", 8192, NULL, 4, NULL) != pdPASS) {
         if (g_console) g_console("[fs] task create failed\n", 24);
         vQueueDelete(g_fs_q); g_fs_q = 0;
