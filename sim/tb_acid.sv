@@ -103,10 +103,15 @@ module tb_acid;
                 if (probe_on)
                     $display("PROBE-RDY    released, hcount=%0d line=%0d", hcount, line);
                 awaiting_resume <= 1'b1;
-            end else if (awaiting_resume && sync) begin
+            end else if (awaiting_resume && dut.c_rdy) begin
+                // The first cycle the CPU is actually RUNNING -- gated on c_rdy,
+                // NOT on `sync`.  Gating on sync reports the first OPCODE FETCH,
+                // which lands after whatever remained of the stalled instruction
+                // plus the whole next one, so it measures instruction length as
+                // much as resume latency.
                 if (probe_on)
-                    $display("PROBE-RESUME first CPU cycle, hcount=%0d line=%0d pc=%04h",
-                             hcount, line, dbg_pc);
+                    $display("PROBE-RESUME running, hcount=%0d line=%0d pc=%04h sync=%0d",
+                             hcount, line, dbg_pc, sync);
                 awaiting_resume <= 1'b0;
             end
         end
