@@ -102,6 +102,7 @@ static int trace_on;
 static uint16_t pc_ring[PC_RING];
 static unsigned pc_ring_n;
 static int      derail_shown;
+static int      key_inject;   /* ACID_KEY: CH code to hand a waiting module */
 
 /* Outcomes.  JAM and TIMEOUT were both reported as "hung", which hid the
  * difference between a test that DERAILED into an illegal opcode and one that
@@ -221,6 +222,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
      * never reach the banking checks.  $C0 is what an XL kernel leaves. */
     sio_probe = getenv("ACID_SIOPROBE") != NULL;
     gtia_probe = getenv("ACID_PMPROBE") != NULL;
+    { const char *k = getenv("ACID_KEY"); if (k) key_inject = (int)strtol(k, 0, 16); }
     s.ram[0x006A] = 0xC0;
     if (!s.ram[0x0217]) { s.ram[0x0216] = 0x40; s.ram[0x0217] = 0xFF; }  /* VIMIRQ */
 
@@ -438,6 +440,15 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
             return 1;
         }
         if (s.cpu.pc == 0xFF70) { *cyc = s.cycles; return R_RET; }
+        /* ACID_KEY=<hex>: hand the module a keypress.  mod_options and
+         * mod_vbxe80 do not hang -- they spin on `lda:req ch` ($02FC), the OS
+         * keyboard register, waiting to be told what to do (mod_options'
+         * `waitkey:` then compares for 'C' and 'F').  With no keyboard they wait
+         * for ever, which is the honest answer, so the key is INJECTED ONLY when
+         * asked for rather than defaulted -- the choice changes what the module
+         * does, so it belongs to whoever is running it. */
+        if (key_inject && s.cycles > 2000000 && s.ram[0x02FC] == 0)
+            s.ram[0x02FC] = (uint8_t)key_inject;
         if (s.cpu.jammed) {
             *cyc = s.cycles;
             /* where it died, and the opcode that killed it — a JAM is always a
