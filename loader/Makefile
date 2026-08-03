@@ -433,6 +433,13 @@ $(BUILD)/bssbench.so: test/freertos/progs/bssbench.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -O2 -Ilibc-compat -Inewlib-pic/include -c $< -o $(BUILD)/bssbench.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/bssbench.o $(BUILD)/libc.so
 
+# bssbencha.so — the SAME source as bssbench.so, built as a RAW APPLET with the
+# SAME flags, so the pair differs only in the LOAD PATH.  Without this the only
+# applet baseline was memprobe, which also differed in optimisation level.
+$(BUILD)/bssbencha.so: test/freertos/progs/bssbench.c | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -O2 -DAPPLET -c $< -o $(BUILD)/bssbencha.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/bssbencha.o
+
 # a program that uses libc (DT_NEEDED libc.so), compiled against the PIC newlib headers
 $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/libc_test.o

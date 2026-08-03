@@ -51,10 +51,14 @@ static void bench(const char *what, uint8_t *a, uint32_t mask)
     (void)sink;
 }
 
-int main(void)
+/* ONE source, TWO binaries, differing ONLY in the load path:
+ *   bssbench.so  -- libc program: main(), DT_NEEDED libc.so
+ *   bssbencha.so -- raw applet:  _app_entry(), -nostdlib, printf from the kernel
+ * Built with IDENTICAL flags.  The first comparison of memprobe against bssbench
+ * left BOTH the entry path and the optimisation level (-Os vs -O2) as variables,
+ * which makes it worthless as evidence about the load path.  This does not. */
+static void run(void)
 {
-    setvbuf(stdout, 0, _IOLBF, 0);
-
     volatile uint32_t sink = 0;
     uint32_t x = 12345;
     long long t0 = now_us();
@@ -64,12 +68,25 @@ int main(void)
     printf("%-22s %lld us for %ld iters = %.2f ns/iter\n",
            "compute-only", t1 - t0, N, (double)(t1 - t0) * 1000.0 / N);
 
+    /* UNTOUCHED first: an all-zero .bss page is demand-zero, and if the kernel
+     * points every one of them at a SINGLE shared zero page then a "64 KB array"
+     * is really one physical page and always an L1 hit.  That would make
+     * memprobe's flat 4 KB == 64 KB reading an artefact rather than a baseline.
+     * Bench untouched, then WRITE every page and bench again: if the second
+     * number is much worse, the sharing is real and memprobe measured nothing. */
+    bench("64KB UNtouched",      big_a,   65535);
+    for (int i = 0; i < 65536; i++) big_a[i] = (uint8_t)i;
+    bench("64KB after writing",  big_a,   65535);
+
     bench("4KB static (.bss)",   small_a, 4095);
     bench("64KB static (.bss)",  big_a,   65535);
     bench("256KB static (.bss)", huge_a,  262143);
 
     /* the same 64 KB on the HEAP.  If .bss is slow and malloc is fast, the
      * writable segment's mapping is the difference and the heap's is right. */
+#ifndef APPLET
+    /* heap only in the libc build -- an applet has no malloc.  The .bss numbers
+     * are the ones being compared across the two paths anyway. */
     uint8_t *heap = malloc(65536);
     if (heap) {
         for (int i = 0; i < 65536; i++) heap[i] = (uint8_t)i;
@@ -77,6 +94,12 @@ int main(void)
     } else {
         printf("64KB heap (malloc)     malloc failed\n");
     }
+#endif
     (void)sink;
-    return 0;
 }
+
+#ifdef APPLET
+void _app_entry(int argc, char **argv) { (void)argc; (void)argv; run(); sys_exit(0); }
+#else
+int main(void) { setvbuf(stdout, 0, _IOLBF, 0); run(); return 0; }
+#endif
