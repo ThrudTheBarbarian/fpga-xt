@@ -92,6 +92,11 @@ module tb_acid;
     // WSYNC_RELEASE is "the cycle /RDY comes back".  Print both the cycle /RDY
     // deasserts and the first cycle the CPU actually retires after it, so the
     // gap between the two semantics is a number and not an inference.
+    // Stall LENGTH: machine cycles the CPU is held (c_rdy low) per WSYNC.
+    // Trigger semantics, stated because three probes tonight were misread:
+    // counts `tick`s where c_rdy is LOW, reset when /RDY comes back.  That is a
+    // COUNT of held cycles, independent of the hcount sampling offset.
+    int stall_len;
     reg rdy_n_d;
     reg awaiting_resume;
     always_ff @(posedge clk) begin
@@ -99,9 +104,11 @@ module tb_acid;
             rdy_n_d <= 1'b0; awaiting_resume <= 1'b0;
         end else if (tick) begin
             rdy_n_d <= rdy_n;
+            stall_len <= dut.c_rdy ? 0 : stall_len + 1;
             if (rdy_n_d && !rdy_n) begin              // /RDY just came back
                 if (probe_on)
-                    $display("PROBE-RDY    released, hcount=%0d line=%0d", hcount, line);
+                    $display("PROBE-RDY    released, hcount=%0d line=%0d stall_cycles=%0d",
+                             hcount, line, stall_len);
                 awaiting_resume <= 1'b1;
             end else if (awaiting_resume && dut.c_rdy) begin
                 // The first cycle the CPU is actually RUNNING -- gated on c_rdy,
