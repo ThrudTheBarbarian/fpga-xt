@@ -1,0 +1,8 @@
+KNOWN-GOOD SNAPSHOT — no pblocks
+  bitstream known-good-nopblock.bit  (PLACE_DIRECTIVE=ExtraTimingOpt)
+  timing    clk_sys +0.016/+0.036  clk_sally +0.119/+0.073  clk_pix +0.197/+0.066
+            (setup/hold; gate PASS on every clock)
+  verified  boots; /bin/blittest byte-identical (bilinear mid=abcd0009);
+            ACID antic_vcount/pokey_noise/cpu_timing/gtia_collision pass
+  restore   cp to vivado/build/fpga_xt_top.bit
+            ./vivado/jtag-valhalla.sh reset && ./vivado/jtag-valhalla.sh load

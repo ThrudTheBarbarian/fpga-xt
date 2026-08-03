@@ -2,6 +2,7 @@
  * system.c — the machine.  See system.h.
  */
 #include "system.h"
+#include "prof.h"
 #ifndef PHANTOM_PM
 #define PHANTOM_PM 1
 #endif
@@ -218,7 +219,7 @@ static void render_cycle(atari *s, int cyc)
         } else if (PSEUDO_MODE_E && !s->hires_ok && (s->an.dl_insn & 0x0F) == 0x0F) {
             pf = antic_pf_pair(&s->an, cc);      /* the pair IS the index */
         } else {
-            pf = antic_pf_at(&s->an, cc, &hires);
+            PROF_BEG(PROF_PF); pf = antic_pf_at(&s->an, cc, &hires); PROF_END(PROF_PF);
         }
         /* A GTIA mode re-reads mode F's bits as NIBBLES, so the playfield is no
          * longer hi-res: leaving this set makes GTIA apply the "lit collides as
@@ -227,7 +228,7 @@ static void render_cycle(atari *s, int cyc)
                       !(PSEUDO_MODE_E && !s->hires_ok);
         uint8_t before = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] |
                                    s->gt.ppf[3] | s->gt.ppl[0] | s->gt.ppl[1]);
-        gtia_clock(&s->gt, cc, pf, hires);
+        PROF_BEG(PROF_GTIA); gtia_clock(&s->gt, cc, pf, hires); PROF_END(PROF_GTIA);
         if (s->col_probe) {
             uint8_t after = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] |
                                       s->gt.ppf[3] | s->gt.ppl[0] | s->gt.ppl[1]);
@@ -251,6 +252,15 @@ static void render_cycle(atari *s, int cyc)
     }
 }
 
+#if defined(EMU_PROF) && defined(__XTOS__)
+unsigned long long prof_acc[PROF_N];
+unsigned long long prof_cnt[PROF_N];
+const char *const prof_name[PROF_N] =
+    { "antic_tick", "render_cycle", "pm_latch", "pokey_rand",
+      "pokey_timer", "sio_cycle", "irq_note", "phantom_latch",
+      "  .pf_lookup", "  .gtia_clock" };
+#endif
+
 static void sys_cycle(atari *s)
 {
     int was_halted = s->an.wsync_halt;
@@ -260,7 +270,7 @@ static void sys_cycle(atari *s)
          * the next tick would clear it again before it was ever sampled. */
         if (s->an.nmi) s->nmi_hold = 1;
         int cyc  = s->an.cycle;
-        int took = antic_tick(&s->an);
+        PROF_BEG(PROF_ANTIC); int took = antic_tick(&s->an); PROF_END(PROF_ANTIC);
         /* A cycle ANTIC takes is rendered here; a cycle the CPU gets is rendered
          * AFTER its bus access, so a GTIA register write lands before the two
          * colour clocks that same cycle emits.  gtia_pmretrigger is what pins
@@ -269,9 +279,10 @@ static void sys_cycle(atari *s)
          *
          * The stored value is cycle + 1 so that zero means "nothing deferred"
          * — cycle 0 is a real cycle. */
-        if (took) { phantom_latch(s, cyc); render_cycle(s, cyc); }
+        if (took) { PROF_BEG(PROF_PHANTOM); phantom_latch(s, cyc); PROF_END(PROF_PHANTOM);
+                    PROF_BEG(PROF_RENDER);  render_cycle(s, cyc);  PROF_END(PROF_RENDER); }
         else      s->pending_render = cyc + 1;
-        pm_latch(s);
+        PROF_BEG(PROF_PMLATCH); pm_latch(s); PROF_END(PROF_PMLATCH);
         s->cycles++;
         /* Hold ANTIC's one-cycle /NMI pulse until the CPU latches the edge, then
          * drop it so the NEXT event raises a fresh one.  The real 6502 clocks
@@ -287,11 +298,11 @@ static void sys_cycle(atari *s)
                         s->an.scanline, cyc);
             return;
         }
-        pokey_rand_tick(&s->pk); s->pk_ticks++;   /* ANTIC's cycles advance it here */
-        sio_cycle(s);
-        pokey_timer_tick(&s->pt);
+        PROF_BEG(PROF_PRAND);  pokey_rand_tick(&s->pk); PROF_END(PROF_PRAND); s->pk_ticks++;
+        PROF_BEG(PROF_SIO);    sio_cycle(s);            PROF_END(PROF_SIO);
+        PROF_BEG(PROF_PTIMER); pokey_timer_tick(&s->pt);PROF_END(PROF_PTIMER);
         s->cpu.irq = (uint8_t)(s->pt.irq | s->pia.irq);
-        irq_note(s);
+        PROF_BEG(PROF_IRQ); irq_note(s); PROF_END(PROF_IRQ);
     }
 }
 
@@ -304,7 +315,7 @@ static void cpu_cycle_done(atari *s)
 {
     if (s->pending_render) {
         phantom_latch(s, s->pending_render - 1);
-        render_cycle(s, s->pending_render - 1);
+        { PROF_BEG(PROF_RENDER); render_cycle(s, s->pending_render - 1); PROF_END(PROF_RENDER); }
         s->pending_render = 0;
     }
     pokey_rand_tick(&s->pk); s->pk_ticks++;

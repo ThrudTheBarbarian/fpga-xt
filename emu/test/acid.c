@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../system.h"
+#include "../prof.h"
 
 /* Emulation-only clock.
  *
@@ -752,6 +753,25 @@ int main(int argc, char **argv)
                "  mispred-rate=%llu%%\n",
                pmu_iref / emu_cyc_total, pmu_bmiss / emu_cyc_total,
                pmu_bexec ? pmu_bmiss * 100ull / pmu_bexec : 0ull);
+#if defined(EMU_PROF) && defined(__XTOS__)
+        /* Per-subsystem share. The CPU core is DERIVED (total - parts) because
+         * sys_cycle is re-entered from the CPU's own bus access, so wrapping it
+         * would double-count. */
+        {
+            unsigned long long parts = 0;
+            for (int k = 0; k < PROF_N; k++) parts += prof_acc[k];
+            printf("acid800: PROF  (host cycles, %% of emulation, per emu-cycle)\n");
+            for (int k = 0; k < PROF_N; k++)
+                printf("acid800: PROF  %-14s %12llu  %3llu%%  %6llu/emu-cyc  calls=%llu\n",
+                       prof_name[k], prof_acc[k],
+                       pmu_cyc ? prof_acc[k] * 100ull / pmu_cyc : 0ull,
+                       prof_acc[k] / emu_cyc_total, prof_cnt[k]);
+            unsigned long long cpu = pmu_cyc > parts ? pmu_cyc - parts : 0;
+            printf("acid800: PROF  %-14s %12llu  %3llu%%  %6llu/emu-cyc  (derived)\n",
+                   "6502+bus", cpu, pmu_cyc ? cpu * 100ull / pmu_cyc : 0ull,
+                   cpu / emu_cyc_total);
+        }
+#endif
     }
 #endif
     return 0;

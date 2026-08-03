@@ -405,6 +405,15 @@ EMU     := ../emu
 EMUSRC  := $(EMU)/system.c $(EMU)/xt6502.c $(EMU)/antic.c $(EMU)/antic_dma.c \
            $(EMU)/gtia.c $(EMU)/pokey_rand.c $(EMU)/pokey_timer.c \
            $(EMU)/pia.c $(EMU)/sio.c
+# acidprof.so -- same emulator, built with -DEMU_PROF so the per-cycle calls are
+# bracketed by PMU cycle reads. Separate target because the shipping acid.so must
+# not pay for the instrumentation.
+$(BUILD)/acidprof.so: $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(ARMCFLAGS) -mcpu=cortex-a9 -O2 -D__XTOS__ -DEMU_PROF -Ilibc-compat -Itest/qemu -Ikernel -I$(EMU) \
+	    -Inewlib-pic/include -fpic -shared -nostdlib \
+	    -Wl,--hash-style=sysv -Wl,-soname,acidprof.so \
+	    $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so -o $@
+
 $(BUILD)/acid.so: $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so | $(BUILD)
 	@# -O2 overrides ARMCFLAGS' -Os on purpose: this one is COMPUTE-BOUND and the
 	@# point of running it on the A9 is partly to find out what a frame costs.
