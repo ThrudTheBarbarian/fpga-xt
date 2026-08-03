@@ -73,6 +73,14 @@ module a8_core #(
     input  wire        tick,            // phi2, one machine cycle
     input  wire        px_tick,         // one hi-res pixel
 
+    // Timing tune, straight through to antic_gtia (GP0 CTRL_RWTUNE on HW).
+    // tune = 0 is exactly the parameter defaults.  Exposed as a PORT because
+    // antic_wsync cannot see the absolute WSYNC release cycle (see 124e88e) --
+    // antic_vcount can, and sweeping tune[11:8] against it is the only way to
+    // measure that axis.  SystemVerilog has no default values on module input
+    // ports, so every instantiation must drive this.
+    input  wire [15:0] tune,
+
     // ---- CPU memory port -------------------------------------------------
     output wire [15:0] cpu_addr,
     output wire [7:0]  cpu_wdata,
@@ -146,7 +154,7 @@ module a8_core #(
 
     // ---- the display chips -------------------------------------------------
     antic_gtia u_video (
-        .tune(16'd0),
+        .tune(tune),
         .clk(clk), .rst(rst), .cold(cold),
         .tick(tick), .px_tick(px_tick),
         .cs_antic(cs_antic), .cs_gtia(cs_gtia),

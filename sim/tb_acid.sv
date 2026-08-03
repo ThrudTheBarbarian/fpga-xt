@@ -63,9 +63,11 @@ module tb_acid;
     wire [6:0]  hcount;
     wire [8:0]  line;
 
+    reg [15:0] tune_v;
+
     a8_core dut (
         .clk(clk), .rst(rst), .cold(cold),
-        .tick(tick), .px_tick(px_tick),
+        .tick(tick), .px_tick(px_tick), .tune(tune_v),
         .cpu_addr(cpu_addr), .cpu_wdata(cpu_wdata), .cpu_we(cpu_we),
         .cpu_rdata(cpu_rdata),
         .antic_addr(antic_addr), .antic_rdata(antic_rdata),
@@ -166,7 +168,16 @@ module tb_acid;
         end
     end
 
+    // TESTNAME as a RUNTIME plusarg, not a compile-time -D: as a define, `make`
+    // does not rebuild when it changes, so a sweep silently re-runs the previous
+    // test -- and every test paid a full iverilog rebuild of ~25 RTL files.
+    // One compile now serves all 63, which is what makes a full sweep practical.
+    reg [8*40-1:0] tname;
     initial begin
+        if (!$value$plusargs("TEST=%s", tname)) tname = "acid";
+        // TUNE likewise a RUNTIME plusarg, and read HERE so it is stable before
+        // reset is released a few lines below.
+        if (!$value$plusargs("TUNE=%d", tune_v)) tune_v = 16'd0;
         $readmemh("acid.mem", mem);
         $readmemh("acid_cfg.mem", cfg);
         test_end  = cfg[0];
@@ -195,16 +206,23 @@ module tb_acid;
         end
 
         if (!done) begin
-            $display("ACID %s: TIMEOUT (pc $%04h, never reached _testEnd $%04h)",
-                     `TESTNAME, dbg_pc, test_end);
+            $display("ACID %0s: TIMEOUT (pc $%04h, never reached _testEnd $%04h)",
+                     tname, dbg_pc, test_end);
             $display("tb_acid: 1 FAIL");
         end else if (!verdict_fail) begin
-            $display("ACID %s: PASS", `TESTNAME);
+            $display("ACID %0s: PASS", tname);
             $display("tb_acid: all checks PASS");
         end else begin
-            $display("ACID %s: FAIL (reached _testFailed $%04h)", `TESTNAME, t_fail);
+            $display("ACID %0s: FAIL (reached _testFailed $%04h)", tname, t_fail);
             $display("tb_acid: 1 FAIL");
         end
+        // The result bytes, on EVERY path.  Without these a tune sweep prints
+        // 16 identical verdict lines and a flat-looking result is indis-
+        // tinguishable from an instrument that never reported anything.
+        // NB d1 is CLOBBERED when assert #1 fails: _ASSERT1 does `sta d1`
+        // before `jsr _testFailed`, so it holds a copy of the bad d0.
+        $display("ACID %0s: d0=%02h d1=%02h d2=%02h d3=%02h",
+                 tname, mem[16'h00C8], mem[16'h00C9], mem[16'h00CA], mem[16'h00CB]);
         $finish;
     end
 

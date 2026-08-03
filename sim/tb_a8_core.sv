@@ -48,7 +48,7 @@ module tb_a8_core;
 
     a8_core dut (
         .clk(clk), .rst(rst), .cold(cold),
-        .tick(tick), .px_tick(px_tick),
+        .tick(tick), .px_tick(px_tick), .tune(16'd0),
         .cpu_addr(cpu_addr), .cpu_wdata(cpu_wdata), .cpu_we(cpu_we),
         .cpu_rdata(cpu_rdata),
         .antic_addr(antic_addr), .antic_rdata(antic_rdata),
