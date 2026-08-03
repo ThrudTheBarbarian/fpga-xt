@@ -72,8 +72,8 @@ module tb_acid;
     reg probe_on;
     always_ff @(posedge clk) begin
         if (probe_on && tick && !rst && dut.c_rw && (dut.c_addr == 16'hD40B))
-            $display("PROBE vcount-read line=%0d hcount=%0d value=%02h",
-                     line, hcount, dut.reg_rdata);
+            $display("PROBE vcount-read pc=%04h line=%0d hcount=%0d value=%02h",
+                     dbg_pc, line, hcount, dut.reg_rdata);
     end
 
     a8_core dut (
