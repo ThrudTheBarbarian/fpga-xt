@@ -98,9 +98,10 @@ static int load_xex(atari *s, const char *path, uint16_t *runaddr)
 static unsigned long pc_hits[65536];
 static int trace_on;
 /* the last few PCs before a derail — see the JAM report below */
-#define PC_RING 24
+#define PC_RING 64
 static uint16_t pc_ring[PC_RING];
 static unsigned pc_ring_n;
+static int      derail_shown;
 
 /* Outcomes.  JAM and TIMEOUT were both reported as "hung", which hid the
  * difference between a test that DERAILED into an illegal opcode and one that
@@ -110,6 +111,8 @@ static unsigned pc_ring_n;
 #define R_JAM     -1
 #define R_TIMEOUT -3
 #define R_SKIP    -2
+/* the module did its work and RTSd back to the loader, as under DOS */
+#define R_RET     -4
 
 static int run_one(const char *dir, const char *name, unsigned long long *cyc)
 {
@@ -308,11 +311,28 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     if (!s.ram[0x0201]) { s.ram[0x0200] = 0x40; s.ram[0x0201] = 0xFF; }  /* VDSLST */
     if (!s.ram[0x0223]) { s.ram[0x0222] = 0x30; s.ram[0x0223] = 0xFF; }  /* VVBLKI */
 
+    /* DOS CALLS RUNAD WITH JSR, so a module that finishes its work and does a
+     * plain `rts` returns to the loader.  Jumping to it with an empty stack
+     * instead makes that `rts` pop zeros, and the CPU lands in zero page and
+     * BRK-walks upward -- every $00 byte is a BRK, vectoring to the stub and
+     * RTIing two bytes on -- until it hits a $02 and jams.  That is exactly what
+     * all three mod_* JAMs were: mod_dispmin's trail ends `2835 2837 283A 283C
+     * 283F`, and $283F is main's own `rts`.  Nothing was wrong with the module.
+     *
+     * So push a return address the way DOS would.  $FF70 is an infinite branch
+     * to itself, so a module that returns parks there instead of derailing, and
+     * the harness sees the ordinary timeout rather than a spurious JAM. */
+    s.ram[0xFF70] = 0x4C; s.ram[0xFF71] = 0x70; s.ram[0xFF72] = 0xFF;  /* JMP $FF70 */
+    memcpy(&s.rom_os[0xFF70 - 0xC000], &s.ram[0xFF70], 3);
     s.cpu.pc = run;
     s.cpu.s  = 0xFD;
+    s.ram[0x01FD] = 0xFF;            /* RTS pops PC+1, so push $FF6F */
+    s.ram[0x01FC] = 0x6F;
+    s.cpu.s  = 0xFB;
     s.cpu.p  = XTF_I | XTF_U;
 
-    if (trace_on) memset(pc_hits, 0, sizeof pc_hits);
+    if (trace_on) { memset(pc_hits, 0, sizeof pc_hits);
+                    pc_ring_n = 0; derail_shown = 0; }
     /* ACID_TRAP=<hex addr>: remember the last PCs and dump them the first time
      * execution reaches that address.  Several tests DERAIL rather than fail —
      * pokey_skstat spins on uninitialised RAM at $3720, and the five mod_* jam
@@ -417,6 +437,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
                        s.ram[0xCC], s.ram[0xCD], s.ram[0xCE], s.ram[0xCF]);
             return 1;
         }
+        if (s.cpu.pc == 0xFF70) { *cyc = s.cycles; return R_RET; }
         if (s.cpu.jammed) {
             *cyc = s.cycles;
             /* where it died, and the opcode that killed it — a JAM is always a
@@ -434,11 +455,44 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
                      k < pc_ring_n; k++)
                     printf(" %04X", pc_ring[k & (PC_RING - 1)]);
                 printf("\n");
+                /* ...and WHICH interrupt line is standing.  A derail that walks
+                 * through zero page two bytes at a time between IRQ entries is a
+                 * source nobody acknowledged, and the only useful question is
+                 * which one -- naming it beats inferring it from IRQST, whose
+                 * probe only fires on CHANGES and so says nothing about a line
+                 * that is simply stuck high. */
+                printf("      irq: pokey=%d pia=%d  irqen $%02X irqst $%02X"
+                       "  pactl $%02X pbctl $%02X\n",
+                       s.pt.irq, s.pia.irq, s.pt.irqen,
+                       pokey_timer_irqst(&s.pt), s.pia.ctl[0], s.pia.ctl[1]);
             }
             return R_JAM;
         }
-        if (trace_on) { pc_hits[s.cpu.pc]++;
-                        pc_ring[pc_ring_n++ & (PC_RING - 1)] = s.cpu.pc; }
+        if (trace_on) {
+            pc_hits[s.cpu.pc]++;
+            /* Skip the $FF00 stub page.  Once a derail reaches zero page every
+             * $00 byte is a BRK, which vectors to the stub and RTIs back two
+             * bytes on -- so the ring fills with FF20/FF40 pairs that are the
+             * SYMPTOM and crowd out the instructions that actually did the
+             * derailing.  (Mistaking those pairs for a stuck interrupt is how
+             * the previous diagnosis went wrong; both IRQ lines read 0.) */
+            if ((s.cpu.pc & 0xFF00u) != 0xFF00u)
+                pc_ring[pc_ring_n++ & (PC_RING - 1)] = s.cpu.pc;
+            /* THE MOMENT OF THE DERAIL.  Once the CPU is loose in zero page it
+             * BRK-walks upward two bytes at a time, so by the time it jams the
+             * ring holds nothing but symptom -- even 64 deep.  Trip on the
+             * FIRST entry below $0200 instead and dump the ring there: that is
+             * the instruction that jumped, which is the only useful question. */
+            if (!derail_shown && s.cpu.pc < 0x0200) {
+                derail_shown = 1;
+                printf("      DERAILED into $%04X; last %d PCs before it:",
+                       s.cpu.pc, PC_RING);
+                for (unsigned k = pc_ring_n > PC_RING ? pc_ring_n - PC_RING : 0;
+                     k + 1 < pc_ring_n; k++)
+                    printf(" %04X", pc_ring[k & (PC_RING - 1)]);
+                printf("\n");
+            }
+        }
         atari_step(&s);
     }
     *cyc = s.cycles;
@@ -525,14 +579,16 @@ int main(int argc, char **argv)
                 }
     }
 
-    int pass = 0, fail = 0, jam = 0, loop = 0, skip = 0;
+    int pass = 0, fail = 0, jam = 0, loop = 0, skip = 0; int ret = 0;
     for (int i = 0; i < n; i++) {
         unsigned long long cyc = 0;
         int r = run_one(dir, names[i], &cyc);
         const char *tag = r == R_PASS ? "PASS" : r == R_FAIL ? "fail"
-                        : r == R_JAM  ? "JAM " : r == R_TIMEOUT ? "LOOP" : "skip";
+                        : r == R_JAM  ? "JAM " : r == R_TIMEOUT ? "LOOP"
+                        : r == R_RET  ? "ran " : "skip";
         if (r == R_PASS) pass++; else if (r == R_FAIL) fail++;
-        else if (r == R_JAM) jam++; else if (r == R_TIMEOUT) loop++; else skip++;
+        else if (r == R_JAM) jam++; else if (r == R_TIMEOUT) loop++;
+        else if (r == R_RET) ret++; else skip++;
         printf("  %-24s %s  %llu cycles\n", names[i], tag, cyc);
         if (trace_on && (r == R_JAM || r == R_TIMEOUT)) {
             /* top spinning addresses — look these up in <name>.lst */
@@ -546,7 +602,7 @@ int main(int argc, char **argv)
             }
         }
     }
-    printf("acid800: %d pass, %d fail, %d jammed, %d looping, %d skipped (of %d)\n",
-           pass, fail, jam, loop, skip, n);
+    printf("acid800: %d pass, %d fail, %d jammed, %d looping, %d ran, %d skipped"
+           " (of %d)\n", pass, fail, jam, loop, ret, skip, n);
     return 0;
 }
