@@ -68,8 +68,17 @@ static inline int pl310_on(void) { return (PL310_CTRL & 1u) != 0; }
  * boot stage set it: the RAM latencies there are board-specific and a wrong
  * guess is worse than a conservative default, so tune it only with a measurement
  * in hand. Contents are UNKNOWN out of reset, hence the invalidate first. */
+/* Build-time kill switch, so the outer cache can be taken out of the picture
+ * without touching any other code — the clean/inval helpers below already
+ * no-op via pl310_on() when the controller is down, so -DXT_PL310_ENABLE=0
+ * gives a true A/B against the L2-off behaviour. */
+#ifndef XT_PL310_ENABLE
+#define XT_PL310_ENABLE 1
+#endif
+
 static inline void pl310_init(void)
 {
+    if (!XT_PL310_ENABLE) return;
     if (pl310_on()) return;
     PL310_INV_WAY = PL310_WAYS;
     while (PL310_INV_WAY & PL310_WAYS) { }

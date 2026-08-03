@@ -178,7 +178,7 @@ $(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos
 # qemu intercepts above the guest — isn't available on metal). JTAG-load with
 # ps7_init; run vmtest/demandtest/faulttest to exercise tier-2 on real silicon.
 $(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/build_id.h $(BUILD)/hwromfs/romfs_blob.h | $(BUILD)
-	$(ARMCC) -I$(BUILD)/hwromfs $(FRCFLAGS) -DXT_HW_UART -DXT_HW -DXL_SIO_TRACE -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
+	$(ARMCC) -I$(BUILD)/hwromfs $(FRCFLAGS) $(XTRACFLAGS) -DXT_HW_UART -DXT_HW -DXL_SIO_TRACE -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # Kernel-menu (runhost) testbed ELF for the toolchain — same sources, -DXT_KERNEL_SHELL.
 $(BUILD)/freertos-hosttest.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/build_id.h $(BUILD)/romfs_blob.h | $(BUILD)

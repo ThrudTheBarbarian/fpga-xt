@@ -325,6 +325,30 @@ void fault_symbolize(unsigned addr, void (*emit)(const char *, unsigned))
         uintptr_t b = xtld_base(g_libc_obj); size_t s = xtld_span(g_libc_obj);
         if (addr >= b && addr < b + s) { emit(" [libc+", (unsigned)(addr - b)); return; }
     }
+    /* Any OTHER loaded object — libGEM.so, libm.so, a dlopened module. Without
+     * this the two cases above are the only ones named and everything else
+     * prints "[??+<absolute addr>]", which is unusable: the absolute address
+     * cannot be turned into a function without the load base, and the base is
+     * not reported anywhere. A fault in libGEM.so is exactly as likely as one
+     * in the program, so name it the same way. */
+    for (int i = 0; ; i++) {
+        xtld_obj *o = xtld_object_at(i);
+        if (!o) break;
+        uintptr_t b = xtld_base(o); size_t s = xtld_span(o);
+        if (addr < b || addr >= b + s) continue;
+        const char *nm = xtld_soname(o);
+        if (nm) {
+            static char nb[40];
+            unsigned k = 0;
+            nb[k++] = ' '; nb[k++] = '[';
+            while (*nm && k < sizeof nb - 3) nb[k++] = *nm++;
+            nb[k++] = '+'; nb[k] = 0;
+            emit(nb, (unsigned)(addr - b));
+        } else {
+            emit(" [obj+", (unsigned)(addr - b));
+        }
+        return;
+    }
     emit(" [??+", addr);
 }
 

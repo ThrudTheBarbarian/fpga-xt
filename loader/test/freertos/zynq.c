@@ -114,12 +114,23 @@ void vApplicationIRQHandler(uint32_t ulICCIAR)
     else if (id == 62) { extern void mathcop_isr(void); mathcop_isr(); }     /* math-cop doorbell (IRQ_F2P[1]) */
 }
 
-void fr_hex(const char *label, unsigned v)   /* non-static: vm.c's debug probe prints to console too */
+/* Fault output goes to the console AND the kernel log. Console-only was a
+ * half-instrument: the person at the screen can read a crash dump but nobody
+ * over the network can, so `dmesg` showed a task had vanished with no reason
+ * why. Mirroring into klog makes a fault diagnosable remotely. */
+void fr_puts(const char *s)
 {
     extern void puts0(const char *);
+    extern void klog(const char *) __attribute__((weak));
+    puts0(s);
+    if (klog) klog(s);
+}
+
+void fr_hex(const char *label, unsigned v)   /* non-static: vm.c's debug probe prints to console too */
+{
     char hex[11] = "0x00000000";
     for (int i = 0; i < 8; i++) { unsigned d = (v >> ((7 - i) * 4)) & 0xF; hex[2 + i] = (char)(d < 10 ? '0' + d : 'a' + d - 10); }
-    puts0(label); puts0(hex);
+    fr_puts(label); fr_puts(hex);
 }
 
 /* called from the exception vectors (xt_vectors.S) to localize a fault.
@@ -134,7 +145,7 @@ void fault_report(unsigned code, unsigned addr, unsigned caller)
      * after a cap so the board stays usable for diagnosis. */
     static unsigned g_faultn;
     if (++g_faultn > 24u) {
-        if (g_faultn == 25u) puts0("\n*** fault storm: suppressing further reports (tasks still killed) ***\n");
+        if (g_faultn == 25u) fr_puts("\n*** fault storm: suppressing further reports (tasks still killed) ***\n");
         return;
     }
     unsigned dfar, dfsr, ifsr;
@@ -145,16 +156,16 @@ void fault_report(unsigned code, unsigned addr, unsigned caller)
         { "reset", "UNDEF", "svc", "PREFETCH-ABORT", "DATA-ABORT", "resv", "irq", "FIQ" };
     /* pcTaskGetName asserts if no task is running (a fault during boot) — guard it */
     char *tn = xTaskGetCurrentTaskHandle() ? pcTaskGetName(0) : 0;
-    puts0("\n*** "); puts0(code < 8 ? names[code] : "?");
-    puts0(" in task '"); puts0(tn ? tn : "<boot/none>"); puts0("'\n");
+    fr_puts("\n*** "); fr_puts(code < 8 ? names[code] : "?");
+    fr_puts(" in task '"); fr_puts(tn ? tn : "<boot/none>"); fr_puts("'\n");
     fr_hex("    PC=", addr); fr_hex("  CALLER=", caller);
     /* map PC + CALLER to <object>+offset so the crash names a function offline */
     { extern void fault_symbolize(unsigned, void (*)(const char *, unsigned));
-      fault_symbolize(addr, fr_hex); puts0("]");
-      fault_symbolize(caller, fr_hex); puts0("]"); }
+      fault_symbolize(addr, fr_hex); fr_puts("]");
+      fault_symbolize(caller, fr_hex); fr_puts("]"); }
     fr_hex("  DFAR=", dfar); fr_hex("  DFSR=", dfsr); fr_hex("  IFSR=", ifsr);
     { extern int stackguard_is_guard(unsigned);
-      if (code == 4 && stackguard_is_guard(dfar)) puts0("\n*** STACK OVERFLOW (hit guard page)"); }
+      if (code == 4 && stackguard_is_guard(dfar)) fr_puts("\n*** STACK OVERFLOW (hit guard page)"); }
     /* DIAG: walk the LIVE tables (current TTBR0) for the faulting address — shows
      * whether the MMU sees the section as split (coarse L2) or a plain SEC_KDATA
      * section, and the page's permission bits. */
@@ -165,7 +176,7 @@ void fault_report(unsigned code, unsigned addr, unsigned caller)
       fr_hex("\n    TTBR0=", ttbr); fr_hex("  L1[sec]=", l1e);
       if ((l1e & 3u) == 1u) { unsigned *l2 = (unsigned *)(l1e & 0xFFFFFC00u);
                               fr_hex("  L2[pg]=", l2[(va >> 12) & 0xFFu]); } }
-    puts0("\n*** killing the faulting task; OS continues (T2-a) ***\n");
+    fr_puts("\n*** killing the faulting task; OS continues (T2-a) ***\n");
     /* returns to xt_vectors.S, which redirects the task into xtos_task_fault_exit */
 }
 
