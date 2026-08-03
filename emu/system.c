@@ -175,6 +175,13 @@ static void irq_note(atari *s)
  * or gtia_pmretrigger (a mid-line HPOS write redraws the player on that line). */
 static void render_cycle(atari *s, int cyc)
 {
+    /* ABLATION HOOKS -- measurement only, results are WRONG when enabled. The
+     * PROF timers wrap calls in PMCCNTR reads, so their attribution is an upper
+     * bound; removing a component's work outright and taking the throughput
+     * delta is the honest price. Re-price after every win: the shares move. */
+#ifdef ABLATE_RENDER
+    (void)s; (void)cyc; return;
+#endif
     /* GTIA blanks on what ANTIC is EMITTING, not on the scanline number.  Past
      * the bottom of the display the list is stalled on whatever instruction it
      * last latched: a blank-line instruction really does blank, but a DISPLAY
@@ -219,7 +226,11 @@ static void render_cycle(atari *s, int cyc)
         } else if (PSEUDO_MODE_E && !s->hires_ok && (s->an.dl_insn & 0x0F) == 0x0F) {
             pf = antic_pf_pair(&s->an, cc);      /* the pair IS the index */
         } else {
+#ifdef ABLATE_PF
+            pf = -1;
+#else
             PROF_BEG(PROF_PF); pf = antic_pf_at(&s->an, cc, &hires); PROF_END(PROF_PF);
+#endif
         }
         /* A GTIA mode re-reads mode F's bits as NIBBLES, so the playfield is no
          * longer hi-res: leaving this set makes GTIA apply the "lit collides as

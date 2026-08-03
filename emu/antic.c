@@ -1266,7 +1266,13 @@ int antic_tick(antic *a)
 
 /* Colour clocks per pixel and bits per pixel, for the BITMAP modes.  The
  * character modes (2..7) need a CHBASE glyph fetch and are not decoded yet. */
-static const uint8_t pf_ccpp[16] = { 0,0,0,0,0,0,0,0, 4,2,2,1,1,1,1,1 };
+/* Colour clocks per pixel, as a SHIFT rather than a divisor: the values are
+ * { modes 8..15 } = 4,2,2,1,1,1,1,1, all powers of two. The A9 has NO integer
+ * divide, so `off / pf_ccpp[mode]` with a runtime divisor compiled to an
+ * __aeabi_idiv CALL -- twice per emulated cycle, on the hottest path in the
+ * emulator. `off` is already proven non-negative by the window check above, so
+ * the shift is exact. */
+static const uint8_t pf_ccsh[16] = { 0,0,0,0,0,0,0,0, 2,1,1,0,0,0,0,0 };
 static const uint8_t pf_bpp [16] = { 0,0,0,0,0,0,0,0, 2,1,2,1,1,2,2,1 };
 
 /* The line buffer's read index: the display skips the bytes fetched before the
@@ -1307,13 +1313,14 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
 
     if (mode <= 7) {                      /* character modes */
         /* 40 characters of 4 colour clocks in modes 2..5, 20 of 8 in 6..7. */
-        int cw = (mode <= 5) ? 4 : 8;
-        int ci = off / cw;
+        /* 4 or 8 -> shift 2 or 3; same reason as pf_ccsh above. */
+        int csh = (mode <= 5) ? 2 : 3;
+        int ci = off >> csh;
         if (ci >= a->lb_len || ci >= (int)sizeof a->glyphbuf)
             return -1;
         uint8_t name  = a->linebuf[lb(a, ci)];
         uint8_t glyph = a->glyphbuf[lb(a, ci)];
-        int within = off % cw;
+        int within = off & ((1 << csh) - 1);
 
         if (mode <= 3) {                  /* hi-res text, two pixels per clock */
             /* CHACTL blank and inverse act on characters with bit 7 set, and
@@ -1349,7 +1356,7 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
         return (b0 | b1) ? 2 : -1;        /* GTIA is shown hi-res as PF2 */
     }
 
-    int px     = off / pf_ccpp[mode];
+    int px     = off >> pf_ccsh[mode];
     int bits   = pf_bpp[mode];
     int bitpos = px * bits;
     uint8_t byte = a->linebuf[lb(a, bitpos >> 3)];
