@@ -358,6 +358,25 @@ static void pf_cpu_stanza(pfb *o, int n, uint32_t midr, uint32_t sctlr,
 {
     pfb_s(o, "processor\t: "); pfb_d(o, n); pfb_c(o, '\n');
     pfb_s(o, "model name\t: ARMv7 Processor (Cortex-A9)\n");
+    /* Read from the ARM PLL, NOT from configCPU_CLOCK_HZ. The constant is what
+     * we ASKED for; this is what the silicon is doing. They diverged during the
+     * 666 -> 766 MHz change and a divergence silently mis-scales gettimeofday
+     * and the scheduler tick, so print both and let the mismatch be visible. */
+    {
+        extern uint32_t cpu_hz_actual(void);
+        extern uint32_t cpu_hz_configured(void);
+        uint32_t hz = cpu_hz_actual(), want = cpu_hz_configured();
+        pfb_s(o, "cpu MHz\t\t: "); pfb_d(o, (int)(hz / 1000000u));
+        pfb_c(o, '.'); {
+            unsigned frac = (hz % 1000000u) / 10000u;     /* two places */
+            pfb_c(o, (char)('0' + frac / 10)); pfb_c(o, (char)('0' + frac % 10));
+        }
+        if (hz / 1000000u != want / 1000000u) {
+            pfb_s(o, "  (MISMATCH: configCPU_CLOCK_HZ says ");
+            pfb_d(o, (int)(want / 1000000u)); pfb_s(o, " MHz)");
+        }
+        pfb_c(o, '\n');
+    }
     pfb_s(o, "CPU implementer\t: 0x"); {
         static const char h[] = "0123456789abcdef";
         pfb_c(o, h[(midr >> 28) & 0xf]); pfb_c(o, h[(midr >> 24) & 0xf]); }

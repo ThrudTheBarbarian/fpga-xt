@@ -167,19 +167,28 @@ static void pmu_set_event(uint32_t ctr, uint32_t ev)
  *   CPU_6x4x = PS_CLK * ARM_PLL_FDIV / ARM_CLK_DIVISOR
  *
  * PS_CLK is the board crystal (33.333 MHz on this carrier). */
-void clk_report(void)
+uint32_t cpu_hz_actual(void)
 {
-    uint32_t pll = REG(0xF8000100u);          /* ARM_PLL_CTRL */
-    uint32_t ctl = REG(0xF8000120u);          /* ARM_CLK_CTRL */
+    uint32_t pll  = REG(0xF8000100u);         /* ARM_PLL_CTRL */
+    uint32_t ctl  = REG(0xF8000120u);         /* ARM_CLK_CTRL */
     uint32_t fdiv = (pll >> 12) & 0x7Fu;
     uint32_t div  = (ctl >> 8)  & 0x3Fu;
+    return div ? (uint32_t)((33333333ull * fdiv) / div) : 0u;
+}
+
+/* What the config CLAIMS, for callers that want to show both. */
+uint32_t cpu_hz_configured(void) { return (uint32_t)configCPU_CLOCK_HZ; }
+
+void clk_report(void)
+{
+    uint32_t pll  = REG(0xF8000100u);
+    uint32_t ctl  = REG(0xF8000120u);
     extern void klog(const char *) __attribute__((weak));
     extern void klog_u(unsigned) __attribute__((weak));
     if (klog && klog_u) {
-        uint32_t hz = div ? (uint32_t)((33333333ull * fdiv) / div) : 0u;
-        klog("[clk] ARM_PLL fdiv="); klog_u(fdiv);
-        klog(" div=");               klog_u(div);
-        klog(" cpu_hz=");            klog_u(hz);
+        klog("[clk] ARM_PLL fdiv="); klog_u((pll >> 12) & 0x7Fu);
+        klog(" div=");               klog_u((ctl >> 8)  & 0x3Fu);
+        klog(" cpu_hz=");            klog_u(cpu_hz_actual());
         klog(" configCPU_CLOCK_HZ="); klog_u(configCPU_CLOCK_HZ);
         klog("\n");
     }
