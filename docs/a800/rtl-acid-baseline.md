@@ -49,6 +49,17 @@ result, the run was cut short. Read `cpu_* 5/8` with that in mind -- the core
 passes `cpu_bugs`, `cpu_decimal`, `cpu_flags`, `cpu_illegal` and `cpu_timing`, and
 independently passes Klaus.
 
+## The remaining 21 failures are genuine -- audited
+
+Every one of the 14 remaining `antic_*` and 7 `gtia_*` failures was checked for
+dependence on hardware this harness does not have: reads of POKEY RANDOM ($D20A),
+IRQST ($D20E), the POT registers ($D200-$D208) and PIA ($D300-$D303). **All
+counts are zero.** Only `antic_dmapattern` and `antic_wsync` measured through
+missing hardware, and they are excluded above.
+
+So no further failure in this table is a harness artefact. What remains is real
+work on the design.
+
 ## Reading the ANTIC column
 
 The 16 `antic_*` failures are very likely ONE integration problem rather than 16
