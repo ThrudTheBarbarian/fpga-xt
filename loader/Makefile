@@ -385,6 +385,25 @@ $(BUILD)/lua.so: test/freertos/progs/lua.c $(LUACORE) $(BUILD)/libc.so $(BUILD)/
 	    -Wl,--hash-style=sysv -Wl,-soname,lua.so \
 	    test/freertos/progs/lua.c $(LUACORE) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
 
+# acid.so -- /bin/acid: the SOFTWARE ATARI 800 (emu/) running the ACID800
+# conformance suite ON THE A9, natively.  Same sources as the Mac host build, no
+# fork: emu/test/acid.c is the harness there and here.
+#
+# -Ilibc-compat comes FIRST because the harness walks a directory and newlib-pic's
+# <dirent.h> is a hard #error -- libc-compat/dirent.h is the one xtos programs use.
+# One gcc call, like lua.so.
+EMU     := ../emu
+EMUSRC  := $(EMU)/system.c $(EMU)/xt6502.c $(EMU)/antic.c $(EMU)/antic_dma.c \
+           $(EMU)/gtia.c $(EMU)/pokey_rand.c $(EMU)/pokey_timer.c \
+           $(EMU)/pia.c $(EMU)/sio.c
+$(BUILD)/acid.so: $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so | $(BUILD)
+	@# -O2 overrides ARMCFLAGS' -Os on purpose: this one is COMPUTE-BOUND and the
+	@# point of running it on the A9 is partly to find out what a frame costs.
+	$(ARMCC) $(ARMCFLAGS) -O2 -Ilibc-compat -Itest/qemu -Ikernel -I$(EMU) \
+	    -Inewlib-pic/include -fpic -shared -nostdlib \
+	    -Wl,--hash-style=sysv -Wl,-soname,acid.so \
+	    $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so -o $@
+
 # a program that uses libc (DT_NEEDED libc.so), compiled against the PIC newlib headers
 $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/libc_test.o
@@ -735,7 +754,7 @@ $(BUILD)/hwromfs/romfs_blob.h: $(BUILD)/romfs-hw.bin
 # login shell exists before the links do)
 SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
-sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blitbench.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
+sdstage: $(BUILD)/acid.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blitbench.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	@rm -rf $(SDSTAGE)
 	@# /OS/var: the kernel writes the across-boot entropy seed there at startup
 	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/fonts $(SDSTAGE)/OS/themes/Aristo2/1x $(SDSTAGE)/OS/Apps/Desktop/Spaces/1 $(SDSTAGE)/OS/var
@@ -749,6 +768,11 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blit
 	cp $(BUILD)/gemd.so    $(SDSTAGE)/OS/bin/gemd
 	cp $(BUILD)/fbgrab.so  $(SDSTAGE)/OS/bin/fbgrab
 	cp $(BUILD)/blitbench.so $(SDSTAGE)/OS/bin/blitbench
+	@# the software Atari 800 + the ACID800 suite it runs, so the A9 can be
+	@# measured against the same 63 tests the Mac host build passes
+	cp $(BUILD)/acid.so    $(SDSTAGE)/OS/bin/acid
+	mkdir -p $(SDSTAGE)/OS/share/acid800
+	cp ../rsrc/acid800/Acid800/standalone/*.xex $(SDSTAGE)/OS/share/acid800/
 	cp $(BUILD)/regtest.so $(SDSTAGE)/OS/bin/regtest
 	cp $(BUILD)/httpd.so   $(SDSTAGE)/OS/bin/httpd
 	cp $(BUILD)/tnfs.so    $(SDSTAGE)/OS/bin/tnfs
