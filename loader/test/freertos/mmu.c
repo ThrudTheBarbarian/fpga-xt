@@ -19,6 +19,7 @@
  * "PL-visible => wired/uncached" invariant.
  */
 #include <stdint.h>
+#include "pl310.h"
 #include "frtos_os.h"
 
 static volatile uint32_t l1[4096] __attribute__((aligned(16384)));
@@ -190,6 +191,14 @@ void mmu_init(void)
     sctlr |=  (1u << 11);                                       /* Z = 1: branch prediction on */
     asm volatile("mcr p15,0,%0,c1,c0,0" :: "r"(sctlr));
     asm volatile("dsb; isb");
+
+    /* ...and the OUTER cache behind them.  Measured: without it a working set
+     * costs 32 ns/iter up to the 32 KB L1 and then 242 ns at 64 KB with no
+     * plateau at all (progs/wsweep.c) -- DRAM, because there was nothing behind
+     * L1.  It is a UNIFIED cache on the AXI path, so this one call serves CPU1
+     * too; CPU1 must not repeat it.  After the MMU and L1, so the memory types
+     * the page tables declare are already in force. */
+    pl310_init();
 }
 
 /* ---- W^X: per-page protection of loaded images (tier-2, T2-c) ----------
