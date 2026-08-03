@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 #
-# STILL NOT VALIDATED — a known-good test does not pass yet.  Closer, though:
-# the image now carries the OS substitutes the suite genuinely needs, all
-# transcribed from emu/test/acid.c, which scores 57/63 on this suite.  What
-# remains is EITHER a further harness gap OR the first real RTL divergence, and
-# those are not yet distinguishable — antic_vcount reaches 20 frames and then
-# sits in zero page ($00CA), the BRK-walk signature.  Do not report a PASS or
-# FAIL from this harness as an ANTIC result until a test the model passes also
-# passes here.
+# VALIDATED 2026-08-03: this harness now produces BOTH verdicts, so a FAIL means
+# the RTL rather than the setup.  antic_default, antic_addrmirror and
+# antic_blockednmi PASS here and in the software model; antic_vcount, antic_wsync
+# and antic_dlitiming FAIL here and PASS in the model, which makes them genuine
+# fabric divergences and the first real output of this instrument.
+#
+# Scored the way the model scores: watch for the PC reaching _testPassed or
+# _testFailed.  The address IS the verdict, so nothing has to be classified from
+# a register, and it lands earlier than _testEnd (which programs a POKEY timer
+# and spins on IRQST).
 #
 # Runs the test image with NO OS ROM, and does not need one.
 #
@@ -204,6 +206,19 @@ def main():
     # a zero vector sends the CPU to $0000 on the first character -- which is
     # exactly the derail this harness showed ($1D15 JMP ($1A29) -> $0000).
     # Printing becomes a no-op; the measurement does not depend on it.
+    # _exitTest / _exitTestS are set by _testInit too, so the same stub that
+    # silences the OS dependency leaves them zero -- and _testFailed does
+    # `LDX _exitTestS / TXS / LDY #$80 / JMP (_exitTest)`, i.e. jumps through
+    # zero.  Park it on a spin instead so a missed detection is visible as a
+    # halt rather than a BRK-walk through zero page.
+    mem[0xFF60], mem[0xFF61], mem[0xFF62] = 0x4C, 0x60, 0xFF   # JMP $FF60
+    ex = syms.get("_exitTest")
+    if ex is not None:
+        mem[ex], mem[ex + 1] = 0x60, 0xFF
+    exs = syms.get("_exitTestS")
+    if exs is not None:
+        mem[exs] = 0xFF
+
     vput = syms.get("_vputchar")
     if vput is not None:
         mem[0xFF50] = 0x60                       # RTS
@@ -221,8 +236,14 @@ def main():
     with open(outdir / "acid.mem", "w") as f:
         for a in range(0x10000):
             f.write(f"{mem.get(a, 0):02x}\n")
+    # SCORE THE WAY THE MODEL DOES: watch for the PC reaching _testPassed or
+    # _testFailed.  The address itself is the verdict, so no register has to be
+    # classified, and it lands EARLIER than _testEnd -- which matters because
+    # _testEnd programs a POKEY timer and spins on IRQST.
+    t_pass = syms.get("_testPassed", 0)
+    t_fail = syms.get("_testFailed", 0)
     with open(outdir / "acid_cfg.mem", "w") as f:
-        f.write(f"{end:04x}\n")
+        f.write(f"{end:04x}\n{t_pass:04x}\n{t_fail:04x}\n")
 
     print(f"{name}: run=${run:04X} _testEnd=${end:04X} bytes={len(mem)}")
 

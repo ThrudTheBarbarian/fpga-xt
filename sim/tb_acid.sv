@@ -80,7 +80,7 @@ module tb_acid;
     );
 
     logic [7:0] mem [0:65535];
-    logic [15:0] cfg [0:0];
+    logic [15:0] cfg [0:2];
 
     // $D000-$D0FF and $D400-$D4FF are answered inside a8_core; anything else in
     // the hardware page reads as an unpopulated bus.
@@ -93,7 +93,8 @@ module tb_acid;
         antic_rdata <= mem[antic_addr];
     end
 
-    logic [15:0] test_end;
+    logic [15:0] test_end, t_pass, t_fail;
+    logic        verdict_fail;
     int          guard;
     logic        done;
 
@@ -111,12 +112,45 @@ module tb_acid;
             pc_d <= 16'h0700; traps <= 0;
         end else if (sync && tick) begin
             pc_d <= dbg_pc;
+            // $FF00-$FFFF is the harness's own stub page (NMI/IRQ dispatcher,
+            // RTCLOK ticker, the _vputchar RTS sink). Jumping there is CORRECT
+            // and reporting it drowns the real derail -- the sink alone fires on
+            // every character the suite prints.
             if (traps < 12 &&
                 (dbg_pc < 16'h0700 || dbg_pc > 16'h3FFF) &&
+                (dbg_pc < 16'hFF00) &&
                 (pc_d  >= 16'h0700 && pc_d  <= 16'h3FFF)) begin
                 $display("  [left the image] $%04h -> $%04h  a=$%02h x=$%02h y=$%02h s=$%02h",
                          pc_d, dbg_pc, dbg_a, dbg_x, dbg_y, dbg_s);
                 traps <= traps + 1;
+            end
+        end
+    end
+
+    // ---- PC ring, dumped at the first FATAL derail ------------------------
+    //
+    // "It ended up at $00CA" says nothing; the TRAIL that got it there says
+    // everything -- the software harness (emu/test/acid.c, PC_RING 64) was built
+    // for exactly this and it is what turned three ACID mysteries into one-line
+    // fixes. A PC below $0200 is the fatal signature: zero page and the stack
+    // are full of zeros, every $00 is a BRK, and the CPU walks upward until it
+    // hits a $02 and jams. Print once, then stop.
+    localparam int PC_RING = 64;
+    logic [15:0] ring [0:PC_RING-1];
+    int          rn;
+    int          derail_shown;
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            rn <= 0; derail_shown <= 0;
+        end else if (sync && tick) begin
+            ring[rn % PC_RING] <= dbg_pc;
+            rn <= rn + 1;
+            if (!derail_shown && dbg_pc < 16'h0200 && rn > PC_RING) begin
+                derail_shown <= 1;
+                $display("  *** DERAIL into $%04h after %0d instructions.  a=$%02h x=$%02h y=$%02h s=$%02h  trail (oldest first):", dbg_pc, rn, dbg_a, dbg_x, dbg_y, dbg_s);
+                for (int k = 0; k < PC_RING; k++)
+                    $write(" %04h", ring[(rn + k) % PC_RING]);
+                $write("\n");
             end
         end
     end
@@ -135,7 +169,9 @@ module tb_acid;
     initial begin
         $readmemh("acid.mem", mem);
         $readmemh("acid_cfg.mem", cfg);
-        test_end = cfg[0];
+        test_end  = cfg[0];
+        t_pass    = cfg[1];
+        t_fail    = cfg[2];
         done = 1'b0;
 
         repeat (4) @(posedge clk);
@@ -148,18 +184,25 @@ module tb_acid;
         while (!done && guard < 60_000_000) begin
             @(posedge clk);
             guard++;
-            if (sync && tick && (dbg_pc == test_end)) done = 1'b1;
+            // Score as the model does: the ADDRESS is the verdict.  Reaching
+            // _testPassed or _testFailed is unambiguous and lands earlier than
+            // _testEnd, which programs a POKEY timer and spins on IRQST.
+            if (sync && tick && (dbg_pc == t_pass)) begin
+                done = 1'b1; verdict_fail = 1'b0;
+            end else if (sync && tick && (dbg_pc == t_fail)) begin
+                done = 1'b1; verdict_fail = 1'b1;
+            end
         end
 
         if (!done) begin
             $display("ACID %s: TIMEOUT (pc $%04h, never reached _testEnd $%04h)",
                      `TESTNAME, dbg_pc, test_end);
             $display("tb_acid: 1 FAIL");
-        end else if (dbg_y == 8'h00) begin
+        end else if (!verdict_fail) begin
             $display("ACID %s: PASS", `TESTNAME);
             $display("tb_acid: all checks PASS");
         end else begin
-            $display("ACID %s: FAIL (Y=$%02h)", `TESTNAME, dbg_y);
+            $display("ACID %s: FAIL (reached _testFailed $%04h)", `TESTNAME, t_fail);
             $display("tb_acid: 1 FAIL");
         end
         $finish;
