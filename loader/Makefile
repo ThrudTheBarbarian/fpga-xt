@@ -426,6 +426,13 @@ $(BUILD)/acid.so: $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so | $(BUILD)
 	 rm -f $(BUILD)/.acid-libc-syms; \
 	 if [ -n "$$u" ]; then echo "acid.so: undefined at load:" $$u >&2; exit 1; fi
 
+# bssbench.so — memprobe's loops, but built as a LIBC PROGRAM rather than a raw
+# applet, to find out whether the two loader paths map a writable segment the
+# same way.  See the file's header.
+$(BUILD)/bssbench.so: test/freertos/progs/bssbench.c $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -O2 -Ilibc-compat -Inewlib-pic/include -c $< -o $(BUILD)/bssbench.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/bssbench.o $(BUILD)/libc.so
+
 # a program that uses libc (DT_NEEDED libc.so), compiled against the PIC newlib headers
 $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/libc_test.o
