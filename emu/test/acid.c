@@ -97,6 +97,10 @@ static int load_xex(atari *s, const char *path, uint16_t *runaddr)
  * in the .lst. */
 static unsigned long pc_hits[65536];
 static int trace_on;
+/* the last few PCs before a derail — see the JAM report below */
+#define PC_RING 24
+static uint16_t pc_ring[PC_RING];
+static unsigned pc_ring_n;
 
 /* Outcomes.  JAM and TIMEOUT were both reported as "hung", which hid the
  * difference between a test that DERAILED into an illegal opcode and one that
@@ -417,12 +421,24 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
             *cyc = s.cycles;
             /* where it died, and the opcode that killed it — a JAM is always a
              * derail, so the address is the first question. */
-            if (trace_on)
+            if (trace_on) {
                 printf("      jammed at $%04X on opcode $%02X\n",
                        s.cpu.jam_pc, s.cpu.jam_op);
+                /* HOW IT GOT THERE.  A JAM is always a derail, and the address
+                 * alone never says why -- the instruction that jumped is the
+                 * question.  The spin list is a HOT-ADDRESS report and answers a
+                 * different one entirely (mod_dispmin's top entries are just its
+                 * 256-iteration screen-clear loop, which is perfectly healthy). */
+                printf("      last %d PCs:", PC_RING);
+                for (unsigned k = pc_ring_n > PC_RING ? pc_ring_n - PC_RING : 0;
+                     k < pc_ring_n; k++)
+                    printf(" %04X", pc_ring[k & (PC_RING - 1)]);
+                printf("\n");
+            }
             return R_JAM;
         }
-        if (trace_on) pc_hits[s.cpu.pc]++;
+        if (trace_on) { pc_hits[s.cpu.pc]++;
+                        pc_ring[pc_ring_n++ & (PC_RING - 1)] = s.cpu.pc; }
         atari_step(&s);
     }
     *cyc = s.cycles;
