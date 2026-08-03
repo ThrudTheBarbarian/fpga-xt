@@ -105,6 +105,20 @@ module tb_acid;
                      hcount, dma_steal, !dut.c_rdy, rdy_n);
     end
 
+    // Collision-register reads.  Trigger: the CPU reading $D000-$D00F, sampled
+    // at SUB_DATA where the core actually latches, so the value printed is the
+    // one the CPU gets.  The oracle's ACID_COLPROBE shows gtia_collision's
+    // samples are almost all ppf=0000/mpf=0000 -- it mostly asserts collisions
+    // do NOT happen -- so a NON-ZERO here is a spurious collision, i.e. a VALUE
+    // error rather than a timing one.
+    always_ff @(posedge clk) begin
+        if (probe_on && !rst && dut.c_rw
+            && (dut.c_addr[15:4] == 12'hD00)
+            && (dut.c_sub == 8'(dut.SUB_DATA)))
+            $display("PROBE-COL addr=%03h value=%02h line=%0d hcount=%0d",
+                     dut.c_addr[11:0], dut.reg_rdata, line, hcount);
+    end
+
     // Stall LENGTH: machine cycles the CPU is held (c_rdy low) per WSYNC.
     // Trigger semantics, stated because three probes tonight were misread:
     // counts `tick`s where c_rdy is LOW, reset when /RDY comes back.  That is a
@@ -288,6 +302,16 @@ module tb_acid;
         end else begin
             $display("ACID %0s: FAIL (reached _testFailed $%04h)", tname, t_fail);
             $display("tb_acid: 1 FAIL");
+            // The PC trail INTO _testFailed.  The ring was only dumped on a
+            // derail, but a test that fails cleanly never derails -- so the one
+            // question that matters ("which assert, and how far did it get?")
+            // had no answer.  Print the last 16 fetches under +PROBE=1.
+            if (probe_on) begin
+                $write("  PC trail into _testFailed:");
+                for (int k = 16; k > 0; k--)
+                    $write(" %04h", ring[(rn - k) % PC_RING]);
+                $write("\n");
+            end
         end
         // The result bytes, on EVERY path.  Without these a tune sweep prints
         // 16 identical verdict lines and a flat-looking result is indis-
