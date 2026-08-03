@@ -94,6 +94,15 @@ void mmu_sync_caches(void *addr, unsigned long len, void *user)
     for (uint32_t p = a; p < end; p += 0x20u)
         __asm__ volatile("mcr p15,0,%0,c7,c11,1" :: "r"(p));   /* DCCMVAU: clean D to PoU */
     __asm__ volatile("dsb");
+    /* ...and OUT THROUGH THE OUTER CACHE. pl310.h originally asserted the I-side
+     * needed nothing because instruction fetch reads through L2, so a clean to
+     * PoU was enough. That was ASSUMED, not measured, and the evidence says
+     * otherwise: with the L2 on, sshd-session took an UNDEF on an address whose
+     * on-disk instruction is a perfectly valid `add r1, sp, #4` — i.e. the core
+     * fetched something other than the bytes the loader had just written. The
+     * CP15 op above only reaches the inner cache, so make the freshly written
+     * TEXT visible at the point of coherency before invalidating the I-cache. */
+    pl310_clean(a, end - a);
     for (uint32_t p = a; p < end; p += 0x20u)
         __asm__ volatile("mcr p15,0,%0,c7,c5,1" :: "r"(p));    /* ICIMVAU: invalidate I */
     __asm__ volatile("mcr p15,0,%0,c7,c5,6" :: "r"(0u));       /* BPIALL */

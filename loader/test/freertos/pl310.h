@@ -32,9 +32,18 @@
  * outer and inner steps a speculative fetch can refill L1 from a line that is
  * still stale in L2, and the second pass discards it.
  *
- * Instruction coherency does NOT need anything here: mmu_sync_caches cleans to
- * the Point of Unification and instruction fetch reads through L2, so data
- * cleaned that far is already visible to the I-side.
+ * INSTRUCTION COHERENCY DOES NEED SOMETHING, and this file used to claim it did
+ * not -- on the reasoning that instruction fetch reads through L2, so a clean to
+ * the Point of Unification was enough. That was assumed rather than measured,
+ * and the assumption cost an afternoon of "unrelated" instability: tasks taking
+ * UNDEF and DATA-ABORT at addresses whose on-disk instructions are perfectly
+ * valid (sshd-session at `add r1, sp, #4`), in whichever task happened to
+ * execute a line the I-side could not yet see. Freshly written TEXT must be
+ * cleaned to the point of COHERENCY -- see mmu_sync_caches(), which now calls
+ * pl310_clean() between the inner clean and the I-cache invalidate.
+ *
+ * The lesson generalises: every "this level needs no maintenance" claim about a
+ * cache hierarchy is a measurement, not a deduction.
  */
 #ifndef XT_PL310_H
 #define XT_PL310_H
