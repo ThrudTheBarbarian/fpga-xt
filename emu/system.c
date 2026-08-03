@@ -226,8 +226,14 @@ static void render_cycle(atari *s, int cyc)
          * PF2" rule and throw the nibble's colour class away. */
         s->gt.hires = (s->an.dl_insn & 0x0F) == 0x0F && !gmode &&
                       !(PSEUDO_MODE_E && !s->hires_ok);
-        uint8_t before = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] |
-                                   s->gt.ppf[3] | s->gt.ppl[0] | s->gt.ppl[1]);
+        /* Only snapshot the collision registers when someone is WATCHING them.
+         * This is six loads and five ORs per colour clock -- twice per emulated
+         * cycle, for the entire run -- and ACID_COLPROBE is off in every normal
+         * run, so it was pure overhead on the hottest path in the emulator. */
+        uint8_t before = s->col_probe
+            ? (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] |
+                        s->gt.ppf[3] | s->gt.ppl[0] | s->gt.ppl[1])
+            : 0;
         PROF_BEG(PROF_GTIA); gtia_clock(&s->gt, cc, pf, hires); PROF_END(PROF_GTIA);
         if (s->col_probe) {
             uint8_t after = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] |

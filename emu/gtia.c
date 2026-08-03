@@ -86,6 +86,21 @@ static void obj_step(gtia *g, int hpos)
          *    positions, and is what its runtest comment calls a lockup. */
         int resize = g->sizep_cnt[i] && --g->sizep_cnt[i] == 0;
         if (resize) g->sizep[i] = g->sizep_pend[i];
+
+        /* IDLE FAST PATH. A player with no live runs that is not triggering on
+         * this clock has nothing to advance and nothing to start, and that is
+         * the common case: the objects occupy a small part of a 228-clock line,
+         * so for most of it this loop was computing a width and a phase rule for
+         * runs that do not exist. The state it would touch is untouched here, so
+         * skipping is exact rather than approximate.
+         *
+         * p_active is still assigned below, unconditionally, so an object that
+         * retired on an earlier clock cannot be left marked live. */
+        if (!g->p_n[i] && hpos != g->hposp[i]) {
+            g->p_active[i] = 0;
+            goto missile;
+        }
+
         int w = size_scale(g->sizep[i]);
         int alt = (g->sizep[i] & 3) == 2;
 
@@ -148,6 +163,7 @@ static void obj_step(gtia *g, int hpos)
             }
         }
         g->p_active[i] = g->p_n[i] > 0;
+missile:
         if (hpos == g->hposm[i]) {
             g->m_active[i] = 1; g->m_bit[i] = 0; g->m_phase[i] = 0;
         } else if (g->m_active[i]) {
@@ -170,23 +186,29 @@ void gtia_clock(gtia *g, int hpos, int pf, int hires_lit)
 
     int visible = hpos >= GTIA_VISIBLE_L && hpos <= GTIA_VISIBLE_R;
 
-    int p[4], m[4];
+    /* Lit-ness as BITMASKS, and nothing beyond this point matters when nothing
+     * is lit -- which is most colour clocks, since the objects occupy a small
+     * part of the line. The pairwise loops below were 32 iterations of trivial
+     * work executed unconditionally, every colour clock of every emulated cycle;
+     * as masks they are 4 iterations and are skipped outright when idle.
+     * gtia_clock is 70% of the emulator's entire runtime, so this is the hot
+     * path, not a micro-optimisation. */
+    unsigned pm = 0, mm = 0;
     for (int i = 0; i < 4; i++) {
-        p[i] = gtia_player_lit(g, i);
-        m[i] = gtia_missile_lit(g, i);
+        if (gtia_player_lit(g, i))  pm |= 1u << i;
+        if (gtia_missile_lit(g, i)) mm |= 1u << i;
     }
+    if (!pm && !mm) return;      /* no object here: no collision of any kind */
 
     /* HBLANK is NOT a uniform "collisions off": missile/player still registers
      * there while player/player does not (gtia_collision). */
-    for (int i = 0; i < 4; i++)
-        for (int j = 0; j < 4; j++)
-            if (m[i] && p[j]) g->mpl[i] |= (uint8_t)(1 << j);
-
-    if (visible) {
+    if (mm && pm)
         for (int i = 0; i < 4; i++)
-            for (int j = 0; j < 4; j++)
-                if (i != j && p[i] && p[j]) g->ppl[i] |= (uint8_t)(1 << j);
-    }
+            if (mm & (1u << i)) g->mpl[i] |= (uint8_t)pm;
+
+    if (visible && pm)
+        for (int i = 0; i < 4; i++)
+            if (pm & (1u << i)) g->ppl[i] |= (uint8_t)(pm & ~(1u << i));
 
     if (!visible) return;
 
@@ -207,8 +229,8 @@ void gtia_clock(gtia *g, int hpos, int pf, int hires_lit)
     if (cls < 0) return;
 
     for (int i = 0; i < 4; i++) {
-        if (p[i]) g->ppf[i] |= (uint8_t)(1 << cls);
-        if (m[i]) g->mpf[i] |= (uint8_t)(1 << cls);
+        if (pm & (1u << i)) g->ppf[i] |= (uint8_t)(1 << cls);
+        if (mm & (1u << i)) g->mpf[i] |= (uint8_t)(1 << cls);
     }
 }
 
