@@ -3,12 +3,12 @@
 `a8_core` (xt6502f + antic_gtia, ANTIC as bus master, phi2 as clock enable)
 measured against `emu/` on the Acid800 suite.
 
-    a8_core   13 / 39
-    emu       39 / 39
+    a8_core   13 / 37
+    emu       37 / 37
 
 | segment | a8_core | emu |
 |---|---|---|
-| `antic_*` | 4 / 20 | 20 / 20 |
+| `antic_*` | 4 / 18 | 18 / 18 |
 | `cpu_*` | 5 / 8 | 8 / 8 |
 | `gtia_*` | 4 / 11 | 11 / 11 |
 
@@ -17,7 +17,17 @@ measured against `emu/` on the Acid800 suite.
 The suite has 63 tests. Two groups are excluded, for two DIFFERENT reasons that
 are deliberately not merged:
 
-**The harness cannot host the chip.** `a8_core` is the CPU and `antic_gtia` only
+**The harness cannot host the chip.** Two `antic_*` tests belong here despite
+their names: `antic_dmapattern` and `antic_wsync` MEASURE through POKEY's RANDOM
+at $D20A, which `tb_acid` answers as $FF. Counted from the .lst, they read it 30
+and 6 times; every other `antic_*`, `cpu_*` and `gtia_*` test reads it zero times.
+Neither can pass here whatever ANTIC does -- which is why the DMA schedule
+measured EXACT against the cycles the CPU actually loses while
+`antic_dmapattern` still failed. `antic_wsync`'s six reads are exactly the "six
+RANDOM samples" `hdl/antic_reg_file.sv` describes as unable to see the WSYNC
+release at all.
+
+ `a8_core` is the CPU and `antic_gtia` only
 -- there is no POKEY and no PIA, and `tb_acid`'s memory model answers `8'hFF` for
 $D1xx-$D3xx and $D5xx-$D7xx. The `pokey_*` family and `mmu_*` (which needs PORTB)
 therefore diverge for reasons that say nothing about ANTIC, as does `pia_*`. That
