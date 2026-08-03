@@ -5,12 +5,29 @@
 // docs/ANTIC-rewrite.md.  xt6502f plus antic_gtia, with the two things that
 // actually connect them: the register decode and the cycle stealing.
 //
-// TWO MEMORY PORTS, NOT AN ARBITER.  ANTIC and the CPU each get their own read
-// path, because on the FPGA the memory is dual-ported and there is no bus to
-// contend for.  The CPU still loses the cycles — `dma_steal` gates its clock
-// enable — so the TIMING is the real machine's even though the physical
-// conflict the real machine has does not exist here.  That is the right trade:
-// the timing is what software can observe, and the contention is not.
+// TWO MEMORY PORTS, NOT AN ARBITER — AND THAT IS WRONG.  The reasoning below is
+// kept because it is nearly right, and because knowing WHY it fails is the
+// point:
+//
+//   "ANTIC and the CPU each get their own read path, because on the FPGA the
+//    memory is dual-ported and there is no bus to contend for.  The CPU still
+//    loses the cycles — `dma_steal` gates its clock enable — so the TIMING is
+//    the real machine's even though the physical conflict the real machine has
+//    does not exist here.  That is the right trade: the timing is what software
+//    can observe, and the contention is not."
+//
+// The last clause is false, and the software model names the counter-example.
+// GTIA's phantom P/M latch captures WHATEVER VALUE IS ON THE DATA BUS at fixed
+// scanline slots, whether or not ANTIC fetched anything there.  gtia_phantomdma
+// sets DMACTL=$21 so ANTIC does no P/M DMA at all, and the byte it requires in
+// GRAFP0 is $AD — the opcode fetch of the test's own `lda $0100`.  Nothing ANTIC
+// touches on that line ends in $D.
+//
+// So the bus VALUE is a third-party observable, not an internal detail, and two
+// independent read ports cannot reproduce it: ANTIC never sees the CPU's fetch.
+// The bus must be SINGLE and ARBITRATED with ANTIC as master, and the value on
+// it exported to GTIA.  See emu/system.c bus_note()/phantom_latch(), which is
+// the model that passes gtia_phantomdma.
 //
 // RDY AND HALT ARE DIFFERENT SIGNALS AND ARE COMPOSED DIFFERENTLY.  This is the
 // whole reason Atari built SALLY instead of using a stock 6502:

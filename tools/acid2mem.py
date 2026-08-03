@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 #
-# NOT VALID YET — DO NOT TRUST RESULTS FROM THIS HARNESS.
+# STILL NOT VALIDATED — a known-good test does not pass yet.  Closer, though:
+# the image now carries the OS substitutes the suite genuinely needs, all
+# transcribed from emu/test/acid.c, which scores 57/63 on this suite.  What
+# remains is EITHER a further harness gap OR the first real RTL divergence, and
+# those are not yet distinguishable — antic_vcount reaches 20 frames and then
+# sits in zero page ($00CA), the BRK-walk signature.  Do not report a PASS or
+# FAIL from this harness as an ANTIC result until a test the model passes also
+# passes here.
 #
-# It runs the test image with NO OS ROM.  The ACID framework installs handlers
-# in the OS vectors (VDSLST, VVBLKI) and relies on the OS ROM's NMI dispatcher
-# at $FFFA to read NMIST and jump through them.  The XEX does not cover $FFFA —
-# antic_vcount's segments are $1A20-$1F30, $2000-$21F2, $02E0-$02E1 — so with
-# no ROM that vector is RAM, reads as zero, and the first DLI or VBI kills the
-# machine.  There is also no VBI, no SIO and no E: handler.
+# Runs the test image with NO OS ROM, and does not need one.
 #
-# A result out of this harness therefore means nothing, and it will still print
-# a confident PASS or FAIL, which is worse than printing nothing.
+# The ACID framework installs handlers in the OS vectors (VDSLST, VVBLKI) and
+# relies on the OS ROM's NMI dispatcher at $FFFA to read NMIST and jump through
+# them.  This harness plants the SAME fourteen-byte dispatcher the software model
+# uses (emu/test/acid.c), so no ROM is required -- which matters, because the XL
+# ROM is not ours to vendor.  That model scores 57/63 on this suite, so the stub
+# is validated rather than guessed.
 #
-# What it needs to be real: RAM + the XL OS ROM at $C000 (rsrc/atari-xl.rom) +
-# PIA for PORTB banking (pia_regs.sv) + POKEY (pokey.sv) + the display chips,
-# cold-booted, with the XEX injected afterwards the way loader/test/freertos/
-# progs/xexload.c does it on the board.  Every piece is already in the repo.
-#
-
 """acid2mem.py — turn an ACID800 standalone XEX into simulator memory.
 
 Emits a 64K byte-per-line hex image plus a tiny config file, so an ACID test can
@@ -132,6 +132,82 @@ def main():
         mem[STUB + k] = b
     mem[0xFFFC] = STUB & 0xFF
     mem[0xFFFD] = STUB >> 8
+
+    # ---- the OS's NMI dispatcher, transcribed from emu/test/acid.c ---------
+    #
+    # Without it $FFFA is RAM, reads as zero, and the first DLI or VBI kills the
+    # machine -- which is why this harness was marked NOT VALID.  The two NMI
+    # paths push DIFFERENT amounts and the handlers read their own return address
+    # off the stack, so the asymmetry is load-bearing: a DLI pushes NOTHING
+    # (antic_dlitiming reads PCL at $0104,X after two pushes of its own) while a
+    # VBI pushes A, X and Y (cpu_bugs reads PCL at $0105,X with no pushes of its
+    # own and pulls exactly three registers on its bail-out path).
+    nmi_stub = [
+        0x48,                       # $FF00  PHA
+        0xAD, 0x0F, 0xD4,           # $FF01  LDA NMIST
+        0x10, 0x04,                 # $FF04  BPL vbi
+        0x68,                       # $FF06  PLA
+        0x6C, 0x00, 0x02,           # $FF07  JMP (VDSLST)
+        0x8A,                       # $FF0A  TXA        vbi:
+        0x48,                       # $FF0B  PHA
+        0x98,                       # $FF0C  TYA
+        0x48,                       # $FF0D  PHA
+        0x6C, 0x22, 0x02,           # $FF0E  JMP (VVBLKI)
+    ]
+    # IRQ/BRK goes through VIMIRQ.  Without it a BRK returns from a bare RTI, the
+    # test's handler never runs, and the CPU ends up executing the STACK PAGE.
+    irq_stub = [0x6C, 0x16, 0x02]   # $FF20  JMP (VIMIRQ)
+    # default handlers: tick RTCLOK (what _waitVBL polls), then unwind and RTI
+    dflt = [
+        0xE6, 0x14,                 # $FF30  INC RTCLOK+2
+        0xD0, 0x06,                 # $FF32  BNE done
+        0xE6, 0x13,                 # $FF34  INC RTCLOK+1
+        0xD0, 0x02,                 # $FF36  BNE done
+        0xE6, 0x12,                 # $FF38  INC RTCLOK
+        0x68,                       # $FF3A  PLA        done:
+        0xA8,                       # $FF3B  TAY
+        0x68,                       # $FF3C  PLA
+        0xAA,                       # $FF3D  TAX
+        0x68,                       # $FF3E  PLA
+        0x40,                       # $FF3F  RTI
+        0x40,                       # $FF40  RTI  -- bare, for DLI and IRQ
+    ]
+    for base, blob in ((0xFF00, nmi_stub), (0xFF20, irq_stub), (0xFF30, dflt)):
+        for k, b in enumerate(blob):
+            mem[base + k] = b
+    mem[0xFFFA], mem[0xFFFB] = 0x00, 0xFF        # NMI     -> dispatcher
+    mem[0xFFFE], mem[0xFFFF] = 0x20, 0xFF        # IRQ/BRK -> dispatcher
+
+    # OS variables the tests read but no OS is here to set, all from the model.
+    mem[0x006A] = 0xC0                           # RAMTOP -- mmu_xlbanking's
+                                                 # first action is `lda ramtop
+                                                 # / cmp #$41` and it skips
+                                                 # below that
+    mem[0x0232] = 0x03                           # SSKCTL: POKEY out of init
+    if not mem.get(0x0217):
+        mem[0x0216], mem[0x0217] = 0x40, 0xFF    # VIMIRQ -> bare RTI
+
+    # Defaults for the vectors the test does not set, matching the model.
+    if not mem.get(0x0201):
+        mem[0x0200], mem[0x0201] = 0x40, 0xFF    # VDSLST -> bare RTI
+    if not mem.get(0x0223):
+        mem[0x0222], mem[0x0223] = 0x30, 0xFF    # VVBLKI -> RTCLOK ticker
+
+    # _testInit opens IOCB0 through an OS that is not here; the MEASUREMENT does
+    # not need it, so stub it to RTS exactly as the model does.
+    init = syms.get("_testInit")
+    if init is not None:
+        mem[init] = 0x60
+
+    # ...and because _testInit is what would have FILLED _vputchar, point that
+    # vector at an RTS directly.  The suite prints through `jmp (_vputchar)`, so
+    # a zero vector sends the CPU to $0000 on the first character -- which is
+    # exactly the derail this harness showed ($1D15 JMP ($1A29) -> $0000).
+    # Printing becomes a no-op; the measurement does not depend on it.
+    vput = syms.get("_vputchar")
+    if vput is not None:
+        mem[0xFF50] = 0x60                       # RTS
+        mem[vput], mem[vput + 1] = 0x50, 0xFF
 
     # A null character sink, installed where the OS would have left it.  The
     # framework does `mwa icptl _vputchar` then `inw _vputchar`, so the table
