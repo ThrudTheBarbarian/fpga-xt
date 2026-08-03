@@ -44,7 +44,7 @@ void vClearTickInterrupt(void);
  * do it: reverting to 666 did not restore boot either, so something else broke in
  * the same window and the clock was never cleanly tested. Re-test from a known
  * good board before concluding anything about the speed grade. */
-#define configCPU_CLOCK_HZ             666666666UL   /* periph timer = /2 */
+#define configCPU_CLOCK_HZ             766666666UL   /* periph timer = /2 */
 #define configTICK_RATE_HZ            ((TickType_t)1000)
 #define configMAX_PRIORITIES           8
 #define configMINIMAL_STACK_SIZE      ((unsigned short)512)
