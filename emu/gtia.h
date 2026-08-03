@@ -37,6 +37,21 @@
 typedef struct {
     /* object registers */
     uint8_t hposp[4], hposm[4];
+    /* WHOLE-OBJECT EARLY-OUT, and it exists because the cost here is LOAD-USE
+     * LATENCY, not instruction count: 521 L1D accesses per emulated cycle at a
+     * 0.0% miss rate, each ~4 cycles the in-order A9 cannot hide. Testing four
+     * players meant dozens of separate dependent loads over [4]-indexed fields.
+     *
+     *   live  -- any player has runs, or any missile is active
+     *   trig  -- trig[h] counts objects whose HPOSP/HPOSM equals h
+     *
+     * so "is there anything to do this clock?" becomes TWO loads instead of
+     * dozens. Indexed by the raw register value, hence 256: an HPOS above
+     * GTIA_CLOCKS simply never matches. Maintained incrementally on write (O(1))
+     * rather than rebuilt, because HPOS is written mid-line by the retrigger
+     * tests. */
+    uint8_t trig[256];
+    uint8_t live;
     uint8_t sizep[4], sizem;
     uint8_t grafp[4], grafm;
     uint8_t colpm[4], colpf[4], colbk;

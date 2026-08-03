@@ -10,6 +10,8 @@ void gtia_init(gtia *g)
 {
     memset(g, 0, sizeof *g);
     g->consol = 0;
+    /* every hposp/hposm starts at 0, so all eight objects trigger at clock 0 */
+    g->trig[0] = 8;
 }
 
 /* How long a SIZEP write takes to reach the object, in colour clocks.  Measured
@@ -84,8 +86,16 @@ static void obj_step(gtia *g, int hpos)
      * which is the $FE ("player lit at every probe") gtia_pmresize saw at
      * 2x-to-1xalt where $40 was wanted.  The run being measured was fine; the
      * one left over from the previous iteration was not. */
-    if (hpos == 0)
-        for (int i = 0; i < 4; i++) g->p_n[i] = 0;
+    if (hpos == 0) {
+        for (int i = 0; i < 4; i++) { g->p_n[i] = 0; g->p_active[i] = 0; }
+        g->live = (uint8_t)(g->m_active[0] || g->m_active[1] ||
+                            g->m_active[2] || g->m_active[3]);
+    }
+
+    /* TWO LOADS decide the whole clock. Nothing is running and nothing starts
+     * here, so all four players and all four missiles are unchanged -- exactly
+     * the case that was 96.1% of calls while still walking every object. */
+    if (!g->live && !g->trig[hpos]) return;
 
     for (int i = 0; i < 4; i++) {
         /* A SIZEP write reaching the object THIS clock replaces the ordinary
@@ -192,6 +202,11 @@ missile:
             }
         }
     }
+    /* Recomputed ONLY here, on the path that can change it. The early-out above
+     * changes nothing, so a skipped clock cannot invalidate this. */
+    g->live = (uint8_t)(g->p_n[0] || g->p_n[1] || g->p_n[2] || g->p_n[3] ||
+                        g->m_active[0] || g->m_active[1] ||
+                        g->m_active[2] || g->m_active[3]);
 }
 
 void gtia_clock(gtia *g, int hpos, int pf, int hires_lit)
@@ -291,8 +306,16 @@ uint8_t gtia_read(gtia *g, uint16_t addr)
 void gtia_write(gtia *g, uint16_t addr, uint8_t val)
 {
     switch (addr & 0x1F) {
-    case 0x00: case 0x01: case 0x02: case 0x03: g->hposp[addr & 3] = val; break;
-    case 0x04: case 0x05: case 0x06: case 0x07: g->hposm[addr & 3] = val; break;
+    case 0x00: case 0x01: case 0x02: case 0x03: {
+        int i = addr & 3;
+        if (g->trig[g->hposp[i]]) g->trig[g->hposp[i]]--;
+        g->hposp[i] = val; g->trig[val]++;
+        break; }
+    case 0x04: case 0x05: case 0x06: case 0x07: {
+        int i = addr & 3;
+        if (g->trig[g->hposm[i]]) g->trig[g->hposm[i]]--;
+        g->hposm[i] = val; g->trig[val]++;
+        break; }
     case 0x08: case 0x09: case 0x0A: case 0x0B:
         if (SIZEP_DELAY) {
             g->sizep_pend[addr & 3] = val;
