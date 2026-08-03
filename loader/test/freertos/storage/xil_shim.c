@@ -7,6 +7,7 @@
  * (link) but never called — they're stubs.
  */
 #include "xil_types.h"
+#include "../pl310.h"
 
 static inline u32 rd32(UINTPTR a) { return *(volatile u32 *)a; }
 
@@ -18,12 +19,22 @@ void usleep(unsigned long us)
     while ((u32)(*lo - s) < ticks) { }
 }
 
-/* D-cache maintenance by MVA (CP15, 32-byte lines) — for xsdps DMA buffers */
+/* D-cache maintenance by MVA (CP15, 32-byte lines) — for xsdps DMA buffers.
+ *
+ * THESE MUST REACH THE OUTER CACHE. The SD controller is a DMA master on the
+ * AXI path and reads/writes DDR directly, so once the PL310 is enabled it sits
+ * between these buffers and the card. Maintaining only L1 leaves the card
+ * reading stale data and the CPU reading stale sectors — which shows up not as
+ * a crash but as `f_mount FAILED rc=3` at boot, because even card init reads
+ * come back wrong. The kernel is identity-mapped, so VA == PA and the PL310's
+ * by-physical-address operations can take these addresses unchanged. */
 void Xil_DCacheFlushRange(INTPTR adr, u32 len)
 {
     UINTPTR a = (UINTPTR)adr & ~31u, e = (UINTPTR)adr + len;
-    for (; a < e; a += 32u) __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(a));  /* DCCIMVAC clean+inval */
+    for (UINTPTR p = a; p < e; p += 32u) __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(p));  /* DCCIMVAC clean+inval */
     __asm__ volatile("dsb");
+    /* inner first, so anything dirty in L1 has landed in L2 before L2 is cleaned */
+    pl310_cleaninval((uint32_t)a, (uint32_t)(e - a));
 }
 void Xil_DCacheInvalidateRange(INTPTR adr, u32 len)
 {
@@ -36,15 +47,26 @@ void Xil_DCacheInvalidateRange(INTPTR adr, u32 len)
     if (a & 31u) {
         UINTPTR la = a & ~31u;
         __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(la));    /* DCCIMVAC clean+inval */
+        __asm__ volatile("dsb");
+        pl310_cleaninval((uint32_t)la, 32u);                     /* same argument, outer level */
         a = la + 32u;
     }
     if (end & 31u) {
         UINTPTR le = end & ~31u;
         __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(le));    /* DCCIMVAC clean+inval */
+        __asm__ volatile("dsb");
+        pl310_cleaninval((uint32_t)le, 32u);
         end = le;
     }
-    for (; a < end; a += 32u) __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(a));  /* DCIMVAC inval */
-    __asm__ volatile("dsb");
+    if (end > a) {
+        for (UINTPTR p = a; p < end; p += 32u) __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(p));  /* DCIMVAC inval */
+        __asm__ volatile("dsb");
+        pl310_inval((uint32_t)a, (uint32_t)(end - a));
+        /* Second inner pass: between the two steps above a speculative fetch can
+         * refill L1 from a line L2 had not yet dropped. Discard those. */
+        for (UINTPTR p = a; p < end; p += 32u) __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(p));
+        __asm__ volatile("dsb");
+    }
 }
 
 /* asserts disabled */

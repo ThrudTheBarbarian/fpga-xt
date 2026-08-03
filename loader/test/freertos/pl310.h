@@ -98,4 +98,16 @@ static inline void pl310_inval(uint32_t addr, uint32_t len)
     pl310_sync();
 }
 
+/* Clean AND discard a span. Use on a partial line at the edge of a DMA buffer:
+ * a plain invalidate there would throw away the bytes OUTSIDE the buffer that
+ * share the line, exactly as the inner code already argues in xil_shim.c. */
+static inline void pl310_cleaninval(uint32_t addr, uint32_t len)
+{
+    if (!pl310_on()) return;
+    uint32_t end = addr + len;
+    for (uint32_t p = addr & ~(PL310_LINE - 1u); p < end; p += PL310_LINE)
+        PL310_CLINV_PA = p;
+    pl310_sync();
+}
+
 #endif /* XT_PL310_H */
