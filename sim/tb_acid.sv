@@ -92,6 +92,19 @@ module tb_acid;
     // WSYNC_RELEASE is "the cycle /RDY comes back".  Print both the cycle /RDY
     // deasserts and the first cycle the CPU actually retires after it, so the
     // gap between the two semantics is a number and not an inference.
+    // DMA APPLICATION: which cycles ANTIC INTENDS to steal (dma_steal) versus
+    // which the CPU actually LOSES (c_rdy low).  Both sampled at the SAME
+    // trigger (`tick`), so the hcount sampling offset applies equally to both
+    // sets and CANCELS in the comparison -- the sets are what matter, not the
+    // absolute numbers.  WSYNC also pulls c_rdy low, so `w` flags whether rdy_n
+    // was asserted; a lost cycle with w=0 and steal=0 is unaccounted for.
+    always_ff @(posedge clk) begin
+        if (probe_on && tick && !rst && (line == 9'd40) &&
+            (dma_steal || !dut.c_rdy))
+            $display("PROBE-DMA hcount=%0d steal=%0d lost=%0d w=%0d",
+                     hcount, dma_steal, !dut.c_rdy, rdy_n);
+    end
+
     // Stall LENGTH: machine cycles the CPU is held (c_rdy low) per WSYNC.
     // Trigger semantics, stated because three probes tonight were misread:
     // counts `tick`s where c_rdy is LOW, reset when /RDY comes back.  That is a
