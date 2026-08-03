@@ -102,7 +102,8 @@ static void k_chan_close(fd_t *f);        /* impl below with the service ops */
 /* kernel-mailbox fs ops (impls with the fs task, below): displacing an open
  * file fd (dup2 restore) must flush + close through the SOLE FatFs driver */
 enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL, KFS_CLOSEFD,
-       KFS_WRITEOPEN, KFS_WRITEBLOCK, KFS_WRITECLOSE, KFS_LOGWRITE };
+       KFS_WRITEOPEN, KFS_WRITEBLOCK, KFS_WRITECLOSE, KFS_LOGWRITE,
+       KFS_STAT };
 static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **out_buf);
 
 typedef struct {
@@ -1864,6 +1865,7 @@ static SemaphoreHandle_t g_kfs_done;
  *   served == returned+1 -> the completion signal was lost (the old bug)
  * Cheap enough to leave in: four increments per block. */
 volatile unsigned g_kfs_queued, g_kfs_picked, g_kfs_served, g_kfs_returned;
+static uint32_t g_kfs_stat_size, g_kfs_stat_mtime;   /* KFS_STAT results */
 volatile long     g_kfs_lastres;
 
 /* Tear down every open fd of a dead proc: flush its dirty cache page, close the backing
@@ -2025,6 +2027,13 @@ void klog_start(void) { xTaskCreate(logger_task, "logd", 512, 0, 1, 0); }
 static long kfs_serve(void)
 {
     switch (g_kfs.op) {
+    case KFS_STAT: {                                    /* size + mtime, no read */
+        struct xt_stat st;
+        if (vfs_stat(g_kfs.path, &st) != 0) return -1;
+        g_kfs_stat_size  = st.size;
+        g_kfs_stat_mtime = st.mtime;
+        return 0;
+    }
     case KFS_READFILE: {                                /* open + alloc + read a whole file */
         extern void puts0(const char *); extern void putu(unsigned);
         vfs_file f;
@@ -3815,26 +3824,67 @@ static int has_prefix(const char *s, const char *p) { while (*p) if (*s++ != *p+
  * serves every subsequent spawn. A binary updated on the card is picked up at
  * the next boot. */
 #define SDPROG_MAX 24
-static struct { char path[64]; const uint8_t *data; uint32_t len; } g_sdprog[SDPROG_MAX];
+static struct { char path[64]; const uint8_t *data; uint32_t len;
+                uint32_t mtime; } g_sdprog[SDPROG_MAX];
+
+/* Is the cached image still the file that is on the card?
+ *
+ * Keying the cache on PATH ALONE meant a rebuilt binary pushed to the SAME path
+ * kept running the OLD image until the next reboot -- silently, which is far
+ * worse than failing: every debugging conclusion drawn from that run is about
+ * code that is no longer on disk. It cost a whole session's worth of confusion
+ * and a workaround of inventing a fresh filename for every push.
+ *
+ * SIZE AND MTIME TOGETHER, because neither alone is enough here: FAT timestamps
+ * have TWO-SECOND resolution, so a quick rebuild-and-push can land inside the
+ * same tick, while a recompile very often produces a byte-identical size. The
+ * pair is what makes the check reliable in practice.
+ *
+ * KFS_STAT rather than KFS_READFILE: this runs on every spawn, so it must not
+ * re-read the file to discover it has not changed. */
+static int sdprog_current(int i, const char *path)
+{
+    if (kfs_call(KFS_STAT, path, 0, 0, 0) != 0) return 1;   /* can't tell -> keep the cache */
+    return g_sdprog[i].len == g_kfs_stat_size &&
+           g_sdprog[i].mtime == g_kfs_stat_mtime;
+}
 static int g_nsdprog;
 
 static int sd_prog_lookup(const char *path, const uint8_t **data, uint32_t *len)
 {
+    int slot = -1;
     for (int i = 0; i < g_nsdprog; i++) {
         const char *a = g_sdprog[i].path, *b = path;
         while (*a && *a == *b) { a++; b++; }
-        if (*a == 0 && *b == 0) { *data = g_sdprog[i].data; *len = g_sdprog[i].len; return 1; }
+        if (*a == 0 && *b == 0) {
+            if (sdprog_current(i, path)) {
+                *data = g_sdprog[i].data; *len = g_sdprog[i].len; return 1;
+            }
+            /* changed on disk: re-read into this slot. The old image leaks —
+             * the kernel heap is a bump allocator with no free — but only when a
+             * binary is actually REPLACED, which is a development action, not
+             * something a running system does. A bounded leak is a far better
+             * trade than silently executing a stale binary. */
+            klog("[sd] reloading changed "); klog(path); klog("\n");
+            slot = i;
+            break;
+        }
     }
     void *buf = 0;
     long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
     if (sz <= 0 || !buf) return 0;                     /* not on the SD (or no SD) */
-    if (g_nsdprog < SDPROG_MAX) {
+    /* KFS_READFILE already stat'd nothing, so take the identity from the read we
+     * just did; a stat here would race a writer mid-push. */
+    uint32_t mt = 0;
+    if (kfs_call(KFS_STAT, path, 0, 0, 0) == 0) mt = g_kfs_stat_mtime;
+    if (slot < 0 && g_nsdprog < SDPROG_MAX) slot = g_nsdprog++;
+    if (slot >= 0) {
         int i = 0;
-        for (; path[i] && i < 63; i++) g_sdprog[g_nsdprog].path[i] = path[i];
-        g_sdprog[g_nsdprog].path[i] = 0;
-        g_sdprog[g_nsdprog].data = (const uint8_t *)buf;
-        g_sdprog[g_nsdprog].len  = (uint32_t)sz;
-        g_nsdprog++;
+        for (; path[i] && i < 63; i++) g_sdprog[slot].path[i] = path[i];
+        g_sdprog[slot].path[i] = 0;
+        g_sdprog[slot].data  = (const uint8_t *)buf;
+        g_sdprog[slot].len   = (uint32_t)sz;
+        g_sdprog[slot].mtime = mt;
     }
     *data = (const uint8_t *)buf; *len = (uint32_t)sz;
     return 1;
