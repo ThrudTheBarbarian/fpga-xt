@@ -514,6 +514,12 @@ static void bus_wr(void *ctx, uint16_t a, uint8_t v)
     else if (!rom_at(s, a))        s->ram[a] = v;   /* a write through ROM is
                                                      * dropped, RAM untouched */
     bus_note(s, s->pending_render - 1, "CPU-W", a, v);
+    /* Probe 10: every VSCROL write with the scanline and cycle it lands
+     * on.  A fixed-scanline bus trace cannot find this write, because
+     * which scanline it lands on is the very thing in question. */
+    if (a == 0xD405 && antic_glyph_probe == 10)
+        fprintf(stderr, "  VSW sl %3d cyc %3d val $%02X\n",
+                s->an.scanline, s->pending_render - 1, v);
     cpu_cycle_done(s);
 }
 

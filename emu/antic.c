@@ -637,7 +637,10 @@ static void line_start(antic *a)
     /* The PREVIOUS line's map, as the hardware finished it -- after every
      * mid-line rebuild, not as it was first built.  Diffing the line_start map
      * against a reference compares two different things. */
-    if (antic_glyph_probe == 9 && a->scanline >= 31 && a->scanline <= 40) {
+    /* Window widened from 31..40: the END map is the reference the RTL is
+     * diffed against, and a fixed window silently excludes the very row a
+     * test is about (antic_vscroldli's $F0 row starts at scanline 40). */
+    if (antic_glyph_probe == 9 && a->scanline >= 28 && a->scanline <= 52) {
         fprintf(stderr, "  END sl %3d insn $%02X clk $%02X org %2u len %2u next %3d ", a->scanline - 1, a->dl_insn, a->pf_clock, a->lb_origin, a->lb_len, a->pf_next);
         for (int k = 0; k < ANTIC_LINE_CYCLES; k++)
             fputc(a->blocked[k] ? '#' : '.', stderr);

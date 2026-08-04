@@ -268,6 +268,29 @@ module tb_acid #(
         end
     end endgenerate
 
+    // WHEN does dl_insn settle, relative to the machine cycle?  antic_dma_sched
+    // latches the whole line shape on the line_start pulse, so if the new
+    // instruction lands after that, the map is built from the PREVIOUS one.
+    // Printed with the fabric-clock offset within the machine cycle.
+    logic [7:0] insn_prev;
+    integer icnt = 0;
+    integer subclk = 0;
+    generate if (USE_ANTIC2) begin : g_insnprobe
+        always_ff @(posedge clk) begin
+            if (rst) begin insn_prev <= 8'h00; subclk <= 0; end
+            else begin
+                subclk <= tick ? 0 : subclk + 1;
+                if (dut.u_antic2.dl_insn !== insn_prev && icnt < 10) begin
+                    icnt <= icnt + 1;
+                    $display("INSN hcount=%0d subclk=%0d %02h -> %02h line_start=%0d",
+                             dut.u_antic2.hcount, subclk, insn_prev,
+                             dut.u_antic2.dl_insn, dut.u_antic2.u_line.line_start);
+                end
+                insn_prev <= dut.u_antic2.dl_insn;
+            end
+        end
+    end endgenerate
+
     integer rncnt = 0;
     always_ff @(posedge clk) begin
         if (!rst && rncnt < 12 && dut.c_rw && dut.c_addr == 16'hD20A &&
@@ -493,6 +516,14 @@ module tb_acid #(
     logic [15:0] test_end, t_pass, t_fail;
     logic        verdict_fail;
     int          guard;
+    // Cycle budget before the harness gives up.  antic_dmapattern walks 50 maps
+    // by 7 offsets and needs far more than the rest, so the limit is
+    // overridable with +GUARD=<n> rather than being raised for everything --
+    // a bigger default makes every genuine hang take proportionally longer to
+    // report.
+    int          guard_limit;
+    initial if (!$value$plusargs("GUARD=%d", guard_limit))
+        guard_limit = 200_000_000;
     logic        done;
 
     // Progress, so a hang is distinguishable from a slow test.  Without this a
@@ -588,7 +619,7 @@ module tb_acid #(
         // rather than hanging if it never reaches the end.
         // ~30 frames is generous: the framework waits a handful.
         guard = 0;
-        while (!done && guard < 60_000_000) begin
+        while (!done && guard < guard_limit) begin
             @(posedge clk);
             guard++;
             // Score as the model does: the ADDRESS is the verdict.  Reaching
@@ -604,6 +635,17 @@ module tb_acid #(
         if (!done) begin
             $display("ACID %0s: TIMEOUT (pc $%04h, never reached _testEnd $%04h)",
                      tname, dbg_pc, test_end);
+            // The PC trail out of a TIMEOUT, printed unconditionally rather
+            // than under +PROBE=1.  A timeout is the one verdict that carries
+            // no information of its own -- a single PC says "spinning", but not
+            // spinning WHERE -- and it is usually met in a long unattended
+            // sweep that nobody thought to pass +PROBE=1 to.  Sixteen fetches
+            // is enough to show the shape of the loop it is stuck in, and it
+            // costs one line on a path that has already given up.
+            $write("  PC trail at TIMEOUT:");
+            for (int k = 16; k > 0; k--)
+                $write(" %04h", ring[(rn - k) % PC_RING]);
+            $write("\n");
             $display("tb_acid: 1 FAIL");
         end else if (!verdict_fail) begin
             $display("ACID %0s: PASS", tname);
