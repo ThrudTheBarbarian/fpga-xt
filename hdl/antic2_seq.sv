@@ -73,7 +73,7 @@ module antic2_seq #(
     output logic [7:0] nmist,
     output logic [7:0] vcount,
     output logic       nmi,                // ONE-CYCLE PULSE, not a level
-    output logic       wsync_take,         // ANTIC takes this cycle for WSYNC
+    output wire        wsync_take,         // ANTIC takes this cycle for WSYNC
     output logic       row_ends,
     output logic       dli_line
 );
@@ -129,12 +129,50 @@ module antic2_seq #(
     //
     // ONE definition, used everywhere in this module: cycles 4 and 6 are below
     // 111 so sl_now == scanline there and nothing changes for them.
-    wire [8:0] sl_now = (cycle >= 7'(CYC_VCOUNT))
+    // THE PHASE RULE, and every cycle constant in this module depends on it:
+    // ANTIC's effects for cycle N must be VISIBLE TO THE CPU DURING CYCLE N.
+    // A register written on the cycle-N edge only reads back at N+1, so the
+    // update has to be computed at the edge FROM N-1.  `cyc_eff` is the cycle
+    // these updates will be seen in, and every event below compares against IT.
+    //
+    // antic_vcount is what pins this: its rollover pair reads VCOUNT at cycle
+    // 111 and requires the 111 advance to be ALREADY THERE (131), then reads at
+    // 112 and requires 0.  Its third probe reads at 111 and wants the advanced
+    // value too.  Computing on the 111 edge put every one of them a cycle late.
+    //
+    // This was HIDDEN until the WSYNC release was fixed: the CPU used to resume
+    // at 105 instead of 104, which shifted every read by +1 and cancelled the
+    // error.  Two wrongs, one passing test -- and antic_vcount went red the
+    // moment the release was corrected, which is how the phase was found.
+    wire [6:0] cyc_eff = (cycle == 7'(LINE_CYCLES - 1)) ? 7'd0 : cycle + 7'd1;
+
+    // The scanline cyc_eff belongs to.  antic_beam advances `line` on the edge
+    // FROM 110, so at the edges from 111 and 112 -- which produce cycles 112 and
+    // 113, still part of the OLD line -- `scanline` already reads the next one.
+    // At the edge from 113 (producing cycle 0) it correctly reads the new line.
+    wire [8:0] sl_now = (cycle >= 7'd111 && cycle <= 7'd112)
                       ? ((scanline == 9'd0) ? 9'(LINES - 1) : scanline - 9'd1)
                       : scanline;
 
     wire blanking = (sl_now < 9'(DISPLAY_TOP)) ||
                     (sl_now >= 9'(DISPLAY_BOTTOM));
+
+    // THE STALL APPLIES TO THE CYCLE IT NAMES, so it is COMBINATIONAL.
+    // antic_tick returns `took` for the cycle it is evaluating; a REGISTERED
+    // wsync_take is computed from this cycle's state but lands on the NEXT one,
+    // which is the "/RDY trailed by one" failure this module's header was
+    // written about -- and it re-appeared here.  Measured: the CPU's first cycle
+    // back after WSYNC was 105 instead of 104, because the release at 104 was
+    // still being stalled by the value latched at 103.
+    //
+    // The asymmetry gave it away: dma_steal (refresh) is combinational from
+    // hcount in antic2.sv and applies in the cycle it names, while this one
+    // trailed it by a cycle -- two stall sources in one design disagreeing about
+    // when a cycle number means that cycle.
+    //
+    // A WRITE IS NEVER STALLED: SALLY's /RDY cannot stop a write, so the write
+    // completes and the stall resumes after it.
+    assign wsync_take = wsync_halt && (cycle != wsync_release) && !cpu_writing;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -144,7 +182,6 @@ module antic2_seq #(
             nmi_arm       <= 2'd0;
             wsync_halt    <= 1'b0;
             wsync_extra   <= 1'b0;
-            wsync_take    <= 1'b0;
             // ARMED at reset, so the first line after the vertical-blank
             // release actually fetches (emu antic_reset: row_ends = 1).
             row_ends      <= 1'b1;
@@ -174,7 +211,7 @@ module antic2_seq #(
                 // NMIST time: NMIST lands at cycle 6, so re-reading there would
                 // let a VSCROL write on cycle 4 count, and antic_vscroldli
                 // requires exactly that write to be too late.
-                if (cycle == 7'(CYC_ROWEND)) begin
+                if (cyc_eff == 7'(CYC_ROWEND)) begin
                     row_ends <= at_last;
                     dli_line <= dl_insn_dli && !(blanking && dli_fired) && at_last;
                     if (dl_insn_dli && !(blanking && dli_fired) && at_last)
@@ -185,7 +222,7 @@ module antic2_seq #(
                 // NMIST sets REGARDLESS of NMIEN -- NMIEN gates the INTERRUPT,
                 // not the status -- and the DLI and VBI bits clear each other
                 // on arrival.
-                if (cycle == 7'(CYC_NMIST)) begin
+                if (cyc_eff == 7'(CYC_NMIST)) begin
                     if (dli_line) begin
                         nmist <= (nmist & ~8'h40) | 8'h80;
                         if (nmien & 8'h80) nmi_arm <= 2'd1;
@@ -204,23 +241,17 @@ module antic2_seq #(
                 // That single cycle is the whole of antic_vcount's rollover
                 // pair: two probes on the SAME scanline differing only in read
                 // cycle, 111 must read 131 and 112 must read 0.
-                if (cycle == 7'(CYC_VCOUNT) && sl_now[0])
+                if (cyc_eff == 7'(CYC_VCOUNT) && sl_now[0])
                     vcount <= vcount + 8'd1;
-                if (cycle == 7'(CYC_VCOUNT) + 7'd1 && sl_now == 9'(LINES - 1))
+                if (cyc_eff == 7'(CYC_VCOUNT) + 7'd1 && sl_now == 9'(LINES - 1))
                     vcount <= 8'd0;
 
                 // ---- 5. WSYNC ------------------------------------------
-                // Expressed the software's way round: the release cycle is the
-                // one the CPU KEEPS, and every other stalled cycle is taken --
-                // except a write, which cannot be stalled.
-                wsync_take <= 1'b0;
-                if (wsync_halt) begin
-                    if (cycle == wsync_release) begin
-                        wsync_halt  <= 1'b0;
-                        wsync_extra <= 1'b0;
-                    end else if (!cpu_writing) begin
-                        wsync_take <= 1'b1;
-                    end
+                // Only the STATE is clocked here.  The stall itself is
+                // combinational below -- see the note on wsync_take.
+                if (wsync_halt && cycle == wsync_release) begin
+                    wsync_halt  <= 1'b0;
+                    wsync_extra <= 1'b0;
                 end
             end
         end
