@@ -156,18 +156,35 @@ module tb_acid #(
     // cycle, sampled at SUB_DATA where the access actually happens.  Lets the
     // two designs be diffed cycle-for-cycle on the same scanline.
     integer bcnt = 0;
+    int BUSLINE = 17;
+    wire [8:0] bus_line = (dut.u_antic2.hcount >= 7'd111)
+                        ? ((dut.u_antic2.line == 9'd0) ? 9'd261
+                                                       : dut.u_antic2.line - 9'd1)
+                        : dut.u_antic2.line;
+    initial if (!$value$plusargs("BUSLINE=%d", BUSLINE)) BUSLINE = 17;
     generate if (USE_ANTIC2) begin : g_busprobe
         always_ff @(posedge clk) begin
             // Anchored on the EVENT, not on a scanline number: the same
             // scanline recurs every frame and the two designs are at different
             // program points on most of them.  This catches the origin_test
             // sled, the NMI vector fetch and the DLI handler wherever they land.
-            if (!rst && bcnt < 60 && dut.c_sub == 8'(dut.SUB_DATA) &&
-                ((dbg_pc >= 16'h2070 && dbg_pc <= 16'h20FF) ||
-                 (dut.c_addr >= 16'hFFFA && dut.c_addr <= 16'hFFFB) ||
-                 (dbg_pc >= 16'h22C7 && dbg_pc <= 16'h22D5))) begin
+            // WHOLE SCANLINE, EVERY FRAME, so the sequence can be diffed
+            // against emu's ACID_BUSTRACE for the same scanline from the FIRST
+            // difference.  The cap must not truncate mid-run: a low cap showed
+            // only the first frame and made two different frames look like a
+            // disagreement.
+            // PHYSICAL scanline, not the beam's: antic_beam advances `line` on
+            // the edge from 110, so cycles 111..113 still belong to the line
+            // before.  Without this the trace attributes them to the next
+            // scanline and cannot be aligned with emu's, which does not.
+            // GATED ON c_rdy AS WELL AS SUB_DATA.  The core can SIT in SUB_DATA
+            // while stalled -- xt6502f advances only on `slot_commit && rdy` --
+            // so SUB_DATA alone reports cycles the CPU never completed, and a
+            // DMA-stolen cycle looks like a CPU access.  A probe is a DUT too.
+            if (!rst && bcnt < 4000 && bus_line == 9'(BUSLINE) &&
+                dut.c_rdy && dut.c_sub == 8'(dut.SUB_DATA)) begin
                 bcnt <= bcnt + 1;
-                $display("BUS sl %0d cyc %0d %s $%04h", dut.u_antic2.line,
+                $display("BUS sl %0d cyc %0d %s $%04h", bus_line,
                          dut.u_antic2.hcount, dut.c_rw ? "CPU-R" : "CPU-W",
                          dut.c_addr);
             end
