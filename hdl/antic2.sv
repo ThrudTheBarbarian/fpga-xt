@@ -191,16 +191,39 @@ module antic2 #(
         .px_start(), .px_stop(), .hs_delay(), .hs_fine()
     );
 
+    // Whether the playfield is FETCHING at all this line: the list is running,
+    // the latched instruction is a display mode, and DMACTL's width is not
+    // zero.  This is emu's `on` in rebuild_line -- `mode >= 2 && pf_dma_on()`
+    // -- and it gates the WHOLE map, not just the playfield walk: when it is
+    // false emu hands the map builder a mode of 0, and that zero takes DMACTL
+    // bit 5 with it, so the display-list fetch is not charged to the CPU
+    // either.
+    //
+    // antic_vscroldli is decided by exactly that one cycle.  It runs with
+    // dmactl = $20 -- display-list DMA on, playfield width zero -- and does
+    // `stx vscrol` at the top of the first line of an $F0 row.  With the fetch
+    // uncharged the instruction runs at cycles 1..4 and the write lands at 4,
+    // in time for the row-end compare; charging cycle 1 for the $F0's own
+    // fetch pushes it to 5, the compare misses it, and the row ends a line
+    // late ("VSCROL took effect too late").  Measured both ways: emu writes at
+    // sl 40 cycle 4, we wrote at cycle 5, and that was the only difference in
+    // the whole line.
+    wire pf_fetching = md_is_display && !dl_done && (dmactl[1:0] != 2'b00);
+
     antic_dma_sched u_sched (
         .clk(clk), .rst(rst),
         .line_start(sched_line_start), .tick(tick), .hcount(hcount),
         .first_row(row_first), .is_char(md_is_char),
-        // A line displays only while the list is RUNNING and the latched
-        // instruction is a display mode; a parked list fetches nothing.
-        .is_display(md_is_display && !dl_done),
+        .is_display(pf_fetching),
         .bytes_per_line(pf_bytes), .dma_start(pf_dma_start), .step(pf_step),
-        .lms(1'b1),
-        .dl_dma_en(dmactl[5]), .missile_dma_en(dmactl[2]),
+        // The OPERAND fetches belong to the INSTRUCTION, not to every row.
+        // Bit 6 is the LMS flag (emu's dma_mode takes `dl_insn & 0x50`), and
+        // on a blank-line instruction such as $F0 that same bit is part of the
+        // blank COUNT -- which is why this may not be tied high.  A jump needs
+        // no case of its own: mode 1 is not a display mode, so pf_fetching is
+        // already false for it, exactly as emu's `on` is.
+        .lms(dl_insn[6]),
+        .dl_dma_en(dmactl[5] && pf_fetching), .missile_dma_en(dmactl[2]),
         .player_dma_en(dmactl[3]),
         .steal(sched_steal)
     );
