@@ -1,0 +1,287 @@
+`default_nettype none
+//
+// antic_pf_stream — fill ANTIC's playfield line buffer ONE SCHEDULED CYCLE AT
+// A TIME.
+//
+// This is the progressive counterpart to antic_pf_fetch, which bursts the whole
+// line at line_start.  The burst is simpler and it is wrong, for one reason:
+// DMACTL and HSCROL are not latched for the line.  ANTIC compares the window
+// edges against the horizontal counter as it runs, so a write part way down the
+// line moves the edges for whatever is still to come, while the cycles already
+// past keep what they did — the bytes they fetched stay fetched and the running
+// count carries on.  Shortening the window mid-fetch therefore truncates the
+// row and widening it extends it.  antic_pfstarttiming and antic_pfstoptiming
+// measure that from opposite directions, antic_hscrolbug measures it through
+// the fetch grid's phase, and antic_linebuffering measures it by killing DMA
+// across the centre of a row.  A fetcher that has already consumed the whole
+// line before the first of those writes lands cannot express any of it.
+//
+// THE INDEX IS A RUNNING COUNT, NOT THE MAP'S OWN SLOT NUMBER.  This is emu's
+// `int i = a->pf_next++` and it is the whole point: because the map can be
+// rebuilt underneath it, the row's byte count follows from how many fetch
+// cycles ACTUALLY happened.  "STOP is a cycle comparison, never a count."
+//
+// THE SCAN POINTER ADVANCES PER ACTUAL FETCH, so the stride the address tests
+// measure falls out rather than being asserted.  It wraps within 4 KB
+// (antic_addresswrap).
+//
+// WHAT EACH SCHEDULED CYCLE MEANS depends on the row, and the scheduler cannot
+// say on its own — it reports the shape of the walk, not the meaning:
+//
+//   character, first row : PAIRS.  The first access reads the NAME and steps
+//                          the scan pointer; the second reads that character's
+//                          GLYPH and steps nothing.  Two steals, one buffer
+//                          entry.
+//   character, later row : SINGLES, and each one is a GLYPH — the name is
+//                          already in the buffer from the row's first line.
+//                          Only the glyph row changed.  This is what halves a
+//                          character row's DMA after its first line.
+//   bitmap, first row    : SINGLES, each a graphics byte, each stepping the
+//                          pointer.
+//   bitmap, later row    : NOTHING.  The block was read on its first row and is
+//                          replayed from the buffer.
+//
+// THE BUFFER IS NOT CLEARED between lines.  If playfield DMA is off, the
+// previous row's contents stay and are displayed again — antic_linebuffering's
+// "mid-interrupted" and "replayed" cases are built on exactly that, and so is
+// the rule that lb_len is only reloaded when the row actually fetches.
+//
+// ONE 16-BIT ENTRY PER BYTE, character code alongside glyph.  Real ANTIC splits
+// these; we do not, because a 48x16 distributed RAM is a single primitive and
+// the code is needed at display time anyway to pick the colour in modes 4/5/6/7.
+//
+// CLOCK BUDGET: one memory access per scheduled machine cycle, which is the
+// same budget the DMA schedule already granted itself.  There is no burst to
+// fit into horizontal blank any more.
+//
+`timescale 1ns/1ps
+
+module antic_pf_stream #(
+    parameter int ENTRIES = 48          // wide playfield, 8 hi-res px per byte
+) (
+    input  wire        clk,
+    input  wire        rst,
+
+    // ---- the line ---------------------------------------------------------
+    input  wire        line_start,      // 1-clk at the top of the scanline
+    input  wire        first_row,       // first scanline of this mode line
+    input  wire [3:0]  mode,
+    input  wire [4:0]  row,             // scanline within the mode line
+    input  wire [7:0]  chbase,
+    input  wire [2:0]  chactl,
+    input  wire [7:0]  bytes_per_line,  // the row's nominal length, for lb_len
+
+    // ---- the schedule -----------------------------------------------------
+    // Tick pulses from antic_dma_sched.  pf_fetch_glyph marks the second half
+    // of a character pair; every other fetch is a name, a graphics byte or a
+    // later row's glyph, which the row shape below tells apart.
+    input  wire        pf_fetch,
+    input  wire        pf_fetch_glyph,
+
+    // ---- the playfield scan pointer ---------------------------------------
+    input  wire [15:0] scan_addr_in,
+    input  wire        scan_load,       // 1-clk: adopt scan_addr_in (LMS)
+    output logic [15:0] scan_addr_out,
+
+    // ---- memory (mem_valid is mem_req delayed one clock) ------------------
+    output logic [15:0] mem_addr,
+    output logic        mem_req,
+    input  wire  [7:0]  mem_data,
+    input  wire         mem_valid,
+
+    // ---- buffer read port, for the renderer -------------------------------
+    input  wire  [5:0]  rd_idx,
+    output wire  [7:0]  rd_data,         // glyph or graphics byte, CHACTL applied
+    output wire  [7:0]  rd_code,         // character code, for the colour select
+    output logic [6:0]  lb_len           // how wide this row is
+);
+
+    // ---- mode parameters --------------------------------------------------
+    wire       is_char, descender, is_display;
+    wire [1:0] bpp;
+    wire [3:0] px_width;
+    wire [4:0] rows;
+
+    antic_mode_tbl u_tbl (
+        .mode(mode), .is_char(is_char), .bpp(bpp), .px_width(px_width),
+        .rows(rows), .descender(descender), .is_display(is_display)
+    );
+
+    // ---- the buffer -------------------------------------------------------
+    logic [15:0] buf_mem [0:ENTRIES-1];
+
+    assign rd_code = buf_mem[rd_idx][15:8];
+    assign rd_data = buf_mem[rd_idx][7:0];
+
+    // ---- the running count ------------------------------------------------
+    // Reset per scanline, incremented per BUFFER ENTRY -- so a character pair
+    // advances it once, on the name, not twice.
+    logic [6:0]  pf_next;
+    logic [15:0] scan_q;
+
+    assign scan_addr_out = scan_q;
+
+    // The character code the glyph access needs.  On a first row it is the name
+    // just fetched; on a later row it comes back out of the buffer, and through
+    // a REGISTER rather than combinationally -- feeding a distributed RAM's
+    // output straight into the memory address path costs a RAMD64E plus five
+    // MUXF stages out to the screen bank's read register.
+    logic [7:0] char_code;
+
+    // ---- glyph row --------------------------------------------------------
+    // Two quirks: 16-row modes (5, 7) show each glyph row twice, and mode 3 has
+    // a ten-row cell whose descenders (code[6:5] == 11) take rows 0/1 from glyph
+    // rows 6/7 and rows 2..9 from glyph rows 0..7, while ordinary characters use
+    // rows 0..7 and are BLANK on rows 8/9.
+    logic [2:0] glyph_row;
+    logic       row_blank;
+
+    always_comb begin
+        row_blank = 1'b0;
+        if (descender) begin
+            if (char_code[6:5] == 2'b11) begin
+                glyph_row = (row < 5'd2) ? (3'd6 + row[0]) : 3'(row - 5'd2);
+            end else begin
+                glyph_row = row[2:0];
+                if (row >= 5'd8) row_blank = 1'b1;
+            end
+        end else if (rows == 5'd16) begin
+            glyph_row = row[3:1];
+        end else begin
+            glyph_row = row[2:0];
+        end
+    end
+
+    // CHACTL sits on BOTH sides of the character-set access: reflect XORs the
+    // row going in, blank and invert rewrite the data coming out.
+    wire [2:0] glyph_row_ctl;
+    wire [7:0] glyph_data_ctl;
+
+    antic_char_ctl u_chactl (
+        .chactl(chactl), .is_char(is_char), .bpp(bpp), .px_width(px_width),
+        .char_code(char_code),
+        .glyph_row_in(glyph_row), .glyph_data_in(mem_data),
+        .glyph_row(glyph_row_ctl), .glyph_data(glyph_data_ctl)
+    );
+
+    wire [15:0] glyph_addr = {chbase[7:2], char_code[6:0], glyph_row_ctl};
+
+    // ---- what this scheduled cycle is -------------------------------------
+    // A later character row's single access is a GLYPH even though the schedule
+    // calls it a plain fetch, because its name is already buffered.  That is the
+    // one case the scheduler's own state cannot distinguish.
+    wire fetch_is_glyph = pf_fetch_glyph || (is_char && !first_row);
+
+    // TWO DIFFERENT QUESTIONS, which the first cut of this conflated:
+    //
+    //   does this access move the SCAN POINTER?  Only a name or a graphics
+    //   byte does -- a glyph is read from the character set and leaves the
+    //   playfield pointer where it stands.
+    //
+    //   does this access consume a BUFFER INDEX?  Everything except the second
+    //   half of a character pair, which shares the entry its name claimed.
+    //
+    // They coincide for a first row, which is what hid it: there, every
+    // index-consuming access is also a pointer-stepping one.  A LATER
+    // character row is the case that separates them -- each single fetch is a
+    // glyph, so it steps nothing, yet each one IS its own entry.  Tying the
+    // count to the pointer froze pf_next at zero and every character in the row
+    // rewrote entry 0.
+    wire ptr_steps = !fetch_is_glyph;
+    wire idx_takes = !pf_fetch_glyph;
+
+    wire [6:0] idx = pf_fetch_glyph ? pf_next - 7'd1 : pf_next;
+
+    // ---- the access -------------------------------------------------------
+    // In flight, so the write-back knows what the data means.  mem_valid is
+    // mem_req delayed exactly one clock, so one stage is enough.
+    logic       inflight, inflight_glyph, inflight_blank;
+    logic [6:0] inflight_idx;
+    logic [7:0] inflight_code;
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            pf_next        <= 7'd0;
+            scan_q         <= 16'h0000;
+            char_code      <= 8'h00;
+            lb_len         <= 7'd0;
+            mem_req        <= 1'b0;
+            mem_addr       <= 16'h0000;
+            inflight       <= 1'b0;
+            inflight_glyph <= 1'b0;
+            inflight_blank <= 1'b0;
+            inflight_idx   <= 7'd0;
+            inflight_code  <= 8'h00;
+        end else begin
+            mem_req  <= 1'b0;
+            // inflight is NOT cleared every clock.  mem_req is registered and
+            // mem_valid is mem_req delayed one more, so the data lands TWO
+            // clocks after the fetch pulse; a flag that survives only one is
+            // already low when it arrives and the write-back never happens.
+            // Fetches are machine cycles apart, so at most one is outstanding.
+            if (mem_valid && inflight) inflight <= 1'b0;
+
+            // An LMS operand replaces the pointer; it does not disturb the
+            // count, which belongs to the scanline.
+            if (scan_load) scan_q <= scan_addr_in;
+
+            if (line_start) begin
+                pf_next <= 7'd0;
+                // The length is reloaded ONLY when this row actually fetches.
+                // Otherwise the buffer keeps its contents AND its length, and
+                // the previous row is displayed again -- a DMACTL width of zero
+                // is not a width, it is no playfield DMA at all.
+                if (is_display && bytes_per_line != 8'd0 &&
+                    (is_char || first_row))
+                    lb_len <= 7'(bytes_per_line);
+                // A later character row reads its names back out of the buffer
+                // as it goes, so the FIRST one has to be standing before the
+                // first glyph access computes its address.
+                if (is_char && !first_row) char_code <= buf_mem[0][15:8];
+            end
+
+            if (pf_fetch) begin
+                mem_req  <= 1'b1;
+                mem_addr <= fetch_is_glyph ? glyph_addr : scan_q;
+
+                inflight       <= 1'b1;
+                inflight_glyph <= fetch_is_glyph;
+                inflight_blank <= row_blank;
+                inflight_idx   <= idx;
+                inflight_code  <= char_code;
+
+                // A later character row takes the name it needs for the NEXT
+                // access out of the buffer as it goes.
+                if (is_char && !first_row)
+                    char_code <= buf_mem[idx + 7'd1][15:8];
+
+                if (idx_takes) pf_next <= pf_next + 7'd1;
+                // The playfield counter wraps within 4 KB during the fetch, so
+                // a row crossing that boundary reads from the bottom of the
+                // same page (antic_addresswrap).
+                if (ptr_steps) scan_q <= {scan_q[15:12], scan_q[11:0] + 12'd1};
+            end
+
+            // ---- the data comes back ------------------------------------
+            if (mem_valid && inflight) begin
+                if (inflight_glyph) begin
+                    // A blanked mode-3 row still occupies its pixels, so store
+                    // zeros rather than skipping the entry.
+                    buf_mem[inflight_idx] <=
+                        {inflight_code, inflight_blank ? 8'h00 : glyph_data_ctl};
+                end else if (is_char) begin
+                    // A name: hold it for the glyph access that follows, and
+                    // park it in the entry so a later row can read it back.
+                    char_code             <= mem_data;
+                    buf_mem[inflight_idx] <= {mem_data, 8'h00};
+                end else begin
+                    // A graphics byte is its own data and has no code.
+                    buf_mem[inflight_idx] <= {8'h00, mem_data};
+                end
+            end
+        end
+    end
+
+endmodule
+
+`default_nettype wire
