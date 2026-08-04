@@ -217,9 +217,14 @@ module antic2_seq #(
 
             // A WSYNC write arms the halt whenever it happens -- including
             // outside the tick, since the strobe is the CPU's own write.
+            // ARMS ON THE FIRST WRITE ONLY.  An RMW writes WSYNC twice and the
+            // halt must NOT re-arm on the second (emu case 0x0A, pinned by
+            // antic_wsync's d5); the second write only sets the extra cycle, and
+            // only when it is ADJACENT to the first.  Doing both unconditionally
+            // re-armed a halt that was already standing.
             if (wsync_stb) begin
-                wsync_halt  <= 1'b1;
-                wsync_extra <= wsync_rmw_readd;
+                if (!wsync_halt)          wsync_halt  <= 1'b1;
+                else if (wsync_rmw_readd) wsync_extra <= 1'b1;
             end
             // NMIRES CLEARS THE STATUS BUT LOSES TO A SET LANDING IN THE SAME
             // CYCLE.  emu is explicit (antic.c case 0x0F): `if (!nmist_set_now)
