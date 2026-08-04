@@ -137,6 +137,48 @@ module antic2 #(
     // priority rule -- a preempted refresh is deferred ONE cycle and then LOST,
     // not re-sought.  So it REPLACES antic2's own refresh steal rather than
     // being OR'd with it; ORing would double-count every refresh cycle.
+    // THE SCHEDULER MUST SAMPLE THE LINE SHAPE *AFTER* THE INSTRUCTION LANDS.
+    //
+    // antic_dma_sched latches the WHOLE line shape on its line_start pulse --
+    // pf_n from n_fetch, dma_start, pairs, is_char (antic_dma_sched.sv:161).
+    // emu can do that at line_start because dl_exec runs SYNCHRONOUSLY inside
+    // line_start, so the new instruction is already in place.  antic2_dl is a
+    // multi-cycle state machine, so on the beam's line_start pulse `dl_insn`
+    // still holds the PREVIOUS instruction -- and the map was built from it.
+    //
+    // MEASURED: dl_insn settles at hcount 0, THREE fabric clocks after the
+    // line_start pulse, which is still well inside machine cycle 0 (the first
+    // scheduled cycle is 1, and refresh does not begin until 25).  So delaying
+    // the scheduler's sample by a few fabric clocks is both sufficient and
+    // invisible to the schedule itself.
+    //
+    // SYMPTOM THIS FIXES: the display-list fetch and that row's playfield
+    // landed on DIFFERENT scanlines, where emu has them on ONE --
+    //   emu   .#....##.................##.####################...
+    //   ours  .#....##.................#...#...#...#...#...#...#     (no playfield)
+    //         .........................##.####################...   (playfield, next line)
+    // -- while a LATER line of the same row matched emu character for
+    // character, which is what showed the map itself was right and only its
+    // start was displaced.
+    localparam int SCHED_SAMPLE_DELAY = 4;
+    logic [2:0] ls_delay;
+    logic       sched_line_start;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            ls_delay         <= 3'd0;
+            sched_line_start <= 1'b0;
+        end else begin
+            sched_line_start <= 1'b0;
+            if (line_start)               ls_delay <= 3'd1;
+            else if (ls_delay != 3'd0) begin
+                if (ls_delay == 3'(SCHED_SAMPLE_DELAY)) begin
+                    ls_delay         <= 3'd0;
+                    sched_line_start <= 1'b1;
+                end else ls_delay <= ls_delay + 3'd1;
+            end
+        end
+    end
+
     wire [7:0] pf_bytes, pf_step;
     wire [6:0] pf_dma_start;
     antic_pf_geom u_geom (
@@ -151,7 +193,7 @@ module antic2 #(
 
     antic_dma_sched u_sched (
         .clk(clk), .rst(rst),
-        .line_start(line_start), .tick(tick), .hcount(hcount),
+        .line_start(sched_line_start), .tick(tick), .hcount(hcount),
         .first_row(row_first), .is_char(md_is_char),
         // A line displays only while the list is RUNNING and the latched
         // instruction is a display mode; a parked list fetches nothing.
