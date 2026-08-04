@@ -134,17 +134,35 @@ module tb_acid #(
     // Every CPU read of NMIST, with where the beam was: "the DLI bit was not
     // cleared at 248" is a claim about a VALUE AT A MOMENT, so both halves have
     // to be measured together.
+    // Where does each machine cycle go across the WSYNC release at line 38?
+    // Print the PC once per machine cycle so the instruction boundaries are
+    // visible against the test's own cycle annotation.
+    integer pccnt = 0;
+    logic [15:0] pc_prev = 16'h0000;
+    generate if (USE_ANTIC2) begin : g_pcprobe
+        always_ff @(posedge clk) begin
+            if (!rst && tick && pccnt < 40 && dbg_pc >= 16'h2200 &&
+                dbg_pc <= 16'h2215 && !dut.u_antic2.wsync_take &&
+                !dut.u_antic2.dma_steal) begin
+                pccnt <= pccnt + 1;
+                $display("PCT sl=%0d cyc=%0d pc=%04h halt=%0d steal=%0d",
+                         dut.u_antic2.line, dut.u_antic2.hcount, dbg_pc,
+                         dut.u_antic2.wsync_take, dut.u_antic2.dma_steal);
+            end
+        end
+    end endgenerate
+
     integer nmcnt = 0;
     logic [7:0] vc_prev = 8'h00;
     integer vccnt = 0;
     generate if (USE_ANTIC2) begin : g_nmprobe
         always_ff @(posedge clk) begin
-            if (!rst && nmcnt < 30 &&
+            if (!rst && nmcnt < 60 &&
                 dut.cs_antic && dut.c_rw && dut.c_addr[3:0] == 4'hF &&
                 dut.c_sub == 8'(dut.SUB_DATA)) begin
                 nmcnt <= nmcnt + 1;
-                $display("NMR sl=%0d cyc=%0d rd=%02h nmist=%02h dli=%0d insn=%02h",
-                         dut.u_antic2.line, dut.u_antic2.hcount, dut.c_din,
+                $display("NMR pc=%04h sl=%0d cyc=%0d rd=%02h nmist=%02h dli=%0d insn=%02h",
+                         dbg_pc, dut.u_antic2.line, dut.u_antic2.hcount, dut.c_din,
                          dut.u_antic2.nmist, dut.u_antic2.dli_line,
                          dut.u_antic2.dl_insn);
             end
@@ -154,6 +172,50 @@ module tb_acid #(
     // WHEN does VCOUNT change, and where is the beam?  emu advances it at cycle
     // 111 of every ODD scanline, so the new value is visible for the last few
     // cycles of that line -- a poll can legitimately catch it there.
+    // VCOUNT against its DEFINITION, sampled at hcount 50 -- before the cycle-111
+    // advance, so the correct value is exactly line>>1 on EVERY line of EVERY
+    // frame.  Printing only MISMATCHES answers "does the drift accumulate?"
+    // without drowning in 262 lines a frame.
+    // Where does the beam's `line` actually change, and what does antic2_seq see
+    // at cycle 111?  The two have to be read at the SAME instant.
+    logic [8:0] ln_prev = 9'd0;
+    integer lncnt = 0;
+    generate if (USE_ANTIC2) begin : g_lnprobe
+        always_ff @(posedge clk) begin
+            if (!rst && tick) begin
+                if (dut.u_antic2.line !== ln_prev && lncnt < 6) begin
+                    lncnt <= lncnt + 1;
+                    $display("LN change at hcount=%0d : %0d -> %0d",
+                             dut.u_antic2.hcount, ln_prev, dut.u_antic2.line);
+                end
+                if (dut.u_antic2.hcount == 7'd111 && lncnt < 12 && lncnt >= 6) begin
+                    lncnt <= lncnt + 1;
+                    $display("LN at cyc111: line=%0d odd=%0d vcount=%02h",
+                             dut.u_antic2.line, dut.u_antic2.line[0],
+                             dut.u_antic2.vcount);
+                end
+                ln_prev <= dut.u_antic2.line;
+            end
+        end
+    end endgenerate
+
+    integer vdcnt = 0;
+    integer vdframe = 0;
+    generate if (USE_ANTIC2) begin : g_vdprobe
+        always_ff @(posedge clk) begin
+            if (!rst && tick && dut.u_antic2.hcount == 7'd50) begin
+                if (dut.u_antic2.line == 9'd0) vdframe <= vdframe + 1;
+                if (dut.u_antic2.vcount !== 8'(dut.u_antic2.line >> 1) &&
+                    vdcnt < 24) begin
+                    vdcnt <= vdcnt + 1;
+                    $display("VD frame=%0d sl=%0d vcount=%02h expected=%02h",
+                             vdframe, dut.u_antic2.line, dut.u_antic2.vcount,
+                             8'(dut.u_antic2.line >> 1));
+                end
+            end
+        end
+    end endgenerate
+
     // Every WSYNC write and every release, with the PC: "the read landed a line
     // early" is a claim about the STALL, so measure the stall itself.
     integer wscnt = 0;

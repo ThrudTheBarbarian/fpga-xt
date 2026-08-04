@@ -36,8 +36,16 @@ module antic2_seq #(
                                        // is sampled the same cycle (antic_nmist)
     parameter int CYC_VCOUNT   = 111,  // vcount advances on ODD scanlines
     parameter int CYC_WSYNC    = 104,  // FIRST CYCLE THE CPU GETS BACK
-    parameter int DISPLAY_TOP  = 8,
-    parameter int LINES        = 262
+    parameter int DISPLAY_TOP    = 8,
+    // VERTICAL BLANK STARTS AT 248, NOT AT THE END OF THE FRAME.  Both the
+    // VBI and the `blanking` test below key off THIS, and using LINES-2 for
+    // them put the VBI 12 scanlines late: antic_nmist enables DMA at
+    // scanline ~249, so a VBI at 260 fired in the SAME frame -- before any
+    // display line had run -- and its handler asserted that the DLIs had
+    // already been called.  At 248 the next VBI is a frame away and the
+    // display region gets to run first.
+    parameter int DISPLAY_BOTTOM = 248,
+    parameter int LINES          = 262
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -106,7 +114,27 @@ module antic2_seq #(
     //   vertical blank          -> it does NOT (antic_hiresbug)
     // A FIRST firing outside the display region is still allowed -- that is
     // antic_dlistwrap #1, whose DLI lands on scanline 1 of the next frame.
-    wire blanking = (scanline < 9'(DISPLAY_TOP)) || (scanline >= 9'(LINES - 2));
+    // THE BEAM'S `line` IS NOT THE CURRENT SCANLINE FOR THE WHOLE LINE.
+    // antic_beam advances it at `hcount == vcount_adv - 1` (110), so from cycle
+    // 111 to 113 it already reads the NEXT line.  That is right for line_start
+    // consumers -- emu increments scanline and THEN runs line_start, so the new
+    // line is what line_start sees -- but wrong for anything keyed to a cycle at
+    // or after 111, where emu is still on the OLD scanline.
+    //
+    // It cost the vcount parity: `cycle == 111 && scanline[0]` matched when the
+    // BEAM's line was odd, i.e. at the end of every EVEN scanline, so VCOUNT read
+    // one too high on every odd line.  antic_nmist's poll for 247/2 then exited a
+    // line early and its NMIST read landed at 247, before the VBI at 248, where
+    // the DLI bit is legitimately still set.
+    //
+    // ONE definition, used everywhere in this module: cycles 4 and 6 are below
+    // 111 so sl_now == scanline there and nothing changes for them.
+    wire [8:0] sl_now = (cycle >= 7'(CYC_VCOUNT))
+                      ? ((scanline == 9'd0) ? 9'(LINES - 1) : scanline - 9'd1)
+                      : scanline;
+
+    wire blanking = (sl_now < 9'(DISPLAY_TOP)) ||
+                    (sl_now >= 9'(DISPLAY_BOTTOM));
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -162,7 +190,7 @@ module antic2_seq #(
                         nmist <= (nmist & ~8'h40) | 8'h80;
                         if (nmien & 8'h80) nmi_arm <= 2'd1;
                     end
-                    if (scanline == 9'(LINES - 2)) begin
+                    if (sl_now == 9'(DISPLAY_BOTTOM)) begin
                         nmist <= (nmist & ~8'h80) | 8'h40;
                         if (nmien & 8'h40) nmi_arm <= 2'd1;
                     end
@@ -176,9 +204,9 @@ module antic2_seq #(
                 // That single cycle is the whole of antic_vcount's rollover
                 // pair: two probes on the SAME scanline differing only in read
                 // cycle, 111 must read 131 and 112 must read 0.
-                if (cycle == 7'(CYC_VCOUNT) && scanline[0])
+                if (cycle == 7'(CYC_VCOUNT) && sl_now[0])
                     vcount <= vcount + 8'd1;
-                if (cycle == 7'(CYC_VCOUNT) + 7'd1 && scanline == 9'(LINES - 1))
+                if (cycle == 7'(CYC_VCOUNT) + 7'd1 && sl_now == 9'(LINES - 1))
                     vcount <= 8'd0;
 
                 // ---- 5. WSYNC ------------------------------------------
