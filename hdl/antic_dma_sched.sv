@@ -180,16 +180,29 @@ module antic_dma_sched (
                     ref_slot <= ref_slot + 7'd4;
                     ref_left <= ref_left - 4'd1;
                 end
-                // ONE cycle of deferral, then the refresh is LOST.  Seeding
-                // this from ref_want re-seeks every cycle until the next
-                // request, so with a solid playfield every refresh eventually
-                // finds a gap and the CPU is charged all nine.  Real ANTIC
-                // defers a refresh onto the NEXT cycle only and drops it
-                // otherwise (antic_dma_steal's is_defer rule), so a hi-res
-                // first line preempts refresh to almost nothing.  Measured on
-                // hardware over a 100-cycle span, screen on, normal width:
-                // legacy steals 45, this stole 51.
-                if (tick) ref_pending <= ref_due && !ref_steal;
+                // A PREEMPTED REFRESH KEEPS SEEKING until it is taken: seeding
+                // from ref_want re-tries every cycle, so all nine are
+                // eventually charged.  REVERTED FROM `ref_due` (cb499ca), which
+                // dropped a refresh after one cycle of deferral and FAILED 12
+                // of the 50 ACID reference maps -- every one a first row, one
+                // steal short at the end.  The same defect showed in situ as a
+                // missing steal at cycle 91 of narrow mode 2.
+                //
+                // emu is the arbiter and it does not model contention at all:
+                // antic_dma_refresh (emu/antic_dma.c:65) simply sets
+                // blocked[c] = 1 for the nine cycles, and the playfield builder
+                // writes into the same array -- a UNION, with no deferral and
+                // no preemption.  emu passes antic_dmapattern that way.
+                //
+                // UNRESOLVED, AND DELIBERATELY LEFT SO: cb499ca cited a HARDWARE
+                // measurement against this form (100-cycle span, screen on,
+                // normal width -- legacy stole 45, `ref_due` stole 51).  That is
+                // real evidence pointing the other way.  For ACID conformance
+                // the reference maps and emu win, because they ARE the
+                // specification the suite encodes; if the hardware figure was
+                // sound then real ANTIC and the test's model genuinely differ,
+                // which is a question about the hardware, not about this line.
+                if (tick) ref_pending <= ref_want && !ref_steal;
 
                 case (pstate)
                     // The opening name of a character first row, on its own.
