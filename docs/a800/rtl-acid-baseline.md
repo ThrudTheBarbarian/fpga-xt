@@ -145,3 +145,37 @@ CPU-vs-beam alignment. Every failure does.
     (cd emu && ./build/acid ../rsrc/acid800/Acid800/standalone <test>)   # oracle
 
 `TEST` is a runtime plusarg, so one iverilog build serves all 63.
+
+## antic_dmapattern is blocked by POKEY RANDOM, not by the DMA map
+
+`antic_dmapattern` decodes POKEY's RANDOM ($D20A) into a cycle number by looking
+up consecutive LFSR values in a table.  It reads `$FF` for both halves of the
+pair, fails at "Cannot decode random pair", and never reaches a single DMA
+assertion.  So it currently says nothing about the fetch map.
+
+Measured on BOTH ANTIC paths, identically — `d0=ff d1=ff d2=ff`, same PC trail:
+
+| path | result |
+|---|---|
+| old (`USE_ANTIC2=0`) | FAIL, cannot decode random pair |
+| antic2 (`USE_ANTIC2=1`) | FAIL, cannot decode random pair |
+
+That the two agree exactly is the point: this is not an ANTIC defect and not a
+regression from the stage-2 playfield map.
+
+Excluded so far: POKEY is clocked (`a8_core` passes `.phi2_tick(tick)`), and the
+test does release the LFSR — the framework writes `SKCTL = $03` at `$1D9C`,
+which takes `skctl[1:0]` out of the `2'b00` init state that holds the polynomial
+counters filling with ones.  So neither "never ticked" nor "held in init" is the
+explanation, and the next step is to probe `skctl` and `random_byte` inside our
+POKEY during the run rather than guess further.
+
+Worth noting the LFSR *has* worked: the 9-bit and 17-bit tap choices in
+`pokey_audio.sv` were fitted to three independent RANDOM reads from
+`antic_wsync`, which no other combination satisfied.  Whatever is wrong is
+therefore more likely in the plumbing around it than in the polynomial.
+
+CONSEQUENCE FOR STAGE 2: the fetch map needs a different gate until this is
+fixed.  `antic_dma_sched` is already measured correct standalone (c96332a), so
+the map's own correctness is not in question — what is missing is an end-to-end
+test that can observe it through this harness.
