@@ -130,21 +130,25 @@ module a8_core #(
     assign cpu_wdata = c_dout;
     assign cpu_we    = !c_rw && c_rdy && (c_sub == 8'(SUB_DATA));
 
-    // $D000-$D0FF is GTIA, $D400-$D4FF is ANTIC.
+    // $D000-$D0FF is GTIA, $D200-$D2FF is POKEY, $D400-$D4FF is ANTIC.
     wire cs_gtia  = (c_addr[15:8] == 8'hD0);
+    wire cs_pokey = (c_addr[15:8] == 8'hD2);
     wire cs_antic = (c_addr[15:8] == 8'hD4);
     wire [7:0] reg_rdata;
+    wire [7:0] pokey_rdata;
+    wire       pokey_irq_n;
 
     always_comb begin
-        if (cs_gtia || cs_antic) c_din = reg_rdata;
-        else                     c_din = cpu_rdata;
+        if      (cs_gtia || cs_antic) c_din = reg_rdata;
+        else if (cs_pokey)            c_din = pokey_rdata;
+        else                          c_din = cpu_rdata;
     end
 
     xt6502f u_cpu (
         .clk(clk), .rst(rst), .phi2_tick(tick),
         .addr(c_addr), .data_in(c_din), .data_out(c_dout), .rw(c_rw),
         .rdy(c_rdy),
-        .irq_n(irq_n), .nmi_n(nmi_n),
+        .irq_n(irq_n && pokey_irq_n), .nmi_n(nmi_n),
         .sync(sync), .dbg_pc(dbg_pc),
         .dbg_a(dbg_a), .dbg_x(dbg_x), .dbg_y(dbg_y),
         .dbg_s(dbg_s), .dbg_p(dbg_p),
@@ -165,6 +169,45 @@ module a8_core #(
         .pal_sense(pal_sense), .consol_keys(consol_keys),
         .lb_wr(lb_wr), .lb_color(lb_color), .lb_line_start(lb_line_start),
         .hcount(hcount), .line(line), .vcount(), .line_start(), .dlpc()
+    );
+
+    // ---- POKEY --------------------------------------------------------------
+    //
+    // The design HAS a POKEY; leaving it out of a8_core was a limitation of this
+    // assembly, not of the hardware, and it cost the suite the whole pokey_*
+    // family plus antic_dmapattern and antic_wsync -- both of which MEASURE
+    // through RANDOM at $D20A and so could never pass without it.
+    //
+    // Snoop-shaped like the ANTIC/GTIA register files: a write port qualified
+    // the same way as theirs (cpu_we is already SUB_DATA-strobed), a
+    // combinational read port, and a read STROBE so KBCODE's read-clears-latch
+    // and RANDOM's advance see the access.
+    //
+    // Everything POKEY needs from outside this core -- keyboard, pots, serial --
+    // is tied off. The ACID tests exercise the timers, IRQs, RANDOM and SKSTAT,
+    // none of which depend on those.
+    wire pokey_re = c_rw && cs_pokey && (c_sub == 8'(SUB_DATA));
+
+    pokey #(.CLK_BUS_HZ(CLK_HZ)) u_pokey (
+        .clk(clk), .rst(rst), .cold_boot(cold),
+        .phi2_tick(tick),
+        .we(cpu_we && cs_pokey), .waddr(c_addr[7:0]), .wdata(c_dout),
+        .re(pokey_re), .re_addr(c_addr[7:0]),
+        .raddr(c_addr[7:0]), .rdata(pokey_rdata),
+        .kbd_event_valid(1'b0), .kbd_event_code(8'h00), .kbd_release(1'b0),
+        .shadow_pot0(8'd228), .shadow_pot1(8'd228),
+        .shadow_pot2(8'd228), .shadow_pot3(8'd228),
+        .shadow_pot4(8'd228), .shadow_pot5(8'd228),
+        .shadow_pot6(8'd228), .shadow_pot7(8'd228),
+        .shadow_allpot(8'h00),
+        .bridge_potgo_pulse(), .bridge_fast_scan(),
+        .ch1_out(), .ch2_out(), .ch3_out(), .ch4_out(),
+        .ser_out_complete(1'b1), .ser_out_ready_pulse(1'b0),
+        .ser_in_byte_pulse(1'b0), .ser_in_byte(8'h00),
+        .break_key_pulse(1'b0), .ser_framing_err(1'b0),
+        .ser_input_overrun(1'b0), .ser_input_busy(1'b0),
+        .irq_n(pokey_irq_n),
+        .serout_byte(), .serout_strobe(), .skctl_out()
     );
 
     // ---- the halt composition -----------------------------------------------

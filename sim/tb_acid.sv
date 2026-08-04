@@ -173,7 +173,8 @@ module tb_acid;
     // $D000-$D0FF and $D400-$D4FF are answered inside a8_core; anything else in
     // the hardware page reads as an unpopulated bus.
     wire in_hw   = (cpu_addr[15:8] >= 8'hD0) && (cpu_addr[15:8] <= 8'hD7);
-    wire is_chip = (cpu_addr[15:8] == 8'hD0) || (cpu_addr[15:8] == 8'hD4);
+    wire is_chip = (cpu_addr[15:8] == 8'hD0) || (cpu_addr[15:8] == 8'hD2)
+                || (cpu_addr[15:8] == 8'hD4);   // POKEY is real now, not $FF
 
     always_ff @(posedge clk) begin
         if (cpu_we && !in_hw) mem[cpu_addr] <= cpu_wdata;

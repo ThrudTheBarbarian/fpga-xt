@@ -1456,7 +1456,14 @@ build/tb_antic_gtia.vvp: tb_antic_gtia.sv $(ANTIC_GTIA_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_gtia \
 	    $(ANTIC_GTIA_SRC) tb_antic_gtia.sv
 
+# a8_core now instantiates POKEY: the design has one, and without it the
+# suite loses the whole pokey_* family plus antic_dmapattern and
+# antic_wsync, which MEASURE through RANDOM at $$D20A.
+POKEY_SRC = $(HDL_DIR)/pokey.sv $(HDL_DIR)/pokey_regs.sv \
+	    $(HDL_DIR)/pokey_audio.sv $(HDL_DIR)/pokey_pot.sv
+
 A8_CORE_SRC = $(HDL_DIR)/a8_core.sv $(ANTIC_GTIA_SRC) \
+	    $(POKEY_SRC) \
 	    $(HDL_DIR)/xt6502f/xt6502f.sv
 
 a8_core: build/tb_a8_core.vvp
@@ -1471,11 +1478,11 @@ build/tb_a8_core.vvp: tb_a8_core.sv $(A8_CORE_SRC) | build
 TEST ?= antic_vcount
 
 acid: build/tb_acid.vvp
-	@vvp -N $<
+	@vvp -N $< +TEST=$(TEST)
 
 build/tb_acid.vvp: tb_acid.sv $(A8_CORE_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
-	    -DTESTNAME='"$(TEST)"' -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
+	    -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
 
 antic_wb_adapt: build/tb_antic_wb_adapt.vvp
 	@vvp -N $<
