@@ -157,6 +157,8 @@ module tb_acid #(
     // two designs be diffed cycle-for-cycle on the same scanline.
     integer bcnt = 0;
     int BUSLINE = 17;
+    int MAPINSN = 'h42;
+    initial if (!$value$plusargs("MAPINSN=%h", MAPINSN)) MAPINSN = 'h42;
     wire [8:0] bus_line = (dut.u_antic2.hcount >= 7'd111)
                         ? ((dut.u_antic2.line == 9'd0) ? 9'd261
                                                        : dut.u_antic2.line - 9'd1)
@@ -235,6 +237,36 @@ module tb_acid #(
                      dut.c_addr, dut.c_dout, dut.c_rdy, dut.cpu_we);
         end
     end
+
+    // THE STAGE-2 MAP, in emu's ACID_GLYPHPROBE=9 shape: one character per
+    // machine cycle, '#' where ANTIC steals it.  Printed at the END of the line
+    // so a mid-line DMACTL or HSCROL rebuild is reflected, which is what emu's
+    // own END map does -- a map captured at line_start shows only what was
+    // planned at cycle 0.
+    logic [113:0] steal_map;
+    integer mpcnt = 0;
+    generate if (USE_ANTIC2) begin : g_mapprobe
+        always_ff @(posedge clk) begin
+            if (rst) steal_map <= '0;
+            else if (tick) begin
+                if (dut.u_antic2.hcount == 7'd0) steal_map <= '0;
+                else if (dut.u_antic2.dma_steal)
+                    steal_map[dut.u_antic2.hcount] <= 1'b1;
+                // ANCHORED ON THE INSTRUCTION, not a scanline number: the same
+                // scanline recurs every frame and the first hits would be from
+                // before the test even sets this mode up.  MAPINSN selects the
+                // display-list instruction whose map is wanted.
+                if (dut.u_antic2.hcount == 7'd113 && mpcnt < 4 &&
+                    dut.u_antic2.dl_insn == 8'(MAPINSN)) begin
+                    mpcnt <= mpcnt + 1;
+                    $write("MAP sl %0d insn %02h ", bus_line, dut.u_antic2.dl_insn);
+                    for (int k = 0; k < 114; k++)
+                        $write("%s", steal_map[k] ? "#" : ".");
+                    $display("");
+                end
+            end
+        end
+    end endgenerate
 
     integer rncnt = 0;
     always_ff @(posedge clk) begin
