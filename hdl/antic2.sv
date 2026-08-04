@@ -22,11 +22,17 @@
 // rewrite spent weeks on ("104" meaning two different events in two files).
 // Only hcount / line / line_start are taken from the beam.
 //
-// SCOPE: STAGE 1.  No playfield fetch, no DMA steal, no render.  Those are
-// stages 2 and 3 and they reuse antic_dma_sched, which is already measured
-// correct end to end.  The stage-1 gate is antic_vcount, antic_nmist,
-// antic_dlitiming and antic_blockednmi -- the tests that need only the beam, the
-// row/DLI decisions and the NMI sequence.
+// SCOPE: STAGE 1.  No playfield fetch and no render; DMA steal is REFRESH ONLY.
+// The playfield map and its priority/slip rules are stage 2 and reuse
+// antic_dma_sched, which is already measured correct end to end.
+//
+// Refresh is in stage 1 on purpose, and the reason is a scoping check worth
+// keeping: the four gate tests all set DMACTL = $22, so DMA is on -- but they
+// MEASURE at scanlines 2-7, inside vertical blank, where the playfield never
+// fetches.  Refresh is the only thing stealing cycles there.  Without it the CPU
+// runs nine cycles a line too fast and the gate cannot pass however correct the
+// rest is; with it, and with no playfield to contend against, there is nothing
+// to arbitrate.
 //
 `timescale 1ns/1ps
 
@@ -57,6 +63,7 @@ module antic2 #(
     // ---- to the CPU / rest of the machine ----------------------------------
     output wire        nmi,                // ONE-CYCLE PULSE
     output wire        wsync_take,         // ANTIC takes this cycle for WSYNC
+    output wire        dma_steal,          // stage 1: memory refresh only
     output wire [6:0]  hcount,
     output wire [8:0]  line
 );
@@ -149,6 +156,34 @@ module antic2 #(
         else if (line_start && (line == 9'd0))    dli_fired <= 1'b0;
         else if (dli_fired_set)                   dli_fired <= 1'b1;
     end
+
+    // ---- memory refresh ----------------------------------------------------
+    //
+    // NINE cycles at 25, 29 .. 57, on EVERY scanline, whatever DMACTL says.  The
+    // CPU never gets them even with the screen off.  emu builds this before any
+    // playfield work (line_start calls antic_dma_refresh unconditionally), and
+    // omitting it let the CPU run nine cycles a line too fast whenever DMA was
+    // off -- gtia_pmretrigger's fourth case, whose `sta hposp0` landed on cycle
+    // 81 against an annotated 90.
+    //
+    // STAGE 1 NEEDS THIS AND NOTHING ELSE OF THE DMA SCHEDULE, which is why it
+    // is here rather than waiting for antic_dma_sched.  The four gate tests
+    // (antic_vcount, antic_nmist, antic_dlitiming, antic_blockednmi) all run with
+    // DMACTL = $22, but they MEASURE at scanlines 2-7 -- inside vertical blank,
+    // where the playfield never fetches.  Refresh is the only thing stealing
+    // there, and with no playfield there is no contention to arbitrate: it
+    // simply takes its nine cycles.  The priority and slip rules come with the
+    // playfield in stage 2.
+    localparam int REFRESH_FIRST = 25;
+    localparam int REFRESH_STEP  = 4;
+    localparam int REFRESH_COUNT = 9;
+
+    wire refresh_steal =
+        (hcount >= 7'(REFRESH_FIRST)) &&
+        (hcount <= 7'(REFRESH_FIRST + (REFRESH_COUNT-1)*REFRESH_STEP)) &&
+        (((hcount - 7'(REFRESH_FIRST)) % 7'(REFRESH_STEP)) == 7'd0);
+
+    assign dma_steal = refresh_steal;
 
     // ---- the per-cycle sequence --------------------------------------------
     antic2_seq #(
