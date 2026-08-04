@@ -79,6 +79,7 @@ module antic2 #(
     wire [7:0]  dl_insn;
     wire [3:0]  row_line;
     wire        dl_done, row_first, jvb_pulse, dl_insn_stb;
+    wire        sched_steal;
     wire        dl_fetch_req;
     wire [3:0]  dl_row_end;
     wire        dl_row_end_live;
@@ -114,10 +115,52 @@ module antic2 #(
     );
 
     // ---- the mode's natural row height -------------------------------------
+    wire       md_is_char, md_is_display;
+    wire [1:0] md_bpp;
+    wire [3:0] md_px_width;
     antic_mode_tbl u_mode (
         .mode(dl_insn[3:0]),
-        .is_char(), .bpp(), .px_width(), .rows(mode_rows),
-        .descender(), .is_display()
+        .is_char(md_is_char), .bpp(md_bpp), .px_width(md_px_width),
+        .rows(mode_rows), .descender(), .is_display(md_is_display)
+    );
+
+    // ---- STAGE 2: the playfield fetch map ----------------------------------
+    //
+    // REUSED, NOT REWRITTEN.  antic_pf_geom turns the mode and DMACTL width
+    // into the line's geometry and antic_dma_sched turns that into "which
+    // machine cycle the CPU loses".  Both are measured correct end to end
+    // (c96332a): all 50 of antic_dmapattern's maps, with the steals mapping 1:1
+    // onto the cycles the CPU actually loses.  Re-deriving either here would be
+    // a second definition of a value that already has one.
+    //
+    // antic_dma_sched OWNS REFRESH as well as the playfield, including the
+    // priority rule -- a preempted refresh is deferred ONE cycle and then LOST,
+    // not re-sought.  So it REPLACES antic2's own refresh steal rather than
+    // being OR'd with it; ORing would double-count every refresh cycle.
+    wire [7:0] pf_bytes, pf_step;
+    wire [6:0] pf_dma_start;
+    antic_pf_geom u_geom (
+        .pf_width(dmactl[1:0]),
+        .hscrol_en(dl_insn[4] && (dl_insn[3:0] >= 4'd2)),
+        .hscrol(hscrol[3:0]),
+        .is_char(md_is_char), .bpp(md_bpp), .px_width(md_px_width),
+        .pf_on(), .bytes_per_line(pf_bytes), .pf_step(pf_step),
+        .dma_start(pf_dma_start), .dma_stop(), .disp_start(), .disp_stop(),
+        .px_start(), .px_stop(), .hs_delay(), .hs_fine()
+    );
+
+    antic_dma_sched u_sched (
+        .clk(clk), .rst(rst),
+        .line_start(line_start), .tick(tick), .hcount(hcount),
+        .first_row(row_first), .is_char(md_is_char),
+        // A line displays only while the list is RUNNING and the latched
+        // instruction is a display mode; a parked list fetches nothing.
+        .is_display(md_is_display && !dl_done),
+        .bytes_per_line(pf_bytes), .dma_start(pf_dma_start), .step(pf_step),
+        .lms(1'b1),
+        .dl_dma_en(dmactl[5]), .missile_dma_en(dmactl[2]),
+        .player_dma_en(dmactl[3]),
+        .steal(sched_steal)
     );
 
     // ---- display-list executor ---------------------------------------------
@@ -176,24 +219,18 @@ module antic2 #(
     // off -- gtia_pmretrigger's fourth case, whose `sta hposp0` landed on cycle
     // 81 against an annotated 90.
     //
-    // STAGE 1 NEEDS THIS AND NOTHING ELSE OF THE DMA SCHEDULE, which is why it
-    // is here rather than waiting for antic_dma_sched.  The four gate tests
-    // (antic_vcount, antic_nmist, antic_dlitiming, antic_blockednmi) all run with
-    // DMACTL = $22, but they MEASURE at scanlines 2-7 -- inside vertical blank,
-    // where the playfield never fetches.  Refresh is the only thing stealing
-    // there, and with no playfield there is no contention to arbitrate: it
-    // simply takes its nine cycles.  The priority and slip rules come with the
-    // playfield in stage 2.
+    // STAGE 2 REPLACED THE STANDALONE REFRESH STEAL.  antic_dma_sched owns the
+    // whole schedule now -- refresh, the display list, P/M and the playfield --
+    // together with the priority rule between them.  What survives here is the
+    // refresh WINDOW, and only because the WSYNC RMW rule keys off it: emu's
+    // antic_dma_in_refresh is a RANGE test over 25..57, which is a different
+    // question from "is this cycle a refresh cycle" and has no other owner.
     localparam int REFRESH_FIRST = 25;
     localparam int REFRESH_STEP  = 4;
     localparam int REFRESH_COUNT = 9;
 
-    wire refresh_steal =
-        (hcount >= 7'(REFRESH_FIRST)) &&
-        (hcount <= 7'(REFRESH_FIRST + (REFRESH_COUNT-1)*REFRESH_STEP)) &&
-        (((hcount - 7'(REFRESH_FIRST)) % 7'(REFRESH_STEP)) == 7'd0);
 
-    assign dma_steal = refresh_steal;
+    assign dma_steal = sched_steal;
 
     // The WSYNC RMW extra cycle keys off the refresh WINDOW, not off individual
     // refresh cycles: emu's antic_dma_in_refresh is the RANGE test (25..57) with
