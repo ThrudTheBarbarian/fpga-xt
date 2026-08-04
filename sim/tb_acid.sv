@@ -152,6 +152,28 @@ module tb_acid #(
         end
     end endgenerate
 
+    // A bus trace in emu's ACID_BUSTRACE format: one line per CPU-serviced
+    // cycle, sampled at SUB_DATA where the access actually happens.  Lets the
+    // two designs be diffed cycle-for-cycle on the same scanline.
+    integer bcnt = 0;
+    generate if (USE_ANTIC2) begin : g_busprobe
+        always_ff @(posedge clk) begin
+            // Anchored on the EVENT, not on a scanline number: the same
+            // scanline recurs every frame and the two designs are at different
+            // program points on most of them.  This catches the origin_test
+            // sled, the NMI vector fetch and the DLI handler wherever they land.
+            if (!rst && bcnt < 60 && dut.c_sub == 8'(dut.SUB_DATA) &&
+                ((dbg_pc >= 16'h2070 && dbg_pc <= 16'h20FF) ||
+                 (dut.c_addr >= 16'hFFFA && dut.c_addr <= 16'hFFFB) ||
+                 (dbg_pc >= 16'h22C7 && dbg_pc <= 16'h22D5))) begin
+                bcnt <= bcnt + 1;
+                $display("BUS sl %0d cyc %0d %s $%04h", dut.u_antic2.line,
+                         dut.u_antic2.hcount, dut.c_rw ? "CPU-R" : "CPU-W",
+                         dut.c_addr);
+            end
+        end
+    end endgenerate
+
     integer nmcnt = 0;
     logic [7:0] vc_prev = 8'h00;
     integer vccnt = 0;
@@ -221,7 +243,8 @@ module tb_acid #(
     integer wscnt = 0;
     generate if (USE_ANTIC2) begin : g_wsprobe
         always_ff @(posedge clk) begin
-            if (!rst && wscnt < 20 && dut.u_antic2.line >= 9'd243) begin
+            if (!rst && wscnt < 24 && dut.u_antic2.line >= 9'd14 &&
+                dut.u_antic2.line <= 9'd24) begin
                 if (dut.u_antic2.u_regs.wsync_stb) begin
                     wscnt <= wscnt + 1;
                     $display("WS ARM pc=%04h sl=%0d cyc=%0d",
@@ -230,8 +253,9 @@ module tb_acid #(
                 if (dut.u_antic2.u_seq.wsync_halt && tick &&
                     dut.u_antic2.hcount == dut.u_antic2.u_seq.wsync_release) begin
                     wscnt <= wscnt + 1;
-                    $display("WS REL pc=%04h sl=%0d cyc=%0d",
-                             dbg_pc, dut.u_antic2.line, dut.u_antic2.hcount);
+                    $display("WS REL pc=%04h sl=%0d cyc=%0d extra=%0d",
+                             dbg_pc, dut.u_antic2.line, dut.u_antic2.hcount,
+                             dut.u_antic2.u_seq.wsync_extra);
                 end
             end
         end
