@@ -74,7 +74,7 @@ module antic2 #(
     wire [7:0]  dlist_val;
     wire [7:0]  pmbase, chbase, nmien;
     wire [7:0]  nmist, vcount;
-    wire        wsync_stb, wsync_rmw_readd, nmires_stb;
+    wire        wsync_stb, wsync_rmw_readd, nmires_stb, nmien_stb;
     wire        row_ends, dli_line, dli_fired_set;
     wire [7:0]  dl_insn;
     wire [3:0]  row_line;
@@ -109,7 +109,8 @@ module antic2 #(
         .hscrol(hscrol), .vscrol(vscrol), .pmbase(pmbase), .chbase(chbase),
         .nmien(nmien), .rdata(rdata),
         .wsync_stb(wsync_stb), .wsync_rmw_readd(wsync_rmw_readd),
-        .nmires_stb(nmires_stb)
+.nmien_stb(nmien_stb),
+                .nmires_stb(nmires_stb)
     );
 
     // ---- the mode's natural row height -------------------------------------
@@ -200,7 +201,7 @@ module antic2 #(
         .row_line(row_line), .row_last(row_last),
         .dl_insn_dli(dl_insn[7]), .dli_fired(dli_fired),
         .dli_fired_set(dli_fired_set),
-        .nmien(nmien), .nmires_stb(nmires_stb),
+        .nmien(nmien), .nmien_stb(nmien_stb), .nmires_stb(nmires_stb),
         .wsync_stb(wsync_stb), .wsync_rmw_readd(wsync_rmw_readd),
         .cpu_writing(cpu_writing),
         .nmist(nmist), .vcount(vcount), .nmi(nmi),

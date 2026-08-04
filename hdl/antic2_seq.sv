@@ -64,6 +64,7 @@ module antic2_seq #(
 
     // ---- register-file interface ------------------------------------------
     input  wire [7:0]  nmien,
+    input  wire        nmien_stb,          // CPU wrote NMIEN  ($D40E)
     input  wire        nmires_stb,         // CPU wrote NMIRES ($D40F)
     input  wire        wsync_stb,          // CPU wrote WSYNC  ($D40A)
     input  wire        wsync_rmw_readd,    // the write is an RMW's SECOND write
@@ -95,6 +96,9 @@ module antic2_seq #(
     // DISPROVED and not to be reintroduced: making this depend on POSITION IN
     // THE LINE (emu's WSYNC_RMW_ADJ_CYCLE=0) cost antic_dlitiming,
     // antic_dmapattern, gtia_phantomdma, gtia_psuedomodee and pokey_noise.
+    // NMIST was set THIS cycle -- a NMIRES landing in the same cycle loses.
+    logic       nmist_set_now;
+
     logic       wsync_halt;
     logic       wsync_extra;
 
@@ -200,6 +204,7 @@ module antic2_seq #(
             vcount        <= 8'h00;
             nmi           <= 1'b0;
             nmi_arm       <= 2'd0;
+            nmist_set_now <= 1'b0;
             wsync_halt    <= 1'b0;
             wsync_extra   <= 1'b0;
             // ARMED at reset, so the first line after the vertical-blank
@@ -216,9 +221,19 @@ module antic2_seq #(
                 wsync_halt  <= 1'b1;
                 wsync_extra <= wsync_rmw_readd;
             end
-            if (nmires_stb) nmist <= 8'h00;
+            // NMIRES CLEARS THE STATUS BUT LOSES TO A SET LANDING IN THE SAME
+            // CYCLE.  emu is explicit (antic.c case 0x0F): `if (!nmist_set_now)
+            // nmist = 0`.  antic_nmist strikes NMIRES on cycle 6, where the VBI
+            // bit is set, and requires the bit to STILL READ AS SET -- "VBI bit
+            // was reset too early"; a strike on cycle 7 clears it normally.
+            // Clearing unconditionally lost the bit and failed that assert.
+            if (nmires_stb && !nmist_set_now) nmist <= 8'h00;
 
             if (tick) begin
+                // Cleared at the START of the tick, like emu, so it is still
+                // standing when the CPU makes its access for the cycle just
+                // ticked -- which is the whole point of the flag.
+                nmist_set_now <= 1'b0;
                 // ---- 1. the NMI countdown ------------------------------
                 if (nmi) nmi <= 1'b0;
                 if (nmi_arm != 2'd0) begin
@@ -245,10 +260,12 @@ module antic2_seq #(
                 if (cycle == 7'(CYC_NMIST)) begin
                     if (dli_line) begin
                         nmist <= (nmist & ~8'h40) | 8'h80;
+                        nmist_set_now <= 1'b1;
                         if (nmien & 8'h80) nmi_arm <= 2'd1;
                     end
                     if (sl_now == 9'(DISPLAY_BOTTOM)) begin
                         nmist <= (nmist & ~8'h80) | 8'h40;
+                        nmist_set_now <= 1'b1;
                         if (nmien & 8'h40) nmi_arm <= 2'd1;
                     end
                 end
@@ -274,6 +291,21 @@ module antic2_seq #(
                     wsync_extra <= 1'b0;
                 end
             end
+
+            // A NMIEN WRITE LANDING IN THE SAME CYCLE AS THE STATUS SET STILL
+            // DELIVERS -- the mirror of the NMIRES rule above (emu case 0x0E).
+            // antic_nmist requires a write on cycle 6 to activate the DLI that
+            // was latched on that very cycle: "DLI was not activated by write to
+            // NMIEN on cycle 6".  It arms with TWO, not one, because the write
+            // path costs a cycle more than the status path -- the same asymmetry
+            // antic_dlitiming's two delay tests measure.
+            //
+            // Placed AFTER the tick because that is where emu applies it: the
+            // step loop runs antic_tick and THEN services the CPU's access, so a
+            // write's effect stands over the tick's own countdown.
+            if (nmien_stb && nmist_set_now && !(|nmi_arm) &&
+                (|(nmist & nmien & 8'hC0)))
+                nmi_arm <= 2'd2;
         end
     end
 

@@ -69,6 +69,7 @@ module antic2_regs (
     output logic       wsync_stb,
     output logic       wsync_rmw_readd,   // this write is an RMW's SECOND write
                                           // AND adjacent to the first
+    output logic       nmien_stb,
     output logic       nmires_stb
 );
 
@@ -103,6 +104,7 @@ module antic2_regs (
             wsync_stb       <= 1'b0;
             wsync_rmw_readd <= 1'b0;
             nmires_stb      <= 1'b0;
+            nmien_stb       <= 1'b0;
             wsync_wr_prev   <= 1'b0;
         end else begin
             wsync_stb       <= 1'b0;
@@ -110,6 +112,7 @@ module antic2_regs (
             nmires_stb      <= 1'b0;
             dlist_lo_stb    <= 1'b0;
             dlist_hi_stb    <= 1'b0;
+            nmien_stb       <= 1'b0;
 
             if (wr) begin
                 case (addr)
@@ -125,7 +128,7 @@ module antic2_regs (
                         wsync_stb       <= 1'b1;
                         wsync_rmw_readd <= wsync_wr_prev;
                     end
-                    4'hE: nmien  <= wdata;
+                    4'hE: begin nmien <= wdata; nmien_stb <= 1'b1; end
                     4'hF: nmires_stb <= 1'b1;
                     default: ;
                 endcase
