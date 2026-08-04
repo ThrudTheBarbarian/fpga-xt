@@ -43,14 +43,13 @@ module antic2_line #(
     input  wire        row_ends_in,       // from antic2_seq, decided at CYC_ROWEND
 
     // ---- display-list instruction fetch ------------------------------------
-    input  wire [7:0]  dl_byte,           // the fetched instruction
-    input  wire        dl_byte_valid,
-    output logic       dl_fetch_req,      // ask for the next instruction
+    // No byte port: antic2_dl owns the decode and hands back dl_done_in.
+    output logic       dl_fetch_req,      // ask antic2_dl for the next instruction
 
     // ---- state the sequence needs ------------------------------------------
-    output logic [7:0] dl_insn,
     output logic [3:0] row_line,
-    output logic       dl_done,           // a JVB has parked the list
+    input  wire        dl_done_in,        // from antic2_dl (JVB parked)
+    output logic       dl_done,           // local view, cleared at vblank end
     output logic       row_first          // this is the row's FIRST scanline
 );
 
@@ -71,7 +70,6 @@ module antic2_line #(
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            dl_insn      <= 8'h00;
             row_line     <= 4'd0;
             // START PARKED, as if a JVB had just executed.  A well-formed
             // display list only ever begins after vertical blank ends, and the
@@ -83,6 +81,7 @@ module antic2_line #(
             dl_fetch_req <= 1'b0;
         end else begin
             dl_fetch_req <= 1'b0;
+            if (dl_done_in) dl_done <= 1'b1;
 
             if (line_start) begin
                 row_first <= 1'b0;
@@ -128,11 +127,12 @@ module antic2_line #(
                 end
             end
 
-            if (dl_byte_valid) begin
-                dl_insn <= dl_byte;
-                // A JVB ($41 in the low nibble with the jump bit) parks the list.
-                if ((dl_byte & 8'h0F) == 4'h1 && dl_byte[6]) dl_done <= 1'b1;
-            end
+            // NO DL DECODE HERE.  antic2_dl owns it.  This module previously
+            // latched every `dl_byte_valid` as an instruction, which also caught
+            // the OPERAND bytes of LMS and JMP -- so a $40-something operand read
+            // as a JVB and parked the list, and the DLI never fired.  That is the
+            // "two definitions of one value" trap: the memory port feeds ONE
+            // decoder, and `dl_done` comes back from it.
         end
     end
 

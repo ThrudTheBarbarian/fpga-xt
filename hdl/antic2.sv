@@ -76,7 +76,7 @@ module antic2 #(
     wire        row_ends, dli_line, dli_fired_set;
     wire [7:0]  dl_insn;
     wire [3:0]  row_line;
-    wire        dl_done, row_first;
+    wire        dl_done, row_first, dl_done_dl;
     wire        dl_fetch_req;
     wire [3:0]  dl_row_end;
     wire        dl_row_end_live;
@@ -125,7 +125,7 @@ module antic2 #(
         .dl_insn(dl_insn), .dl_addr(dl_addr_o), .pf_addr(pf_addr_o),
         .row_end(dl_row_end), .row_end_live(dl_row_end_live),
         .row_line_load(dl_row_line_load), .row_line_set(dl_row_line_set),
-        .dl_done(), .busy(dl_busy)
+        .dl_done(dl_done_dl), .busy(dl_busy)
     );
 
     // ---- start-of-line bookkeeping -----------------------------------------
@@ -134,9 +134,8 @@ module antic2 #(
     ) u_line (
         .clk(clk), .rst(rst), .line_start(line_start),
         .scanline(line), .dmactl(dmactl), .row_ends_in(row_ends),
-        .dl_byte(mem_data), .dl_byte_valid(mem_valid),
-        .dl_fetch_req(dl_fetch_req),
-        .dl_insn(), .row_line(row_line), .dl_done(dl_done), .row_first(row_first)
+        .dl_fetch_req(dl_fetch_req), .dl_done_in(dl_done_dl),
+        .row_line(row_line), .dl_done(dl_done), .row_first(row_first)
     );
 
     // The row's last scanline, resolved NOW.  `row_end_live` is emu's -1: the
