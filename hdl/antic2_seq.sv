@@ -146,6 +146,26 @@ module antic2_seq #(
     // moment the release was corrected, which is how the phase was found.
     wire [6:0] cyc_eff = (cycle == 7'(LINE_CYCLES - 1)) ? 7'd0 : cycle + 7'd1;
 
+    // MEASURED AGAINST THE ORACLE, and the two registers DO NOT share a phase:
+    //
+    //   VCOUNT  advances at 111 and a read AT 111 sees the NEW value
+    //           (emu, antic_vcount scanline 5: "cyc 111 CPU-R $D40B -> $03"),
+    //           so it is computed at the edge from 110  -> cyc_eff.
+    //   NMIST   sets at 6 and a read AT 6 sees the OLD value; the same test's
+    //           next probe, seven cycles later, sees the new one
+    //           (emu, antic_nmist scanline 39: "cyc 6 CPU-R $D40F -> $00" from
+    //           the lda at $220B, "cyc 7 -> $80" from the lda at $2251),
+    //           so it is computed at the edge from 6    -> cycle.
+    //
+    // Applying VCOUNT's phase to NMIST set the DLI bit a cycle early and cost
+    // antic_blockednmi.  ROWEND stays on `cycle` with NMIST: it feeds the same
+    // decision two cycles ahead of it.
+    //
+    // The test's own annotation says that read is on cycle 5.  IT IS NOT -- the
+    // oracle's bus trace shows the instruction fetches at 3,4,5 and the data
+    // cycle at 6.  Comments in the suite are commentary; the asserts and the
+    // oracle are the specification.
+
     // The scanline cyc_eff belongs to.  antic_beam advances `line` on the edge
     // FROM 110, so at the edges from 111 and 112 -- which produce cycles 112 and
     // 113, still part of the OLD line -- `scanline` already reads the next one.
@@ -211,7 +231,7 @@ module antic2_seq #(
                 // NMIST time: NMIST lands at cycle 6, so re-reading there would
                 // let a VSCROL write on cycle 4 count, and antic_vscroldli
                 // requires exactly that write to be too late.
-                if (cyc_eff == 7'(CYC_ROWEND)) begin
+                if (cycle == 7'(CYC_ROWEND)) begin
                     row_ends <= at_last;
                     dli_line <= dl_insn_dli && !(blanking && dli_fired) && at_last;
                     if (dl_insn_dli && !(blanking && dli_fired) && at_last)
@@ -222,7 +242,7 @@ module antic2_seq #(
                 // NMIST sets REGARDLESS of NMIEN -- NMIEN gates the INTERRUPT,
                 // not the status -- and the DLI and VBI bits clear each other
                 // on arrival.
-                if (cyc_eff == 7'(CYC_NMIST)) begin
+                if (cycle == 7'(CYC_NMIST)) begin
                     if (dli_line) begin
                         nmist <= (nmist & ~8'h40) | 8'h80;
                         if (nmien & 8'h80) nmi_arm <= 2'd1;
