@@ -50,8 +50,14 @@ module antic2_regs (
     // ---- register state out -----------------------------------------------
     output logic [7:0] dmactl,
     output logic [7:0] chactl,
-    output logic [7:0] dlistl,
-    output logic [7:0] dlisth,
+    // DLISTL/H ARE NOT STORED HERE.  They ARE the display-list counter, which
+    // antic2_dl increments in place as it fetches; a write says where the list
+    // RESUMES from and there is nothing to reload it from later.  Keeping a
+    // copy in the register file would be a second definition of the same
+    // value, so the write leaves here as an EVENT and antic2_dl owns it.
+    output logic       dlist_lo_stb,
+    output logic       dlist_hi_stb,
+    output logic [7:0] dlist_val,
     output logic [7:0] hscrol,
     output logic [7:0] vscrol,
     output logic [7:0] pmbase,
@@ -86,8 +92,9 @@ module antic2_regs (
         if (rst) begin
             dmactl          <= 8'h00;
             chactl          <= 8'h00;
-            dlistl          <= 8'h00;
-            dlisth          <= 8'h00;
+            dlist_lo_stb    <= 1'b0;
+            dlist_hi_stb    <= 1'b0;
+            dlist_val       <= 8'h00;
             hscrol          <= 8'h00;
             vscrol          <= 8'h00;
             pmbase          <= 8'h00;
@@ -101,13 +108,15 @@ module antic2_regs (
             wsync_stb       <= 1'b0;
             wsync_rmw_readd <= 1'b0;
             nmires_stb      <= 1'b0;
+            dlist_lo_stb    <= 1'b0;
+            dlist_hi_stb    <= 1'b0;
 
             if (wr) begin
                 case (addr)
                     4'h0: dmactl <= wdata;
                     4'h1: chactl <= wdata;
-                    4'h2: dlistl <= wdata;
-                    4'h3: dlisth <= wdata;
+                    4'h2: begin dlist_lo_stb <= 1'b1; dlist_val <= wdata; end
+                    4'h3: begin dlist_hi_stb <= 1'b1; dlist_val <= wdata; end
                     4'h4: hscrol <= wdata;
                     4'h5: vscrol <= wdata;
                     4'h7: pmbase <= wdata;

@@ -48,7 +48,7 @@ module antic2_line #(
 
     // ---- state the sequence needs ------------------------------------------
     output logic [3:0] row_line,
-    input  wire        dl_done_in,        // from antic2_dl (JVB parked)
+    input  wire        jvb_pulse,         // one cycle from antic2_dl
     output logic       dl_done,           // local view, cleared at vblank end
     output logic       row_first          // this is the row's FIRST scanline
 );
@@ -81,7 +81,9 @@ module antic2_line #(
             dl_fetch_req <= 1'b0;
         end else begin
             dl_fetch_req <= 1'b0;
-            if (dl_done_in) dl_done <= 1'b1;
+            // antic2_line OWNS dl_done: set by the JVB pulse, cleared at the
+            // vblank-end release below.  ONE owner.
+            if (jvb_pulse) dl_done <= 1'b1;
 
             if (line_start) begin
                 row_first <= 1'b0;
@@ -94,12 +96,24 @@ module antic2_line #(
                 // antic_dlistwrap's first assertion outright.  row_line is not
                 // reset either -- an overrunning row carries on across the
                 // boundary.
+                // row_line ADVANCES ON EVERY SCANLINE THE LIST IS RUNNING,
+                // INCLUDING THE ONE THAT FETCHES.  emu's line_start ends with an
+                // unconditional `row_line = (row_line + 1) & 15`, and dl_exec
+                // sets the counter to 0, so a fetched row leaves its FIRST line
+                // holding ONE, not zero.  Incrementing only on the non-fetch
+                // lines -- the intuitive shape -- makes every row ONE SCANLINE
+                // LONG TOO MANY: an $F0 blank ran nine lines and its DLI landed
+                // on the first line of the NEXT row.
+                //
+                // The exception is the early return: a row that ends OUTSIDE the
+                // display region consumes row_ends and returns before the
+                // increment, so the counter does not move.
                 if (vblank_ends && dl_done) begin
                     dl_done <= 1'b0;
                     // force a fetch on the first line
                     dl_fetch_req <= 1'b1;
                     row_first    <= 1'b1;
-                    row_line     <= 4'd0;
+                    row_line     <= 4'd1;
                 end
                 else if (!dl_done && row_ends_in) begin
                     // Only FETCHING a new instruction needs display-list DMA.  A
@@ -109,7 +123,7 @@ module antic2_line #(
                         if (dmactl[5]) begin
                             dl_fetch_req <= 1'b1;
                             row_first    <= 1'b1;
-                            row_line     <= 4'd0;
+                            row_line     <= 4'd1;
                         end
                         // With DL DMA OFF there is no new instruction, so the
                         // CURRENT one is REUSED and the row runs again -- the

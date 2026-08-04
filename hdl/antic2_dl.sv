@@ -40,6 +40,13 @@ module antic2_dl (
     output logic       mem_req,
     output logic [15:0] mem_addr,
 
+    // The DL counter is loaded by a CPU write to DLISTL/H.  Without this the
+    // list is fetched from $0000 -- which reads $00, a one-line blank with no
+    // DLI -- so the list appears to run and nothing ever interrupts.
+    input  wire        dlist_lo_stb,
+    input  wire        dlist_hi_stb,
+    input  wire  [7:0] dlist_val,
+
     input  wire  [7:0] vscrol,
     input  wire  [4:0] mode_rows,       // from antic_mode_tbl, for modes >= 2
 
@@ -51,7 +58,11 @@ module antic2_dl (
                                         //    against VSCROL every scanline
     output logic [3:0]  row_line_load,  // entering a scrolled region: start high
     output logic        row_line_set,
-    output logic        dl_done,        // JVB: park until vertical blank ends
+    output logic        jvb_pulse,      // ONE CYCLE when a JVB is decoded.
+                                       // antic2_line OWNS the parked state:
+                                       // a LEVEL here re-set it every clock,
+                                       // the list never unparked, nothing was
+                                       // ever fetched and no DLI could fire.
     output logic        busy
 );
 
@@ -84,7 +95,7 @@ module antic2_dl (
             row_end_live  <= 1'b0;
             row_line_load <= 4'd0;
             row_line_set  <= 1'b0;
-            dl_done       <= 1'b1;      // start PARKED (see antic2_line)
+            jvb_pulse     <= 1'b0;
             busy          <= 1'b0;
             vscrol_prev   <= 1'b0;
             want_operand  <= 1'b0;
@@ -94,6 +105,7 @@ module antic2_dl (
         end else begin
             row_line_set <= 1'b0;
             mem_req      <= 1'b0;
+            jvb_pulse    <= 1'b0;
 
             case (st)
             S_IDLE: begin
@@ -158,7 +170,7 @@ module antic2_dl (
                 dl_addr <= dl_addr + 16'd1;
                 if (is_jump) begin
                     dl_addr <= {mem_data, lo_r};
-                    dl_done <= insn_r[6];          // JVB
+                    jvb_pulse <= insn_r[6];        // JVB
                 end else begin
                     // LMS: the operand fetches go through the same 1 KB-wrapping
                     // counter, which is what antic_addresswrap exploits.
@@ -181,6 +193,11 @@ module antic2_dl (
                 st <= S_IDLE;
             end
             endcase
+
+            // AFTER the case, so a write WINS over an increment in the same
+            // cycle: emu applies it straight to dl_addr at write time.
+            if (dlist_lo_stb) dl_addr[7:0]  <= dlist_val;
+            if (dlist_hi_stb) dl_addr[15:8] <= dlist_val;
         end
     end
 

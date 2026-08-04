@@ -69,14 +69,16 @@ module antic2 #(
 );
 
     wire        line_start;
-    wire [7:0]  dmactl, chactl, dlistl, dlisth, hscrol, vscrol;
+    wire [7:0]  dmactl, chactl, hscrol, vscrol;
+    wire        dlist_lo_stb, dlist_hi_stb;
+    wire [7:0]  dlist_val;
     wire [7:0]  pmbase, chbase, nmien;
     wire [7:0]  nmist, vcount;
     wire        wsync_stb, wsync_rmw_readd, nmires_stb;
     wire        row_ends, dli_line, dli_fired_set;
     wire [7:0]  dl_insn;
     wire [3:0]  row_line;
-    wire        dl_done, row_first, dl_done_dl;
+    wire        dl_done, row_first, jvb_pulse;
     wire        dl_fetch_req;
     wire [3:0]  dl_row_end;
     wire        dl_row_end_live;
@@ -101,7 +103,9 @@ module antic2 #(
         .clk(clk), .rst(rst), .tick(tick),
         .cs(cs), .we(we), .addr(addr), .wdata(wdata),
         .nmist_in(nmist), .vcount_in(vcount),
-        .dmactl(dmactl), .chactl(chactl), .dlistl(dlistl), .dlisth(dlisth),
+        .dmactl(dmactl), .chactl(chactl),
+        .dlist_lo_stb(dlist_lo_stb), .dlist_hi_stb(dlist_hi_stb),
+        .dlist_val(dlist_val),
         .hscrol(hscrol), .vscrol(vscrol), .pmbase(pmbase), .chbase(chbase),
         .nmien(nmien), .rdata(rdata),
         .wsync_stb(wsync_stb), .wsync_rmw_readd(wsync_rmw_readd),
@@ -121,11 +125,13 @@ module antic2 #(
         .exec_req(dl_fetch_req),
         .mem_data(mem_data), .mem_valid(mem_valid),
         .mem_req(mem_req), .mem_addr(mem_addr),
+        .dlist_lo_stb(dlist_lo_stb), .dlist_hi_stb(dlist_hi_stb),
+        .dlist_val(dlist_val),
         .vscrol(vscrol), .mode_rows(mode_rows),
         .dl_insn(dl_insn), .dl_addr(dl_addr_o), .pf_addr(pf_addr_o),
         .row_end(dl_row_end), .row_end_live(dl_row_end_live),
         .row_line_load(dl_row_line_load), .row_line_set(dl_row_line_set),
-        .dl_done(dl_done_dl), .busy(dl_busy)
+        .jvb_pulse(jvb_pulse), .busy(dl_busy)
     );
 
     // ---- start-of-line bookkeeping -----------------------------------------
@@ -134,7 +140,7 @@ module antic2 #(
     ) u_line (
         .clk(clk), .rst(rst), .line_start(line_start),
         .scanline(line), .dmactl(dmactl), .row_ends_in(row_ends),
-        .dl_fetch_req(dl_fetch_req), .dl_done_in(dl_done_dl),
+        .dl_fetch_req(dl_fetch_req), .jvb_pulse(jvb_pulse),
         .row_line(row_line), .dl_done(dl_done), .row_first(row_first)
     );
 
@@ -186,7 +192,8 @@ module antic2 #(
 
     // ---- the per-cycle sequence --------------------------------------------
     antic2_seq #(
-        .LINE_CYCLES(LINE_CYCLES), .DISPLAY_TOP(DISPLAY_TOP), .LINES(LINES)
+        .LINE_CYCLES(LINE_CYCLES), .DISPLAY_TOP(DISPLAY_TOP),
+        .DISPLAY_BOTTOM(DISPLAY_BOTTOM), .LINES(LINES)
     ) u_seq (
         .clk(clk), .rst(rst), .tick(tick),
         .cycle(hcount), .scanline(line),

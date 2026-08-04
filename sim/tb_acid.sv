@@ -125,6 +125,118 @@ module tb_acid #(
                      dut.c_addr[11:0], dut.c_din, line, hcount);
     end
 
+    // DLI chain probe (antic2 only).  antic_nmist fails on "The DLI1 handler was
+    // not called" while the VBI fires, so the break is somewhere in
+    // fetch -> dl_insn[7] -> row_ends -> dli_line.  Print the whole chain once
+    // per scanline so the broken link is visible rather than guessed.
+        logic [2:0] dl_st_prev = 3'd0;
+
+    // Every CPU read of NMIST, with where the beam was: "the DLI bit was not
+    // cleared at 248" is a claim about a VALUE AT A MOMENT, so both halves have
+    // to be measured together.
+    integer nmcnt = 0;
+    logic [7:0] vc_prev = 8'h00;
+    integer vccnt = 0;
+    generate if (USE_ANTIC2) begin : g_nmprobe
+        always_ff @(posedge clk) begin
+            if (!rst && nmcnt < 30 &&
+                dut.cs_antic && dut.c_rw && dut.c_addr[3:0] == 4'hF &&
+                dut.c_sub == 8'(dut.SUB_DATA)) begin
+                nmcnt <= nmcnt + 1;
+                $display("NMR sl=%0d cyc=%0d rd=%02h nmist=%02h dli=%0d insn=%02h",
+                         dut.u_antic2.line, dut.u_antic2.hcount, dut.c_din,
+                         dut.u_antic2.nmist, dut.u_antic2.dli_line,
+                         dut.u_antic2.dl_insn);
+            end
+        end
+    end endgenerate
+
+    // WHEN does VCOUNT change, and where is the beam?  emu advances it at cycle
+    // 111 of every ODD scanline, so the new value is visible for the last few
+    // cycles of that line -- a poll can legitimately catch it there.
+    // Every WSYNC write and every release, with the PC: "the read landed a line
+    // early" is a claim about the STALL, so measure the stall itself.
+    integer wscnt = 0;
+    generate if (USE_ANTIC2) begin : g_wsprobe
+        always_ff @(posedge clk) begin
+            if (!rst && wscnt < 20 && dut.u_antic2.line >= 9'd243) begin
+                if (dut.u_antic2.u_regs.wsync_stb) begin
+                    wscnt <= wscnt + 1;
+                    $display("WS ARM pc=%04h sl=%0d cyc=%0d",
+                             dbg_pc, dut.u_antic2.line, dut.u_antic2.hcount);
+                end
+                if (dut.u_antic2.u_seq.wsync_halt && tick &&
+                    dut.u_antic2.hcount == dut.u_antic2.u_seq.wsync_release) begin
+                    wscnt <= wscnt + 1;
+                    $display("WS REL pc=%04h sl=%0d cyc=%0d",
+                             dbg_pc, dut.u_antic2.line, dut.u_antic2.hcount);
+                end
+            end
+        end
+    end endgenerate
+
+    generate if (USE_ANTIC2) begin : g_vcprobe
+        always_ff @(posedge clk) begin
+            if (!rst && tick && dut.u_antic2.vcount !== vc_prev &&
+                dut.u_antic2.line >= 9'd240 && vccnt < 12) begin
+                vccnt <= vccnt + 1;
+                $display("VC sl=%0d cyc=%0d vcount %02h -> %02h",
+                         dut.u_antic2.line, dut.u_antic2.hcount,
+                         vc_prev, dut.u_antic2.vcount);
+            end
+            if (tick) vc_prev <= dut.u_antic2.vcount;
+        end
+    end endgenerate
+
+    generate if (USE_ANTIC2) begin : g_dlprobe
+        // The DL executor's own state machine.  Print on every state change and
+        // on every DLIST write, so "no instruction is ever latched" resolves to
+        // WHICH step stops: the request, the memory answer, or the decode.
+        integer dlcnt = 0;
+        // cap raised: the interesting window is after DMACTL is set
+        always_ff @(posedge clk) begin
+            if (!rst && dlcnt < 400) begin
+                if (dut.u_antic2.u_regs.dlist_lo_stb ||
+                    dut.u_antic2.u_regs.dlist_hi_stb) begin
+                    dlcnt <= dlcnt + 1;
+                    $display("DLW lo=%0d hi=%0d val=%02h dl_addr=%04h",
+                             dut.u_antic2.u_regs.dlist_lo_stb,
+                             dut.u_antic2.u_regs.dlist_hi_stb,
+                             dut.u_antic2.u_regs.dlist_val,
+                             dut.u_antic2.u_dl.dl_addr);
+                end
+                if (dut.u_antic2.u_line.line_start &&
+                    dut.u_antic2.dmactl != 8'h00) begin
+                    dlcnt <= dlcnt + 1;
+                    $display("DLL sl=%0d dmactl=%02h dldone=%0d rowends=%0d rowline=%0d fetch=%0d",
+                             dut.u_antic2.line, dut.u_antic2.dmactl,
+                             dut.u_antic2.dl_done, dut.u_antic2.row_ends,
+                             dut.u_antic2.row_line, dut.u_antic2.dl_fetch_req);
+                end
+                if (dut.u_antic2.u_dl.st !== dl_st_prev) begin
+                    dlcnt <= dlcnt + 1;
+                    $display("DLS st=%0d req=%0d addr=%04h valid=%0d data=%02h exec=%0d insn=%02h",
+                             dut.u_antic2.u_dl.st, dut.u_antic2.mem_req,
+                             dut.u_antic2.mem_addr, dut.u_antic2.mem_valid,
+                             dut.u_antic2.mem_data, dut.u_antic2.dl_fetch_req,
+                             dut.u_antic2.dl_insn);
+                end
+            end
+            dl_st_prev <= dut.u_antic2.u_dl.st;
+        end
+    end endgenerate
+
+    generate if (USE_ANTIC2) begin : g_dliprobe
+        always_ff @(posedge clk) begin
+            if (probe_on && tick && !rst && (hcount == 7'd8) && (line >= 9'd30) && (line < 9'd50))
+                $display("DLI sl=%0d insn=%02h row_line=%0d row_last=%0d rowends=%0d dli=%0d nmist=%02h nmien=%02h",
+                         line, dut.u_antic2.dl_insn, dut.u_antic2.row_line,
+                         dut.u_antic2.row_last, dut.u_antic2.row_ends,
+                         dut.u_antic2.dli_line, dut.u_antic2.nmist,
+                         dut.u_antic2.nmien);
+        end
+    end endgenerate
+
     // Stall LENGTH: machine cycles the CPU is held (c_rdy low) per WSYNC.
     // Trigger semantics, stated because three probes tonight were misread:
     // counts `tick`s where c_rdy is LOW, reset when /RDY comes back.  That is a
