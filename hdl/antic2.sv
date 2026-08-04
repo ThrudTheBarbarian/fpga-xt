@@ -78,7 +78,7 @@ module antic2 #(
     wire        row_ends, dli_line, dli_fired_set;
     wire [7:0]  dl_insn;
     wire [3:0]  row_line;
-    wire        dl_done, row_first, jvb_pulse;
+    wire        dl_done, row_first, jvb_pulse, dl_insn_stb;
     wire        dl_fetch_req;
     wire [3:0]  dl_row_end;
     wire        dl_row_end_live;
@@ -132,7 +132,7 @@ module antic2 #(
         .dl_insn(dl_insn), .dl_addr(dl_addr_o), .pf_addr(pf_addr_o),
         .row_end(dl_row_end), .row_end_live(dl_row_end_live),
         .row_line_load(dl_row_line_load), .row_line_set(dl_row_line_set),
-        .jvb_pulse(jvb_pulse), .busy(dl_busy)
+        .jvb_pulse(jvb_pulse), .insn_stb(dl_insn_stb), .busy(dl_busy)
     );
 
     // ---- start-of-line bookkeeping -----------------------------------------
@@ -142,6 +142,7 @@ module antic2 #(
         .clk(clk), .rst(rst), .line_start(line_start),
         .scanline(line), .dmactl(dmactl), .row_ends_in(row_ends),
         .dl_fetch_req(dl_fetch_req), .jvb_pulse(jvb_pulse),
+        .row_line_load(dl_row_line_load), .row_line_set(dl_row_line_set),
         .row_line(row_line), .dl_done(dl_done), .row_first(row_first)
     );
 
@@ -157,10 +158,13 @@ module antic2 #(
     // still allowing a FIRST firing outside the display region
     // (antic_dlistwrap #1).  Cleared once per frame.
     logic dli_fired;
+    // CLEARED PER DISPLAY-LIST INSTRUCTION, not per frame.  emu's dl_exec does
+    // `a->dli_fired = 0` on every instruction it executes; clearing once a frame
+    // let one row's firing suppress a later row's in the same frame.
     always_ff @(posedge clk or posedge rst) begin
-        if (rst)                                  dli_fired <= 1'b0;
-        else if (line_start && (line == 9'd0))    dli_fired <= 1'b0;
-        else if (dli_fired_set)                   dli_fired <= 1'b1;
+        if (rst)                  dli_fired <= 1'b0;
+        else if (dl_insn_stb)     dli_fired <= 1'b0;
+        else if (dli_fired_set)   dli_fired <= 1'b1;
     end
 
     // ---- memory refresh ----------------------------------------------------

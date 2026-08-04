@@ -63,6 +63,9 @@ module antic2_dl (
                                        // a LEVEL here re-set it every clock,
                                        // the list never unparked, nothing was
                                        // ever fetched and no DLI could fire.
+    // Pulsed when an instruction is LATCHED.  emu's dl_exec clears dli_fired
+    // PER INSTRUCTION, not per frame -- see antic2.sv.
+    output logic        insn_stb,
     output logic        busy
 );
 
@@ -96,6 +99,7 @@ module antic2_dl (
             row_line_load <= 4'd0;
             row_line_set  <= 1'b0;
             jvb_pulse     <= 1'b0;
+            insn_stb      <= 1'b0;
             busy          <= 1'b0;
             vscrol_prev   <= 1'b0;
             want_operand  <= 1'b0;
@@ -106,6 +110,7 @@ module antic2_dl (
             row_line_set <= 1'b0;
             mem_req      <= 1'b0;
             jvb_pulse    <= 1'b0;
+            insn_stb     <= 1'b0;
 
             case (st)
             S_IDLE: begin
@@ -120,6 +125,7 @@ module antic2_dl (
             S_INSN: if (mem_valid) begin
                 insn_r      <= mem_data;
                 dl_insn     <= mem_data;
+                insn_stb    <= 1'b1;
                 dl_addr     <= dl_addr + 16'd1;
                 vscrol_prev <= (mem_data[3:0] >= 4'd2) && mem_data[5];
 

@@ -49,6 +49,15 @@ module antic2_line #(
     // ---- state the sequence needs ------------------------------------------
     output logic [3:0] row_line,
     input  wire        jvb_pulse,         // one cycle from antic2_dl
+
+    // ENTERING A SCROLLED REGION: the row counter STARTS at VSCROL, so the
+    // first row is short by that much (emu dl_exec).  antic2_line stays the
+    // SOLE owner of row_line -- antic2_dl only supplies a value and a strobe,
+    // which arrive a few clocks after line_start because the decode has to
+    // finish first.  The +1 is line_start's own tail increment, the same one
+    // that leaves an ordinary fetched row holding ONE.
+    input  wire [3:0]  row_line_load,
+    input  wire        row_line_set,
     output logic       dl_done,           // local view, cleared at vblank end
     output logic       row_first          // this is the row's FIRST scanline
 );
@@ -84,6 +93,7 @@ module antic2_line #(
             // antic2_line OWNS dl_done: set by the JVB pulse, cleared at the
             // vblank-end release below.  ONE owner.
             if (jvb_pulse) dl_done <= 1'b1;
+            if (row_line_set) row_line <= row_line_load + 4'd1;
 
             if (line_start) begin
                 row_first <= 1'b0;
