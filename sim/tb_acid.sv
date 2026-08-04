@@ -191,6 +191,26 @@ module tb_acid #(
         end
     end endgenerate
 
+    // The NMI ARM path, cycle by cycle, on the scanline under test: the DLI can
+    // be armed by the STATUS set (arm=1) or by a NMIEN write in the same cycle
+    // (arm=2), and the two deliver one cycle apart.
+    integer acnt = 0;
+    generate if (USE_ANTIC2) begin : g_armprobe
+        always_ff @(posedge clk) begin
+            // Gated on NMIEN being enabled: the early frames run with NMIEN=0
+            // and would eat the whole event budget before the DLI phase starts.
+            if (!rst && tick && acnt < 42 && bus_line == 9'(BUSLINE) &&
+                dut.u_antic2.nmien != 8'h00 && dut.u_antic2.hcount <= 7'd20) begin
+                acnt <= acnt + 1;
+                $display("ARM cyc=%0d dli=%0d nmist=%02h nmien=%02h arm=%0d nmi=%0d setnow=%0d",
+                         dut.u_antic2.hcount, dut.u_antic2.dli_line,
+                         dut.u_antic2.nmist, dut.u_antic2.nmien,
+                         dut.u_antic2.u_seq.nmi_arm, dut.u_antic2.nmi,
+                         dut.u_antic2.u_seq.nmist_set_now);
+            end
+        end
+    end endgenerate
+
     integer nmcnt = 0;
     logic [7:0] vc_prev = 8'h00;
     integer vccnt = 0;
