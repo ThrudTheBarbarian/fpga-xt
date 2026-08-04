@@ -125,6 +125,14 @@ module a8_core #(
     wire [6:0]  gt_hcount;      // antic_gtia's beam, used when USE_ANTIC2=0
     wire [8:0]  gt_line;
     wire [15:0] gt_antic_addr;
+    wire [7:0]  a2_rdata;
+    wire        a2_nmi;          // POSITIVE one-cycle PULSE
+    wire        a2_wsync_take;
+    wire        a2_dma_steal;
+    wire [15:0] a2_mem_addr;
+    wire        a2_mem_req;
+    wire [6:0]  a2_hcount;
+    wire [8:0]  a2_line;
     wire        nmi_n_eff;
     wire [15:0] c_addr;
     wire [7:0]  c_dout;
@@ -184,14 +192,6 @@ module a8_core #(
 
 
     // ---- antic2 (stage 1) ---------------------------------------------------
-    wire [7:0]  a2_rdata;
-    wire        a2_nmi;          // POSITIVE one-cycle PULSE
-    wire        a2_wsync_take;
-    wire        a2_dma_steal;
-    wire [15:0] a2_mem_addr;
-    wire        a2_mem_req;
-    wire [6:0]  a2_hcount;
-    wire [8:0]  a2_line;
 
     // The ANTIC memory port answers one clock after the address is presented
     // (tb_acid and the fabric both register it), so `valid` is the request

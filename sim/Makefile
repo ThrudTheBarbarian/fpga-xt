@@ -1462,7 +1462,11 @@ build/tb_antic_gtia.vvp: tb_antic_gtia.sv $(ANTIC_GTIA_SRC) | build
 POKEY_SRC = $(HDL_DIR)/pokey.sv $(HDL_DIR)/pokey_regs.sv \
 	    $(HDL_DIR)/pokey_audio.sv $(HDL_DIR)/pokey_pot.sv
 
-A8_CORE_SRC = $(HDL_DIR)/a8_core.sv $(ANTIC_GTIA_SRC) \
+ANTIC2_SRC = $(HDL_DIR)/antic2.sv $(HDL_DIR)/antic2_seq.sv \
+	    $(HDL_DIR)/antic2_regs.sv $(HDL_DIR)/antic2_line.sv \
+	    $(HDL_DIR)/antic2_dl.sv
+
+A8_CORE_SRC = $(HDL_DIR)/a8_core.sv $(ANTIC_GTIA_SRC) $(ANTIC2_SRC) \
 	    $(POKEY_SRC) \
 	    $(HDL_DIR)/xt6502f/xt6502f.sv
 
@@ -1479,6 +1483,15 @@ TEST ?= antic_vcount
 
 acid: build/tb_acid.vvp
 	@vvp -N $< +TEST=$(TEST)
+
+# antic2 build: a SEPARATE binary, not a -D toggle on the same one.  make does
+# not rebuild for a changed define and would silently re-run the other design.
+acid2: build/tb_acid2.vvp
+	@vvp -N $< +TEST=$(TEST)
+
+build/tb_acid2.vvp: tb_acid.sv $(A8_CORE_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
+	    -Ptb_acid.USE_ANTIC2=1 -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
 
 build/tb_acid.vvp: tb_acid.sv $(A8_CORE_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \

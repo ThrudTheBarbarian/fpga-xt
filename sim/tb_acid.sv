@@ -36,7 +36,13 @@
 // Reads of other hardware pages return $FF, which is what an unpopulated bus
 // gives.
 //
-module tb_acid;
+module tb_acid #(
+    // Selects the ANTIC implementation.  A PARAMETER on the top module so it can
+    // be set with iverilog -Ptb_acid.USE_ANTIC2=1, and a SEPARATE BINARY rather
+    // than a -D toggle: `make` does not rebuild for a changed define, which has
+    // silently re-run the previous build twice in this project.
+    parameter bit USE_ANTIC2 = 1'b0
+);
 
     logic clk = 0, rst = 1, cold = 0;
     always #5 clk = ~clk;
@@ -73,7 +79,7 @@ module tb_acid;
     always_ff @(posedge clk) begin
         if (probe_on && tick && !rst && dut.c_rw && (dut.c_addr == 16'hD40B))
             $display("PROBE vcount-read pc=%04h line=%0d hcount=%0d value=%02h",
-                     dbg_pc, line, hcount, dut.reg_rdata);
+                     dbg_pc, line, hcount, dut.c_din);
     end
 
     // The SAME read, sampled where the CPU actually samples it: SUB_DATA,
@@ -84,7 +90,7 @@ module tb_acid;
         if (probe_on && !rst && dut.c_rw && (dut.c_addr == 16'hD40B)
             && (dut.c_sub == 8'(dut.SUB_DATA)))
             $display("PROBE-SUB    pc=%04h line=%0d hcount=%0d value=%02h",
-                     dbg_pc, line, hcount, dut.reg_rdata);
+                     dbg_pc, line, hcount, dut.c_din);
     end
 
     // The WSYNC resume gap, measured rather than argued.  The oracle's
@@ -116,7 +122,7 @@ module tb_acid;
             && (dut.c_addr[15:4] == 12'hD00)
             && (dut.c_sub == 8'(dut.SUB_DATA)))
             $display("PROBE-COL addr=%03h value=%02h line=%0d hcount=%0d",
-                     dut.c_addr[11:0], dut.reg_rdata, line, hcount);
+                     dut.c_addr[11:0], dut.c_din, line, hcount);
     end
 
     // Stall LENGTH: machine cycles the CPU is held (c_rdy low) per WSYNC.
@@ -151,7 +157,7 @@ module tb_acid;
         end
     end
 
-    a8_core dut (
+    a8_core #(.USE_ANTIC2(USE_ANTIC2)) dut (
         .clk(clk), .rst(rst), .cold(cold),
         .tick(tick), .px_tick(px_tick), .tune(tune_v),
         .cpu_addr(cpu_addr), .cpu_wdata(cpu_wdata), .cpu_we(cpu_we),
