@@ -179,3 +179,43 @@ CONSEQUENCE FOR STAGE 2: the fetch map needs a different gate until this is
 fixed.  `antic_dma_sched` is already measured correct standalone (c96332a), so
 the map's own correctness is not in question — what is missing is an end-to-end
 test that can observe it through this harness.
+
+## Stage 2: the playfield starts one scanline late
+
+With the SKCTL harness fix in place, `antic_dmapattern` reaches its assertions
+and names the fault: `_FAIL "Incorrect timing for mode %x-%c"` with d1=$02,
+d2='a' — mode 2, variant a.
+
+Diffing our per-line steal map against emu's `ACID_GLYPHPROBE=9` END map for the
+same display-list instruction ($42, LMS + mode 2) shows what that means.  emu
+puts the display-list fetch AND that row's playfield on ONE scanline:
+
+    emu    .#....##.................##.###############################...
+
+We split them across two:
+
+    ours   .#....##.................#...#...#...#...#...#...#...#...#...   (DL fetch, no playfield)
+    ours   .........................##.###############################...   (playfield, no DL fetch)
+
+and our third line — a later line of the same row — matches emu character for
+character.  So the map itself is right; it simply starts a scanline late.
+
+MECHANISM.  `antic_dma_sched` latches the whole line shape on the `line_start`
+pulse: `pf_n` from `n_fetch`, plus `dma_start`, `pairs` and `is_char`
+(antic_dma_sched.sv:161).  Our `antic2_dl` is a multi-cycle state machine that
+fetches the instruction AFTER line_start, so at the instant the scheduler
+samples, `dl_insn` still holds the PREVIOUS instruction and the geometry derived
+from it.  emu has no such gap because `dl_exec` runs synchronously inside
+`line_start`, before the map is built.
+
+This is the sequential-to-clocked class of defect again — the same class as the
+VCOUNT/NMIST phase split, not a semantic one, so it could not have been read off
+emu.  The DL-fetch steals themselves are correct on both lines; only the
+playfield is displaced.
+
+NEXT: the fix is to make the instruction settle before the scheduler samples,
+not to shift the map.  `line_start` is a one-clock pulse at the very start of a
+machine cycle and a machine cycle is many fabric clocks, so the open question —
+to be MEASURED, not assumed — is whether `dl_insn` settles before the end of
+machine cycle 0, in which case delaying the scheduler's latch by that much is
+sufficient and local.
