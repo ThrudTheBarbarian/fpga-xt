@@ -67,8 +67,6 @@ module antic2_regs (
 
     // ---- strobes to the sequence ------------------------------------------
     output logic       wsync_stb,
-    output logic       wsync_rmw_readd,   // this write is an RMW's SECOND write
-                                          // AND adjacent to the first
     output logic       nmien_stb,
     output logic       nmires_stb
 );
@@ -87,7 +85,6 @@ module antic2_regs (
     // re-arming one.  Cleared on any tick without a WSYNC write, so a pair
     // separated by a DMA or refresh slot does NOT count -- which is exactly
     // gtia_pmresize's case.
-    logic wsync_wr_prev;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -102,13 +99,10 @@ module antic2_regs (
             chbase          <= 8'h00;
             nmien           <= 8'h00;
             wsync_stb       <= 1'b0;
-            wsync_rmw_readd <= 1'b0;
             nmires_stb      <= 1'b0;
             nmien_stb       <= 1'b0;
-            wsync_wr_prev   <= 1'b0;
         end else begin
             wsync_stb       <= 1'b0;
-            wsync_rmw_readd <= 1'b0;
             nmires_stb      <= 1'b0;
             dlist_lo_stb    <= 1'b0;
             dlist_hi_stb    <= 1'b0;
@@ -124,20 +118,13 @@ module antic2_regs (
                     4'h5: vscrol <= wdata;
                     4'h7: pmbase <= wdata;
                     4'h9: chbase <= wdata;
-                    4'hA: begin
-                        wsync_stb       <= 1'b1;
-                        wsync_rmw_readd <= wsync_wr_prev;
-                    end
+                    4'hA: wsync_stb <= 1'b1;
                     4'hE: begin nmien <= wdata; nmien_stb <= 1'b1; end
                     4'hF: nmires_stb <= 1'b1;
                     default: ;
                 endcase
             end
 
-            // Track adjacency on the machine-cycle boundary, not on every
-            // fabric clock: "adjacent" means consecutive CPU cycles.
-            if (tick)
-                wsync_wr_prev <= wr && (addr == 4'hA);
         end
     end
 

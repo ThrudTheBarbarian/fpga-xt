@@ -67,8 +67,7 @@ module antic2_seq #(
     input  wire        nmien_stb,          // CPU wrote NMIEN  ($D40E)
     input  wire        nmires_stb,         // CPU wrote NMIRES ($D40F)
     input  wire        wsync_stb,          // CPU wrote WSYNC  ($D40A)
-    input  wire        wsync_rmw_readd,    // the write is an RMW's SECOND write
-                                           // AND adjacent to the first -> +1
+    input  wire        refresh_window_prev, // cycle-1 is inside 25..57
     input  wire        cpu_writing,        // this cycle is a CPU write
 
     output logic [7:0] nmist,
@@ -217,6 +216,15 @@ module antic2_seq #(
 
             // A WSYNC write arms the halt whenever it happens -- including
             // outside the tick, since the strobe is the CPU's own write.
+            // THE RMW EXTRA CYCLE KEYS OFF THE REFRESH WINDOW, NOT ADJACENCY.
+            // emu's case 0x0A picks its variable by tunable and the LIVE one is
+            // WSYNC_RMW_REFRESH=1, whose branch is
+            // `!antic_dma_in_refresh(cycle - 1)` -- the RANGE test 25..57.  The
+            // adjacency branch (WSYNC_RMW_ADJACENT) is never reached, and that
+            // is what we had implemented.  DISPROVED SEPARATELY and not to be
+            // reintroduced: position-in-line (WSYNC_RMW_ADJ_CYCLE=0), which cost
+            // five tests.
+            //
             // ARMS ON THE FIRST WRITE ONLY.  An RMW writes WSYNC twice and the
             // halt must NOT re-arm on the second (emu case 0x0A, pinned by
             // antic_wsync's d5); the second write only sets the extra cycle, and
@@ -224,7 +232,7 @@ module antic2_seq #(
             // re-armed a halt that was already standing.
             if (wsync_stb) begin
                 if (!wsync_halt)          wsync_halt  <= 1'b1;
-                else if (wsync_rmw_readd) wsync_extra <= 1'b1;
+                else if (!refresh_window_prev) wsync_extra <= 1'b1;
             end
             // NMIRES CLEARS THE STATUS BUT LOSES TO A SET LANDING IN THE SAME
             // CYCLE.  emu is explicit (antic.c case 0x0F): `if (!nmist_set_now)

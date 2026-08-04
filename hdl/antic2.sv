@@ -74,7 +74,7 @@ module antic2 #(
     wire [7:0]  dlist_val;
     wire [7:0]  pmbase, chbase, nmien;
     wire [7:0]  nmist, vcount;
-    wire        wsync_stb, wsync_rmw_readd, nmires_stb, nmien_stb;
+    wire        wsync_stb, nmires_stb, nmien_stb;
     wire        row_ends, dli_line, dli_fired_set;
     wire [7:0]  dl_insn;
     wire [3:0]  row_line;
@@ -108,7 +108,7 @@ module antic2 #(
         .dlist_val(dlist_val),
         .hscrol(hscrol), .vscrol(vscrol), .pmbase(pmbase), .chbase(chbase),
         .nmien(nmien), .rdata(rdata),
-        .wsync_stb(wsync_stb), .wsync_rmw_readd(wsync_rmw_readd),
+        .wsync_stb(wsync_stb),
 .nmien_stb(nmien_stb),
                 .nmires_stb(nmires_stb)
     );
@@ -195,6 +195,16 @@ module antic2 #(
 
     assign dma_steal = refresh_steal;
 
+    // The WSYNC RMW extra cycle keys off the refresh WINDOW, not off individual
+    // refresh cycles: emu's antic_dma_in_refresh is the RANGE test (25..57) with
+    // no %STEP term -- `is_refresh` is the other, stricter one.  Evaluated at
+    // cycle-1 because that is what emu passes.  Computed HERE so the window
+    // bounds have a single definition, shared with refresh_steal above.
+    wire [6:0] prev_cycle = (hcount == 7'd0) ? 7'(LINE_CYCLES - 1) : hcount - 7'd1;
+    wire refresh_window_prev =
+        (prev_cycle >= 7'(REFRESH_FIRST)) &&
+        (prev_cycle <= 7'(REFRESH_FIRST + (REFRESH_COUNT-1)*REFRESH_STEP));
+
     // ---- the per-cycle sequence --------------------------------------------
     antic2_seq #(
         .LINE_CYCLES(LINE_CYCLES), .DISPLAY_TOP(DISPLAY_TOP),
@@ -206,7 +216,7 @@ module antic2 #(
         .dl_insn_dli(dl_insn[7]), .dli_fired(dli_fired),
         .dli_fired_set(dli_fired_set),
         .nmien(nmien), .nmien_stb(nmien_stb), .nmires_stb(nmires_stb),
-        .wsync_stb(wsync_stb), .wsync_rmw_readd(wsync_rmw_readd),
+        .wsync_stb(wsync_stb), .refresh_window_prev(refresh_window_prev),
         .cpu_writing(cpu_writing),
         .nmist(nmist), .vcount(vcount), .nmi(nmi),
         .wsync_take(wsync_take), .row_ends(row_ends), .dli_line(dli_line)
