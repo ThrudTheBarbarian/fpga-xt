@@ -117,7 +117,9 @@ module antic2_seq #(
             wsync_halt    <= 1'b0;
             wsync_extra   <= 1'b0;
             wsync_take    <= 1'b0;
-            row_ends      <= 1'b0;
+            // ARMED at reset, so the first line after the vertical-blank
+            // release actually fetches (emu antic_reset: row_ends = 1).
+            row_ends      <= 1'b1;
             dli_line      <= 1'b0;
             dli_fired_set <= 1'b0;
         end else begin

@@ -73,7 +73,12 @@ module antic2_line #(
         if (rst) begin
             dl_insn      <= 8'h00;
             row_line     <= 4'd0;
-            dl_done      <= 1'b0;
+            // START PARKED, as if a JVB had just executed.  A well-formed
+            // display list only ever begins after vertical blank ends, and the
+            // release at scanline DISPLAY_TOP is what puts it there.  Starting
+            // UNPARKED runs the list from scanline 0 and shifts every DLI eight
+            // lines early.
+            dl_done      <= 1'b1;
             row_first    <= 1'b0;
             dl_fetch_req <= 1'b0;
         end else begin
