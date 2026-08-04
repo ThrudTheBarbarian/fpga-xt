@@ -3,12 +3,13 @@
 `a8_core` (xt6502f + antic_gtia, ANTIC as bus master, phi2 as clock enable)
 measured against `emu/` on the Acid800 suite.
 
-    a8_core   13 / 37
-    emu       37 / 37
+    a8_core   20 / 54
+    emu       54 / 54
 
 | segment | a8_core | emu |
 |---|---|---|
-| `antic_*` | 4 / 18 | 18 / 18 |
+| `antic_*` | 4 / 20 | 20 / 20 |
+| `pokey_*` | 7 / 15 | 15 / 15 |
 | `cpu_*` | 5 / 8 | 8 / 8 |
 | `gtia_*` | 4 / 11 | 11 / 11 |
 
@@ -17,15 +18,12 @@ measured against `emu/` on the Acid800 suite.
 The suite has 63 tests. Two groups are excluded, for two DIFFERENT reasons that
 are deliberately not merged:
 
-**The harness cannot host the chip.** Two `antic_*` tests belong here despite
-their names: `antic_dmapattern` and `antic_wsync` MEASURE through POKEY's RANDOM
-at $D20A, which `tb_acid` answers as $FF. Counted from the .lst, they read it 30
-and 6 times; every other `antic_*`, `cpu_*` and `gtia_*` test reads it zero times.
-Neither can pass here whatever ANTIC does -- which is why the DMA schedule
-measured EXACT against the cycles the CPU actually loses while
-`antic_dmapattern` still failed. `antic_wsync`'s six reads are exactly the "six
-RANDOM samples" `hdl/antic_reg_file.sv` describes as unable to see the WSYNC
-release at all.
+**The harness cannot host the chip.** `mmu_*` needs PORTB and `pia_*` needs the
+PIA; `a8_core` has neither.
+
+`pokey_*`, `antic_dmapattern` and `antic_wsync` were in this category until
+`a8_core` gained a POKEY -- the design always had one, and leaving it out was a
+limitation of this assembly rather than of the hardware. All 17 are now measured.
 
  `a8_core` is the CPU and `antic_gtia` only
 -- there is no POKEY and no PIA, and `tb_acid`'s memory model answers `8'hFF` for
@@ -49,7 +47,30 @@ result, the run was cut short. Read `cpu_* 5/8` with that in mind -- the core
 passes `cpu_bugs`, `cpu_decimal`, `cpu_flags`, `cpu_illegal` and `cpu_timing`, and
 independently passes Klaus.
 
-## The remaining 21 failures are genuine -- audited
+## The POKEY figure is NOT yet attributable -- read this before quoting 7/15
+
+`pokey_*` scores 7/15, and the failures have THREE candidate causes that have not
+been separated:
+
+1. **Tie-offs in `a8_core`.** `ser_out_complete`, `ser_out_ready_pulse`,
+   `ser_in_byte_pulse`, `ser_in_byte`, `break_key_pulse`, `ser_framing_err`,
+   `ser_input_overrun` and `ser_input_busy` are all constants. That plausibly
+   accounts for `serclock`, `serdirect` and `sertiming`; `pokey_asyncrecv` and
+   `pokey_seroc` PASS, so the serial logic partly works and the constants starve
+   the rest.
+2. **Parameterisation.** `CLK_BUS_HZ` is passed as `CLK_HZ` (100 MHz) and the
+   ratio is right, but `REF_REL_HI/LO` ("init-release phase") and `REL_SKEW`
+   ("write-commit vs phi2_tick alignment") are constants tuned for the FABRIC
+   assembly. `inittiming`, `timerirq`, `timertiming` and `twotone` sit in that
+   blast radius.
+3. **Genuine POKEY defects** -- possible, but not claimable until 1 and 2 are
+   ruled out.
+
+The discriminator is cheap and not yet run: sweep `REL_SKEW` against one timer
+test, and replace the tie-offs with a loopback for one serial test. If either
+moves, it is integration rather than POKEY.
+
+## The remaining ANTIC/GTIA failures are genuine -- audited
 
 Every one of the 14 remaining `antic_*` and 7 `gtia_*` failures was checked for
 dependence on hardware this harness does not have: reads of POKEY RANDOM ($D20A),
