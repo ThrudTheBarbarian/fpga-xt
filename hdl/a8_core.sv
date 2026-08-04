@@ -63,6 +63,12 @@
 `timescale 1ns/1ps
 
 module a8_core #(
+    // Stage-1 switch for the from-scratch ANTIC.  0 = the existing antic_gtia
+    // path, byte-identical to before; 1 = antic2 drives the ANTIC side (regs,
+    // NMI, WSYNC, refresh steal, beam) while antic_gtia continues to answer
+    // $D0xx.  A SWITCH rather than a replacement because the baseline is the
+    // regression floor and must stay runnable on demand.
+    parameter bit USE_ANTIC2 = 1'b0,
     parameter int unsigned CLK_HZ  = 100_000_000,
     parameter int unsigned PHI2_HZ = 1_785_714
 ) (
@@ -116,6 +122,10 @@ module a8_core #(
 );
 
     // ---- the CPU ----------------------------------------------------------
+    wire [6:0]  gt_hcount;      // antic_gtia's beam, used when USE_ANTIC2=0
+    wire [8:0]  gt_line;
+    wire [15:0] gt_antic_addr;
+    wire        nmi_n_eff;
     wire [15:0] c_addr;
     wire [7:0]  c_dout;
     wire        c_rw;                    // 1 = read, 0 = write
@@ -139,16 +149,17 @@ module a8_core #(
     wire       pokey_irq_n;
 
     always_comb begin
-        if      (cs_gtia || cs_antic) c_din = reg_rdata;
-        else if (cs_pokey)            c_din = pokey_rdata;
-        else                          c_din = cpu_rdata;
+        if      (USE_ANTIC2 && cs_antic) c_din = a2_rdata;
+        else if (cs_gtia || cs_antic)    c_din = reg_rdata;
+        else if (cs_pokey)               c_din = pokey_rdata;
+        else                             c_din = cpu_rdata;
     end
 
     xt6502f u_cpu (
         .clk(clk), .rst(rst), .phi2_tick(tick),
         .addr(c_addr), .data_in(c_din), .data_out(c_dout), .rw(c_rw),
         .rdy(c_rdy),
-        .irq_n(irq_n && pokey_irq_n), .nmi_n(nmi_n),
+        .irq_n(irq_n && pokey_irq_n), .nmi_n(nmi_n_eff),
         .sync(sync), .dbg_pc(dbg_pc),
         .dbg_a(dbg_a), .dbg_x(dbg_x), .dbg_y(dbg_y),
         .dbg_s(dbg_s), .dbg_p(dbg_p),
@@ -164,12 +175,48 @@ module a8_core #(
         .cs_antic(cs_antic), .cs_gtia(cs_gtia),
         .addr(c_addr[7:0]), .we(cpu_we), .wdata(c_dout), .rdata(reg_rdata),
         .rdy_n(rdy_n), .nmi_n(nmi_n), .dma_steal(dma_steal),
-        .mem_addr(antic_addr), .mem_data(antic_rdata),
+        .mem_addr(gt_antic_addr), .mem_data(antic_rdata),
         .trig0(trig0), .trig1(trig1), .trig2(trig2), .trig3(trig3),
         .pal_sense(pal_sense), .consol_keys(consol_keys),
         .lb_wr(lb_wr), .lb_color(lb_color), .lb_line_start(lb_line_start),
-        .hcount(hcount), .line(line), .vcount(), .line_start(), .dlpc()
+        .hcount(gt_hcount), .line(gt_line), .vcount(), .line_start(), .dlpc()
     );
+
+
+    // ---- antic2 (stage 1) ---------------------------------------------------
+    wire [7:0]  a2_rdata;
+    wire        a2_nmi;          // POSITIVE one-cycle PULSE
+    wire        a2_wsync_take;
+    wire        a2_dma_steal;
+    wire [15:0] a2_mem_addr;
+    wire        a2_mem_req;
+    wire [6:0]  a2_hcount;
+    wire [8:0]  a2_line;
+
+    // The ANTIC memory port answers one clock after the address is presented
+    // (tb_acid and the fabric both register it), so `valid` is the request
+    // delayed by one.  Modelling it as combinational would let the DL executor
+    // latch the PREVIOUS byte.
+    logic a2_mem_valid;
+    always_ff @(posedge clk or posedge rst)
+        if (rst) a2_mem_valid <= 1'b0;
+        else     a2_mem_valid <= a2_mem_req;
+
+    antic2 #(
+        .LINE_CYCLES(114), .LINES(262), .DISPLAY_TOP(8), .DISPLAY_BOTTOM(248)
+    ) u_antic2 (
+        .clk(clk), .rst(rst), .tick(tick),
+        .cs(cs_antic), .we(cpu_we), .addr(c_addr[3:0]), .wdata(c_dout),
+        .rdata(a2_rdata), .cpu_writing(!c_rw),
+        .mem_addr(a2_mem_addr), .mem_data(antic_rdata),
+        .mem_valid(a2_mem_valid), .mem_req(a2_mem_req),
+        .nmi(a2_nmi), .wsync_take(a2_wsync_take), .dma_steal(a2_dma_steal),
+        .hcount(a2_hcount), .line(a2_line)
+    );
+
+    assign hcount     = USE_ANTIC2 ? a2_hcount   : gt_hcount;
+    assign line       = USE_ANTIC2 ? a2_line     : gt_line;
+    assign antic_addr = USE_ANTIC2 ? a2_mem_addr : gt_antic_addr;
 
     // ---- POKEY --------------------------------------------------------------
     //
@@ -214,10 +261,20 @@ module a8_core #(
     // HALT is unconditional; WSYNC's RDY cannot stall a write.  A LEVEL, not a
     // pulse: the fid core is paced by phi2_tick and samples this at its commit
     // slot.
-    wire halt_n   = !dma_steal;
-    wire wsync_ok = !rdy_n || !c_rw;
+    // With antic2 the two terms come from ONE module and keep SALLY's asymmetry
+    // explicitly: HALT is unconditional, and the WSYNC stall cannot stop a
+    // WRITE.  antic2_seq already expresses the stall the software's way round --
+    // every cycle EXCEPT the release is taken, and a write is never taken -- so
+    // `a2_wsync_take` is already write-aware and does not need `|| !c_rw` here.
+    wire halt_n   = USE_ANTIC2 ? !a2_dma_steal  : !dma_steal;
+    wire wsync_ok = USE_ANTIC2 ? !a2_wsync_take : (!rdy_n || !c_rw);
 
     assign c_rdy = halt_n && wsync_ok;
+
+    // antic2 emits a POSITIVE ONE-CYCLE PULSE; antic_gtia drives an active-low
+    // LEVEL.  Mixing the two conventions silently is exactly the class of bug
+    // this rewrite exists to avoid, so the conversion is explicit and named.
+    assign nmi_n_eff = USE_ANTIC2 ? ~a2_nmi : nmi_n;
 
 endmodule
 
