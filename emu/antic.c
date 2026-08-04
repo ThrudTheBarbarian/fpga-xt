@@ -1149,6 +1149,10 @@ int antic_tick(antic *a)
      * a DMA burst, where the CPU is not being serviced, is still seen. */
     if (a->nmi) a->nmi = 0;
     if (a->nmi_arm && --a->nmi_arm == 0) a->nmi = 1;
+    /* ACID_GLYPHPROBE=8: the cycle /NMI is actually asserted, which is the one
+     * thing the RTL comparison needs and no existing probe reports. */
+    if (antic_glyph_probe == 8 && a->nmi)
+        fprintf(stderr, "  NMIASSERT sl %3d cyc %3d\n", a->scanline, c);
 
     /* ---- status and interrupt timing, all at fixed cycles ------------------
      * NMIST bits set at cycle 6 REGARDLESS of NMIEN — NMIEN gates the
