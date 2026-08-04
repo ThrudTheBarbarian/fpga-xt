@@ -125,10 +125,25 @@ def main():
 
     # A bare 6502 has no stack pointer; on hardware the OS set one long before
     # the loader ran.  Plant the equivalent and aim the reset vector at it.
+    # ...and POKEY out of init.  SKCTL[1:0] == 0 holds the polynomial counters
+    # filling with ones, so RANDOM ($D20A) reads $FF forever.  The library sets
+    # SKCTL = 3 at init but later restores it from the SSKCTL shadow, which a
+    # booted OS holds at 3 and a bare image does not -- and antic_dmapattern
+    # never writes SKCTL itself.  Setting the shadow at $0232 (below) is not
+    # enough: with no OS, nothing ever copies it to the hardware register.
+    # emu's harness pokes its model directly for the same reason
+    # (emu/test/acid.c: `pokey_rand_skctl(&s.pk, 0x03)`); the equivalent here is
+    # a real write, because our POKEY is real RTL.
+    #
+    # MEASURED: without this, antic_dmapattern reads $FF for both halves of its
+    # LFSR pair, fails at "Cannot decode random pair" and never reaches a single
+    # DMA assertion -- on BOTH ANTIC paths.
     stub = [0xA2, 0xFF,             # LDX #$FF
             0x9A,                   # TXS
             0xD8,                   # CLD
             0x78,                   # SEI
+            0xA9, 0x03,             # LDA #$03
+            0x8D, 0x0F, 0xD2,       # STA SKCTL ($D20F)
             0x4C, run & 0xFF, run >> 8]
     for k, b in enumerate(stub):
         mem[STUB + k] = b

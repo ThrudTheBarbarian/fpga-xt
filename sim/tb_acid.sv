@@ -211,6 +211,41 @@ module tb_acid #(
         end
     end endgenerate
 
+    // POKEY's RANDOM plumbing: what the LFSR holds, what SKCTL holds, and what
+    // the CPU actually gets back from $D20A.  antic_dmapattern reads $FF for
+    // both halves of its LFSR pair on BOTH ANTIC paths, so the fault is here,
+    // not in the DMA map.
+    // Every POKEY register WRITE that actually reaches the register file.
+    integer pwcnt = 0;
+    always_ff @(posedge clk) begin
+        if (!rst && pwcnt < 16 && dut.u_pokey.we) begin
+            pwcnt <= pwcnt + 1;
+            $display("PWR waddr=%02h wdata=%02h", dut.u_pokey.waddr,
+                     dut.u_pokey.wdata);
+        end
+    end
+
+    // ...and every CPU write into the $D2xx page, whether or not POKEY took it.
+    integer cwcnt = 0;
+    always_ff @(posedge clk) begin
+        if (!rst && cwcnt < 16 && !dut.c_rw && dut.cs_pokey &&
+            dut.c_sub == 8'(dut.SUB_DATA)) begin
+            cwcnt <= cwcnt + 1;
+            $display("CWR addr=%04h data=%02h rdy=%0d cpu_we=%0d",
+                     dut.c_addr, dut.c_dout, dut.c_rdy, dut.cpu_we);
+        end
+    end
+
+    integer rncnt = 0;
+    always_ff @(posedge clk) begin
+        if (!rst && rncnt < 12 && dut.c_rw && dut.c_addr == 16'hD20A &&
+            dut.c_sub == 8'(dut.SUB_DATA)) begin
+            rncnt <= rncnt + 1;
+            $display("RND skctl=%02h random_byte=%02h cpu_sees=%02h",
+                     dut.u_pokey.skctl_out, dut.u_pokey.random_byte, dut.c_din);
+        end
+    end
+
     integer nmcnt = 0;
     logic [7:0] vc_prev = 8'h00;
     integer vccnt = 0;

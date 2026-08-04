@@ -1,7 +1,9 @@
 /*
  * pokey_rand.c — POKEY's polynomial counters. See pokey_rand.h for provenance.
  */
+#include <stdio.h>
 #include "pokey_rand.h"
+#include "antic.h"
 
 #define M9   0x000001FFu
 #define M17  0x0001FFFFu
@@ -84,6 +86,11 @@ void pokey_rand_audctl(pokey_rand *p, uint8_t v) { p->audctl = v; }
 void pokey_rand_skctl(pokey_rand *p, uint8_t v)
 {
     uint8_t was_init = p->init;
+    /* ACID_GLYPHPROBE=6: every SKCTL write, to answer "does this test release
+     * the polynomial counters at all, and when". */
+    if (antic_glyph_probe == 6)
+        fprintf(stderr, "  SKCTLW $%02X (init %d -> %d)\n", v, was_init,
+                (v & 0x03u) == 0);
     p->skctl = v;
     p->init  = (uint8_t)((v & 0x03u) == 0);
     if (was_init && !p->init) p->release_cycle = 1;
