@@ -88,7 +88,23 @@ module antic_dma_sched (
     input  wire       missile_dma_en,       // DMACTL[2]
     input  wire       player_dma_en,        // DMACTL[3]
 
-    output wire       steal                 // this machine cycle is ANTIC's
+    output wire       steal,                // this machine cycle is ANTIC's
+
+    // ---- the playfield fetch, for whoever fills the line buffer -----------
+    // The schedule ALREADY knows which cycles fetch and which of them is the
+    // pair's glyph access; it just kept them to itself.  A fetcher driven by
+    // these is progressive -- one byte per scheduled cycle, as emu's antic_tick
+    // is -- rather than bursting the line at line_start.  That distinction is
+    // not cosmetic: DMACTL and HSCROL can be written PART WAY DOWN a line, and
+    // the bytes already fetched must stay fetched while the rest of the map is
+    // rebuilt around them.  antic_hscrolbug, antic_pfstarttiming,
+    // antic_pfstoptiming and antic_linebuffering all measure exactly that.
+    //
+    // Tick-aligned PULSES, unlike `steal`, which is deliberately a level (see
+    // below) -- a fetch happens once, at the tick, and must not be counted
+    // again for the rest of the machine cycle.
+    output wire       pf_fetch,             // this tick fetches a playfield byte
+    output wire       pf_fetch_glyph        // ...and it is the GLYPH of a pair
 );
 
     // ---- the fixed slots -------------------------------------------------
@@ -147,6 +163,12 @@ module antic_dma_sched (
     wire ref_steal = ref_want && !hdr_steal && !pf_steal;
 
     assign steal = hdr_steal || pf_steal || ref_steal;
+
+    // Observation only -- these are the SAME pf_hit/pf_hit_b the walk already
+    // runs on, so exposing them cannot move a single cycle of `steal`.  The
+    // module's 50 ACID maps are the check on that.
+    assign pf_fetch       = pf_hit || pf_hit_b;
+    assign pf_fetch_glyph = pf_hit_b;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
