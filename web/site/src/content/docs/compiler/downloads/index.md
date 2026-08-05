@@ -3,7 +3,18 @@ title: Downloads
 description: Prebuilt xtc toolchain binaries for macOS, Linux, and Windows.
 ---
 
-Prebuilt binaries for **xtc 0.12**. Each archive contains the compiler driver (`xtc`), the standalone assembler (`xta`), the 6502 simulator (`xts`), and the `resources/support/` tree the compiler expects to find alongside the binaries (linker scripts, startup stubs, runtime asm, standard-library classes).
+:::caution[These archives predate the 0.4 rename]
+The binaries below are **0.12-era** builds, from before the toolchain was renamed:
+the driver in them is `xtc`, not `xcc`, and they carry the older `resources/support/`
+layout rather than the current `lib/xc`. They still work as documented on this page,
+but the rest of the documentation describes the current toolchain.
+
+For the current compiler, build from source and `make install` — it lands in
+`/opt/xcc/<version>` with the driver as `xcc`, and finds its own libraries with no
+flags. See [Install](/compiler/usage/install/).
+:::
+
+Prebuilt binaries for **xtc 0.12**. Each archive contains the compiler driver (`xtc`), the standalone assembler, the 6502 simulator, and the `resources/support/` tree the compiler expects to find alongside the binaries (linker scripts, startup stubs, runtime asm, standard-library classes).
 
 | Platform | Download | Size |
 | --- | --- | --- |
@@ -46,7 +57,7 @@ The Windows build is statically linked against GNUstep, so no separate GNUstep i
 Try a small program to confirm everything's wired up:
 
 ```c
-// hello.xt
+// hello.xc
 #use Stdio
 
 void main(void) {
@@ -55,18 +66,18 @@ void main(void) {
 ```
 
 ```bash
-xtc -O2 hello.xt -o hello.xex
+xcc -O2 hello.xc -o hello.xex
 ```
 
 ```
 xtc: optimised -O2 (... → ...)
-xtc: compiled 'hello.xt' -> 'hello.xex' (0 warnings, 0 errors)
-xta: assembled -> 'hello.xex' (... bytes, 1 segments)
+xtc: compiled 'hello.xc' -> 'hello.xex' (0 warnings, 0 errors)
+xcc-as: assembled -> 'hello.xex' (... bytes, 1 segments)
 ```
 
 Drop `hello.xex` into your favourite Atari emulator (Altirra, atari800, or run it under the bundled simulator with `xts hello.xex`) and you should see `hello, atari` print to the screen.
 
-One thing to note is that xtc will attempt to read from its 'support' folder for things like Stdio.xt. It therefore needs to know where those files are, and you can tell it that in one of several ways (in order of priority)...
+One thing to note is that xtc will attempt to read from its 'support' folder for things like Stdio.xc. It therefore needs to know where those files are, and you can tell it that in one of several ways (in order of priority)...
 
  - pass "-H path-to-support-dir" to xtc on the command line
  - set an environment variable of XTC_HOME to point to the support dir
@@ -75,6 +86,6 @@ One thing to note is that xtc will attempt to read from its 'support' folder for
  - place the 'support' directory into /usr/local/xtc
  - place the 'support' directory into /opt/xtc
 
-You should find the support directory itself in the resources/ folder that came in the download along with xtc, xta and xts.
+You should find the support directory itself in the resources/ folder that came in the download along with xtc, xcc-as and xts.
 
 From here, [Compiler usage → CLI reference](/compiler/usage/cli/) covers the flags you'll reach for next; [Memory models](/compiler/usage/memory-models/) walks through the xt6502 memory map.

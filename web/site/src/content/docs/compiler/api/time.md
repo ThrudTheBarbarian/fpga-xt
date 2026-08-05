@@ -6,7 +6,7 @@ description: Read the Atari real-time clock, measure elapsed jiffies and seconds
 `Time` exposes the Atari `RTCLOK` three-byte timer (`$12`/`$13`/`$14`) as a 24-bit jiffy counter, plus helpers for measuring elapsed time in seconds and for busy-waiting for fixed durations. All methods are `static`.
 
 ```c
-#import <Time.xt>
+#import <Time.xc>
 ```
 
 A **jiffy** is one VBI tick — that's 1/50 s on PAL hardware and 1/60 s on NTSC. `Time` detects PAL vs NTSC at runtime by reading the GTIA `PAL` register at `$D014`, so `secondsSince` and `delaySeconds` work correctly without per-platform recompilation.

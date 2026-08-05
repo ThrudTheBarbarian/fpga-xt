@@ -12,7 +12,7 @@ Listed from highest to lowest. Rows at the same level have the same precedence; 
 | Operators | Assoc | Notes |
 |-----------|-------|-------|
 | `a[i]`, `f(...)`, `.`, `->`, postfix `++`, postfix `--` | left | primary |
-| prefix `+ -`, `!`, `~`, prefix `++`, prefix `--`, `@` (deref), `&` (addr-of), `(type)` cast, `sizeof()`, `<` `>` `>>` `>>>` (byte extract, asm) | right | unary |
+| prefix `+ -`, `!`, `~`, prefix `++`, prefix `--`, `*` (deref), `&` (addr-of), `(type)` cast, `sizeof()`, `<` `>` `>>` `>>>` (byte extract, asm) | right | unary |
 | `*`, `/`, `%` | left | multiplicative |
 | `+`, `-` | left | additive |
 | `<:`, `:>` | left | rotate (ROL / ROR) |
@@ -41,23 +41,23 @@ u8 c = a << 1;    // arithmetic left shift; bit 7 lost
 
 ### Pointer dereference and address-of
 
-`@` is the unary dereference operator; `&` takes an address. They're inverses:
+`*` is the unary dereference operator; `&` takes an address. They're inverses:
 
 ```c
 u8 v   = 42;
-u8@ p  = &v;
-u8 q   = @p;     // q == 42
-@p     = 99;     // v becomes 99
+u8* p  = &v;
+u8 q   = *p;     // q == 42
+*p     = 99;     // v becomes 99
 ```
 
-`->` is sugar for "dereference then access a member": `p->x` is exactly `(@p).x`. xtc also accepts the dot form `p.x` directly on a pointer — the compiler auto-dereferences. See [Types → Pointers](/compiler/language/types/#pointers) for the rationale.
+`->` is sugar for "dereference then access a member": `p->x` is exactly `(*p).x`. xtc also accepts the dot form `p.x` directly on a pointer — the compiler auto-dereferences. See [Types → Pointers](/compiler/language/types/#pointers) for the rationale.
 
 ### Cast extensions
 
 Inside the `(type)` cast, two forms have non-C semantics:
 
-- `(Dog@) animal` — runtime-checked downcast. Traps on mismatch.
-- `(Dog@ ?) animal` — failable downcast. Yields `(Dog@)0` on mismatch.
+- `(Dog*) animal` — runtime-checked downcast. Traps on mismatch.
+- `(Dog* ?) animal` — failable downcast. Yields `(Dog*)0` on mismatch.
 
 These are class-pointer-only; `(u16 ?)x` is a compile-time error. Details on [Inheritance & protocols](/compiler/language/inheritance/).
 

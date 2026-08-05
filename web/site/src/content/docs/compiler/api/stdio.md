@@ -6,7 +6,7 @@ description: Screen output, cursor positioning, and formatted print for xtc prog
 `Stdio` is the screen-I/O class. It writes characters to the active text-mode screen, positions the cursor, and offers a `printf`-style formatter that handles every primitive type plus structs and classes.
 
 ```c
-#import <Stdio.xt>
+#import <Stdio.xc>
 ```
 
 All methods are `static`. The class is typically promoted with `use Stdio;` or the `#use Stdio` shorthand so callers can write `print(...)` and `printf(...)` bare — but every method is reachable in its qualified `Stdio.xxx` form too.
@@ -92,9 +92,9 @@ static void printfAt(u8 x, u8 y, string fmt, ...);
 | `%f` | `float` | floating-point |
 | `%lf` | `double` | double-precision floating-point |
 | `%c` | `u8` | character (no width promotion) |
-| `%s` | `string` (`u8@`) | null-terminated string |
+| `%s` | `string` (`u8*`) | null-terminated string |
 | `%e` | enum value (must be statically typed as an enum) | textual name of the enum value — rewritten to `%s` at compile time |
-| `%@` | struct or class | recursive print of every member |
+| `%@` | class instance | calls the object's `description()` through its vtable |
 | `%%` | — | literal `%` |
 
 ```c
@@ -107,6 +107,34 @@ Stdio.printf("%s scored %u in %ld ms\n", name, score, millis);
 Stdio.printf("pi ≈ %f\n", pi);
 Stdio.printf("ratio: %u%%\n", (u16)42);   // "ratio: 42%"
 ```
+
+### Objects: `%@`
+
+`%@` takes a **class instance** and prints whatever its `description()` method
+returns, dispatched through the vtable. `Object` supplies a default, so any class
+works; override `description()` and every `%@` in the program follows:
+
+```c
+class Point : Object
+{
+    i32 x;
+    i32 y;
+    String* description(void)
+    {
+        String* s = String.withCString("(");
+        s.append(String.withI32(x));
+        s.appendCString("|");
+        s.append(String.withI32(y));
+        s.appendCString(")");
+        return s;
+    }
+}
+
+Stdio.printf("last %@\n", p);        // last (3|4)
+```
+
+It is a virtual call on an object, not a structural dump — a plain `struct` has
+no vtable and no `description()`, so pass its fields individually.
 
 ### Enum names: `%e`
 
@@ -154,13 +182,15 @@ Stdio.printf("sprite=%@\n", s);
 
 Nested structs are formatted recursively with parentheses around each level. The mechanism uses the compiler-generated descriptor for the struct, so user code doesn't need to write any printer.
 
-## Variadic limits
+## Variadic limits (xt6502 only)
 
-Every variadic call shares a single 64-byte pack buffer (the address is platform-specific — see [Functions → Shared pack buffer](/compiler/language/functions/#shared-pack-buffer-and-reentrance)). For `printf` that means:
+On **xt6502** a variadic call marshals its arguments through a single shared 64-byte pack buffer (`__xtc_va_buf`; the address comes from the active layout — see [Functions → Shared pack buffer](/compiler/language/functions/#shared-pack-buffer-and-reentrance)). For `printf` that means:
 
 - Total argument payload per call ≤ 62 bytes (64 minus the 2-byte fmt-pointer header).
 - A `printf` call inside another variadic that has called `va_start` will scramble the outer's buffer — sema diagnoses this at compile time.
 - `printfAt` is a pure forwarder: it does not call `va_start` itself, so it's exempt from the reentrance check.
+
+The **native** targets (`arm64`, `x86_64`, `win64`, `arm9`) use their platform's own varargs ABI — registers and the stack, per call — so none of the above applies there: there is no shared buffer, no payload cap and no reentrance hazard. Code that stays inside the limit is portable to all of them; code that exceeds it works everywhere except xt6502.
 
 ## Platform notes
 

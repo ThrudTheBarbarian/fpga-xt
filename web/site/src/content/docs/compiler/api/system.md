@@ -6,7 +6,7 @@ description: Process-control helpers — currently exit() to return to DOS.
 `System` is the process-control class. At present it offers a single helper, `exit`, which terminates the program and returns control to DOS.
 
 ```c
-#import <System.xt>
+#import <System.xc>
 ```
 
 ## Methods
@@ -35,10 +35,10 @@ The `-Q loop` command-line switch changes the post-`main` behaviour to an infini
 
 ## Platform notes
 
-`System` ships **only** under `support/xt6502/lib/`. There is no native-backend implementation, so `#import <System.xt>` fails to resolve under `-A arm64` and friends:
+`System` ships **only** under `support/xt6502/lib/`. There is no native-backend implementation, so `#import <System.xc>` fails to resolve under `-A arm64` and friends:
 
 ```
-Cannot find include file 'System.xt'
+Cannot find include file 'System.xc'
 ```
 
 On the native backends, return from `main` instead.

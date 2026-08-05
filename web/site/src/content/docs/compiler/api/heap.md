@@ -6,7 +6,7 @@ description: Introspection helpers for the coalescing free-list heap allocator.
 `Heap` exposes three static helpers for inspecting the allocator's state at runtime — total free bytes, the size of the biggest single free extent, and the compile-time heap capacity. All methods are `static`.
 
 ```c
-#import <Heap.xt>
+#import <Heap.xc>
 ```
 
 `Heap` is meaningful only under `-falloc=heap` — the default on the 6502 `xt` layouts and on every native backend. On a bump-allocator target the allocator keeps no free-list metadata, so `size()` and `largest()` would return misleading values.
@@ -45,7 +45,7 @@ if (Heap.largest() < (u16)needed + 4) {
     Stdio.print("not enough contiguous heap; bailing\n");
     return;
 }
-u8@ buf = new u8[needed];
+u8* buf = new u8[needed];
 ```
 
 The `+4` accounts for the per-block header overhead; if you forget it the allocator will refuse the request even though `largest()` says yes.

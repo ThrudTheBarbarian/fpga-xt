@@ -31,8 +31,8 @@ You may also initialise the **raw bytes** of any value, regardless of its type, 
 Examples:
 
 ```c
-volatile u16@ dosvec = @10;       // both stores happen, even at -O2+
-register u16@ hot = $1234;        // priority on ZP allocation
+volatile u16* dosvec = (u16*)10;  // both stores happen, even at -O3
+register u16* hot = $1234;        // priority on ZP allocation
 static  u16  hits = 0;            // persists across calls; file-scoped
 global static u16 totalHits = 0;  // persists, visible everywhere
 ```
@@ -110,7 +110,19 @@ The collection may be either:
 - A fixed-size array (length is known at compile time), or
 - A heap-allocated pointer from `new T[N]` (length is read from the allocator's block header at loop entry, so deep recursion or re-allocation inside the body doesn't perturb the iteration count).
 
-The loop variable's type is normally given explicitly (`u8 ch in ...`); `auto` works too if you'd rather have the compiler infer it.
+The loop variable's type may be given explicitly (`u8 ch in …`) or **omitted**, in which case it is taken from the collection's element type:
+
+```c
+u16 squares[5];
+for (u16 v in squares) { … }      // explicit
+for (v in squares)     { … }      // same loop, element type inferred
+```
+
+Both spellings produce identical code. (The untyped form used to be accepted and then lowered into nothing, so the body silently never ran — compiler bug 036, fixed. If the element type genuinely cannot be inferred, it is now a diagnostic naming the cure rather than a loop that quietly does not run.)
+
+:::caution[Primitive elements in a typed collection]
+`for ... in` over an `Array<i32>` is a different matter — the element there is a boxed `Number`, and the loop hands you the box rather than the value. See [Collections](/compiler/language/collections/#primitive-element-types).
+:::
 
 ## For-in (range)
 
@@ -166,9 +178,14 @@ Anything else — non-literal bound, literal beyond 255, large step — requires
 
 ### Caveat: unsigned descending and underflow
 
-Descending unsigned loops with a step that doesn't divide evenly into the start can wrap past 0 and run longer than expected. For example, `for (u8 i in 20..0 step -3)` walks 20, 17, 14, 11, 8, 5, 2 — then `2 - 3` wraps to 255 and the loop continues from there.
+Descending **unsigned** loops with a step that doesn't divide evenly into the start wrap past 0 and keep going. `for (u8 i in 20..0 step -3)` walks 20, 17, 14, 11, 8, 5, 2 — then `2 - 3` wraps to 255 and the loop continues from there.
 
-Avoid by either aligning the bounds with the step (`21..0 step -3`) or widening the loop variable to `u16` / `i16`.
+Two fixes, and only these two:
+
+- **Align the bounds with the step**, so the walk lands exactly on the end: `for (u8 i in 9..0 step -3)` gives 9, 6, 3 and stops.
+- **Make the loop variable SIGNED**: `for (i16 i in 10..0 step -3)` gives 10, 7, 4, 1 and stops, because stepping below the bound produces a negative rather than a huge positive.
+
+Widening from `u8` to `u16` does **not** help — it only moves the wrap to 65535, so the loop runs 20 000 iterations instead of 80. The problem is the unsignedness, not the width.
 
 ### Lowering
 
@@ -236,7 +253,7 @@ for (u8 i = 0; i < n; i++) {
 `defer { ... }` registers a block to run when the **enclosing scope** exits — by any path: fall-through, `return`, `break`, `continue`, or a propagating [`throw`](/compiler/language/errors/). It is the cleanup statement: you write the release next to the acquisition instead of at the bottom of the function, and every exit path gets it for free.
 
 ```c
-void render(Scene@ s) {
+void render(Scene* s) {
     s.lock();
     defer { s.unlock(); }             // released however we leave
 
@@ -280,7 +297,7 @@ The ordering that makes `defer` useful: a scope exits by running **its defers fi
 
 ```c
 {
-    Res@ r = new Res((u32)7);
+    Res* r = new Res((u32)7);
     defer { Stdio.printf("defer sees id=%d\n", r.id); }
 }
 // defer sees id=7
@@ -329,3 +346,81 @@ i16 main(u8 numArgs, string args[]) {
 ```
 
 When `main` returns, the program issues an `RTS` to the caller — unless you pass `-Q loop` on the command line, in which case the runtime spins in an infinite loop instead.
+
+## Worked example
+
+Every loop form in one runnable program:
+
+```c
+// loops.xc — every loop form the language has.
+#import "Foundation.xc"
+#import "Stdio.xc"
+
+i32 main(void)
+{
+    // 1. C-style for: init; condition; step.
+    Stdio.print("for       ");
+    for (u16 i = (u16)0; i < (u16)5; i = i + (u16)1)
+        Stdio.printf("%d ", i);
+    Stdio.print("\n");
+
+    // 2. while — the test runs first, so the body may not run at all.
+    Stdio.print("while     ");
+    u16 n = (u16)5;
+    while (n > (u16)0) { Stdio.printf("%d ", n); n = n - (u16)1; }
+    Stdio.print("\n");
+
+    // 3. for ... in over an array, with and without the element type.
+    u16 squares[5];
+    for (u16 i = (u16)0; i < (u16)5; i = i + (u16)1)
+        squares[i] = i * i;
+    Stdio.print("for-in    ");
+    for (u16 v in squares)
+        Stdio.printf("%d ", v);
+    Stdio.print("\n");
+
+    Stdio.print("inferred  ");
+    for (v in squares)
+        Stdio.printf("%d ", v);
+    Stdio.print("\n");
+
+    // 4. break and continue, as in C.
+    Stdio.print("evens<=6  ");
+    for (u16 i = (u16)0; i < (u16)10; i = i + (u16)1) {
+        if ((i & (u16)1) != (u16)0) continue;
+        if (i > (u16)6) break;
+        Stdio.printf("%d ", i);
+    }
+    Stdio.print("\n");
+
+    // 5. Nested: break leaves only the INNERMOST loop.
+    Stdio.print("nested    ");
+    for (u16 r = (u16)0; r < (u16)3; r = r + (u16)1)
+        for (u16 c = (u16)0; c < (u16)3; c = c + (u16)1) {
+            if (c == (u16)2) break;
+            Stdio.printf("%d%d ", r, c);
+        }
+    Stdio.print("\n");
+
+    // 6. `: unroll` asks the optimiser to unroll a counted loop fully.
+    //    Purely a performance annotation — the result is identical.
+    Stdio.print("unrolled  ");
+    for (u16 i = (u16)0; i < (u16)4; i = i + (u16)1) : unroll
+        Stdio.printf("%d ", i);
+    Stdio.print("\n");
+    return 0;
+}
+```
+
+```
+for       0 1 2 3 4
+while     5 4 3 2 1
+for-in    0 1 4 9 16
+inferred  0 1 4 9 16
+evens<=6  0 2 4 6
+nested    00 01 10 11 20 21
+unrolled  0 1 2 3
+```
+
+There is **no** `do/while`: the loop forms are `while`, C-style `for`, and
+`for ... in` over an array, a range or a slice.

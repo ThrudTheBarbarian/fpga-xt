@@ -6,7 +6,7 @@ description: In-place quicksort with a user-supplied comparator.
 `Sort` is an in-place quicksort over a `u16` array, with the ordering supplied by a user-written comparator function. The standard C `qsort` convention applies — the comparator returns negative / zero / positive for less / equal / greater. The class lives under `support/generic/lib/`, so it works the same on every platform.
 
 ```c
-#import <Sort.xt>
+#import <Sort.xc>
 ```
 
 ## Comparator type
@@ -36,7 +36,7 @@ The same reason C's `qsort` uses `int`: xtc's codegen currently treats `i8` call
 ## The sort
 
 ```c
-static void qsort(u16@ base, u16 n, cmpU16_t@ cmp);
+static void qsort(u16* base, u16 n, cmpU16_t* cmp);
 ```
 
 ```c
@@ -54,7 +54,7 @@ The implementation is a recursive Lomuto-partition quicksort with the pivot at t
 
 ## A historical caveat: global arrays
 
-`Sort.xt`'s own header comment still warns that `base` must be a **local** array — that global array names decay to pointers with a corrupted high byte, so `Sort.qsort(globalArr, …)` silently reads the wrong memory.
+`Sort.xc`'s own header comment still warns that `base` must be a **local** array — that global array names decay to pointers with a corrupted high byte, so `Sort.qsort(globalArr, …)` silently reads the wrong memory.
 
 That no longer reproduces. Sorting a module-scope `u16[]` gives the correct result on **both** live backends (arm64 and xt6502), at `-O0` and at the default `-O3`:
 
@@ -71,6 +71,6 @@ The warning is left in the library source and recorded here because it was real;
 
 ## Recursion and the call stack
 
-`Sort.qsort`'s internal driver is recursive, so it allocates its frame on the **xtc software stack** rather than the 6502 hardware stack — the codegen's stage-4c eligibility pass marks recursive functions ineligible for the static-frame fast path. Non-recursive comparators stay static-frame eligible under the stage-2 CFA pass, so the comparator itself adds no per-call overhead beyond an indirect JSR.
+On **xt6502**, `Sort.qsort`'s internal driver is recursive, so it allocates its frame on the software stack rather than taking the static-frame fast path — the codegen marks recursive functions ineligible for it. Non-recursive comparators stay eligible, so the comparator itself costs no more than an indirect `JSR`. On the register targets the frame is an ordinary stack frame and none of this applies.
 
 For arrays of thousands of elements, watch the depth: worst-case quicksort is O(N) deep on already-sorted input. The xtc stack is tunable with the `-ss` / `--stack-size` flag if you need more headroom.

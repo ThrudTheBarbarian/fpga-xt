@@ -1,147 +1,214 @@
 ---
 title: CLI flag reference
-description: Every command-line option for xtc, grouped by purpose.
+description: Every command-line option for xcc, grouped by purpose.
 ---
 
-Every flag the `xtc` driver accepts. Grouped by purpose; for a flat alphabetical dump, run `xtc -h`.
+Every flag the `xcc` driver accepts, grouped by purpose. For the flat listing the
+compiler itself prints, run `xcc -h`.
+
+## The short version
+
+```bash
+xcc -o prog prog.xc
+```
+
+That is a complete invocation. With no `-A`, `xcc` builds a native executable for
+the machine it is running on; it finds the standard library relative to its own
+binary, and optimises at `-O3`. A simple program should not need anything else.
+
+```bash
+xcc [options] <input.xc> [<input2.xc> …]
+```
 
 ## Inputs and outputs
 
-```bash
-xtc [options] <input.xt> [<input2.xt> …]
-```
-
 | Flag | Effect |
 |------|--------|
-| `-o <path>`, `--output <path>` | Output file. The extension (`.asm`, `.xex`, `.exe`, `.bin`, `.com`, `.prg`) selects the format. Default: stdout. |
-| `-a`, `--assemble-only` | Stop after producing `.asm` — don't invoke the assembler. Useful for inspection and toolchain integration. |
-| `-E <path>`, `--preprocessed <path>` | Write the preprocessed source to `<path>` and continue compilation. Lets you see exactly what the lexer sees. |
-| `-I <path>` | Add `<path>` to the include-search path. Repeatable. |
-| `-D <name>[=<value>]` | Define a preprocessor symbol. `-DDEBUG` is `#define DEBUG 1`; `-DLEVEL=3` defines `LEVEL` as `3`. |
-| `-q`, `--quiet` | Suppress informational output. Errors still print. |
+| `-o <path>`, `--output <path>` | Output file. On a native target this is a runnable executable unless the path ends in `.s` (assembly) or `.o` (object). On 6502 and m68k the extension picks the container — see below. |
+| `-a`, `--assemble-only` | Stop after producing assembly; don't assemble or link. |
+| `-E <path>`, `--preprocessed <path>` | Write the preprocessed source to `<path>` and carry on. Shows exactly what the lexer sees. |
+| `-I <path>`, `--include <path>` | Add an include-search path. Repeatable. |
+| `-D <name>[=<value>]` | Define a preprocessor symbol. `-DDEBUG` is `#define DEBUG 1`; `-DLEVEL=3` defines it as `3`. |
+| `-q`, `--quiet` | Suppress informational output. Errors and warnings still print. |
+| `-V`, `--verbose` | Print the resolved support root and every include path at startup. First stop when *Cannot find include file* fires. |
+| `-v`, `--version` | Print the version and exit. |
 | `-h`, `--help` | Print the full flag listing and exit. |
+
+Output containers on the non-native targets:
+
+| Extension | Format |
+|---|---|
+| `.asm` | assembly source — stops before the assembler |
+| `.xex` `.exe` `.bin` `.com` | Atari XEX binary (6502) |
+| `.tos` `.prg` | GEMDOS executable (m68k) |
 
 ## Target architecture
 
 | Flag | Effect |
 |------|--------|
-| `-A <arch>`, `--arch <arch>` | Target architecture. One of `6502` (default), `arm64`, `arm9`, `m68k`, `x86_64`. |
+| `-A <arch>`, `--arch <arch>` | Target architecture. With no `-A`, `xcc` builds for the machine it is running on. |
 
 | `-A` | Target | Output |
 |---|---|---|
-| `6502` *(default)* | banked **xt6502** | Atari `.xex` — run under `xts` |
-| `arm64` | native macOS / Linux host | Mach-O / ELF executable — run it |
-| `arm9` | AArch32 / **XTOS** | ELF executable, or a `.so` (see below) |
-| `m68k` | Atari ST | GEMDOS `.tos` — run under `xst` |
-| `x86_64` | Linux (musl) | ELF executable |
+| *(none)* | the host you are on | native executable |
+| `arm64` | macOS / Linux on 64-bit ARM | Mach-O / ELF — run it |
+| `x86_64` | Linux (musl) | ELF — run it |
+| `win64` | Windows | PE/COFF `.exe` |
+| `arm9` | AArch32 / **XTOS** | ELF, or a `.so` (see `--emit-lib`) |
+| `m68k` | Atari ST / TT | GEMDOS `.tos` — run under `xcc-sim-68k` |
+| `6502` | banked **xt6502** | Atari `.xex` — run under `xcc-sim-6502 -m xt` |
 
-`-m` (below) selects the *memory layout* within a target; it applies to the 6502 path. The
-native targets have no memory model to load — their libraries come from `support/<arch>/`.
+`-A` and `-m` are orthogonal: `-A` picks the instruction set, `-m` picks the
+memory layout within it. Only the 6502 path has layouts to choose.
+
+## Native linking
+
+These apply when `xcc` produces a native executable or library. By default it
+assembles, links and (on macOS) signs **in-house** — no system assembler, linker
+or `clang` is involved.
+
+| Flag | Effect |
+|------|--------|
+| `-l<name>` | Link a system library, forwarded to the linker. e.g. `-lobjc`. |
+| `-framework <F>` | Link a macOS framework. e.g. `-framework AppKit`. |
+| `-Xlinker <arg>`, `-Wl,<arg>` | Pass an argument straight to the linker. `$XTC_LDFLAGS` is appended too. |
+| `--self-host` | The default: in-house assemble + link + sign. Accepted explicitly; already on. |
+| `--no-self-host` | Use the `clang` link path instead. |
+| `-fpic`, `-fPIC`, `-mpic` | Position-independent code. Implied by `--emit-lib`; on arm9 it is what produces an `ET_DYN` `.so` rather than a fixed-load ELF. |
 
 ## Shared libraries
 
-Only on `arm9`, which is the target with a dynamic loader.
-
 | Flag | Effect |
 |------|--------|
-| `--emit-lib` | Emit a **shared library** (`.so`) instead of an executable, with its public interface embedded in the binary. |
-| `-L <path>`, `--library-path <path>` | Add a search path for `#import <Lib>`, which resolves to `lib<Lib>.so`. Repeatable. |
+| `--emit-lib` | Emit a **shared library** instead of an executable, together with a sibling `.xtc.iface` describing the classes, protocols, structs and enums it exports. Implies `-fpic`. |
+| `-L <path>`, `--library-path <path>` | Add a search path for `#import <Lib>`, which resolves to `lib<Lib>.so` and reads its interface (or, for a C library, its DWARF). Repeatable. |
 
 ```bash
-xtc -A arm9 --emit-lib -o libXtg.so xtg.xt     # build the library
-xtc -A arm9 -L . -o app.so app.xt              # build a client against it
+xcc --emit-lib -o libXtg.so xtg.xc      # build the library
+xcc -L . -o app app.xc                  # build a client against it
 ```
 
-`#import <Lib>` type-checks the client against the **actual binary** — there is no header to
-drift out of sync. It also works on a plain **C** `.so`, whose DWARF supplies its functions,
-types and enum constants. See
+`#import <Lib>` type-checks the client against the **actual binary** — there is no
+header to drift out of sync. It also works on a plain **C** `.so`, whose DWARF
+supplies its functions, types and enum constants. See
 [Modules & shared libraries](/compiler/language/modules/).
 
-## Memory model and platform
+## Support tree and memory model
 
 | Flag | Effect |
 |------|--------|
-| `-m <layout>` | Load a memory layout (6502 only — the native backends ignore it). Searches `<layout>` as a path (appends `.lnk` if needed), then `support/layouts/<layout>.lnk`, then `support/<platform>/layouts/<layout>.lnk`. Default: `xt`. |
-| `-ll`, `--list-layouts` | List every built-in layout, grouped by platform. Exits without compiling. |
-| `--dump-layout` | Print the active layout's memory-map diagram and exit. Use with `-m`. |
-| `-H <path>`, `--xtc-home <path>` | Set the xtc home directory (overrides `XTC_HOME`). Affects the search path for layouts, library classes, and runtime asm. |
+| `-H <path>`, `--xcc-home <path>` | Root holding the support tree. Rarely needed — `xcc` finds it relative to its own binary. See [Install](/compiler/usage/install/). |
+| `-m <layout>`, `--memory-model <layout>` | Load a memory layout (`.lnk`). Searches `<layout>` as a path (appending `.lnk`), then the built-in layout directories. `-m xt` is the banked 6502 map and implies `-A 6502`. There is no default: with neither `-m` nor `-A`, `xcc` targets the host. |
+| `-ll`, `--list-layouts` | List every built-in layout, grouped by platform, and exit. |
+| `-dl`, `--dump-layout` | Print the active layout's memory-map diagram and exit. Use with `-m`. |
+| `-dp`, `--dump-placement` | After codegen, print every function's final placement (main / banked page N / irq / vbi) with per-bank byte usage. |
+| `-du`, `--dump-usage` | After codegen, print a per-segment usage summary for every region and bank in the layout. |
 
-See [Memory models](/compiler/usage/memory-models/) for the full discussion of the available layouts.
+See [Memory models](/compiler/usage/memory-models/).
 
 ## Optimisation
 
 | Flag | Effect |
 |------|--------|
-| `-O0` | No optimisation — straight-through codegen. The default. |
+| `-O0` | No optimisation. A debug aid — the production level is `-O3`. |
 | `-O`, `-O1` | Peephole + register tracking. |
-| `-O2` | Adds: const propagation, dead code / dead store elimination, tail-call optimisation, leaf-function inlining, loop unrolling for small trip counts. |
-| `-O3` | Adds: branch inversion, branch threading, strength reduction, cross-function dead-code elimination, label cleanup. |
-| `-Fli <n>`, `--fn-leaf-inline <n>` | Max leaf-function size (in instructions) eligible for inlining. Default: 100. Requires `-O2+`. |
-| `-Flu <n>`, `--fn-loop-unroll <n>` | Auto-unroll counted `for`-loops with trip count ≤ `<n>`. Default: 5 at `-O2+`, 0 below. |
+| `-O2` | Adds const propagation, dead code / dead store elimination, tail-call optimisation, leaf-function inlining, loop unrolling for small trip counts. |
+| `-O3` | **The default.** Adds branch inversion and threading, strength reduction, cross-function dead-code elimination, label cleanup — and on arm64 the NEON auto-vectoriser. |
+| `-Fli <n>`, `--fn-leaf-inline <n>` | Max leaf-function size (instructions) eligible for inlining. Default 100; needs `-O2+`. |
+| `-Flu <n>`, `--fn-loop-unroll <n>` | Auto-unroll counted `for` loops with trip count ≤ `n`. Default 5 at `-O2+`, 0 below. |
+| `-Fmb <n>`, `--fn-min-banked <n>` | Minimum function size (6502 instructions) to be banked. Smaller functions stay in main RAM so their call sites skip the `_xcall` trampoline. Default 0 (off). |
 
 Full discussion on [Optimisation](/compiler/usage/optimization/).
 
-## Allocator and ARC
+## Allocator, ARC and threads
 
 | Flag | Effect |
 |------|--------|
 | `-falloc=bump` | Inline bump allocator. Fast `new`, no `delete`. |
-| `-falloc=heap` | Coalescing free-list allocator. Supports `delete`, `release`, `dealloc`. Default on layouts with a dedicated `[heap]` region. |
-| `-farc[=on\|off]` | Automatic reference counting. `on` (default) emits retains and releases automatically and rejects manual `retain` / `release` statements; `off` disables auto-emit and accepts manual lifecycle. Accepts `on/yes/1` or `off/no/0`. |
+| `-falloc=heap` | Coalescing free-list allocator; supports `delete`. Default on targets with a dedicated heap region — the `xt` layouts and the native hosts. |
+| `-farc[=on\|off]` | Automatic reference counting. `on` (default) emits retains and releases and rejects manual `retain` / `release`; `off` disables auto-emit and accepts manual lifecycle. |
+| `-fthread-safe-arc` | Force atomic ARC refcounts, so two threads can share an object. |
+| `-fno-thread-safe-arc` | Force plain, non-atomic refcounts. |
 
-See [Allocator & ARC](/compiler/usage/allocator-arc/) for the lifecycle implications.
+Atomic refcounts are decided **per module**, and switch on exactly when the module
+spawns a thread — so these flags are only for overriding that. See
+[Allocator & ARC](/compiler/usage/allocator-arc/) and
+[Threading](/compiler/language/threading/).
+
+## Floating point (arm9)
+
+| Flag | Effect |
+|------|--------|
+| `-mhard-float`, `-mfpu` | Use VFP instructions for `float` and `double`. The default on boards that have it. |
+| `-msoft-float` | Route floating point through the libgcc soft-float helpers instead. |
 
 ## Stack control
 
 | Flag | Effect |
 |------|--------|
-| `-S`, `--xtc-stack` | Use the xtc software stack globally for return addresses and saved registers. Slower but unbounded. |
-| `-ss <n>`, `--stack-size <n>` | Cap the xtc stack at `<n>` bytes. Accepts decimal, `$hex`, or `0xhex`; range 1..65535. On a flat-heap layout the bytes you reclaim are handed to the heap. No effect on banked-heap or non-heap targets. |
+| `-S`, `--xtc-stack` | Use the xtc software stack globally for return addresses and saved registers. |
+| `-ss <n>`, `--stack-size <n>` | Cap the xtc stack at `n` bytes (decimal, `$hex` or `0xhex`; 1..65535). No effect on banked-heap or non-heap targets, which is all of the current ones. |
 
 ## Runtime behaviour
 
 | Flag | Effect |
 |------|--------|
-| `-Q rts`, `--quit-style rts` | When `main` returns, issue an `RTS` to the caller (DOS). Default. |
-| `-Q loop`, `--quit-style loop` | When `main` returns, jump to an infinite loop. Useful for "the program owns the machine" demos and for cases where the caller doesn't expect control back. |
+| `-Q rts`, `--quit-style rts` | When `main` returns, `RTS` to the caller (DOS). Default. |
+| `-Q loop`, `--quit-style loop` | When `main` returns, spin. For "the program owns the machine" builds where the caller does not expect control back. |
+
+## Diagnostics
+
+| Flag | Effect |
+|------|--------|
+| `--emit-ir` | Dump the IR after lowering, to stderr. Does not change the generated code. |
+| `--emit-ir-opt` | Dump the IR after the optimiser, to stderr. |
 
 ## Warnings
 
-Suppress a category with `-Wno-<category>`. All warnings on by default.
+Suppress a category with `-Wno-<category>`. All are on by default.
 
 | Category | Triggered by |
 |----------|--------------|
-| `asm-clobbers` | `asm{}` block's `clobbers` annotation disagrees with the registers the compiler thinks were touched |
-| `class-init` | bad initialiser passed to a stack-allocated class |
-| `escape` | a stack-allocated address is stored into a longer-lived variable (global, heap field, outer scope) — likely dangling |
-| `new-in-loop` | `new` inside a loop body — likely a leak unless deliberately accumulating |
-| `unknown-annotation` | unrecognised function annotation (e.g. `:foo`) — caught at sema time |
-| `unknown-pragma` | unrecognised `#`-directive |
+| `asm-clobbers` | an `asm{}` block's `clobbers` annotation disagrees with the registers the compiler thinks it touched |
+| `class-init` | a bad initialiser on a stack-allocated class |
+| `escape` | a stack address stored into a longer-lived slot (global, heap field, outer scope) — likely dangling |
+| `new-in-loop` | `new` inside a loop body — likely a leak unless you are deliberately accumulating |
+| `unknown-annotation` | an unrecognised function annotation, e.g. `:foo` |
+| `unknown-pragma` | an unrecognised `#` directive |
 
-Example:
+## Environment
 
-```bash
-xtc app.xt -o app.xex -O2 -Wno-new-in-loop
-```
+| Variable | Effect |
+|---|---|
+| `XCC_HOME` | Override the support-tree search. `-H` beats it. |
+| `XTC_HOME` | The older spelling, still read. |
+| `XTC_LDFLAGS` | Extra arguments appended to the native link. |
 
 ## Combined examples
 
 ```bash
-# Plain build, default xl flat memory model
-xtc hello.xt -o hello.xex
+# Native build for this machine
+xcc -o app app.xc
 
-# 130XE with banking, full optimisation, looped exit
-xtc -m xe -O3 -Q loop game.xt -o game.xex
+# Cross-compile the same source three ways
+xcc -A win64 -o app.exe app.xc
+xcc -A m68k  -o app.tos app.xc
+xcc -A 6502  -o app.xex app.xc
 
-# Inspect the optimiser's output without invoking the assembler
-xtc -O2 -a app.xt -o app.asm
+# Link against a system library and a framework (macOS)
+xcc -o app app.xc -lobjc -framework AppKit
 
-# See what the active layout looks like
-xtc --dump-layout -m xt
+# Build a shared library, then a client against it
+xcc --emit-lib -o libgfx.so gfx.xc
+xcc -L . -o app app.xc
 
-# Build with a custom layout file
-xtc -m ./my-layout.lnk app.xt -o app.xex
+# Inspect the generated assembly rather than linking
+xcc -a -o app.s app.xc
 
-# Manual lifecycle, larger stack, debug build
-xtc -farc=off -ss $0400 -DDEBUG -O0 game.xt -o game.xex
+# See the 6502 memory map, and where functions ended up
+xcc -dl -m xt
+xcc -A 6502 -dp -o app.xex app.xc
+
+# Manual lifecycle, debug build, one warning silenced
+xcc -farc=off -O0 -DDEBUG -Wno-new-in-loop -o app app.xc
 ```

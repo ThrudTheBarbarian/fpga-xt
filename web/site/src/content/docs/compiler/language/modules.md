@@ -3,25 +3,29 @@ title: Modules & shared libraries
 description: Building an xtc shared library with --emit-lib, importing it with #import <Lib>, what crosses the interface, and the extern keyword for globals.
 ---
 
-On targets with a dynamic loader — today that is **arm9** (XTOS) — a program can be split
-into a **shared library** and its clients. The library is a real `.so`; the client is
-type-checked against the actual binary, not against a header that might have drifted from
-it.
+On every target with a dynamic loader — the native hosts (`arm64`, `x86_64`, `win64`) and
+**arm9** (XTOS) — a program can be split into a **shared library** and its clients. The
+library is a real `.dylib` / `.so` / `.dll`; the client is type-checked against the actual
+binary, not against a header that might have drifted from it.
 
 ```bash
-# build the library
-xtc -A arm9 --emit-lib -o libXtg.so xtg.xt
+# build the library (native host — add -A arm9 etc. to cross-compile)
+xcc --emit-lib -o libXtg.dylib xtg.xc
 
 # build a client against it
-xtc -A arm9 -L . -o app.so app.xt
+xcc -L . -o app app.xc
 ```
+
+`--emit-lib` also writes a sibling `.xtc.iface` describing the classes, protocols, structs
+and enums the library exports; that is what `#import <Lib>` reads. The 6502 and m68k targets
+have no dynamic loader and remain whole-program.
 
 ```c
 #import <Xtg>          // resolves to libXtg.so on the -L search path
 
 i16 main(void)
 {
-    XGButton@ b = new XGButton();   // a class from the library
+    XGButton* b = new XGButton();   // a class from the library
     b.setAction(&onClick);          // …taking a bound method from HERE
     return 0;
 }
@@ -122,6 +126,13 @@ CFLAGS += -g -fno-eliminate-unused-debug-types
 
 ## Limits
 
-- **Shared libraries are arm9-only** today. The other four targets are whole-program.
+- **6502 and m68k are whole-program** — they have no dynamic loader, so `--emit-lib` does
+  not apply there.
+- **On macOS, a dylib currently caps at 255 exported symbols.** The Mach-O export trie the
+  linker writes is a single flat node, and `childCount` is one byte. A library that imports
+  Foundation exceeds this, and the build warns (`>255 exports, trie truncated`) but still
+  produces a `.dylib` — whose missing symbols then surface as a `dyld: Symbol not found` in
+  the *client*, at run time. Keep a macOS library small until compiler bug 042 is closed;
+  ELF and PE have no such limit.
 - **A library and its dependencies compose**, transitively. Two libraries built *in complete
   ignorance of each other* also compose — that is what the protocol design above is for.

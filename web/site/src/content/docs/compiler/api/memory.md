@@ -6,7 +6,7 @@ description: Bulk fill, clear, copy and move primitives — self-modifying 6502 
 `Memory` is a static class of bulk byte primitives: fill, clear, copy, and an overlap-safe move. All four take **raw `u16` addresses**, not typed pointers — take the address of the first element and cast:
 
 ```c
-#import <Memory.xt>
+#import <Memory.xc>
 
 u8 screen[960];
 Memory.memclr((u16)&screen[0], (u16)960);

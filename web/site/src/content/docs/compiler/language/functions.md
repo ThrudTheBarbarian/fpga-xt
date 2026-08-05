@@ -65,11 +65,11 @@ string s = va_arg(ap, string);
 va_end(ap);
 ```
 
-Supported `va_arg` types: `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `float`, `double`, `string` (`u8@`), and `T@` for any pointer-to-type.
+Supported `va_arg` types: `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `float`, `double`, `string` (`u8*`), and `T*` for any pointer-to-type.
 
 ### Pointer-to-struct from varargs
 
-`va_arg(ap, T@)` where `T` is a user-defined struct returns a typed pointer **into the pack buffer** pointing at the struct's raw bytes, and advances the cursor by `sizeof(T)`. Read fields through the returned pointer with `->`:
+`va_arg(ap, T*)` where `T` is a user-defined struct returns a typed pointer **into the pack buffer** pointing at the struct's raw bytes, and advances the cursor by `sizeof(T)`. Read fields through the returned pointer with `->`:
 
 ```c
 typedef struct { u8 r; u8 g; u8 b; } RGB;
@@ -77,7 +77,7 @@ typedef struct { u8 r; u8 g; u8 b; } RGB;
 void logColor(string tag, ...) {
     u8 ap;
     va_start(ap);
-    RGB@ sp = va_arg(ap, RGB@);     // pointer into the pack buffer
+    RGB* sp = va_arg(ap, RGB*);     // pointer into the pack buffer
     u8 red   = sp->r;
     u8 green = sp->g;
     u8 blue  = sp->b;
@@ -141,7 +141,7 @@ void fn(void) :xtcStack   { ... }    // use the xtc software stack
 void fn(void) :needsOS    { ... }    // requires OS ROM mapped in
 void fn(void) :irq        { ... }    // hardware-IRQ handler, ends with RTI
 void fn(void) :vbi        { ... }    // VBI handler — install via Vbi.install()
-void fn(void) :banked     { ... }    // place in the bank window (xt / xe)
+void fn(void) :banked     { ... }    // place in the bank window (xt)
 void fn(void) :main       { ... }    // place in main RAM, opt out of auto-bank
 void fn(void) :shadow     { ... }    // place in shadow RAM (layouts declaring a [shadow] section)
 void fn(void) :cloaked    { ... }    // place in a cloaked region (xe family)
@@ -159,16 +159,16 @@ void fn(void) :cloaked(ext1) { ... } // pin to a named cloaked region
 - `:irq` — emitted naked, with `RTI` instead of `RTS` so the 6502 pops the flags + return PC the IRQ pushed. Install the address into `$FFFE/$FFFF` (or your platform's appropriate vector) yourself.
 - `:vbi` — Vertical-Blank-Interrupt handler. The prologue saves A/X/Y, the body runs, the epilogue restores A/X/Y and `JMP`s through `XITVBV` (`$E462`) so the OS finishes the interrupt. Install via `Vbi.addImmediate(&fn)` or `Vbi.addDeferred(&fn)`; remove with `Vbi.removeImmediate()` / `Vbi.removeDeferred()` (both routes call `SETVBV` `$E45C` for an SEI-safe atomic write).
 
-On banked targets (xt / xe), `:irq` and `:vbi` handlers are placed in main RAM at a stable address — the OS dispatcher `JMP`s through their vector slot directly, with no opportunity for the bank-switch trampoline to swap the right page in. The codegen handles this automatically.
+On the banked `xt` target, `:irq` and `:vbi` handlers are placed in main RAM at a stable address — the OS dispatcher `JMP`s through their vector slot directly, with no opportunity for the bank-switch trampoline to swap the right page in. The codegen handles this automatically.
 
 ### Placement
 
-`:banked`, `:main`, and `:shadow` are mutually exclusive and control where in the address space the function lives. They apply to the **6502** target; the native backends ignore them. Defaults stay as they are (free functions auto-bank on `xt`; unbanked RAM otherwise), so most programs don't need to think about them.
+`:banked`, `:main`, and `:shadow` are mutually exclusive and control where in the address space the function lives. They apply to the **6502** target only; every other backend ignores them. Defaults stay as they are (free functions auto-bank on `xt`; unbanked RAM otherwise), so most programs don't need to think about them.
 
 - `:banked` — force into the code-bank window. On a target with no banking, the compiler warns and falls through to `:main`.
-- `:main` — force into main RAM, even on xt / xe where it would otherwise auto-bank. Useful for hot routines where the cross-bank trampoline cost matters, or for code that an `:irq` / `:vbi` handler calls (since handlers can't trampoline).
+- `:main` — force into main RAM, even on `xt` where it would otherwise auto-bank. Useful for hot routines where the cross-bank trampoline cost matters, or for code that an `:irq` / `:vbi` handler calls (since handlers can't trampoline).
 - `:shadow` — place under the OS ROM, on a layout that declares a `[shadow]` section. No shipped layout does — `xt6502` reaches its extra RAM through the bank windows — so on the shipped targets the compiler warns and falls through to `:main`. Cross-bank-style calls work either way — but `:shadow` code is unreachable when ROM is mapped in, so don't call it from inside a `:needsOS` function.
-- `:cloaked` / `:cloaked(<id>)` — place in a layout-declared cloaked region. xe-family-only. Bare `:cloaked` auto-packs into the layout's first declared region, with overflow spilling forward to the next region (and finally to `:main`). The id form pins the decl to a named region — useful when the layout has both `lib` (banking-off, exposed in main RAM) and numbered-bank `extN` regions and you want a specific one. The compiler errors on a target without cloaking support or on an unknown id; see [Linker scripts — `[cloaked]`](/compiler/usage/linker-scripts/#cloaked--code-regions-for-cloaked-decls) for the layout side. Auto-cloak (`-fauto-cloak={never,auto,always}`) promotes cloak-safe decls automatically, so most programs don't need the manual annotation.
+- `:cloaked` / `:cloaked(<id>)` — place in a layout-declared cloaked region. **Retired in practice**: it applied to the `xe`-family Atari models, which are gone, and no shipped layout declares a cloaked region — the annotation and `-fauto-cloak` are still accepted but inert. Kept because the machinery is still in the IR and a future layout could declare one. Bare `:cloaked` auto-packs into the layout's first declared region, with overflow spilling forward to the next region (and finally to `:main`). The id form pins the decl to a named region — useful when the layout has both `lib` (banking-off, exposed in main RAM) and numbered-bank `extN` regions and you want a specific one. The compiler errors on a target without cloaking support or on an unknown id; see [Linker scripts — `[cloaked]`](/compiler/usage/linker-scripts/#cloaked--code-regions-for-cloaked-decls) for the layout side. Auto-cloak (`-fauto-cloak={never,auto,always}`) promotes cloak-safe decls automatically, so most programs don't need the manual annotation.
 
 ### Shadow-target helpers
 
@@ -179,3 +179,107 @@ On banked targets (xt / xe), `:irq` and `:vbi` handlers are placed in main RAM a
 By default, parameters pass on the **xtc software stack**, return addresses and saved registers go on the **6502 hardware stack**. The `-S` / `--xtc-stack` command-line flag forces all stack traffic onto the software stack — larger but slower.
 
 `:hwStack` and `:xtcStack` annotations override the command-line default per-function. Parameters always travel on the software stack regardless of which annotation wins.
+
+## Worked example
+
+Overloading, multiple return values, tuple unpacking, varargs and recursion:
+
+```c
+// functions.xc — overloading, multiple return values, tuple unpacking,
+// varargs, and recursion.
+#import "Foundation.xc"
+#import "Stdio.xc"
+
+// ---- Overloading -----------------------------------------------------------
+// Same name, different parameter types. The compiler picks by argument type,
+// scoring conversions so the closest match wins.
+u16 area(u16 side)             { return side * side; }
+u16 area(u16 w, u16 h)         { return w * h; }
+float area(float radius)       { return 3.14159 * radius * radius; }
+
+// ---- Multiple return values ------------------------------------------------
+// A function may return several values: the return types are a comma-separated
+// list before the name, and `return` takes a matching list. The CALL SITE
+// parenthesises, not the declaration.
+u16, u16 divmod(u16 n, u16 d)
+{
+    return n / d, n % d;
+}
+
+// Three, of mixed type — the list is not restricted to one width.
+u16, u16, bool minMax(u16 a, u16 b)
+{
+    if (a <= b) return a, b, true;
+    return b, a, false;
+}
+
+// ---- Varargs ---------------------------------------------------------------
+// `...` after the fixed parameters. The cursor is a plain `u8` that `va_start`
+// initialises — there is no `va_list` type and no `va_end`. Each argument is
+// read with a WIDTH-NAMED accessor (`va_arg_u16`, `va_arg_i32`, `va_arg_double`,
+// `va_arg_ptr`, …) rather than a type parameter, and as in C the count has to
+// come from somewhere — here a leading argument.
+u32 sumOf(u16 count, ...)
+{
+    u32 total = (u32)0;
+    u8  ap;
+    va_start(ap);
+    for (u16 i = (u16)0; i < count; i = i + (u16)1)
+        total = total + (u32)va_arg_u16(ap);
+    return total;
+}
+
+// ---- Recursion -------------------------------------------------------------
+// Self-recursion is ordinary. At -O2 and above a TAIL call becomes a loop, so
+// this costs no stack depth per step.
+u32 factorial(u16 n)
+{
+    if (n <= (u16)1) return (u32)1;
+    return (u32)n * factorial(n - (u16)1);
+}
+
+// A default-free "out parameter" is just a pointer.
+void bump(u16* slot, u16 by) { *slot = *slot + by; }
+
+i32 main(void)
+{
+    // Overloads resolve on the argument types.
+    Stdio.printf("area square %d, rect %d, circle %f\n",
+                 area((u16)5), area((u16)3, (u16)4), area(2.0));
+
+    // Tuple unpacking: declare the variables, then assign the call to them
+    // as a parenthesised list.
+    u16 q, r;
+    (q, r) = divmod((u16)17, (u16)5);
+    Stdio.printf("17/5 = %d rem %d\n", q, r);
+
+    u16 lo, hi;
+    bool ordered;
+    (lo, hi, ordered) = minMax((u16)9, (u16)4);
+    Stdio.printf("minMax(9,4) = %d %d ordered=%d\n",
+                 lo, hi, ordered ? (u16)1 : (u16)0);
+
+    // Varargs.
+    Stdio.printf("sum %ld\n", sumOf((u16)4, (u16)10, (u16)20, (u16)30, (u16)40));
+
+    // Recursion.
+    Stdio.printf("10! = %ld\n", factorial((u16)10));
+
+    // Out parameter.
+    u16 counter = (u16)100;
+    bump(&counter, (u16)5);
+    Stdio.printf("counter %d\n", counter);
+    return 0;
+}
+```
+
+```
+area square 25, rect 12, circle 12.566360
+17/5 = 3 rem 2
+minMax(9,4) = 4 9 ordered=0
+sum 100
+10! = 3628800
+counter 105
+```
+
+Two things that differ from C and catch people out: the multiple-return **types** are a bare comma-separated list before the function name, while the **unpacking** at the call site is parenthesised — the opposite of what the shapes suggest. And varargs use a plain `u8` cursor with width-named accessors (`va_arg_u16`, `va_arg_double`, …) instead of `va_list` and a type parameter; there is no `va_end`.

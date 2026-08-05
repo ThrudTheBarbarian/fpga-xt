@@ -10,13 +10,13 @@ That choice is what makes the feature portable. Table-driven unwinding would nee
 ## The shape of it
 
 ```c
-#import <Error.xt>
+#import <Error.xc>
 
 class ParseError <Error>
 {
-    String@ msg;
-    void init(String@ m)  { msg = m; }
-    String@ message(void) { return msg; }
+    String* msg;
+    void init(String* m)  { msg = m; }
+    String* message(void) { return msg; }
 }
 
 i32 parseDigit(u8 ch) throws
@@ -44,13 +44,13 @@ An error is an ordinary heap object — not a new kind of value. It conforms to 
 ```c
 protocol Error
 {
-    String@ message(void);
+    String* message(void);
 }
 ```
 
 One requirement means a handler can always say something useful about what it caught without knowing the concrete type. Everything else comes free from machinery the language already has: errors are classes, so they use protocols, ARC and the RTTI downcast rather than a mechanism sitting beside them.
 
-`Error.xt` lives in `support/generic/lib/`. It is **not** part of the `Foundation.xt` umbrella — import it explicitly.
+`Error.xc` lives in `support/generic/lib/`. It is **not** part of the `Foundation.xc` umbrella — import it explicitly.
 
 Errors follow ARC like anything else. A caught error is a strong local, released at the end of its `catch` scope.
 
@@ -59,7 +59,7 @@ Errors follow ARC like anything else. A caught error is a strong local, released
 `throws` goes between the parameter list and the body, after any function annotations:
 
 ```c
-i32 parse(String@ s) throws { … }
+i32 parse(String* s) throws { … }
 void reload(void) :main throws { … }
 ```
 
@@ -107,11 +107,11 @@ catch (e) { … }                // untyped catch-all
 
 A `try` block must be followed by at least one `catch`. Arms are tested **in source order**:
 
-- A **typed** arm runs only when the in-flight error really is an instance of that class. The test is the same RTTI conformance check that [`(T@ ?)obj`](/compiler/language/inheritance/#downcasts--runtime-checked) uses, so it works across a `.so` boundary for free. Inside the arm, the binder is already narrowed to that class — `e.message()` resolves directly against it.
-- An **untyped** arm catches everything. Its binder is `Object@`, the most general reference, so reaching a specific class's members needs a cast.
+- A **typed** arm runs only when the in-flight error really is an instance of that class. The test is the same RTTI conformance check that [`(T* ?)obj`](/compiler/language/inheritance/#downcasts--runtime-checked) uses, so it works across a `.so` boundary for free. Inside the arm, the binder is already narrowed to that class — `e.message()` resolves directly against it.
+- An **untyped** arm catches everything. Its binder is `Object*`, the most general reference, so reaching a specific class's members needs a cast.
 - If **no** arm matches, the error keeps propagating — out to an enclosing `try`, or out of the function if it is `throws`.
 
-Note the class name in a typed arm carries **no** `@`: it is `catch (IOError e)`, not `catch (IOError@ e)`.
+Note the class name in a typed arm carries **no** pointer sigil: it is `catch (IOError e)`, not `catch (IOError* e)`.
 
 ### Unreachable arms are a warning
 
@@ -144,7 +144,7 @@ void main(void)
     catch (e) { Stdio.printf("UNEXPECTED\n"); }
 
     try { i32 b = middle((u32)1); Stdio.printf("UNEXPECTED b=%d\n", b); }
-    catch (e) { Stdio.printf("caught: %s\n", ((ParseError@)e).message().cString()); }
+    catch (e) { Stdio.printf("caught: %s\n", ((ParseError*)e).message().cString()); }
 }
 ```
 
@@ -168,3 +168,94 @@ The defer fires on both paths — once on the ordinary return, once on the throw
 - [Statements & control flow → `defer`](/compiler/language/statements/#defer) — the cleanup half of this design.
 - [Inheritance & protocols](/compiler/language/inheritance/) — protocols and the failable downcast the typed arms are built on.
 - [Heap, ARC & weak refs](/compiler/language/memory/) — how a caught error's lifetime is managed.
+
+## Worked example
+
+`throws` as a checked effect, `defer` on the unwind path, and typed `catch` arms:
+
+```c
+// errors.xc — throws / try / catch / defer, worked end to end.
+//
+// A function that can fail says so with `throws`. Callers must either handle
+// it in a `try` block or be declared `throws` themselves, so a failure path
+// cannot be ignored by accident.
+#import "Foundation.xc"
+#import "Error.xc"      // not part of the Foundation umbrella
+#import "Stdio.xc"
+
+// Anything thrown must conform to `Error`, which requires message().
+class ParseError <Error>
+{
+    String* _what;
+    void init(void) { _what = 0; }
+    static ParseError* with(String* what)
+    {
+        ParseError* e = new ParseError();
+        e._what = what;
+        return e;
+    }
+    String* message(void) { return _what; }
+}
+
+// `throws` is part of the signature: the caller can see it can fail.
+u16 parseDigit(u8 c) throws
+{
+    if (c < (u8)'0' || c > (u8)'9')
+        throw ParseError.with(String.withCString("not a digit"));
+    return (u16)(c - (u8)'0');
+}
+
+// A `defer` block runs when the enclosing scope exits — on the normal path
+// AND when an error unwinds through it. That is what makes it useful for
+// releasing things.
+u16 sumDigits(string s) throws
+{
+    defer { Stdio.print("  (defer: sumDigits scope exited)\n"); }
+    u16 total = (u16)0;
+    for (u16 i = (u16)0; s[i] != (u8)0; i = i + (u16)1)
+        total = total + parseDigit(s[i]);       // may throw; propagates
+    return total;
+}
+
+i32 main(void)
+{
+    // 1. The happy path. `try` guards the block; `catch (T e)` binds the
+    //    error as a T. Name the class: an untyped `catch (e)` binds `e` as
+    //    Object*, which has no message() — so it is only useful for "handle
+    //    anything and carry on", not for inspecting what went wrong.
+    try {
+        u16 n = sumDigits("12345");
+        Stdio.printf("sum of 12345 = %d\n", n);
+    } catch (ParseError e) {
+        Stdio.printf("unexpected: %s\n", e.message().cString());
+    }
+
+    // 2. The failing path — the throw unwinds out of the loop, out of
+    //    sumDigits (running its defer), and lands in catch.
+    try {
+        u16 n = sumDigits("12x45");
+        Stdio.printf("sum of 12x45 = %d\n", n);
+    } catch (ParseError e) {
+        Stdio.printf("caught: %s\n", e.message().cString());
+    }
+
+    // 3. The same, catching a throw that happens directly in the block.
+    try {
+        u16 d = parseDigit((u8)'!');
+        Stdio.printf("digit %d\n", d);
+    } catch (ParseError e) {
+        Stdio.printf("caught a ParseError: %s\n", e.message().cString());
+    }
+    return 0;
+}
+```
+
+```
+  (defer: sumDigits scope exited)
+sum of 12345 = 15
+  (defer: sumDigits scope exited)
+caught: not a digit
+caught a ParseError: not a digit
+```
+
+Note the order of the output: `sumDigits`'s `defer` runs *before* the `printf` in the `try` block on the happy path, because the defer fires when `sumDigits` returns — and it runs on the failing path too, as the throw unwinds through it.

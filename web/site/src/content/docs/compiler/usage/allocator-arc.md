@@ -13,14 +13,14 @@ The two flags compose. The defaults (`heap` on layouts with a `[heap]` region; `
 ## Allocator: `-falloc=bump|heap`
 
 ```bash
-xtc -falloc=bump tiny.xt -o tiny.xex
-xtc -falloc=heap full.xt -o full.xex
+xcc -falloc=bump tiny.xc -o tiny.xex
+xcc -falloc=heap full.xc -o full.xex
 ```
 
 ### Bump allocator
 
 ```c
-u8@ buf = new u8[256];          // bump pointer advances by 256
+u8* buf = new u8[256];          // bump pointer advances by 256
 // ... use buf ...
 // no free — the bytes stay allocated for the rest of the program
 ```
@@ -38,7 +38,7 @@ The bump allocator is **always available** — every layout supports it. It's al
 ### Heap allocator
 
 ```c
-u8@ buf = new u8[256];
+u8* buf = new u8[256];
 // ... use buf ...
 delete buf;                     // returns the bytes to the free list
 ```
@@ -60,15 +60,15 @@ You can't. The allocator choice is global per compile — `-falloc` is a single 
 ## Reference counting: `-farc=on|off`
 
 ```bash
-xtc -farc=on   game.xt -o game.xex      # default
-xtc -farc=off  game.xt -o game.xex      # manual lifecycle
+xcc -farc=on   game.xc -o game.xex      # default
+xcc -farc=off  game.xc -o game.xex      # manual lifecycle
 ```
 
 ARC and the manual mode are **mutually exclusive per compile** — you can't mix them in the same program.
 
 ### `-farc=on` — automatic (default)
 
-The compiler emits retains and releases at the right places: when one slot is initialised from another (`Foo@ b = a;` → retain), at scope exit (release every tracked strong class-pointer local, LIFO), inside aggregate dealloc (release every strong class-pointer ivar before bytes return to the free list), and so on. **You never write `retain` or `release`** — those statements are rejected at sema time.
+The compiler emits retains and releases at the right places: when one slot is initialised from another (`Foo* b = a;` → retain), at scope exit (release every tracked strong class-pointer local, LIFO), inside aggregate dealloc (release every strong class-pointer ivar before bytes return to the free list), and so on. **You never write `retain` or `release`** — those statements are rejected at sema time.
 
 Function calling convention follows from the emit rules:
 
@@ -80,8 +80,8 @@ Full mechanics are on [Heap, ARC & weak refs](/compiler/language/memory/).
 ### `-farc=off` — manual
 
 ```c
-Foo@ p = new Foo();             // arrives with refcount 1
-Foo@ q = p;                     // q holds a *borrowed* reference
+Foo* p = new Foo();             // arrives with refcount 1
+Foo* q = p;                     // q holds a *borrowed* reference
 retain p;                       // refcount 2
 // ... share / pass around ...
 release p;                      // refcount 1
@@ -111,6 +111,6 @@ In practice the diagonal — `bump + arc=on` — is the unusual one and should o
 
 ## Stack allocations are unaffected
 
-Both flags only govern **heap** allocation. Stack-allocated class instances (`MyClass mine;` rather than `MyClass@ p = new MyClass();`) live in the enclosing scope's local storage; their lifetime is the scope, not the refcount. ARC mode doesn't change them, allocator choice doesn't change them — they're free, they're predictable, and they're always reused at scope exit.
+Both flags only govern **heap** allocation. Stack-allocated class instances (`MyClass mine;` rather than `MyClass* p = new MyClass();`) live in the enclosing scope's local storage; their lifetime is the scope, not the refcount. ARC mode doesn't change them, allocator choice doesn't change them — they're free, they're predictable, and they're always reused at scope exit.
 
 For a refresher on stack vs heap class allocation, see [Classes → Two ways to allocate](/compiler/language/classes/#two-ways-to-allocate).

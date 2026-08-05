@@ -8,7 +8,7 @@ containers (`Array`, `Map`, `Set`), and the three protocols they are built on (`
 `Hashable`, `Enumerable`).
 
 ```c
-#import "Foundation.xt"        // the umbrella
+#import "Foundation.xc"        // the umbrella
 ```
 
 The umbrella pulls in `Object`, `Comparable`, `Enumerable`, `Hashable`, `Number`, `String`, `Data`,
@@ -16,7 +16,7 @@ The umbrella pulls in `Object`, `Comparable`, `Enumerable`, `Hashable`, `Number`
 by name.
 
 Every class inherits from the runtime's built-in `Object` root — every parentless `class X`
-does — so a `Number@`, a `String@`, or any class of your own fits wherever an `Object@` is
+does — so a `Number*`, a `String*`, or any class of your own fits wherever an `Object*` is
 expected. No `: Object` annotation is needed.
 
 All of it needs a real heap (`-falloc=heap`), which is the default on the 6502 `xt` layouts
@@ -33,17 +33,42 @@ caller index widens at the call boundary, so `for (u16 i = 0; i < a.count(); i++
 it says on either.
 :::
 
-## `Array`
+## Element types
 
-An ordered, resizable list of `Object@`. Holds a strong reference to every element.
+Every container takes an optional **element type** in angle brackets. It is a
+compile-time check that is *erased* at run time — one `Array` implementation
+serves every element type, so there is no code-size cost per instantiation:
 
 ```c
-Array@ a = new Array();
+Array<String>* names = new Array();      // new Array() needs no type argument
+names.add(String.withCString("ada"));
+String* s = names.get((u32)0);           // a String*, no cast
+
+names.add(Number.withU32((u32)7));       // error: Number is not a subclass of String
+```
+
+`Map<V>` names the **value** type; keys are anything conforming to `Hashable`.
+There is one type argument per collection — no `Map<K,V>` spelling yet.
+
+A primitive element type works and is enforced (`Array<i32>` refuses a `float`),
+but the value travels boxed in a `Number`, and unboxing happens in **assignment
+context**: `i32 v = a.get(i)`. Full discussion, and the `for ... in` caveat, on
+[Collections & strings](/compiler/language/collections/).
+
+Untyped `Array*` / `Map*` / `Set*` remain valid everywhere — the signatures
+below are the erased ones, in terms of `Object*` and `Hashable*`.
+
+## `Array`
+
+An ordered, resizable list of `Object*`. Holds a strong reference to every element.
+
+```c
+Array* a = new Array();
 a.add(Number.with((i32)42));
 a.add(String.withCString("hi"));
 
-for (Object@ o in a) {                 // Enumerable
-    Number@ n = (Number@ ?)o;          // safe-checked downcast
+for (Object* o in a) {                 // Enumerable
+    Number* n = (Number* ?)o;          // safe-checked downcast
     if (n != 0) Stdio.printf("%d\n", n.asI16());
 }
 ```
@@ -72,17 +97,17 @@ same Array can be filtered two different ways at once.
 ```c
 class Threshold {
     i16 limit;
-    bool above(Object@ o) {
-        Number@ n = (Number@ ?)o;
+    bool above(Object* o) {
+        Number* n = (Number* ?)o;
         return n != 0 && n.asI16() > limit;
     }
 }
 
-Threshold@ t = new Threshold();
+Threshold* t = new Threshold();
 t.limit = (i16)3;
-Array@ big = rows.filtered(&t.above);      // the receiver comes along
+Array* big = rows.filtered(&t.above);      // the receiver comes along
 t.limit = (i16)10;
-Array@ bigger = rows.filtered(&t.above);   // same ^, different answer
+Array* bigger = rows.filtered(&t.above);   // same ^, different answer
 ```
 
 `mapped` skips a `null` result rather than storing it, so a transform doubles as a filter in
@@ -106,18 +131,18 @@ not invent one. See [Comparable](#comparable) below.
 A hash map keyed by anything that is `Hashable` + `Comparable`. Retains both keys and values.
 
 ```c
-Map@ m = new Map();
+Map* m = new Map();
 m.set(String.withCString("width"), Number.with((i32)320));
 
-Number@ w = (Number@ ?)m.get(String.withCString("width"));
-for (Object@ key in m) { … }               // for-in yields the KEYS
+Number* w = (Number* ?)m.get(String.withCString("width"));
+for (Object* key in m) { … }               // for-in yields the KEYS
 ```
 
 | | |
 |---|---|
 | **Build** | `new Map()`, `Map.withCapacity(n)` |
 | **Read** | `count()`, `isEmpty()`, `get(k)`, `getOrDefault(k, fallback)`, `containsKey(k)` — `contains(k)` is an alias |
-| **Views** | `allKeys()`, `allValues()` — each an `Array@` |
+| **Views** | `allKeys()`, `allValues()` — each an `Array*` |
 | **Mutate** | `set(k, v)`, `remove(k)`, `removeAll()` |
 | **Enumerable** | `enumLength()`, `enumAt(i)` — `for-in` over a Map yields its **keys** |
 
@@ -130,11 +155,11 @@ A hash set of `Hashable` + `Comparable` elements, and the algebra that makes one
 over an Array.
 
 ```c
-Set@ online = Set.withArray(currentUsers);
-Set@ known  = Set.withArray(allUsers);
+Set* online = Set.withArray(currentUsers);
+Set* known  = Set.withArray(allUsers);
 
-Set@ newcomers = online.subtract(known);       // who is new
-Set@ shared    = online.intersect(known);      // who is in both
+Set* newcomers = online.subtract(known);       // who is new
+Set* shared    = online.intersect(known);      // who is in both
 ```
 
 | | |
@@ -157,12 +182,12 @@ Every algebra method returns a **new** Set; neither operand is modified.
 Hash order was not merely arbitrary, it was *unstable*. The default `Object.hash` is derived from the instance's **address**, so a Map keyed by objects of your own classes enumerated in heap-layout order — which differs between runs. Anything ordered that way reaching a program's output made that output non-reproducible.
 
 ```c
-Map@ m = new Map();
+Map* m = new Map();
 m.set(String.withCString("zebra"), Number.with((i32)1));
 m.set(String.withCString("apple"), Number.with((i32)2));
 m.set(String.withCString("mango"), Number.with((i32)3));
 
-for (Object@ k in m) { … }          // zebra, apple, mango — every run
+for (Object* k in m) { … }          // zebra, apple, mango — every run
 ```
 
 Re-`set`ting an existing key updates its value **in place** and leaves its position alone; only a key that is genuinely new goes on the end. `remove` closes the gap, so the survivors keep their relative order.
@@ -179,13 +204,13 @@ The cost, and it is a real one: **`remove` is O(count)** rather than O(1), becau
 A heap-owned, NUL-terminated byte string.
 
 ```c
-String@ s = String.withCString("  Hello, World  ");
-String@ t = s.trimmed();                             // "Hello, World"
+String* s = String.withCString("  Hello, World  ");
+String* t = s.trimmed();                             // "Hello, World"
 
 if (t.hasPrefix(String.withCString("Hello"))) { … }
 
-Array@ fields = String.withCString("a,b,,c").split((u8)',');   // 4 parts — the gap counts
-String@ back  = String.join(fields, String.withCString("-"));  // "a-b--c"
+Array* fields = String.withCString("a,b,,c").split((u8)',');   // 4 parts — the gap counts
+String* back  = String.join(fields, String.withCString("-"));  // "a-b--c"
 ```
 
 | | |
@@ -197,7 +222,7 @@ String@ back  = String.join(fields, String.withCString("-"));  // "a-b--c"
 | **Slice** | `substring(from, len)`, `substringFrom(from)`, `substringTo(to)` |
 | **Mutate** | `append(s)`, `appendChar(c)`, `appendCString(p)` — and `appending(s)`, which returns a new String instead |
 | **Case** | `uppercased()`, `lowercased()`, `caseInsensitiveCompare(s)`, `equalsIgnoringCase(s)` |
-| **Other** | `trimmed()`, `split(sep)` → `Array@`, `String.join(parts, sep)`, `replacing(find, sub)`, `description()` |
+| **Other** | `trimmed()`, `split(sep)` → `Array*`, `String.join(parts, sep)`, `replacing(find, sub)`, `description()` |
 | **Value** | `equals(other)`, `compare(other)`, `hash()` — FNV-1a over the bytes |
 
 Out-of-range slicing **clamps to empty** rather than faulting — `substringFrom(999)` is an
@@ -214,7 +239,7 @@ extension (`"go"` before `"gone"`).
 An opaque byte block. No trailing NUL, no character semantics.
 
 ```c
-Data@ d = Data.withBytes(&raw[0], (u32)4);
+Data* d = Data.withBytes(&raw[0], (u32)4);
 Stdio.printf("%s\n", d.hexString().cString());     // "deadbeef"
 ```
 
@@ -233,10 +258,10 @@ Stdio.printf("%s\n", d.hexString().cString());     // "deadbeef"
 A wrapper around any sized integer or a float. Conversion between the two is lazy and cached.
 
 ```c
-Number@ n = Number.with((i32)-42);
+Number* n = Number.with((i32)-42);
 Stdio.printf("%s\n", n.description().cString());   // "-42"
 
-Number@ f = Number.withFloat(3.25);
+Number* f = Number.withFloat(3.25);
 Stdio.printf("%s\n", f.description().cString());   // "3.250"
 ```
 
@@ -263,12 +288,12 @@ what a `Map`, `Set` or `Array` sees when you don't.
 class Object <Hashable, Comparable>
 {
     u32     hash(void);            // u8 on the 6502 build
-    bool    equals(Object@ other);
-    String@ description(void);
+    bool    equals(Object* other);
+    String* description(void);
 }
 ```
 
-- **`equals`** is pointer identity — two `Object@`s compare equal only when they point at the same
+- **`equals`** is pointer identity — two `Object*`s compare equal only when they point at the same
   heap block.
 - **`hash`** folds the receiver's **address**. Distinct instances live at distinct addresses, so they
   hash apart by construction. It is deliberately not cached on the instance: a one-byte cache field
@@ -287,8 +312,8 @@ stored numeric value, `String` and `Data` fold over their bytes. Address-derived
 ```c
 protocol Comparable
 {
-    bool equals(Object@ other);
-    optional i8 compare(Object@ other);      // <0 / 0 / >0, as NSComparisonResult
+    bool equals(Object* other);
+    optional i8 compare(Object* other);      // <0 / 0 / >0, as NSComparisonResult
 }
 ```
 
@@ -316,7 +341,7 @@ things that define none. If you want those sorted, say what the order is:
 protocol Hashable
 {
     u32  hash(void);           // u8 on the 6502 build
-    bool equals(Object@ other);
+    bool equals(Object* other);
 }
 ```
 
@@ -333,7 +358,7 @@ single method body.
 protocol Enumerable
 {
     u32     enumLength(void);      // u16 on the 6502 build
-    Object@ enumAt(u32 i);
+    Object* enumAt(u32 i);
 }
 ```
 
@@ -348,7 +373,7 @@ retains or releases it.
 ```c
 protocol Error
 {
-    String@ message(void);
+    String* message(void);
 }
 ```
 
@@ -358,9 +383,9 @@ so a handler can always say something useful about what it caught without knowin
 ```c
 class ParseError <Error>
 {
-    String@ msg;
-    void init(String@ m)  { msg = m; }
-    String@ message(void) { return msg; }
+    String* msg;
+    void init(String* m)  { msg = m; }
+    String* message(void) { return msg; }
 }
 ```
 
@@ -368,10 +393,10 @@ Errors are ordinary heap objects following ordinary ARC — nothing about `throw
 A caught error is a strong local, released at the end of its `catch` scope. That is deliberate: the
 error model reuses protocols, RTTI and the object model rather than adding a mechanism beside them.
 
-`Error.xt` is **not** part of the `Foundation.xt` umbrella. Import it by name:
+`Error.xc` is **not** part of the `Foundation.xc` umbrella. Import it by name:
 
 ```c
-#import <Error.xt>
+#import <Error.xc>
 ```
 
 ## Ownership

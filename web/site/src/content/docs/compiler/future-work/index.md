@@ -10,8 +10,8 @@ useful when its rough edges are visible than when they're hidden.
 ## Where things stand
 
 The back-end rebuild that dominated the last stretch is **done**. The compiler lowers to a
-single architecture-neutral IR and out through **five live backends** — xt6502, arm64, arm9,
-m68k, x86_64 — and every one of them passes the full fixture corpus. The old AST code
+single architecture-neutral IR and out through **six live backends** — xt6502, arm64, arm9,
+m68k, x86_64 and win64 — and every one of them passes the full fixture corpus. The old AST code
 generator has been removed; the IR pipeline is the only path.
 
 On top of that, `arm9` grew a real module system: shared libraries, an interface that travels
@@ -26,15 +26,19 @@ ignorance of each other. See [Modules & shared libraries](/compiler/language/mod
    (GR.0–GR.5) are further `Gfx` subclasses; first deliverable per mode is line draw. `Gfx` is
    also **not ported to x86_64** — that target has no framebuffer to draw into.
 
-2. **Shared libraries beyond arm9.** `--emit-lib` needs a dynamic loader, so today it is
-   arm9-only; the other four targets are whole-program. Nothing in the design is
-   arm9-specific — it is a matter of the target having somewhere to load a `.so`.
+2. **A real Mach-O export trie.** `--emit-lib` now works on the native hosts as well as
+   arm9 — but on macOS the linker writes a single flat export node, and `childCount` is one
+   byte, so a dylib silently caps at **255 exported symbols**. A library that imports
+   Foundation exceeds that, warns, and then fails in the *client's* `dyld`. The format is a
+   prefix tree, so the cap is per-node: splitting on the first character lifts it past
+   anything a compilation unit will produce. Compiler bug 042. ELF and PE are unaffected —
+   6502 and m68k have no loader and stay whole-program.
 
 ## Planned features
 
 ### Bank memory via pointer
 
-Direct user-level access to bank pages, something like `u8@ data = bank(4);`. An escape hatch
+Direct user-level access to bank pages, something like `u8* data = bank(4);`. An escape hatch
 to deliberately route reads and writes through a chosen bank when the compiler's automatic
 placement isn't what you want.
 
@@ -87,10 +91,10 @@ These are tradeoffs in algorithm choice, not bugs — they won't be "fixed":
   stored `^` too (`weak: act_t^`), which is the idiomatic action field.
 - **`final`.** Opts a method back out of the vtable under `--emit-lib`, where whole-program
   devirtualisation is unsound because the program isn't whole.
-- **m68k and x86_64 backends.** Atari ST (with the `xst` simulator) and Linux/musl, both at
+- **m68k and x86_64 backends.** Atari ST (with the `xcc-sim-68k` simulator) and Linux/musl, both at
   full corpus parity.
 - **The IR back-end rebuild, completed.** Architecture-neutral IR, ~21 optimisation passes,
-  five backends, and the legacy AST code generator removed.
+  six backends, and the legacy AST code generator removed.
 - **A differential fuzzer.** Generates random programs and compiles them through every
   backend; any divergence between two targets is a bug. It found seven the corpus had missed.
 - **Collections.** `Array`, `Map`, `Set`, `String`, `Data`, `Number` and `Sort`, plus the
@@ -100,8 +104,8 @@ These are tradeoffs in algorithm choice, not bugs — they won't be "fixed":
   runs ARC `release()` walks before the block is freed; class arrays iterate release across
   every element. Gated by `-falloc=heap`.
 - **Class inheritance, protocols and runtime downcasts.** Single-inheritance chains, virtual
-  dispatch, `super.method(...)`, and runtime-checked `T@` downcasts (with the failable
-  `(T@ ?)` form). See [Inheritance & protocols](/compiler/language/inheritance/).
+  dispatch, `super.method(...)`, and runtime-checked `T*` downcasts (with the failable
+  `(T* ?)` form). See [Inheritance & protocols](/compiler/language/inheritance/).
 - **Array slicing in for-in.** `arr[m..n]` / `arr[..n]` / `arr[m..]` / `arr[m...n]` produce a
   slice the for-in loop walks element by element, on fixed-size arrays and heap pointers
   alike; bounds may be runtime expressions.

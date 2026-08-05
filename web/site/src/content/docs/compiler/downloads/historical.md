@@ -25,4 +25,4 @@ The first public release.
 | Linux (x86_64) | [xtc-linux-0.1.tar.bz2](/downloads/xtc-linux-0.1.tar.bz2) | 16 MB |
 | Windows (x64) | [xtc-win64-0.1.zip](/downloads/xtc-win64-0.1.zip) | 18 MB |
 
-Each archive contains the compiler driver (`xtc`), the assembler (`xta`), the simulator (`xts`), and the matching `resources/support/` tree. Installation matches the procedure described on the current download page — substitute `0.1` for the version number in the unpack and `cd` commands.
+Each archive contains the compiler driver (`xtc`), the assembler (`xcc-as`), the simulator (`xcc-sim-6502`), and the matching `resources/support/` tree. Installation matches the procedure described on the current download page — substitute `0.1` for the version number in the unpack and `cd` commands.

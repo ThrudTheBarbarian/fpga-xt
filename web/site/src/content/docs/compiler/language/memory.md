@@ -12,11 +12,11 @@ Banked-heap targets reserve one or more 16 KB bank pages for the heap, and the r
 Three `new` forms cover scalar and array allocation for primitives, structs, and classes. Every successful `new` zero-fills the payload and initialises its reference count to 1:
 
 ```c
-MyClass@ p   = new MyClass();       // class instance — init() runs
-MyClass@ q   = new MyClass(4, 2);   // parameterised init
-RGB@ pixel   = new RGB;             // struct scalar
-u8@ buf      = new u8[128];         // array of primitives
-MyClass@ mob = new MyClass[8];      // array of class instances
+MyClass* p   = new MyClass();       // class instance — init() runs
+MyClass* q   = new MyClass(4, 2);   // parameterised init
+RGB* pixel   = new RGB;             // struct scalar
+u8* buf      = new u8[128];         // array of primitives
+MyClass* mob = new MyClass[8];      // array of class instances
 ```
 
 `new T[N]` is the only way to allocate an array on the heap. For arrays of class instances, every element is zero-filled and its `init()` runs. On out-of-memory, `new` returns null — callers that care should check.
@@ -33,8 +33,8 @@ The compiler emits retain / release operations at the right places:
 
 | Event | What the compiler emits |
 |-------|--------------------------|
-| `Foo@ a = new Foo()` | take the allocator's +1; no extra retain |
-| `Foo@ b = a` | a borrowed read → retain `a`'s pointee |
+| `Foo* a = new Foo()` | take the allocator's +1; no extra retain |
+| `Foo* b = a` | a borrowed read → retain `a`'s pointee |
 | `var = expr` | release the old pointee; retain the new one (if borrowed), or absorb the +1 (if `expr` is a value producer like `new` or a function call) |
 | **scope exit** | run that scope's [`defer`](/compiler/language/statements/#defer) bodies, then release every tracked strong class-pointer local, LIFO |
 | **class dealloc** | when refcount hits zero, the aggregate walker releases every strong class-pointer ivar recursively before returning the bytes to the free list |
@@ -52,8 +52,8 @@ Under ARC, the manual `retain`, `release`, and `delete` statements are **rejecte
 
 ```c
 void work(void) {
-    Foo@ a = new Foo();   // take allocator's +1.
-    Foo@ b = a;           // a borrowed read → retain; refcount = 2.
+    Foo* a = new Foo();   // take allocator's +1.
+    Foo* b = a;           // a borrowed read → retain; refcount = 2.
     a = new Foo();        // release old-a, absorb new +1.
                           //   old-a refcount → 1 (b still holds it).
                           //   new-a refcount = 1.
@@ -69,7 +69,7 @@ When a class-pointer's refcount reaches zero, the class's `dealloc(void)` method
 
 ```c
 class Buffer {
-    u8@ bytes;
+    u8* bytes;
     u16 len;
 
     void init(u16 n) {
@@ -93,25 +93,25 @@ Pure reference counting leaks on cycles. If `Parent` owns `Child` strongly and `
 
 ```c
 class Child {
-    weak:Parent@ dad;     // non-owning back-pointer
+    weak:Parent* dad;     // non-owning back-pointer
     u8 tag;
 }
 
 class Parent {
-    Child@ kid;           // strong, owning
+    Child* kid;           // strong, owning
     u8 tag;
 }
 ```
 
-A `weak:T@` slot holds a raw pointer but is **invisible to refcounting** — assigning to it doesn't retain, releasing the pointee doesn't consult it. Instead every live weak slot is linked onto a chain hanging off the referent's own heap header; when a refcount reaches zero, the dealloc path walks *that object's* chain and writes `$00` through every slot pointing at the dying block. Reads of the slot after that return null.
+A `weak:T*` slot holds a raw pointer but is **invisible to refcounting** — assigning to it doesn't retain, releasing the pointee doesn't consult it. Instead every live weak slot is linked onto a chain hanging off the referent's own heap header; when a refcount reaches zero, the dealloc path walks *that object's* chain and writes `$00` through every slot pointing at the dying block. Reads of the slot after that return null.
 
 ```c
-Parent@ p = new Parent();
+Parent* p = new Parent();
 p.kid = new Child();
 p.kid.dad = p;                   // weak: no retain on p.
 // Parent refcount = 1 (held by p).
 // Child  refcount = 1 (held by p.kid).
-p = (Parent@)0;                  // p's release cascades:
+p = (Parent*)0;                  // p's release cascades:
 //   Parent refcount → 0; dealloc fires.
 //     Aggregate walker releases Parent.kid.
 //       Child refcount → 0; dealloc fires.
@@ -128,12 +128,12 @@ p = (Parent@)0;                  // p's release cascades:
 Weak slots come in all the shapes a strong pointer can take:
 
 ```c
-weak:Foo@ g;                     // module-scope global
-weak:Foo@ local;                 // stack-resident local
-weak:Foo@ arr[8];                // array of weak slots
-struct Row { weak:Foo@ owner; }  // struct field
+weak:Foo* g;                     // module-scope global
+weak:Foo* local;                 // stack-resident local
+weak:Foo* arr[8];                // array of weak slots
+struct Row { weak:Foo* owner; }  // struct field
 class Observer {
-    weak:Subject@ target;        // ivar
+    weak:Subject* target;        // ivar
     weak: act_t^  action;        // a weak BOUND METHOD — target/action
 }
 ```
@@ -144,8 +144,8 @@ rather than calling into freed memory.
 
 ### Rules and limits
 
-- **Class pointers only.** `weak:u8@` and similar are rejected at compile time — the chain head lives in a heap block's refcount header, and non-class pointers don't have one.
-- **Use `weak:banked:T@` when the pointee is itself banked.** Bare `weak:T@` in a class ivar means "whatever placement the target uses for a bare T@". On banked-heap layouts that's a 2-byte implicit-bank pointer — fine for ivars holding heap-placement pointees. If you need a per-instance bank byte in the weak slot (because the pointee really is `banked:T@`), say so explicitly.
+- **Class pointers only.** `weak:u8*` and similar are rejected at compile time — the chain head lives in a heap block's refcount header, and non-class pointers don't have one.
+- **Use `weak:banked:T*` when the pointee is itself banked.** Bare `weak:T*` in a class ivar means "whatever placement the target uses for a bare T*". On banked-heap layouts that's a 2-byte implicit-bank pointer — fine for ivars holding heap-placement pointees. If you need a per-instance bank byte in the weak slot (because the pointee really is `banked:T*`), say so explicitly.
 - **Cycle-detection is your responsibility.** There is no automatic cycle collector; the `weak:` annotation is how you tell the compiler which edge in a cycle is the non-owning one.
 - **Reading is a plain pointer read.** A non-null weak slot is guaranteed to point at a live block (the chain is zeroed *before* the block's dealloc runs), so `if (w != 0) ...` is sufficient — no special `weak_load` primitive.
 
@@ -185,7 +185,7 @@ Manual mode and ARC mode are **mutually exclusive per compile** — you can't mi
 
 ## Introspection
 
-The `Heap` library class (`#import <Heap.xt>`) exposes static helpers for inspecting the allocator's state at runtime:
+The `Heap` library class (`#import <Heap.xc>`) exposes static helpers for inspecting the allocator's state at runtime:
 
 | Method | Type | Meaning |
 |--------|------|---------|
@@ -198,3 +198,90 @@ The `Heap` library class (`#import <Heap.xt>`) exposes static helpers for inspec
 - **On the 6502, a single block cannot exceed one bank** (~12 KB) — that's the size of the data page holding it. The heap holds far more *in total* (it grows across banks on demand), but no one allocation spans a bank boundary. The native backends have no such limit.
 - **Retain counts saturate at `$FFFF`** (65535). Effectively unlimited for normal ownership patterns; not a defect to be worked around with additional retains.
 - **On the 6502**, a heap pointer carries its own data bank in its third byte, and the backend re-selects that bank on every dereference. Because the code window and the data window have *separate* selectors, a `:banked` function can touch the heap freely — it does not swap its own code page out to do so.
+
+## Worked example
+
+`new`, ARC, and a `weak:` back-reference breaking what would otherwise be a retain cycle:
+
+```c
+// memory.xc — ARC, strong vs weak references, and `delete`.
+//
+// Every class reference is counted. The compiler inserts retain/release; you
+// do not write them. An object dies when the last STRONG reference goes.
+#import "Foundation.xc"
+#import "Stdio.xc"
+
+class Node : Object
+{
+    String*  _name;
+    Node*    _next;      // strong: keeps the next node alive
+    weak Node* _prev;    // weak: does NOT keep the previous node alive
+
+    void init(void) { _name = 0; _next = 0; _prev = 0; }
+    static Node* named(string n)
+    {
+        Node* x = new Node();
+        x._name = String.withCString(n);
+        return x;
+    }
+    String* description(void) { return _name; }
+    void    link(Node* nxt) { _next = nxt; nxt._prev = self; }
+    Node*   next(void)   { return _next; }
+    weak Node* prev(void) { return _prev; }
+    void dealloc(void) { Stdio.printf("  dealloc %@\n", self); }
+}
+
+i32 main(void)
+{
+    // 1. Ordinary lifetime: `head` is the only reference, so the object
+    //    lives until the end of the scope.
+    Stdio.print("scope A:\n");
+    {
+        Node* a = Node.named("A");
+        Stdio.printf("  made %@\n", a);
+    }
+    Stdio.print("  (a is gone)\n");
+
+    // 2. A strong chain. Releasing the head releases the whole chain, in
+    //    order, because each node holds the next.
+    Stdio.print("scope B:\n");
+    {
+        Node* b1 = Node.named("B1");
+        Node* b2 = Node.named("B2");
+        b1.link(b2);
+        // b2._prev is WEAK, so the pair is not a retain cycle: without that
+        // the two would keep each other alive forever and neither would be
+        // freed. Weak is how you break a back-reference.
+        Node* fwd = b1.next();
+        Stdio.printf("  %@ -> %@, and back: %@\n", b1, fwd, b2.prev());
+    }
+    Stdio.print("  (chain gone)\n");
+
+    // 3. `delete` is for RAW heap blocks — `new T[N]` of a primitive. It is
+    //    rejected on a class instance, because ARC already owns that: the
+    //    compiler tells you to let the scope release it. So the two models
+    //    never overlap and you cannot double-free.
+    Stdio.print("raw buffer:\n");
+    u16* buf = new u16[4];
+    for (u16 i = (u16)0; i < (u16)4; i = i + (u16)1) buf[i] = i * (u16)11;
+    Stdio.printf("  buf[3] = %d, length = %d\n", buf[3], (u16)buf.length);
+    delete buf;
+    Stdio.print("  (deleted)\n");
+    return 0;
+}
+```
+
+```
+scope A:
+  made A
+  dealloc A
+  (a is gone)
+scope B:
+  B1 -> B2, and back: B1
+  dealloc B1
+  dealloc B2
+  (chain gone)
+raw buffer:
+  buf[3] = 33, length = 4
+  (deleted)
+```
