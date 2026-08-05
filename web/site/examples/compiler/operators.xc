@@ -5,11 +5,12 @@
 i32 main(void)
 {
     // ---- Arithmetic, at the operands' own width -----------------------------
-    // Same-width arithmetic stays at that width, so this wraps rather than
-    // promoting to int as C would.
+    // Same-width arithmetic stays at that width, so these WRAP rather than
+    // promoting to int as C would: 300 & $FF = 44, 600 & $FF = 88.
     u8 a = (u8)200;
     u8 b = (u8)100;
     Stdio.printf("u8   200+100=%d  200*3=%d\n", (u16)(a + b), (u16)(a * (u8)3));
+    // Widening the OPERANDS is what gets the true sum.
     Stdio.printf("wide 200+100=%d\n", (u16)a + (u16)b);
 
     // Division and modulo. Integer division truncates toward zero.

@@ -120,8 +120,8 @@ for (v in squares)     { … }      // same loop, element type inferred
 
 Both spellings produce identical code. (The untyped form used to be accepted and then lowered into nothing, so the body silently never ran — compiler bug 036, fixed. If the element type genuinely cannot be inferred, it is now a diagnostic naming the cure rather than a loop that quietly does not run.)
 
-:::caution[Primitive elements in a typed collection]
-`for ... in` over an `Array<i32>` is a different matter — the element there is a boxed `Number`, and the loop hands you the box rather than the value. See [Collections](/compiler/language/collections/#primitive-element-types).
+:::note[Primitive elements in a typed collection]
+`for ... in` over an `Array<i32>` works too: the element is a boxed `Number`, and binding it to a primitive loop variable unboxes it. See [Collections](/compiler/language/collections/#primitive-element-types).
 :::
 
 ## For-in (range)

@@ -62,19 +62,15 @@ i32 main(void)
     // but conformance is judged by the DECLARED type, so this array refuses a
     // float at compile time ("cannot be stored in a collection of").
     //
-    // Read primitives back with an index and get(). The unboxing happens in
-    // ASSIGNMENT context, so `i32 v = scores.get(i)` is what triggers it — and
-    // `for (i32 v in scores)` does NOT (compiler bug 039), which is why this
-    // loop is written the long way.
+    // Unboxing happens in ASSIGNMENT context, and a for-in loop variable is a
+    // binding, so this reads the values and not the boxes. Note that
+    // `total + scores.get(i)` would NOT unbox — the right operand there is
+    // still an Object*, so bind it to a named local first.
     Array<i32>* scores = new Array();
     scores.add((i32)70);
     scores.add((i32)95);
     i32 total = (i32)0;
-    for (u32 i = (u32)0; i < scores.count(); i = i + (u32)1)
-    {
-        i32 v = scores.get(i);
-        total = total + v;
-    }
+    for (i32 v in scores) { total = total + v; }
     Stdio.printf("total %ld\n", total);
 
     // ---- Map ---------------------------------------------------------------

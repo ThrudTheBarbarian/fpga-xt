@@ -22,9 +22,8 @@ i32 main(void)
     // to int" step.
     u8 a = (u8)200, b = (u8)100;
     u8  wrapped = a + b;                 // 300 & 0xFF = 44
-    // To get the true sum, widen the OPERANDS. (Widening only the destination
-    // — `u16 w = a + b;` — also happens to work today, but that is compiler
-    // bug 041 rather than a rule to lean on.)
+    // Widening the DESTINATION does not help — `u16 w = a + b;` is still a u8
+    // add, and still 44. To get the true sum, widen the OPERANDS.
     u16 widened = (u16)a + (u16)b;       // 300
     Stdio.printf("u8 200+100 -> %d   widened -> %d\n", (u16)wrapped, widened);
 
