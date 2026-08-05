@@ -144,6 +144,46 @@ module tb_acid #(
                      dut.c_addr[11:0], dut.c_din, line, hcount);
     end
 
+    // Collision-latch probe (antic2 only).  gtia_collision asserts that objects
+    // parked in horizontal blank latch NOTHING, and the window that is supposed
+    // to enforce that already exists in gtia_stage -- so the question is not
+    // "is there a window" but "which colour clock is the hit actually recorded
+    // at".  Print every transition of p_pl from clear to set, with the position
+    // and presence that produced it.
+    logic [15:0] ppl_prev, ppf_prev;
+    integer      colcnt = 0;
+    integer      pfcnt  = 0;
+    generate if (USE_ANTIC2) begin : g_colprobe
+        always_ff @(posedge clk) begin
+            if (rst) ppl_prev <= 16'h0000;
+            else begin
+                if (probe_on && dut.u_a2_video.u_gtia.u_col.p_pf != ppf_prev &&
+                    pfcnt < 16) begin
+                    pfcnt <= pfcnt + 1;
+                    $display("COLPF p_pf %04h -> %04h  cc_pos=%0d pres=%02h pf_src=%0d line=%0d",
+                             ppf_prev, dut.u_a2_video.u_gtia.u_col.p_pf,
+                             dut.u_a2_video.u_gtia.cc_pos,
+                             dut.u_a2_video.u_gtia.pres,
+                             dut.u_a2_video.u_gtia.u_col.pf_src,
+                             line);
+                end
+                ppf_prev <= dut.u_a2_video.u_gtia.u_col.p_pf;
+                if (probe_on && dut.u_a2_video.u_gtia.u_col.p_pl != ppl_prev &&
+                    colcnt < 24) begin
+                    colcnt <= colcnt + 1;
+                    $display("COL p_pl %04h -> %04h  cc_pos=%0d pres=%02h active=%0d win=%0d line=%0d",
+                             ppl_prev, dut.u_a2_video.u_gtia.u_col.p_pl,
+                             dut.u_a2_video.u_gtia.cc_pos,
+                             dut.u_a2_video.u_gtia.pres,
+                             dut.u_a2_video.u_gtia.active,
+                             dut.u_a2_video.u_gtia.cc_in_window,
+                             line);
+                end
+                ppl_prev <= dut.u_a2_video.u_gtia.u_col.p_pl;
+            end
+        end
+    end endgenerate
+
     // DLI chain probe (antic2 only).  antic_nmist fails on "The DLI1 handler was
     // not called" while the VBI fires, so the break is somewhere in
     // fetch -> dl_insn[7] -> row_ends -> dli_line.  Print the whole chain once

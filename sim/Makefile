@@ -1414,6 +1414,19 @@ build/tb_antic_nmi.vvp: tb_antic_nmi.sv $(HDL_DIR)/antic_nmi.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_nmi \
 	    $(HDL_DIR)/antic_nmi.sv tb_antic_nmi.sv
 
+ANTIC2_PXPOS_SRC = $(ANTIC2_SRC) $(HDL_DIR)/antic_beam.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_pf_geom.sv \
+	    $(HDL_DIR)/antic_dma_sched.sv $(HDL_DIR)/antic_line_render.sv \
+	    $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_color_sel.sv \
+	    $(HDL_DIR)/antic_char_ctl.sv $(HDL_DIR)/antic_pixel_shift.sv
+
+antic2_pxpos: build/tb_antic2_pxpos.vvp
+	@vvp -N $<
+
+build/tb_antic2_pxpos.vvp: tb_antic2_pxpos.sv $(ANTIC2_PXPOS_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic2_pxpos \
+	    $(ANTIC2_PXPOS_SRC) tb_antic2_pxpos.sv
+
 antic_emit_win: build/tb_antic_emit_win.vvp
 	@vvp -N $<
 
