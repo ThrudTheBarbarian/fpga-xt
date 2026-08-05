@@ -205,7 +205,13 @@ module antic_pf_geom (
             // mid-line effect and lives in antic2.
             dma_start = win_start(fetch_width) - (is_char ? 7'd2 : 7'd0)
                       + (hscrol_en ? {4'd0, hs_delay} : 7'd0);
-            dma_stop  = win_stop(fetch_width)
+            // THE STOP CARRIES THE CHARACTER SHIFT TOO.  emu's window is
+            // `st + span` where `st` is the character-adjusted start, so a
+            // character row's stop is two cycles early exactly as its start
+            // is -- the span is the same 64/80/96 either way.  Taking the stop
+            // from the unshifted table instead leaves the window two cycles
+            // long on character modes, which is one extra fetch.
+            dma_stop  = win_stop(fetch_width) - (is_char ? 7'd2 : 7'd0)
                       + (hscrol_en ? {4'd0, hs_delay} : 7'd0);
         end
     end

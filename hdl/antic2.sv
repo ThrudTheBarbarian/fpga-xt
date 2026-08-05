@@ -225,14 +225,14 @@ module antic2 #(
     end
 
     wire [7:0] pf_bytes, pf_step;
-    wire [6:0] pf_dma_start;
+    wire [6:0] pf_dma_start, pf_dma_stop;
     antic_pf_geom u_geom (
         .pf_width(dmactl[1:0]),
         .hscrol_en(dl_insn[4] && (dl_insn[3:0] >= 4'd2)),
         .hscrol(hscrol[3:0]),
         .is_char(md_is_char), .bpp(md_bpp), .px_width(md_px_width),
         .pf_on(), .bytes_per_line(pf_bytes), .pf_step(pf_step),
-        .dma_start(pf_dma_start), .dma_stop(), .disp_start(), .disp_stop(),
+        .dma_start(pf_dma_start), .dma_stop(pf_dma_stop), .disp_start(), .disp_stop(),
         .px_start(pf_px_start), .px_stop(pf_px_stop), .hs_delay(), .hs_fine()
     );
 
@@ -279,7 +279,8 @@ module antic2 #(
         .line_start(sched_line_start), .tick(tick), .hcount(hcount),
         .first_row(row_first), .is_char(md_is_char),
         .is_display(pf_fetching),
-        .bytes_per_line(pf_bytes), .dma_start(pf_dma_start), .step(pf_step),
+        .bytes_per_line(pf_bytes), .dma_start(pf_dma_start),
+        .dma_stop(pf_dma_stop), .step(pf_step),
         // The OPERAND fetches belong to the INSTRUCTION, not to every row.
         // Bit 6 is the LMS flag (emu's dma_mode takes `dl_insn & 0x50`), and
         // on a blank-line instruction such as $F0 that same bit is part of the

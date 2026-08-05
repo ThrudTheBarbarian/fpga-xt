@@ -80,6 +80,10 @@ module antic_dma_sched (
     input  wire       is_display,
     input  wire [7:0] bytes_per_line,
     input  wire [6:0] dma_start,
+    // One past the last fetch cycle.  ANTIC's clock CLEARS at this cycle's
+    // phase, and when HSCROL has moved the stop off the phase the start
+    // injected, the clear removes nothing and the fetch runs on.
+    input  wire [6:0] dma_stop,
     input  wire [7:0] step,                 // machine cycles between fetches
     input  wire       lms,                  // the instruction carries operands
 
@@ -117,38 +121,94 @@ module antic_dma_sched (
     // ---- the playfield walk ----------------------------------------------
     // How many fetches this scanline costs, and where the first one lands.
     wire       pairs   = is_char && first_row;
-    // A later bitmap row costs nothing at all: the block was read on its first
-    // row and is replayed from the internal buffer.
-    wire [8:0] n_fetch = (!is_display || (!is_char && !first_row))
-                       ? 9'd0 : {1'b0, bytes_per_line};
 
-    // Where the first (glyph, next name) pair sits, relative to the opening
-    // name.  step is 2 or 4 for every character mode there is, giving 2 or 3.
-    wire [6:0] char_phase = 7'((step >> 1) + 8'd1);
+    // ---- THE DMA CLOCK ----------------------------------------------------
+    // ANTIC does not walk a window.  It has an eight-bit clock with (normally)
+    // a single bit flying round it, and a cycle fetches when the clock's bit
+    // for that cycle's phase is set.  The window's START injects a bit at the
+    // start's phase and its STOP clears one at the stop's phase.
+    //
+    // THAT ASYMMETRY IS THE WHOLE POINT.  The clear only removes the bit if the
+    // stop lands on the SAME PHASE the start injected -- and the two edges
+    // latch independently, so HSCROL can move the stop without moving the
+    // start.  Then nothing is cleared, the bit keeps flying, and the playfield
+    // fetches on through horizontal blank and into the next scanline.  That is
+    // antic_hscrolbug: seventeen extra fetches, and the next line's display
+    // shifted left by seventeen bytes.
+    //
+    // A WALK CANNOT EXPRESS THAT.  A walk stops because the loop stops; this
+    // stops because a bit was cleared, or does not.
+    //
+    // THE CLOCK IS NOT RESET PER LINE.  Carrying it across the line boundary is
+    // how a run-on reaches the next scanline at all.
+    logic [7:0] pf_clock;
 
-    typedef enum logic [2:0] {
-        P_IDLE, P_FIRST, P_PAIR_A, P_PAIR_B, P_PLAIN, P_DONE
-    } pstate_t;
-    pstate_t pstate;
+    // spec_clock[rate][phase], from emu/antic_dma.c: rate 1/2/3 fetch every
+    // 8/4/2 cycles, which `step` states as 8/4/2.
+    wire [1:0] rate = (step == 8'd8) ? 2'd1 : (step == 8'd4) ? 2'd2 : 2'd3;
 
-    logic [6:0] pf_at;                      // the cycle the next fetch wants
-    logic [8:0] pf_k;                       // how many bytes are done
-    logic [8:0] pf_n;                       // how many this line needs
+    function automatic logic [7:0] clock_mask(input logic [1:0] r,
+                                              input logic [2:0] ph);
+        case (r)
+            2'd1:    clock_mask = 8'h01 << ph;            // 01,02,04...80
+            2'd2:    clock_mask = 8'h11 << ph[1:0];       // 11,22,44,88
+            2'd3:    clock_mask = ph[0] ? 8'hAA : 8'h55;
+            default: clock_mask = 8'h00;
+        endcase
+    endfunction
+
+    // A row INJECTS only if it fetches at all: a bitmap row reads its bytes on
+    // the first scanline only, a character row re-reads the data every line.
+    // This gates the INJECTION and never the EMISSION -- gating the emission
+    // throws away whatever was carried in, and kills a run-on the moment it
+    // reaches a bitmap row's later scanline, which is exactly where
+    // antic_hscrolbug's second unstopped case sends it.
+    wire fetches = is_display && (is_char || first_row);
+
+    // The injection and the clear both land in the cycle they name, and the
+    // bit is tested AFTER them, so the effective clock is combinational.
+    wire inject = (hcount == dma_start) && fetches;
+    wire clear  = (hcount == dma_stop);
+    wire [7:0] clk_eff =
+        (pf_clock | (inject ? clock_mask(rate, dma_start[2:0]) : 8'h00))
+        & ~(clear ? clock_mask(rate, dma_stop[2:0]) : 8'h00);
+
+    wire hit_now = clk_eff[hcount[2:0]];
+
+    // A character row's DATA is the same window shifted by three: the name is
+    // read on the clock's cycle and the glyph three cycles later.  A later
+    // character row re-reads only the glyph, so its single access is the
+    // delayed one.  That is the whole of the pair logic -- the old
+    // P_FIRST/P_PAIR_A/P_PAIR_B states were a walk's way of saying it.
+    logic [2:0] hit_dly;
+    wire        hit_3 = hit_dly[2];
 
     // `steal` is a LEVEL across the machine cycle, not a pulse at the tick.
     // The fid core is paced by phi2_tick and samples its rdy input at a commit
     // slot well inside the cycle, so a tick-aligned pulse is invisible to it and
     // the CPU loses nothing.  hcount and the walk state are both stable between
     // ticks, so the comparison is valid throughout the cycle either way.
-    wire pf_want   = (hcount == pf_at) &&
-                     (pstate == P_FIRST || pstate == P_PAIR_A ||
-                      pstate == P_PLAIN);
-    wire pf_want_b = (hcount == pf_at) && (pstate == P_PAIR_B);
+    // The PRIMARY access -- the one that advances the buffer index.  A bitmap
+    // row and a character row's first line take it on the clock's own cycle;
+    // a later character row takes its glyph three cycles on, and antic_pf_stream
+    // works out for itself that it is a glyph (its `fetch_is_glyph` ORs in
+    // `is_char && !first_row`).
+    wire pf_want   = is_char ? (first_row ? hit_now : hit_3) : hit_now;
+    // ...and the GLYPH of a pair, which only a character first line has.
+    wire pf_want_b = pairs && hit_3;
 
     wire pf_hit    = tick && pf_want;
     wire pf_hit_b  = tick && pf_want_b;
 
-    wire pf_steal  = pf_want || pf_want_b;
+    // A FETCH IS NOT ALWAYS A STEAL.  Cycles from PF_HBLANK_FIRST on still
+    // fetch -- that is what a run-on does -- but the CPU is not running there,
+    // so they cost it nothing.  And cycle 0 never steals either: a fetch
+    // landing there happens and clocks the line buffer, but takes no cycle.
+    // Only abnormal DMA can put one there at all.
+    localparam int PF_HBLANK_FIRST = 106;
+    wire pf_fetching = pf_want || pf_want_b;
+    wire pf_steal    = pf_fetching && (hcount != 7'd0) &&
+                       (hcount < 7'(PF_HBLANK_FIRST));
 
     // ---- refresh ---------------------------------------------------------
     // Nine requests, four cycles apart.  A single pending bit IS the drop rule:
@@ -172,31 +232,30 @@ module antic_dma_sched (
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            pstate      <= P_IDLE;
-            pf_at       <= 7'd0;
-            pf_k        <= 9'd0;
-            pf_n        <= 9'd0;
+            pf_clock    <= 8'h00;
+            hit_dly     <= 3'b000;
             ref_left    <= 4'd0;
             ref_slot    <= 7'd25;
             ref_pending <= 1'b0;
         end else begin
+            // The clock and the pair delay advance once per machine cycle,
+            // wherever the line boundary happens to fall -- the carry across
+            // that boundary is the mechanism, not an edge case.
+            if (tick) begin
+                pf_clock <= clk_eff;
+                hit_dly  <= {hit_dly[1:0], hit_now};
+            end
+
+            // THE PLAYFIELD LATCHES NOTHING AT line_start ANY MORE.  The walk
+            // pinned the line's whole shape here -- byte count, first slot,
+            // pairing -- which is precisely why a mid-line DMACTL or HSCROL
+            // write could not move it, and why a run-on could not cross into
+            // the next line.  The clock just keeps turning.  Only refresh has
+            // per-line state.
             if (line_start) begin
-                pf_k     <= 9'd0;
-                pf_n     <= n_fetch;
                 ref_left <= 4'd9;
                 ref_slot <= 7'd25;
                 ref_pending <= 1'b0;
-                if (n_fetch == 9'd0) begin
-                    pstate <= P_DONE;
-                end else if (pairs) begin
-                    pf_at  <= dma_start;
-                    pstate <= P_FIRST;
-                end else begin
-                    // A later character row starts three cycles into the
-                    // window; a bitmap row starts at the window edge.
-                    pf_at  <= is_char ? (dma_start + 7'd3) : dma_start;
-                    pstate <= P_PLAIN;
-                end
             end else begin
                 if (ref_req) begin
                     ref_slot <= ref_slot + 7'd4;
@@ -226,39 +285,6 @@ module antic_dma_sched (
                 // which is a question about the hardware, not about this line.
                 if (tick) ref_pending <= ref_want && !ref_steal;
 
-                case (pstate)
-                    // The opening name of a character first row, on its own.
-                    P_FIRST: if (pf_hit) begin
-                        pf_at  <= dma_start + char_phase;
-                        pstate <= P_PAIR_A;
-                    end
-
-                    // (glyph, next name) go out back to back...
-                    P_PAIR_A: if (pf_hit) begin
-                        if (pf_k == pf_n - 9'd1) begin
-                            pstate <= P_DONE;   // the last glyph stands alone
-                        end else begin
-                            pf_at  <= pf_at + 7'd1;
-                            pstate <= P_PAIR_B;
-                        end
-                    end
-
-                    // ...and the pair as a whole repeats every `step`.
-                    P_PAIR_B: if (pf_hit_b) begin
-                        pf_at  <= pf_at - 7'd1 + 7'(step);
-                        pf_k   <= pf_k + 9'd1;
-                        pstate <= P_PAIR_A;
-                    end
-
-                    // One fetch per byte: bitmap rows and later character rows.
-                    P_PLAIN: if (pf_hit) begin
-                        pf_k <= pf_k + 9'd1;
-                        if (pf_k == pf_n - 9'd1) pstate <= P_DONE;
-                        else                     pf_at  <= pf_at + 7'(step);
-                    end
-
-                    default: ;
-                endcase
             end
         end
     end
