@@ -651,6 +651,23 @@ module tb_acid #(
             // both land earlier and must win.
             end else if (sync && tick && (dbg_pc == test_end)) begin
                 done = 1'b1; verdict_ran = 1'b1;
+            // ...and a module can simply RETURN.  DOS calls RUNAD with JSR, so
+            // a module that finishes its work does a plain `rts` and lands on
+            // the loader's park -- $FF60 here, installed as _exitTest.  That is
+            // an ORDINARY ENDING, not a hang: the model classifies it as "ran"
+            // on exactly this condition (`pc == 0xFF70` -> R_RET,
+            // emu/test/acid.c:540), and all three mod_* tests end this way.
+            //
+            // Without this the run is CORRECT but mislabelled -- the module
+            // parks quietly and the harness still grinds out the full 200M
+            // guard before calling a clean return a TIMEOUT, at about ninety
+            // minutes each.
+            //
+            // Checked LAST on purpose.  _testFailed itself exits through
+            // _exitTest, so a failing test reaches the park too; pass, fail and
+            // skip all land earlier in this chain and must win.
+            end else if (sync && tick && (dbg_pc == 16'hFF60)) begin
+                done = 1'b1; verdict_ran = 1'b1;
             end
         end
 
@@ -676,8 +693,15 @@ module tb_acid #(
         end else if (verdict_ran) begin
             // Reached the end having asserted nothing.  Reported plainly rather
             // than dressed up as either verdict.
-            $display("ACID %0s: RAN (reached _testEnd $%04h, no verdict)",
-                     tname, test_end);
+            // Distinguish the two ways of ending without a verdict: reaching
+            // _testEnd having asserted nothing, and simply returning to the
+            // loader.  Both are "ran"; they are not the same event.
+            if (dbg_pc == 16'hFF60)
+                $display("ACID %0s: RAN (returned to the loader park $FF60)",
+                         tname);
+            else
+                $display("ACID %0s: RAN (reached _testEnd $%04h, no verdict)",
+                         tname, test_end);
             $display("tb_acid: no verdict");
         end else if (!verdict_fail) begin
             $display("ACID %0s: PASS", tname);
