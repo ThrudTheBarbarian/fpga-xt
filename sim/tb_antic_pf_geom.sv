@@ -278,6 +278,36 @@ module tb_antic_pf_geom;
         hscrol_en = 0;
 
         // ================================================================
+        // T7f: HSCROL DELAYS THE FETCH WINDOW, not just the display one
+        // ================================================================
+        // emu's spec_window does TWO things to a scrolled row: it steps the
+        // fetch width up one (T7, above) AND it adds `off = (hscrol & 14) >> 1`
+        // to BOTH edges -- `*start = st + off; *vend = st + span + off`.  T7
+        // only ever runs at HSCROL 0, where the offset is zero and invisible,
+        // so nothing above this line can tell the two apart.
+        //
+        // The odd bit is the FINE colour clock and belongs to the display, not
+        // to the fetch grid, which is why the mask is 14 and not 15: HSCROL 4
+        // and 5 delay the fetch by the same two machine cycles.
+        m = 4'hE; #1; is_char = t_is_char; bpp = t_bpp; px_width = t_px_width;
+        pf_width = 2'd1; hscrol_en = 1;
+        for (int h = 0; h < 16; h++) begin
+            hscrol = 4'(h); #1;
+            if (int'(dma_start) != 20 + (h / 2)) begin
+                $display("FAIL T7f: HSCROL %0d starts the fetch at %0d, expected %0d",
+                         h, dma_start, 20 + (h / 2));
+                fail++;
+            end
+            if (int'(dma_stop) != 100 + (h / 2)) begin
+                $display("FAIL T7g: HSCROL %0d stops the fetch at %0d, expected %0d",
+                         h, dma_stop, 100 + (h / 2));
+                fail++;
+            end
+        end
+        hscrol = 4'd0;
+        hscrol_en = 0;
+
+        // ================================================================
         // T8: the fetch step is span/bytes -- as a shift, not a division
         // ================================================================
         // Writing this as a divide cost 22 carry chains and a 17ns path off

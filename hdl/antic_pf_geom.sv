@@ -187,8 +187,26 @@ module antic_pf_geom (
             dma_start = 7'd0;
             dma_stop  = 7'd0;
         end else begin
-            dma_start = win_start(fetch_width) - (is_char ? 7'd2 : 7'd0);
-            dma_stop  = win_stop(fetch_width);
+            // HSCROL DELAYS THE FETCH WINDOW TOO, by one machine cycle per two
+            // units -- emu's spec_window adds the same `off = (hscrol & 14) >> 1`
+            // to BOTH edges.  Widening the window for a scrolled row (above) is
+            // only half of what scrolling does; without this the fetch grid
+            // stays put while the display slides across it, and the two
+            // disagree by up to seven machine cycles.
+            //
+            // The odd bit is the FINE colour clock and belongs to the display,
+            // not to the fetch grid: hs_delay is hscrol[3:1], so HSCROL 4 and 5
+            // delay the fetch by the same two cycles.
+            //
+            // BOTH edges move together here, which is why static geometry alone
+            // cannot produce abnormal DMA -- the stop stays on the phase the
+            // start injected and the clear always succeeds.  Missing the stop
+            // needs the start LATCHED and the stop moving under it, which is a
+            // mid-line effect and lives in antic2.
+            dma_start = win_start(fetch_width) - (is_char ? 7'd2 : 7'd0)
+                      + (hscrol_en ? {4'd0, hs_delay} : 7'd0);
+            dma_stop  = win_stop(fetch_width)
+                      + (hscrol_en ? {4'd0, hs_delay} : 7'd0);
         end
     end
 
