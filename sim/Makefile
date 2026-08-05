@@ -1414,6 +1414,19 @@ build/tb_antic_nmi.vvp: tb_antic_nmi.sv $(HDL_DIR)/antic_nmi.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_nmi \
 	    $(HDL_DIR)/antic_nmi.sv tb_antic_nmi.sv
 
+antic_pf_pair: build/tb_antic_pf_pair.vvp
+	@vvp -N $<
+
+build/tb_antic_pf_pair.vvp: tb_antic_pf_pair.sv $(HDL_DIR)/antic_pf_stream.sv \
+	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_char_ctl.sv $(HDL_DIR)/antic_pixel_shift.sv \
+	    $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_color_sel.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pf_pair \
+	    $(HDL_DIR)/antic_pf_stream.sv $(HDL_DIR)/antic_line_render.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_char_ctl.sv \
+	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
+	    $(HDL_DIR)/antic_color_sel.sv tb_antic_pf_pair.sv
+
 antic_pf_stream: build/tb_antic_pf_stream.vvp
 	@vvp -N $<
 
