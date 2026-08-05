@@ -205,7 +205,7 @@ module a8_core #(
     antic2 #(
         .LINE_CYCLES(114), .LINES(262), .DISPLAY_TOP(8), .DISPLAY_BOTTOM(248)
     ) u_antic2 (
-        .clk(clk), .rst(rst), .tick(tick),
+        .clk(clk), .rst(rst), .tick(tick), .px_tick(px_tick),
         .cs(cs_antic), .we(cpu_we), .addr(c_addr[3:0]), .wdata(c_dout),
         .rdata(a2_rdata), .cpu_writing(!c_rw),
         .mem_addr(a2_mem_addr), .mem_data(antic_rdata),

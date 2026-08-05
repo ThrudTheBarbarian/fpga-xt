@@ -45,6 +45,13 @@ module antic2 #(
     input  wire        clk,
     input  wire        rst,
     input  wire        tick,               // phi2
+    // One hi-res pixel.  FOUR per machine cycle, and the display side needs it
+    // because a playfield byte is two to eight pixels wide: `tick` alone cannot
+    // say WHERE in the cycle a pixel lands.  Taken as an input rather than
+    // divided down locally so there is one definition of the pixel clock in the
+    // design -- a8_core already has it, and deriving a second one here is the
+    // "two definitions of one value" mistake this rewrite exists to avoid.
+    input  wire        px_tick,
 
     // ---- CPU register port -------------------------------------------------
     input  wire        cs,                 // $D4xx
@@ -105,6 +112,14 @@ module antic2 #(
     wire [7:0]  lb_rd_data, lb_rd_code;
     wire [6:0]  lb_len;
     wire [4:0]  mode_rows;
+
+    // The display window and the beam's position within the scanline.  Declared
+    // here, before the generate-free body below uses them, because a wire first
+    // referenced inside a port connection is an implicit 1-bit net under
+    // `default_nettype none` -- which is an error here, and silently the wrong
+    // width where it is not.
+    wire [8:0]  pf_px_start, pf_px_stop, pf_px_pos;
+    wire        pf_emit_en;
 
     // ---- position ----------------------------------------------------------
     antic_beam #(
@@ -205,7 +220,26 @@ module antic2 #(
         .is_char(md_is_char), .bpp(md_bpp), .px_width(md_px_width),
         .pf_on(), .bytes_per_line(pf_bytes), .pf_step(pf_step),
         .dma_start(pf_dma_start), .dma_stop(), .disp_start(), .disp_stop(),
-        .px_start(), .px_stop(), .hs_delay(), .hs_fine()
+        .px_start(pf_px_start), .px_stop(pf_px_stop), .hs_delay(), .hs_fine()
+    );
+
+    // ---- the display window ------------------------------------------------
+    //
+    // FETCHING AND DISPLAYING ARE DIFFERENT WINDOWS.  Above, dma_start feeds
+    // the scheduler and decides which cycles the fetcher steals; here px_start
+    // and px_stop decide which hi-res pixels the beam actually paints, with
+    // HSCROL already applied.  A scrolled narrow row fetches 40 bytes and
+    // displays 32, so wiring the renderer to the fetch window would slide the
+    // row sideways by the scroll amount.
+    //
+    // emit_en is a PULSE, one per displayed pixel, not a level across the
+    // window -- antic_emit_win qualifies it with px_tick for exactly that
+    // reason.
+    antic_emit_win u_emit (
+        .clk(clk), .rst(rst),
+        .line_start(line_start), .px_tick(px_tick),
+        .px_start(pf_px_start), .px_stop(pf_px_stop),
+        .emit_en(pf_emit_en), .px_pos(pf_px_pos)
     );
 
     // Whether the playfield is FETCHING at all this line: the list is running,
