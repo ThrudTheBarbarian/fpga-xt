@@ -71,12 +71,15 @@ module antic2_regs (
     output logic       nmires_stb
 );
 
-    // Only three ANTIC registers READ back; everything else is write-only and
-    // the bus floats.  $D40B VCOUNT and $D40F NMIST come from the sequence,
-    // $D40C/$D40D are the light pen (unimplemented, reads 0).
+    // Only two ANTIC registers READ back: $D40B VCOUNT and $D40F NMIST, both
+    // from the sequence.  EVERYTHING ELSE READS $FF, and that is not a "don't
+    // care" -- the bus floats high and antic_default is four instructions long
+    // whose entire content is reading $D406 and asserting it is $FF.  The light
+    // pen registers $D40C/$D40D are unimplemented, which means they float too;
+    // returning 0 for them is a value, and the wrong one.
     assign rdata = (addr == 4'hB) ? vcount_in
                  : (addr == 4'hF) ? nmist_in
-                 : 8'h00;
+                 : 8'hFF;
 
     wire wr = cs && we;
 
