@@ -138,10 +138,31 @@ def main():
     # MEASURED: without this, antic_dmapattern reads $FF for both halves of its
     # LFSR pair, fails at "Cannot decode random pair" and never reaches a single
     # DMA assertion -- on BOTH ANTIC paths.
+    # DOS CALLS RUNAD WITH JSR.  A module that finishes its work and does a
+    # plain `rts` therefore returns to the loader -- and several do.  Jumping
+    # to the entry with an empty stack instead makes that `rts` pop zeros, and
+    # the CPU lands in zero page and BRK-walks upward, every $00 being a BRK
+    # that vectors to the stub and returns two bytes on.  Measured with the
+    # testbench's own "left the image" probe:
+    #
+    #     mod_disp80   $209f -> $0001  s=$01     ($209F is main's rts)
+    #     mod_dispmin  $283f -> $0001  s=$01     ($283F is main's rts)
+    #
+    # s=$01 is exactly two pops from an empty $FF stack.  emu hit the same
+    # thing and fixed it the same way (emu/test/acid.c:410), naming $283F for
+    # mod_dispmin in its own comment: "Nothing was wrong with the module."
+    #
+    # So push a return address the way DOS would.  $FF60 already holds
+    # `JMP $FF60` (installed below as _exitTest), so an RTS pops $FF5F, adds
+    # one, and parks there instead of derailing.
     stub = [0xA2, 0xFF,             # LDX #$FF
             0x9A,                   # TXS
             0xD8,                   # CLD
             0x78,                   # SEI
+            0xA9, 0xFF,             # LDA #>($FF60-1)
+            0x48,                   # PHA
+            0xA9, 0x5F,             # LDA #<($FF60-1)
+            0x48,                   # PHA
             0xA9, 0x03,             # LDA #$03
             0x8D, 0x0F, 0xD2,       # STA SKCTL ($D20F)
             0x4C, run & 0xFF, run >> 8]
