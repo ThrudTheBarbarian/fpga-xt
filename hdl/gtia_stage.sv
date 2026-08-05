@@ -155,8 +155,7 @@ module gtia_stage (
     // HPOS $22 sits exactly ON it and MUST register, while the same object at
     // $21 falls just outside and must NOT. ACID pins both halves.
     //
-    // Carried across from the legacy path, which passes this test, but restated
-    // in this design's coordinates rather than lifted: there the window was
+    // The bound in this design's coordinates: the legacy window was
     // x in [-28, 346] with x = 2*cc - 96, so cc = (x + 96)/2 gives [34, 221] --
     // and 34 is $22, which is the check the comment above describes.
     // `cc_pos` is the same coordinate HPOS is compared against in the object
@@ -165,10 +164,34 @@ module gtia_stage (
     localparam logic [7:0] CC_HI = 8'd221;
     wire cc_in_window = (cc_pos >= CC_LO) && (cc_pos <= CC_HI);
 
+    // ...AND IT MUST BE LATCHED WITH THE PAIR, NOT SAMPLED WHEN THE COLLISION
+    // WALK GETS ROUND TO IT.  Having the comparator is not the same as applying
+    // it at the right instant, and this window existed while gtia_collision
+    // still failed on "P/P collisions were detected in HBLANK on left".
+    //
+    // The two halves of a colour clock are resolved in sequence: the object walk
+    // is eight clocks, priority is ten, and the SECOND half's collision start
+    // therefore lands about eighteen fabric clocks after cc_tick.  A colour
+    // clock is twenty-eight, but cc_pos advances at the FOURTEENTH -- one hi-res
+    // pixel in -- so by the time the second half is accumulated the position has
+    // already stepped on.  An object sitting one colour clock outside the left
+    // edge then gets its window tested at the first position INSIDE it, and
+    // latches a collision that never appeared on screen.
+    //
+    // Latching here rather than widening the bound: the bound is right, the
+    // instant was wrong.  gtia_collide already latches `active` for the same
+    // class of reason -- it just latches it at `start`, which is itself too
+    // late for this.
+    logic cc_win_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)          cc_win_q <= 1'b0;
+        else if (cc_tick) cc_win_q <= cc_in_window;
+    end
+
     gtia_collide u_col (
         .clk(clk), .rst(rst),
         .start(col_start), .pres(pres), .pf_src(cur_pf),
-        .active(active && cc_in_window), .hitclr(hitclr),
+        .active(active && cc_win_q), .hitclr(hitclr),
         .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl), .busy()
     );
 
