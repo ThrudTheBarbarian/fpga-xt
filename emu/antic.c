@@ -645,6 +645,17 @@ static void line_start(antic *a)
         for (int k = 0; k < ANTIC_LINE_CYCLES; k++)
             fputc(a->blocked[k] ? '#' : '.', stderr);
         fputc('\n', stderr);
+        /* ...and what actually LANDED in the buffer.  The map, lb_origin and
+         * the read index can all agree with an RTL port while the CONTENTS
+         * differ, and until this print existed the only reference for the
+         * contents was a prose comment in the test -- which on this very test
+         * describes a compiled-out branch.  Forty-eight entries is the whole
+         * of a wide row plus room for a run-on. */
+        fprintf(stderr, "  LBUF sl %3d insn $%02X org %2u:", a->scanline - 1,
+                a->dl_insn, a->lb_origin);
+        for (int k = 0; k < 48; k++)
+            fprintf(stderr, " %02x", a->linebuf[k]);
+        fputc('\n', stderr);
     }
 
     a->hscrol_line = a->hscrol;           /* the clamp is per-line */
