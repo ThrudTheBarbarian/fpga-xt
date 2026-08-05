@@ -248,6 +248,38 @@ def main():
     # zero.  Park it on a spin instead so a missed detection is visible as a
     # halt rather than a BRK-walk through zero page.
     mem[0xFF60], mem[0xFF61], mem[0xFF62] = 0x4C, 0x60, 0xFF   # JMP $FF60
+
+    # ---- the OS ENTRY POINTS ------------------------------------------------
+    #
+    # DSKINV ($E453), CIOV ($E456) and SIOV ($E459) live in the OS ROM, which
+    # this harness deliberately does not have.  A test that calls one finds a
+    # zero, executes it as BRK, and walks up the vector table until it falls
+    # out the far end.  MEASURED, with the testbench's own probe:
+    #
+    #     pokey_skstat   [left the image] $2027 -> $e453
+    #                    ($2027 is `jsr dskinv`, per the .lst)
+    #
+    # and emu names both of the tests this kills (emu/test/acid.c:394): "not a
+    # POKEY bug, and not the interrupt storm the $FF20/$FF40 spins suggested."
+    #
+    # The vectors are three bytes apart because in real ROM each one is itself
+    # a JMP to a handler elsewhere; writing the handler at all three addresses
+    # would have them overlap.
+    #
+    # They answer NO DEVICE.  emu answers DSKINV as a drive would -- but only
+    # because it models one, and it says plainly that doing so without a drive
+    # "would be a lie if no device answered".  There is no SIO device in this
+    # testbench.  pokey_skstat and pokey_serdirect both open with `jsr dskinv`
+    # purely as a "is a drive present" gate and SKIP when it fails, so the
+    # honest answer makes them skip cleanly rather than derail.
+    nodev = [0xA9, 0x80,             # LDA #$80   -- N set: operation failed
+             0x8D, 0x03, 0x03,       # STA DSTATS ($0303)
+             0xA0, 0x8A,             # LDY #$8A   -- device does not respond
+             0x60]                   # RTS
+    for k, b in enumerate(nodev):
+        mem[0xE480 + k] = b
+    for v in (0xE453, 0xE456, 0xE459):
+        mem[v], mem[v + 1], mem[v + 2] = 0x4C, 0x80, 0xE4      # JMP $E480
     ex = syms.get("_exitTest")
     if ex is not None:
         mem[ex], mem[ex + 1] = 0x60, 0xFF
