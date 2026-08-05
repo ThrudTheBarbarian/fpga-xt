@@ -41,20 +41,39 @@ module tb_acid #(
     // be set with iverilog -Ptb_acid.USE_ANTIC2=1, and a SEPARATE BINARY rather
     // than a -D toggle: `make` does not rebuild for a changed define, which has
     // silently re-run the previous build twice in this project.
-    parameter bit USE_ANTIC2 = 1'b0
+    parameter bit USE_ANTIC2 = 1'b0,
+    // Fabric clocks per machine cycle.  56 is the real ratio and the only
+    // value known to work.
+    //
+    // This is a knob because 56:1 looks like pure simulation cost -- the core
+    // is gated on tick/px_tick, and the only thing counting raw fabric clocks
+    // is the memory pipeline (mem_valid is mem_req delayed one clock, data two
+    // clocks after the request), which still has slack at 16.  MEASURED, AND
+    // THE ARGUMENT IS WRONG: antic_nmist takes 437s at 56 and had not finished
+    // after 58 MINUTES at 16.  Fewer edges to the same 6502 state cannot be
+    // slower unless the behaviour changed, so at 16 it never reaches its
+    // verdict and grinds to the guard.  The ratio is NOT free to alter.
+    //
+    // Kept, rather than reverted, so the next person who has the same idea
+    // finds the result instead of repeating the experiment.  Must be a
+    // multiple of 4 -- px_tick fires four times per machine cycle, evenly
+    // spaced -- and at 56 the generator below yields exactly the phases it
+    // always did: 13, 27, 41, 55.
+    parameter int PHASES = 56
 );
 
     logic clk = 0, rst = 1, cold = 0;
     always #5 clk = ~clk;
 
-    // The real ratio: 56 fabric clocks per machine cycle.
+    localparam int PXSTEP = PHASES / 4;
+
     logic [5:0] phase = 6'd0;
     logic       tick, px_tick;
     always_ff @(posedge clk) begin
-        phase   <= (phase == 6'd55) ? 6'd0 : phase + 6'd1;
-        tick    <= (phase == 6'd55);
-        px_tick <= (phase == 6'd13) || (phase == 6'd27) ||
-                   (phase == 6'd41) || (phase == 6'd55);
+        phase   <= (phase == 6'(PHASES-1)) ? 6'd0 : phase + 6'd1;
+        tick    <= (phase == 6'(PHASES-1));
+        px_tick <= (phase == 6'(PXSTEP-1))   || (phase == 6'(2*PXSTEP-1)) ||
+                   (phase == 6'(3*PXSTEP-1)) || (phase == 6'(4*PXSTEP-1));
     end
 
     wire [15:0] cpu_addr, antic_addr;
