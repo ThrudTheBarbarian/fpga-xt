@@ -87,6 +87,23 @@ module antic2 #(
     wire        dl_row_line_set;
     wire        dl_busy;
     wire [15:0] dl_addr_o, pf_addr_o;
+
+    // Memory clients: the display-list executor and the playfield fetcher.
+    wire [15:0] dl_mem_addr, pf_mem_addr, pf_scan_addr;
+    wire        dl_mem_req,  pf_mem_req;
+    wire        dl_mem_valid, pf_mem_valid;
+    wire        pf_load;                    // 1-clk: an LMS operand landed
+
+    // The schedule's own fetch slots, which the fetcher runs on.
+    wire        sched_pf_fetch, sched_pf_fetch_glyph;
+
+    // The line buffer's read port.  Nothing reads it yet -- the emit side is
+    // the next piece of stage 3 -- so the index is parked at zero rather than
+    // left floating, and the outputs are carried as wires so the fetcher's
+    // buffer is observable from a testbench in the meantime.
+    wire [5:0]  lb_rd_idx = 6'd0;
+    wire [7:0]  lb_rd_data, lb_rd_code;
+    wire [6:0]  lb_len;
     wire [4:0]  mode_rows;
 
     // ---- position ----------------------------------------------------------
@@ -225,23 +242,73 @@ module antic2 #(
         .lms(dl_insn[6]),
         .dl_dma_en(dmactl[5] && pf_fetching), .missile_dma_en(dmactl[2]),
         .player_dma_en(dmactl[3]),
-        .steal(sched_steal)
+        .steal(sched_steal),
+        .pf_fetch(sched_pf_fetch), .pf_fetch_glyph(sched_pf_fetch_glyph)
     );
 
     // ---- display-list executor ---------------------------------------------
     antic2_dl u_dl (
         .clk(clk), .rst(rst),
         .exec_req(dl_fetch_req),
-        .mem_data(mem_data), .mem_valid(mem_valid),
-        .mem_req(mem_req), .mem_addr(mem_addr),
+        .mem_data(mem_data), .mem_valid(dl_mem_valid),
+        .mem_req(dl_mem_req), .mem_addr(dl_mem_addr),
         .dlist_lo_stb(dlist_lo_stb), .dlist_hi_stb(dlist_hi_stb),
         .dlist_val(dlist_val),
         .vscrol(vscrol), .mode_rows(mode_rows),
         .dl_insn(dl_insn), .dl_addr(dl_addr_o), .pf_addr(pf_addr_o),
+        .pf_load(pf_load),
         .row_end(dl_row_end), .row_end_live(dl_row_end_live),
         .row_line_load(dl_row_line_load), .row_line_set(dl_row_line_set),
         .jvb_pulse(jvb_pulse), .insn_stb(dl_insn_stb), .busy(dl_busy)
     );
+
+    // ---- the playfield fetcher ---------------------------------------------
+    // Driven by the SCHEDULE, one byte per scheduled cycle, so that a mid-line
+    // DMACTL or HSCROL write moves the window for what is still to come while
+    // the bytes already fetched stay fetched.  See antic_pf_stream.sv.
+    antic_pf_stream u_pf (
+        .clk(clk), .rst(rst),
+        .line_start(sched_line_start), .first_row(row_first),
+        .mode(dl_insn[3:0]), .row({1'b0, row_line}),
+        .chbase(chbase), .chactl(chactl[2:0]),
+        .bytes_per_line(pf_bytes),
+        .pf_fetch(sched_pf_fetch), .pf_fetch_glyph(sched_pf_fetch_glyph),
+        .scan_addr_in(pf_addr_o), .scan_load(pf_load),
+        .scan_addr_out(pf_scan_addr),
+        .mem_addr(pf_mem_addr), .mem_req(pf_mem_req),
+        .mem_data(mem_data), .mem_valid(pf_mem_valid),
+        .rd_idx(lb_rd_idx), .rd_data(lb_rd_data), .rd_code(lb_rd_code),
+        .lb_len(lb_len)
+    );
+
+    // ---- memory arbitration -------------------------------------------------
+    // The two clients CANNOT collide: the schedule puts the display-list fetch
+    // at hcount 1 (and its operands at 6 and 7) and opens the playfield walk no
+    // earlier than cycle 10.  They are the same schedule's own slots, so this
+    // is a priority mux over signals that are never both asserted, not an
+    // arbiter resolving real contention.  The assertion below is the check.
+    assign mem_req  = dl_mem_req || pf_mem_req;
+    assign mem_addr = dl_mem_req ? dl_mem_addr : pf_mem_addr;
+
+    // mem_valid is mem_req delayed one clock, so remembering WHICH client
+    // issued needs exactly one clock of delay too.  Without this the fetcher
+    // would latch the display list's bytes into the line buffer, and the DL
+    // executor would decode a playfield byte as an instruction.
+    logic vld_is_pf;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) vld_is_pf <= 1'b0;
+        else     vld_is_pf <= pf_mem_req && !dl_mem_req;
+    end
+    assign pf_mem_valid = mem_valid &&  vld_is_pf;
+    assign dl_mem_valid = mem_valid && !vld_is_pf;
+
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+        if (!rst && dl_mem_req && pf_mem_req)
+            $display("antic2: ASSERT display-list and playfield fetch collided at hcount %0d",
+                     hcount);
+    end
+`endif
 
     // ---- start-of-line bookkeeping -----------------------------------------
     antic2_line #(

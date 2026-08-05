@@ -52,7 +52,12 @@ module antic2_dl (
 
     output logic [7:0] dl_insn,
     output logic [15:0] dl_addr,        // the display-list pointer
-    output logic [15:0] pf_addr,        // the playfield scan address (LMS)
+    // The LMS operand: the value the playfield scan pointer is LOADED with,
+    // and emphatically not the live pointer.  This module never advances it --
+    // the fetcher does, once per actual fetch -- so the running pointer lives
+    // there and only there, and pf_load is how it hears about a load.
+    output logic [15:0] pf_addr,
+    output logic        pf_load,        // 1-clk when an LMS operand lands
     output logic [3:0]  row_end,        // the row's last scanline...
     output logic        row_end_live,   // ...unless this is set: compare LIVE
                                         //    against VSCROL every scanline
@@ -100,6 +105,7 @@ module antic2_dl (
             row_line_set  <= 1'b0;
             jvb_pulse     <= 1'b0;
             insn_stb      <= 1'b0;
+            pf_load       <= 1'b0;
             busy          <= 1'b0;
             vscrol_prev   <= 1'b0;
             want_operand  <= 1'b0;
@@ -111,6 +117,7 @@ module antic2_dl (
             mem_req      <= 1'b0;
             jvb_pulse    <= 1'b0;
             insn_stb     <= 1'b0;
+            pf_load      <= 1'b0;
 
             case (st)
             S_IDLE: begin
@@ -181,6 +188,7 @@ module antic2_dl (
                     // LMS: the operand fetches go through the same 1 KB-wrapping
                     // counter, which is what antic_addresswrap exploits.
                     pf_addr <= {mem_data, lo_r};
+                    pf_load <= 1'b1;
                 end
                 busy <= 1'b0;
                 st   <= S_DONE;
