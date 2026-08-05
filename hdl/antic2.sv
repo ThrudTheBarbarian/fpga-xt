@@ -104,11 +104,9 @@ module antic2 #(
     // The schedule's own fetch slots, which the fetcher runs on.
     wire        sched_pf_fetch, sched_pf_fetch_glyph;
 
-    // The line buffer's read port.  Nothing reads it yet -- the emit side is
-    // the next piece of stage 3 -- so the index is parked at zero rather than
-    // left floating, and the outputs are carried as wires so the fetcher's
-    // buffer is observable from a testbench in the meantime.
-    wire [5:0]  lb_rd_idx = 6'd0;
+    // The line buffer's read port.  The renderer owns the index: it walks the
+    // buffer the fetcher filled, one hi-res pixel per emit_en pulse.
+    wire [5:0]  lb_rd_idx;
     wire [7:0]  lb_rd_data, lb_rd_code;
     wire [6:0]  lb_len;
     wire [4:0]  mode_rows;
@@ -120,6 +118,17 @@ module antic2 #(
     // width where it is not.
     wire [8:0]  pf_px_start, pf_px_stop, pf_px_pos;
     wire        pf_emit_en;
+
+    // The renderer's pixel stream.  GTIA is the consumer and has not landed
+    // yet, so these go nowhere for the moment; they are named rather than left
+    // unconnected so the stream is observable from a testbench and so the next
+    // step is a wiring change, not a re-plumb.
+    wire        px_wr;
+    wire [7:0]  px_color;
+    wire [2:0]  px_pf_src;
+    wire [1:0]  px_val;
+    wire        px_hires;
+    wire        render_busy, render_done;
 
     // ---- position ----------------------------------------------------------
     antic_beam #(
@@ -313,6 +322,33 @@ module antic2 #(
         .mem_data(mem_data), .mem_valid(pf_mem_valid),
         .rd_idx(lb_rd_idx), .rd_data(lb_rd_data), .rd_code(lb_rd_code),
         .lb_len(lb_len)
+    );
+
+    // ---- the renderer ------------------------------------------------------
+    // Walks the buffer the fetcher filled, one hi-res pixel per emit_en pulse,
+    // so the pixel stream is paced by the BEAM and not by the fetch.  `start`
+    // is the scheduler's line_start, the same pulse the fetcher restarts on, so
+    // the walk and the fill agree about which line's mode and byte count they
+    // are working from.
+    //
+    // THE COLOUR REGISTERS ARE TIED OFF, DELIBERATELY.  COLBK/COLPF0-3 are
+    // $D016-$D01A -- GTIA's registers, not ANTIC's -- and antic2 does not hold
+    // them.  Routing a second copy through here to satisfy a port would be two
+    // definitions of one value.  What matters first is the SOURCE: GTIA decides
+    // priority and collisions on WHICH playfield a pixel is and only then
+    // colours it, so lb_pf_src / lb_px_val / lb_is_hires are the outputs that
+    // carry real information today.  px_color is therefore meaningless until
+    // GTIA lands and hands the registers over; nothing reads it.
+    antic_line_render u_render (
+        .clk(clk), .rst(rst),
+        .start(sched_line_start), .emit_en(pf_emit_en),
+        .mode(dl_insn[3:0]), .bytes_per_line(pf_bytes),
+        .colbk(8'h00), .colpf0(8'h00), .colpf1(8'h00),
+        .colpf2(8'h00), .colpf3(8'h00),
+        .rd_idx(lb_rd_idx), .rd_data(lb_rd_data), .rd_code(lb_rd_code),
+        .lb_wr(px_wr), .lb_color(px_color), .lb_pf_src(px_pf_src),
+        .lb_px_val(px_val), .lb_is_hires(px_hires),
+        .busy(render_busy), .done(render_done)
     );
 
     // ---- memory arbitration -------------------------------------------------
