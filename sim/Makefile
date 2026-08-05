@@ -1414,6 +1414,14 @@ build/tb_antic_nmi.vvp: tb_antic_nmi.sv $(HDL_DIR)/antic_nmi.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_nmi \
 	    $(HDL_DIR)/antic_nmi.sv tb_antic_nmi.sv
 
+antic_emit_win: build/tb_antic_emit_win.vvp
+	@vvp -N $<
+
+build/tb_antic_emit_win.vvp: tb_antic_emit_win.sv $(HDL_DIR)/antic_emit_win.sv \
+	    $(HDL_DIR)/antic_pf_geom.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_emit_win \
+	    $(HDL_DIR)/antic_emit_win.sv $(HDL_DIR)/antic_pf_geom.sv tb_antic_emit_win.sv
+
 antic_pf_pair: build/tb_antic_pf_pair.vvp
 	@vvp -N $<
 
