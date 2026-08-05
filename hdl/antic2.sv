@@ -107,6 +107,10 @@ module antic2 #(
     // The line buffer's read port.  The renderer owns the index: it walks the
     // buffer the fetcher filled, one hi-res pixel per emit_en pulse.
     wire [5:0]  lb_rd_idx;
+    // Declared here, with the read port it belongs to, because the fetcher's
+    // instantiation below uses it and a variable must exist before it is
+    // referenced.  Driven by the counter further down.
+    logic [5:0] lb_origin;
     wire [7:0]  lb_rd_data, lb_rd_code;
     wire [6:0]  lb_len;
     wire [4:0]  mode_rows;
@@ -320,9 +324,42 @@ module antic2 #(
         .scan_addr_out(pf_scan_addr),
         .mem_addr(pf_mem_addr), .mem_req(pf_mem_req),
         .mem_data(mem_data), .mem_valid(pf_mem_valid),
-        .rd_idx(lb_rd_idx), .rd_data(lb_rd_data), .rd_code(lb_rd_code),
+        .rd_idx(lb_rd_idx), .rd_origin(lb_origin),
+        .rd_data(lb_rd_data), .rd_code(lb_rd_code),
         .lb_len(lb_len)
     );
+
+    // ---- the line buffer's READ ORIGIN -------------------------------------
+    // How many entries were filled BEFORE this line's own fetch window opened.
+    // A line whose stream ran on from the previous one starts with its write
+    // pointer already ahead, and the display has to skip those bytes; a normal
+    // line's origin is zero.  antic_hscrolbug is built on it: seventeen extra
+    // fetches in HBLANK shift the NEXT line's display left by seventeen bytes.
+    //
+    // COUNT ENTRIES, NOT FETCHES.  A character first row takes two accesses per
+    // entry -- the name, and the glyph three cycles later -- and pf_fetch
+    // pulses for BOTH.  Counting it would double the origin on exactly the
+    // rows that matter.  pf_fetch_glyph marks the second access, and
+    // antic_pf_stream calls the same distinction idx_takes.
+    //
+    // ONLY ON A ROW'S FIRST LINE.  emu's map is written under
+    // `(mode >= 8 || first_line)` (antic_dma.c, spec_edges), so a later
+    // CHARACTER row marks nothing at all: it re-reads only glyphs from the
+    // character base and replays the names out of the buffer, advancing no
+    // scan address and taking no index, and its origin is zero even when the
+    // stream ran on.  A later BITMAP row fetches nothing whatever, so that
+    // half of emu's condition needs no separate test here.
+    //
+    // Counted as the fetches happen rather than derived from a map at line
+    // start, because the fetch is progressive and the display window opens
+    // long after the carried entries are in.
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)                   lb_origin <= 6'd0;
+        else if (sched_line_start) lb_origin <= 6'd0;
+        else if (row_first && sched_pf_fetch && !sched_pf_fetch_glyph &&
+                 hcount < pf_dma_start)
+            lb_origin <= lb_origin + 6'd1;
+    end
 
     // ---- the renderer ------------------------------------------------------
     // Walks the buffer the fetcher filled, one hi-res pixel per emit_en pulse,

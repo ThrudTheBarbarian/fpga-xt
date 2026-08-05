@@ -57,7 +57,7 @@
 `timescale 1ns/1ps
 
 module antic_pf_stream #(
-    parameter int ENTRIES = 48          // wide playfield, 8 hi-res px per byte
+    parameter int ENTRIES = 64          // 48 are written; the reader needs 64
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -91,6 +91,11 @@ module antic_pf_stream #(
 
     // ---- buffer read port, for the renderer -------------------------------
     input  wire  [5:0]  rd_idx,
+    // How many entries were filled BEFORE the line's fetch window opened, so
+    // the display can skip them.  Applied HERE because this module owns the
+    // buffer and therefore owns its wrap, which is the same place emu applies
+    // it (antic.c's lb(): `i += a->lb_origin; return i % sizeof a->linebuf`).
+    input  wire  [5:0]  rd_origin,
     output wire  [7:0]  rd_data,         // glyph or graphics byte, CHACTL applied
     output wire  [7:0]  rd_code,         // character code, for the colour select
     output logic [6:0]  lb_len           // how wide this row is
@@ -110,8 +115,16 @@ module antic_pf_stream #(
     // ---- the buffer -------------------------------------------------------
     logic [15:0] buf_mem [0:ENTRIES-1];
 
-    assign rd_code = buf_mem[rd_idx][15:8];
-    assign rd_data = buf_mem[rd_idx][7:0];
+    // SIZED BY ITS READER, not by its writer.  A wide row writes 48 entries and
+    // never more, but the read index is rd_idx + rd_origin, which runs past 47
+    // whenever the origin is non-zero -- and emu wraps that sum modulo 64
+    // (`uint8_t linebuf[64]`).  At 64 entries the 6-bit sum below IS that
+    // modulo, and the top sixteen hold whatever the last row left, exactly as
+    // emu's array does.
+    wire [5:0] rd_at = rd_idx + rd_origin;
+
+    assign rd_code = buf_mem[rd_at][15:8];
+    assign rd_data = buf_mem[rd_at][7:0];
 
     // ---- the running count ------------------------------------------------
     // Reset per scanline, incremented per BUFFER ENTRY -- so a character pair

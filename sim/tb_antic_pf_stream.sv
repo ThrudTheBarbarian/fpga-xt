@@ -55,7 +55,8 @@ module tb_antic_pf_stream;
         .scan_addr_out(scan_addr_out),
         .mem_addr(mem_addr), .mem_req(mem_req),
         .mem_data(mem_data), .mem_valid(mem_valid),
-        .rd_idx(rd_idx), .rd_data(rd_data), .rd_code(rd_code), .lb_len(lb_len)
+        .rd_idx(rd_idx), .rd_origin(6'd0),
+        .rd_data(rd_data), .rd_code(rd_code), .lb_len(lb_len)
     );
 
     integer errors = 0;
