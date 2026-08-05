@@ -85,6 +85,19 @@ module antic2_dl (
     logic [7:0] insn_r;
     logic [7:0] lo_r;
 
+    // THE DISPLAY LIST POINTER WRAPS AT 1 KB.  Only the low ten bits advance;
+    // bits 15:10 are held.  A list that runs off the end of its 1 KB page does
+    // not continue into the next one, it comes back round to the page's start --
+    // and that applies to the LMS OPERAND FETCHES too, because they go through
+    // this same counter.  antic_addresswrap puts an LMS at $27FE so its operands
+    // straddle the boundary: the low byte is at $27FF and the HIGH byte is at
+    // $2400, not $2800.  A plain 16-bit increment reads $2800 instead, gets the
+    // $80 sitting there, fires a DLI, and the test reports the list failed to
+    // wrap.  The wrap is not an edge case here; it is the whole measurement.
+    function automatic logic [15:0] dl_next(input logic [15:0] a);
+        dl_next = {a[15:10], a[9:0] + 10'd1};
+    endfunction
+
     // Decoded from the LATCHED instruction, in the order emu decides them.
     wire [3:0] mode     = insn_r[3:0];
     wire       vs       = (mode >= 4'd2) && insn_r[5];
@@ -133,7 +146,7 @@ module antic2_dl (
                 insn_r      <= mem_data;
                 dl_insn     <= mem_data;
                 insn_stb    <= 1'b1;
-                dl_addr     <= dl_addr + 16'd1;
+                dl_addr     <= dl_next(dl_addr);
                 vscrol_prev <= (mem_data[3:0] >= 4'd2) && mem_data[5];
 
                 // MODE 0 and MODE 1 ARE DECIDED FIRST, before bit 6 means LMS.
@@ -153,7 +166,7 @@ module antic2_dl (
                     want_operand <= 1'b1;
                     is_jump      <= 1'b1;
                     mem_req      <= 1'b1;
-                    mem_addr     <= dl_addr + 16'd1;
+                    mem_addr     <= dl_next(dl_addr);
                     st           <= S_LO;
                 end
                 else begin
@@ -162,7 +175,7 @@ module antic2_dl (
                         want_operand <= 1'b1;
                         is_jump      <= 1'b0;
                         mem_req      <= 1'b1;
-                        mem_addr     <= dl_addr + 16'd1;
+                        mem_addr     <= dl_next(dl_addr);
                         st           <= S_LO;
                     end else begin
                         busy <= 1'b0;
@@ -173,14 +186,14 @@ module antic2_dl (
 
             S_LO: if (mem_valid) begin
                 lo_r     <= mem_data;
-                dl_addr  <= dl_addr + 16'd1;
+                dl_addr  <= dl_next(dl_addr);
                 mem_req  <= 1'b1;
-                mem_addr <= dl_addr + 16'd1;
+                mem_addr <= dl_next(dl_addr);
                 st       <= S_HI;
             end
 
             S_HI: if (mem_valid) begin
-                dl_addr <= dl_addr + 16'd1;
+                dl_addr <= dl_next(dl_addr);
                 if (is_jump) begin
                     dl_addr <= {mem_data, lo_r};
                     jvb_pulse <= insn_r[6];        // JVB
