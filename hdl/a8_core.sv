@@ -133,6 +133,17 @@ module a8_core #(
     wire        a2_mem_req;
     wire [6:0]  a2_hcount;
     wire [8:0]  a2_line;
+    // antic2's pixel stream and the gap filler's answer to it.
+    wire        a2_px_wr, a2_px_hires, a2_px_in_window;
+    wire [2:0]  a2_px_pf_src;
+    wire [1:0]  a2_px_val;
+    wire [8:0]  a2_px_pos;
+    wire        a2_px_line_start, a2_px_active;
+    wire [7:0]  a2_gtia_rdata;
+    wire        a2_lb_wr, a2_lb_line_start;
+    wire [7:0]  a2_lb_color;
+    wire        gt_lb_wr, gt_lb_line_start;
+    wire [7:0]  gt_lb_color;
     wire        nmi_n_eff;
     wire [15:0] c_addr;
     wire [7:0]  c_dout;
@@ -158,6 +169,11 @@ module a8_core #(
 
     always_comb begin
         if      (USE_ANTIC2 && cs_antic) c_din = a2_rdata;
+        // $D0xx is the gap filler's under USE_ANTIC2, not the legacy monolith's.
+        // The collision latches the ACID tests read live in whichever register
+        // file the live raster path feeds, and with antic2 driving the pixels
+        // that is this one.
+        else if (USE_ANTIC2 && cs_gtia)  c_din = a2_gtia_rdata;
         else if (cs_gtia || cs_antic)    c_din = reg_rdata;
         else if (cs_pokey)               c_din = pokey_rdata;
         else                             c_din = cpu_rdata;
@@ -186,7 +202,8 @@ module a8_core #(
         .mem_addr(gt_antic_addr), .mem_data(antic_rdata),
         .trig0(trig0), .trig1(trig1), .trig2(trig2), .trig3(trig3),
         .pal_sense(pal_sense), .consol_keys(consol_keys),
-        .lb_wr(lb_wr), .lb_color(lb_color), .lb_line_start(lb_line_start),
+        .lb_wr(gt_lb_wr), .lb_color(gt_lb_color),
+        .lb_line_start(gt_lb_line_start),
         .hcount(gt_hcount), .line(gt_line), .vcount(), .line_start(), .dlpc()
     );
 
@@ -211,8 +228,42 @@ module a8_core #(
         .mem_addr(a2_mem_addr), .mem_data(antic_rdata),
         .mem_valid(a2_mem_valid), .mem_req(a2_mem_req),
         .nmi(a2_nmi), .wsync_take(a2_wsync_take), .dma_steal(a2_dma_steal),
-        .hcount(a2_hcount), .line(a2_line)
+        .hcount(a2_hcount), .line(a2_line),
+        .px_wr(a2_px_wr), .px_pf_src(a2_px_pf_src), .px_val(a2_px_val),
+        .px_hires(a2_px_hires), .px_in_window(a2_px_in_window),
+        .px_pos(a2_px_pos), .px_line_start(a2_px_line_start),
+        .px_active(a2_px_active)
     );
+
+    // ---- the ANTIC->framebuffer gap ----------------------------------------
+    //
+    // antic2 emits playfield SOURCES; the framebuffer wants colours; the CPU
+    // wants to read collisions out of $D0xx.  a2_video is all three, and it
+    // holds the $D0xx registers, so under USE_ANTIC2 the legacy monolith's
+    // register file is not the one answering.
+    //
+    // P/M DMA has not landed yet, so no object bytes are stored.  The players
+    // are still POSITIONED and still collide -- GRAFP0-3 are CPU-writable and
+    // the ACID collision tests write them directly -- so this is a missing
+    // fetch path, not a missing object path.
+    a2_video u_a2_video (
+        .clk(clk), .rst(rst), .px_tick(px_tick),
+        .cs(cs_gtia), .we(cpu_we), .addr(c_addr[7:0]), .wdata(c_dout),
+        .rdata(a2_gtia_rdata),
+        .px_wr(a2_px_wr), .px_pf_src(a2_px_pf_src), .px_val(a2_px_val),
+        .px_hires(a2_px_hires), .px_in_window(a2_px_in_window),
+        .px_pos(a2_px_pos), .px_line_start(a2_px_line_start),
+        .px_active(a2_px_active),
+        .pm_we(1'b0), .pm_obj(3'd0), .pm_data(8'h00), .pm_mask(8'h00),
+        .trig0(trig0), .trig1(trig1), .trig2(trig2), .trig3(trig3),
+        .pal_sense(pal_sense), .consol_keys(consol_keys),
+        .lb_wr(a2_lb_wr), .lb_color(a2_lb_color),
+        .lb_line_start(a2_lb_line_start)
+    );
+
+    assign lb_wr         = USE_ANTIC2 ? a2_lb_wr         : gt_lb_wr;
+    assign lb_color      = USE_ANTIC2 ? a2_lb_color      : gt_lb_color;
+    assign lb_line_start = USE_ANTIC2 ? a2_lb_line_start : gt_lb_line_start;
 
     assign hcount     = USE_ANTIC2 ? a2_hcount   : gt_hcount;
     assign line       = USE_ANTIC2 ? a2_line     : gt_line;

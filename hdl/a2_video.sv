@@ -1,0 +1,230 @@
+`default_nettype none
+//
+// a2_video — the gap between what ANTIC produces and what the framebuffer needs.
+//
+// THIS IS NOT A GTIA.  There is no real GTIA analogue in this design and none is
+// wanted.  What there is, is a stream of playfield SOURCES coming out of antic2
+// and a line buffer that wants one colour per hi-res pixel, and something has to
+// stand between them.  That something also happens to be where the $D0xx
+// registers live, where players and missiles are drawn, and where collisions are
+// latched, because all four are the same question asked once per colour clock:
+// given the playfield here and the objects here, what colour is this, and what
+// touched what.
+//
+// WHY IT IS A SEPARATE MODULE AND NOT PART OF antic2.  ANTIC does not know what
+// colour anything is.  It sends two bits per colour clock and a playfield
+// number; the colour registers are $D016-$D01A, on the other chip.  Keeping the
+// lookup here means antic2 has no colour ports to tie off and no second copy of
+// COLBK to disagree with this one.
+//
+// THE PAIRING, which is the one genuinely awkward thing here.  antic2 emits ONE
+// hi-res pixel per emit_en.  A colour clock is TWO of them.  So the two pixels
+// are captured on the even and odd hi-res pixel of each colour clock and handed
+// over together on the next colour clock's tick -- the non-blocking assignment
+// IS the pipeline stage, and gtia_stage samples the pair that is one colour
+// clock old.  cc_pos is therefore the PREVIOUS colour clock's position, because
+// the objects have to be evaluated where that pair actually was.
+//
+// OUTSIDE THE WINDOW THERE IS NO PLAYFIELD, ONLY BACKGROUND.  The border is not
+// a special case with its own path: it is source 0 fed through the same stage as
+// everything else, so a player over the border collides with nothing and is
+// coloured by the same priority logic.  That is why px_in_window is a LEVEL from
+// antic2 and not merely the emit pulse -- the pulse says the renderer emitted,
+// the level says the beam is on the playfield, and the border needs the second.
+//
+// EVERY PIXEL OF THE LINE IS WRITTEN.  lb_wr is px_tick, unconditionally: the
+// framebuffer wants a full scanline, borders included. The line-start rewind is
+// delayed by the pipeline depth so the pixels still in flight when the beam
+// crosses the line boundary land at the end of the line they belong to, not at
+// the start of the next one.
+//
+// The capture, the pairing, the stage wiring and the delayed rewind are the same
+// hardware the legacy raster uses (antic_scanline), for the same reason: it is
+// measured good against the ACID collision tests. What is different is where the
+// pixels come from.
+//
+`timescale 1ns/1ps
+
+module a2_video (
+    input  wire        clk,
+    input  wire        rst,
+    input  wire        px_tick,          // 1-clk per hi-res pixel
+
+    // ---- CPU bus: $D0xx ---------------------------------------------------
+    input  wire        cs,
+    input  wire        we,
+    input  wire [7:0]  addr,             // low byte of $D0xx
+    input  wire [7:0]  wdata,
+    output wire [7:0]  rdata,
+
+    // ---- the pixel stream from antic2 -------------------------------------
+    input  wire        px_wr,            // the renderer emitted this pixel
+    input  wire [2:0]  px_pf_src,        // which playfield it is
+    input  wire [1:0]  px_val,           // ...or the raw pair a GTIA mode reads
+    input  wire        px_hires,
+    input  wire        px_in_window,     // LEVEL: the beam is on the playfield
+    input  wire [8:0]  px_pos,           // hi-res pixel index along the line
+    input  wire        px_line_start,    // 1-clk at the top of the scanline
+    input  wire        px_active,        // an active display line
+
+    // ---- P/M DMA store, for when antic2 fetches them ----------------------
+    input  wire        pm_we,
+    input  wire [2:0]  pm_obj,
+    input  wire [7:0]  pm_data,
+    input  wire [7:0]  pm_mask,
+
+    // ---- console and controllers ------------------------------------------
+    input  wire [7:0]  trig0, trig1, trig2, trig3,
+    input  wire [7:0]  pal_sense,
+    input  wire [7:0]  consol_keys,
+
+    // ---- the scanline out --------------------------------------------------
+    output wire        lb_wr,
+    output wire [7:0]  lb_color,
+    output wire        lb_line_start
+);
+
+    // ---- the registers -----------------------------------------------------
+    wire [7:0] hposp0, hposp1, hposp2, hposp3;
+    wire [7:0] hposm0, hposm1, hposm2, hposm3;
+    wire [1:0] sizep0, sizep1, sizep2, sizep3;
+    wire [7:0] sizem;
+    wire [7:0] grafp0, grafp1, grafp2, grafp3;
+    wire [7:0] grafm;
+    wire [7:0] colpm0, colpm1, colpm2, colpm3;
+    wire [7:0] colpf0, colpf1, colpf2, colpf3;
+    wire [7:0] colbk, prior, vdelay, gractl;
+    wire       hitclr;
+    wire [15:0] m_pf, p_pf, m_pl, p_pl;
+
+    gtia_reg_file u_regs (
+        .clk(clk), .rst(rst),
+        .addr(addr), .we(cs && we), .wdata(wdata), .rdata(rdata),
+        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_mask(pm_mask),
+        .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl),
+        .trig0(trig0), .trig1(trig1), .trig2(trig2), .trig3(trig3),
+        .pal_sense(pal_sense), .consol_keys(consol_keys),
+        .hposp0(hposp0), .hposp1(hposp1), .hposp2(hposp2), .hposp3(hposp3),
+        .hposm0(hposm0), .hposm1(hposm1), .hposm2(hposm2), .hposm3(hposm3),
+        .sizep0(sizep0), .sizep1(sizep1), .sizep2(sizep2), .sizep3(sizep3),
+        .sizem(sizem),
+        .grafp0(grafp0), .grafp1(grafp1), .grafp2(grafp2), .grafp3(grafp3),
+        .grafm(grafm),
+        .colpm0(colpm0), .colpm1(colpm1), .colpm2(colpm2), .colpm3(colpm3),
+        .colpf0(colpf0), .colpf1(colpf1), .colpf2(colpf2), .colpf3(colpf3),
+        .colbk(colbk), .prior(prior), .vdelay(vdelay), .gractl(gractl),
+        .hitclr(hitclr)
+    );
+
+    // ---- the playfield pair ------------------------------------------------
+    localparam logic [2:0] SRC_BK = 3'd0;
+
+    wire [2:0] this_px_src = px_wr ? px_pf_src : SRC_BK;
+
+    // px_pos counts hi-res pixels from the top of the line, so bit 0 says which
+    // half of the colour clock this is and bits [8:1] say which colour clock.
+    wire px_odd = px_pos[0];
+
+    logic [2:0] pf_cap_a, pf_cap_b;
+    logic [1:0] pv_cap_a, pv_cap_b;
+    logic       win_cap;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            pf_cap_a <= SRC_BK;
+            pf_cap_b <= SRC_BK;
+            pv_cap_a <= 2'd0;
+            pv_cap_b <= 2'd0;
+            win_cap  <= 1'b0;
+        end else if (px_tick) begin
+            if (!px_odd) begin
+                pf_cap_a <= this_px_src;
+                pv_cap_a <= px_wr ? px_val : 2'd0;
+                win_cap  <= px_in_window;
+            end else begin
+                pf_cap_b <= this_px_src;
+                pv_cap_b <= px_wr ? px_val : 2'd0;
+            end
+        end
+    end
+
+    // ANTIC sends GTIA two playfield bits per colour clock whatever mode it is
+    // in.  A hi-res colour clock carries two one-bit pixels; every other mode
+    // carries one pixel whose value is already two bits wide.  That single fact
+    // is the whole of "pseudo mode E" -- see gtia_special.
+    wire [1:0] an_pair = px_hires ? {pv_cap_a[0], pv_cap_b[0]} : pv_cap_a;
+
+    // A colour clock starts on the even hi-res pixel.  At that same edge
+    // gtia_stage samples pf_cap_a/b, which still hold the PREVIOUS colour
+    // clock's pair -- non-blocking assignment is doing the pipelining here.
+    wire cc_tick = px_tick && !px_odd;
+
+    // ...and the objects must be evaluated where that pair was, one colour
+    // clock back.  px_pos[8:1] is constant across a colour clock, so subtracting
+    // one gives the previous one throughout.
+    wire [7:0] cc_pos = px_pos[8:1] - 8'd1;
+
+    wire       gtia_valid;
+    wire [7:0] gtia_a, gtia_b;
+
+    gtia_stage u_gtia (
+        .clk(clk), .rst(rst),
+        .line_start(px_line_start), .cc_tick(cc_tick), .cc_pos(cc_pos),
+        .active(px_active), .hitclr(hitclr),
+        .pf_src_a(pf_cap_a), .pf_src_b(pf_cap_b),
+        .an_pair(an_pair), .pf_win(win_cap),
+        .hposp0(hposp0), .hposp1(hposp1), .hposp2(hposp2), .hposp3(hposp3),
+        .hposm0(hposm0), .hposm1(hposm1), .hposm2(hposm2), .hposm3(hposm3),
+        .sizep0(sizep0), .sizep1(sizep1), .sizep2(sizep2), .sizep3(sizep3),
+        .sizem(sizem),
+        .grafp0(grafp0), .grafp1(grafp1), .grafp2(grafp2), .grafp3(grafp3),
+        .grafm(grafm), .prior(prior),
+        .colbk(colbk), .colpf0(colpf0), .colpf1(colpf1),
+        .colpf2(colpf2), .colpf3(colpf3),
+        .colpm0(colpm0), .colpm1(colpm1), .colpm2(colpm2), .colpm3(colpm3),
+        .out_valid(gtia_valid), .out_color_a(gtia_a), .out_color_b(gtia_b),
+        .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl)
+    );
+
+    // The resolved pair waits here for the colour clock after next.
+    logic [7:0] pend_a, pend_b;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            pend_a <= 8'h00;
+            pend_b <= 8'h00;
+        end else if (gtia_valid) begin
+            pend_a <= gtia_a;
+            pend_b <= gtia_b;
+        end
+    end
+
+    // Every pixel of the line is written; the border is background that came
+    // through the same path as everything else.
+    assign lb_wr    = px_tick;
+    assign lb_color = px_odd ? pend_b : pend_a;
+
+    // ---- the delayed rewind -------------------------------------------------
+    // Four hi-res pixels, the pipeline depth.  The four pixels written between
+    // the beam's line start and this are the PREVIOUS line's last four, and the
+    // pointer has not rewound yet, so they land where they belong.
+    localparam int PIPE_PX = 4;
+
+    logic [2:0] ls_cnt;
+    logic       ls_arm;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            ls_arm <= 1'b0;
+            ls_cnt <= 3'd0;
+        end else if (px_line_start) begin
+            ls_arm <= 1'b1;
+            ls_cnt <= 3'd0;
+        end else if (ls_arm && px_tick) begin
+            if (ls_cnt == 3'(PIPE_PX - 1)) ls_arm <= 1'b0;
+            else                           ls_cnt <= ls_cnt + 3'd1;
+        end
+    end
+
+    assign lb_line_start = ls_arm && px_tick && (ls_cnt == 3'(PIPE_PX - 1));
+
+endmodule
+
+`default_nettype wire

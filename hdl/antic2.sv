@@ -72,7 +72,23 @@ module antic2 #(
     output wire        wsync_take,         // ANTIC takes this cycle for WSYNC
     output wire        dma_steal,          // stage 1: memory refresh only
     output wire [6:0]  hcount,
-    output wire [8:0]  line
+    output wire [8:0]  line,
+
+    // ---- the pixel stream, for the ANTIC->framebuffer gap filler ----------
+    // ANTIC's output is not colour.  It is, per hi-res pixel, WHICH PLAYFIELD
+    // this is (px_pf_src) and the raw two-bit value a GTIA mode reads instead
+    // (px_val), plus whether the colour clock is a hi-res one.  Priority,
+    // players, collisions and the colour lookup all happen downstream; see
+    // a2_video.  px_wr says the renderer emitted this pixel at all, which is
+    // not the same as px_in_window -- the border is inside neither.
+    output wire        px_wr,
+    output wire [2:0]  px_pf_src,
+    output wire [1:0]  px_val,
+    output wire        px_hires,
+    output wire        px_in_window,       // LEVEL: the beam is on the playfield
+    output wire [8:0]  px_pos,             // hi-res pixel index along the line
+    output wire        px_line_start,      // 1-clk at the top of the scanline
+    output wire        px_active           // an active display line
 );
 
     wire        line_start;
@@ -120,18 +136,18 @@ module antic2 #(
     // referenced inside a port connection is an implicit 1-bit net under
     // `default_nettype none` -- which is an error here, and silently the wrong
     // width where it is not.
-    wire [8:0]  pf_px_start, pf_px_stop, pf_px_pos;
+    wire [8:0]  pf_px_start, pf_px_stop;
     wire        pf_emit_en;
 
-    // The renderer's pixel stream.  GTIA is the consumer and has not landed
-    // yet, so these go nowhere for the moment; they are named rather than left
-    // unconnected so the stream is observable from a testbench and so the next
-    // step is a wiring change, not a re-plumb.
-    wire        px_wr;
+    // The renderer also computes a colour, and in this design NOTHING READS IT.
+    // Colour is decided downstream, in a2_video, from the source plus priority
+    // plus whatever player happens to be over the pixel -- which is where the
+    // real chip decides it too.  Taking antic_line_render's answer as well
+    // would be two definitions of one value, and the two would disagree the
+    // moment a player overlapped the playfield.  It is named and left here
+    // rather than deleted because antic_line_render is shared with the legacy
+    // raster, where it IS the answer.
     wire [7:0]  px_color;
-    wire [2:0]  px_pf_src;
-    wire [1:0]  px_val;
-    wire        px_hires;
     wire        render_busy, render_done;
 
     // ---- position ----------------------------------------------------------
@@ -141,8 +157,14 @@ module antic2 #(
     ) u_beam (
         .clk(clk), .rst(rst), .tick(tick), .vcount_adv(7'd111),
         .hcount(hcount), .line(line), .vcount(),          // NOT used -- see header
-        .line_start(line_start), .in_display(), .in_vblank(), .vbi_line()
+        .line_start(line_start), .in_display(px_active),
+        .in_vblank(), .vbi_line()
     );
+
+    // The gap filler needs the beam, not just the pixels: GTIA compares object
+    // positions against the colour clock even where the playfield emitted
+    // nothing, and it does not compare at all during vertical blank.
+    assign px_line_start = line_start;
 
     // ---- registers ---------------------------------------------------------
     antic2_regs u_regs (
@@ -252,7 +274,7 @@ module antic2 #(
         .clk(clk), .rst(rst),
         .line_start(line_start), .px_tick(px_tick),
         .px_start(pf_px_start), .px_stop(pf_px_stop),
-        .emit_en(pf_emit_en), .px_pos(pf_px_pos)
+        .emit_en(pf_emit_en), .in_window(px_in_window), .px_pos(px_pos)
     );
 
     // Whether the playfield is FETCHING at all this line: the list is running,
@@ -369,14 +391,15 @@ module antic2 #(
     // the walk and the fill agree about which line's mode and byte count they
     // are working from.
     //
-    // THE COLOUR REGISTERS ARE TIED OFF, DELIBERATELY.  COLBK/COLPF0-3 are
-    // $D016-$D01A -- GTIA's registers, not ANTIC's -- and antic2 does not hold
-    // them.  Routing a second copy through here to satisfy a port would be two
-    // definitions of one value.  What matters first is the SOURCE: GTIA decides
-    // priority and collisions on WHICH playfield a pixel is and only then
-    // colours it, so lb_pf_src / lb_px_val / lb_is_hires are the outputs that
-    // carry real information today.  px_color is therefore meaningless until
-    // GTIA lands and hands the registers over; nothing reads it.
+    // THE COLOUR REGISTERS ARE TIED OFF, AND THEY STAY THAT WAY.  COLBK and
+    // COLPF0-3 are $D016-$D01A -- GTIA's registers, not ANTIC's -- and the
+    // colour they select is not ANTIC's answer either: a player over the
+    // playfield changes it, and only the stage that knows where the players are
+    // can say what the pixel ends up being.  That stage is a2_video, and it
+    // does the lookup itself from lb_pf_src.  Feeding the registers in here as
+    // well would put the lookup in two places and the two would disagree the
+    // first time an object overlapped.  So what leaves antic2 is the SOURCE --
+    // lb_pf_src / lb_px_val / lb_is_hires -- and px_color goes nowhere.
     antic_line_render u_render (
         .clk(clk), .rst(rst),
         .start(sched_line_start), .emit_en(pf_emit_en),

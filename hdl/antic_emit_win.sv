@@ -41,6 +41,7 @@ module antic_emit_win (
     input  wire [8:0]  px_stop,
 
     output wire        emit_en,      // 1-clk per DISPLAYED hi-res pixel
+    output wire        in_window,    // ...and the LEVEL the pulse is gated by
     output logic [8:0] px_pos        // where the beam is, for whoever needs it
 );
 
@@ -50,11 +51,19 @@ module antic_emit_win (
         else if (px_tick)    px_pos <= px_pos + 9'd1;
     end
 
+    // The window as a LEVEL.  The stage that hands pixels to GTIA needs to know
+    // it is outside the playfield -- that is what makes the border background
+    // rather than a stale playfield source -- and it needs it on colour-clock
+    // boundaries, not only on the pixels the renderer emitted.  Exported from
+    // here rather than recomputed downstream so the comparison against
+    // px_start/px_stop exists once.
+    assign in_window = (px_pos >= px_start) && (px_pos < px_stop);
+
     // Qualified by px_tick so it is a PULSE per pixel, not a level across the
     // window -- the renderer advances its buffer index on every asserted clock,
     // and a level would run the whole line off the end of the buffer in a
     // handful of fabric clocks.
-    assign emit_en = px_tick && (px_pos >= px_start) && (px_pos < px_stop);
+    assign emit_en = px_tick && in_window;
 
 endmodule
 
