@@ -163,7 +163,10 @@ module tb_acid #(
                         ? ((dut.u_antic2.line == 9'd0) ? 9'd261
                                                        : dut.u_antic2.line - 9'd1)
                         : dut.u_antic2.line;
-    initial if (!$value$plusargs("BUSLINE=%d", BUSLINE)) BUSLINE = 17;
+    // OFF unless asked for.  A trace probe that runs by default is not free:
+    // this one wrote 114 KB into every run of an unattended sweep, nobody having
+    // requested a single line of it.  -1 matches no scanline.
+    initial if (!$value$plusargs("BUSLINE=%d", BUSLINE)) BUSLINE = -1;
     generate if (USE_ANTIC2) begin : g_busprobe
         always_ff @(posedge clk) begin
             // Anchored on the EVENT, not on a scanline number: the same
@@ -499,7 +502,11 @@ module tb_acid #(
     );
 
     logic [7:0] mem [0:65535];
-    logic [15:0] cfg [0:2];
+    // FOUR entries: _testEnd, _testPassed, _testFailed, _testSkipped.  Sized to
+    // match acid2mem's output -- an array a slot short does not fail loudly, it
+    // just reads x, and an x compares equal to nothing, so the verdict it holds
+    // is silently never recognised.
+    logic [15:0] cfg [0:3];
 
     // $D000-$D0FF and $D400-$D4FF are answered inside a8_core; anything else in
     // the hardware page reads as an unpopulated bus.
@@ -513,8 +520,8 @@ module tb_acid #(
         antic_rdata <= mem[antic_addr];
     end
 
-    logic [15:0] test_end, t_pass, t_fail;
-    logic        verdict_fail;
+    logic [15:0] test_end, t_pass, t_fail, t_skip;
+    logic        verdict_fail, verdict_skip, verdict_ran;
     int          guard;
     // Cycle budget before the harness gives up.  antic_dmapattern walks 50 maps
     // by 7 offsets and needs far more than the rest, so the limit is
@@ -610,7 +617,9 @@ module tb_acid #(
         test_end  = cfg[0];
         t_pass    = cfg[1];
         t_fail    = cfg[2];
-        done = 1'b0;
+        t_skip    = cfg[3];
+        done = 1'b0; verdict_fail = 1'b0;
+        verdict_skip = 1'b0; verdict_ran = 1'b0;
 
         repeat (4) @(posedge clk);
         rst = 0;
@@ -629,6 +638,19 @@ module tb_acid #(
                 done = 1'b1; verdict_fail = 1'b0;
             end else if (sync && tick && (dbg_pc == t_fail)) begin
                 done = 1'b1; verdict_fail = 1'b1;
+            // A test that finds its hardware absent signals _testSkipped and
+            // parks -- cpu_65c816 does it 35 cycles in.  Watching only pass and
+            // fail runs a deliberate skip all the way to the guard and then
+            // calls it a TIMEOUT, which is both wrong and slow.
+            end else if (sync && tick && (t_skip != 16'h0000) &&
+                         (dbg_pc == t_skip)) begin
+                done = 1'b1; verdict_skip = 1'b1;
+            // ...and a test can reach _testEnd having asserted nothing at all.
+            // The model calls that "ran": a real outcome, distinct from a
+            // verdict AND from a hang.  Checked last, because pass and fail
+            // both land earlier and must win.
+            end else if (sync && tick && (dbg_pc == test_end)) begin
+                done = 1'b1; verdict_ran = 1'b1;
             end
         end
 
@@ -647,6 +669,16 @@ module tb_acid #(
                 $write(" %04h", ring[(rn - k) % PC_RING]);
             $write("\n");
             $display("tb_acid: 1 FAIL");
+        end else if (verdict_skip) begin
+            // Not a failure and not a pass: the test declined to run.
+            $display("ACID %0s: SKIP (reached _testSkipped $%04h)", tname, t_skip);
+            $display("tb_acid: skipped");
+        end else if (verdict_ran) begin
+            // Reached the end having asserted nothing.  Reported plainly rather
+            // than dressed up as either verdict.
+            $display("ACID %0s: RAN (reached _testEnd $%04h, no verdict)",
+                     tname, test_end);
+            $display("tb_acid: no verdict");
         end else if (!verdict_fail) begin
             $display("ACID %0s: PASS", tname);
             $display("tb_acid: all checks PASS");

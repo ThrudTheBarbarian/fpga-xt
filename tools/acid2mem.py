@@ -257,8 +257,16 @@ def main():
     # _testEnd programs a POKEY timer and spins on IRQST.
     t_pass = syms.get("_testPassed", 0)
     t_fail = syms.get("_testFailed", 0)
+    # PASS AND FAIL ARE NOT THE ONLY OUTCOMES, and treating them as such costs
+    # real time.  A test that finds the hardware it is written for is absent
+    # signals _testSkipped and parks -- cpu_65c816 does it 35 cycles in, after
+    # checking for a 65C816 -- and a harness watching only pass and fail then
+    # runs it to the guard limit and calls a deliberate skip a TIMEOUT.  Others
+    # reach _testEnd having asserted nothing at all, which the model reports as
+    # "ran": a real outcome, and distinct from both a verdict and a hang.
+    t_skip = syms.get("_testSkipped", 0)
     with open(outdir / "acid_cfg.mem", "w") as f:
-        f.write(f"{end:04x}\n{t_pass:04x}\n{t_fail:04x}\n")
+        f.write(f"{end:04x}\n{t_pass:04x}\n{t_fail:04x}\n{t_skip:04x}\n")
 
     print(f"{name}: run=${run:04X} _testEnd=${end:04X} bytes={len(mem)}")
 
