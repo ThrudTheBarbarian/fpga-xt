@@ -541,6 +541,7 @@ module tb_acid #(
 
     logic [15:0] test_end, t_pass, t_fail, t_skip;
     logic        verdict_fail, verdict_skip, verdict_ran;
+    logic [7:0]  fail_sp;
     int          guard;
     // Cycle budget before the harness gives up.  antic_dmapattern walks 50 maps
     // by 7 offsets and needs far more than the rest, so the limit is
@@ -657,6 +658,10 @@ module tb_acid #(
                 done = 1'b1; verdict_fail = 1'b0;
             end else if (sync && tick && (dbg_pc == t_fail)) begin
                 done = 1'b1; verdict_fail = 1'b1;
+                // The stack pointer AT THE MOMENT OF ENTRY, which is the only
+                // moment it points at the caller's return address -- see the
+                // message reconstruction below.
+                fail_sp = dbg_s;
             // A test that finds its hardware absent signals _testSkipped and
             // parks -- cpu_65c816 does it 35 cycles in.  Watching only pass and
             // fail runs a deliberate skip all the way to the guard and then
@@ -727,6 +732,27 @@ module tb_acid #(
             $display("tb_acid: all checks PASS");
         end else begin
             $display("ACID %0s: FAIL (reached _testFailed $%04h)", tname, t_fail);
+            // WHICH assertion failed, in the test's own words.
+            //
+            // ACID's _ASSERT macros put the message INLINE, immediately after
+            // the `jsr _testFailed` -- so the return address on the stack is a
+            // pointer to the text, minus one.  Sixteen tests can share one
+            // `d1=0f` and mean sixteen different things; the string does not.
+            // Reconstructing it here turns every FAIL into a sentence and costs
+            // nothing but the stack pointer captured at entry.
+            begin
+                logic [15:0] msg;
+                int          n;
+                msg = {mem[16'h0102 + 16'(fail_sp)],
+                       mem[16'h0101 + 16'(fail_sp)]} + 16'd1;
+                $write("  said: \"");
+                n = 0;
+                while (mem[msg + 16'(n)] != 8'h00 && n < 96) begin
+                    $write("%c", mem[msg + 16'(n)]);
+                    n++;
+                end
+                $write("\"\n");
+            end
             $display("tb_acid: 1 FAIL");
             // The PC trail INTO _testFailed.  The ring was only dumped on a
             // derail, but a test that fails cleanly never derails -- so the one
