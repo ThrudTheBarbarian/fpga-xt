@@ -105,8 +105,16 @@ static void phantom_latch(atari *s, int c)
     int missile = (s->an.dmactl & 0x04) != 0 || player;
     if (PHANTOM_PM_M && !missile && (s->gt.gractl & 0x01) && c == PM_SLOT_M)
         s->gt.grafm = s->last_bus;
-    if (!player && (s->gt.gractl & 0x02) && c >= PM_SLOT_P && c < PM_SLOT_P + 4)
+    if (!player && (s->gt.gractl & 0x02) && c >= PM_SLOT_P && c < PM_SLOT_P + 4) {
         s->gt.grafp[c - PM_SLOT_P] = s->last_bus;
+        /* PHAN, not "PM" or "BUS": the RTL has to reproduce WHICH CYCLE
+         * captured WHICH player, and antic2's player DMA steals 2..5 while
+         * these slots are 3..6 -- two numbers in the same units that have
+         * never had to agree, because neither model has both mechanisms. */
+        if (antic_glyph_probe == 6)
+            fprintf(stderr, "  PHAN sl %3d cyc %3d p%d <- $%02X\n",
+                    s->an.scanline, c, c - PM_SLOT_P, s->last_bus);
+    }
 }
 
 /* ANTIC fetched P/M data; GRACTL decides whether GTIA latches it — players and
