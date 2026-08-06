@@ -67,6 +67,11 @@ module antic2 #(
     input  wire        mem_valid,
     output wire        mem_req,
 
+    // What was last on the DATA BUS, whoever drove it.  Only the VIRTUAL
+    // playfield slot reads it: that access drives no address, so the buffer
+    // takes whatever the previous bus cycle left behind.  a8_core keeps it.
+    input  wire [7:0]  bus_byte,
+
     // ---- to the CPU / rest of the machine ----------------------------------
     output wire        nmi,                // ONE-CYCLE PULSE
     output wire        wsync_take,         // ANTIC takes this cycle for WSYNC
@@ -332,6 +337,58 @@ module antic2 #(
         .jvb_pulse(jvb_pulse), .insn_stb(dl_insn_stb), .busy(dl_busy)
     );
 
+    // ---- the VIRTUAL last slot ---------------------------------------------
+    // A WIDE row's last playfield access runs off the end of the line.  ANTIC
+    // still accounts for it and still clocks the line buffer, but it drives
+    // neither address nor data, so what the buffer takes is the bus's leftover.
+    // antic_virtdma is built on it: its missiles sit over four pixels of that
+    // last character, which in mode 7 is the top four bits of the byte.
+    //
+    // COMPUTED ONCE AT LINE START from the settled window, exactly as emu does
+    // (antic_pf_last).  Counting it live against a window that a mid-line
+    // DMACTL write can move is the same fault that made lb_origin wrong, and
+    // this is the second place it would have bitten.
+    //
+    // WIDE MEANS THE PROGRAMMED WIDTH, NOT THE FETCH WIDTH.  emu gates on
+    // `width_of(dmactl) == ANTIC_WIDE`, so a scrolled NORMAL row -- which
+    // fetches wide -- gets no virtual slot at all.  Un-blocking one everywhere
+    // costs antic_dmapattern and antic_linebuffering, which tabulate the narrow
+    // and normal cases and say their last playfield cycle IS a real fetch.
+    //
+    // The last slot is `start + step*floor((stop-1-start)/step)`, plus the
+    // three-cycle character shift, which for antic_virtdma's $57 row is
+    // 11 + 4*23 = 103, +3 = 106 -- emu's own probe prints exactly that.
+    // The step is a power of two, so the divide is a shift.
+    //
+    // NOTHING NEEDS TO CHANGE IN THE SCHEDULE.  106 is PF_HBLANK_FIRST, where
+    // antic_dma_sched already stops charging the CPU, so the slot costs no
+    // cycle without being told not to -- measured, not assumed.
+    logic [6:0] virt_cyc;
+    logic       virt_en;
+
+    wire [2:0] virt_sh = (pf_step == 8'd8) ? 3'd3
+                       : (pf_step == 8'd4) ? 3'd2 : 3'd1;
+    wire       virt_win = pf_dma_stop > pf_dma_start;
+    wire [6:0] virt_n   = virt_win ? ((pf_dma_stop - 7'd1 - pf_dma_start) >> virt_sh)
+                                   : 7'd0;
+    wire [6:0] virt_c   = pf_dma_start + (virt_n << virt_sh);
+    // emu returns -1 for `mode < 2` and for `mode >= 8 && !first_line`: a
+    // BITMAP row's later lines have no last slot, a character row's do.
+    wire       virt_ok  = (dmactl[1:0] == 2'b11) && md_is_display && virt_win &&
+                          (md_is_char || row_first);
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            virt_en  <= 1'b0;
+            virt_cyc <= 7'd127;
+        end else if (sched_line_start) begin
+            virt_en  <= virt_ok;
+            virt_cyc <= md_is_char ? (virt_c + 7'd3) : virt_c;
+        end
+    end
+
+    wire virt_slot = virt_en && (hcount == virt_cyc);
+
     // ---- the playfield fetcher ---------------------------------------------
     // Driven by the SCHEDULE, one byte per scheduled cycle, so that a mid-line
     // DMACTL or HSCROL write moves the window for what is still to come while
@@ -349,8 +406,10 @@ module antic2 #(
         .mem_data(mem_data), .mem_valid(pf_mem_valid),
         .rd_idx(lb_rd_idx), .rd_origin(lb_origin),
         .rd_data(lb_rd_data), .rd_code(lb_rd_code),
-        .lb_len(lb_len)
+        .lb_len(lb_len),
+        .virt_slot(virt_slot), .bus_byte(bus_byte)
     );
+
 
     // ---- the line buffer's READ ORIGIN -------------------------------------
     // How many entries were filled BEFORE this line's own fetch window opened.

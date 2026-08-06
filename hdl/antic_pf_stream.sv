@@ -78,6 +78,20 @@ module antic_pf_stream #(
     input  wire        pf_fetch,
     input  wire        pf_fetch_glyph,
 
+    // ---- the VIRTUAL slot --------------------------------------------------
+    // High when THIS scheduled fetch is the line's virtual one.  ANTIC accounts
+    // for the slot and clocks the line buffer, but drives neither address nor
+    // data: what the buffer takes is whatever the last bus access left behind.
+    // antic2 decides which cycle that is; this module only needs to know that
+    // the fetch in front of it is that one.
+    input  wire        virt_slot,
+    // What was last on the DATA BUS, whoever drove it.  Latched in a8_core at
+    // the CPU's data phase, which is EARLIER in the machine cycle than the tick
+    // this fetch rides on -- so by the time the slot reads it, it already holds
+    // this cycle's byte, which is the "after the access, not before it" rule
+    // emu's antic_virt_latch is built on.
+    input  wire [7:0]  bus_byte,
+
     // ---- the playfield scan pointer ---------------------------------------
     input  wire [15:0] scan_addr_in,
     input  wire        scan_load,       // 1-clk: adopt scan_addr_in (LMS)
@@ -254,14 +268,28 @@ module antic_pf_stream #(
             end
 
             if (pf_fetch) begin
-                mem_req  <= 1'b1;
-                mem_addr <= fetch_is_glyph ? glyph_addr : scan_q;
+                // THE VIRTUAL SLOT TAKES THE BUS INSTEAD OF MEMORY.  No
+                // request, nothing in flight, and the byte lands in the DATA
+                // half of the entry -- the glyph, which is what gets displayed.
+                // The code half is left alone: emu writes only glyphbuf here
+                // (its fetch-loop special case never runs, measured), so
+                // touching the name would be inventing a second effect.
+                //
+                // Everything else about the cycle is unchanged: it still takes
+                // its index and still steps the pointer if the mode says so,
+                // because ANTIC accounts for the slot as a fetch either way.
+                if (virt_slot) begin
+                    buf_mem[idx] <= {buf_mem[idx][15:8], bus_byte};
+                end else begin
+                    mem_req  <= 1'b1;
+                    mem_addr <= fetch_is_glyph ? glyph_addr : scan_q;
 
-                inflight       <= 1'b1;
-                inflight_glyph <= fetch_is_glyph;
-                inflight_blank <= row_blank;
-                inflight_idx   <= idx;
-                inflight_code  <= char_code;
+                    inflight       <= 1'b1;
+                    inflight_glyph <= fetch_is_glyph;
+                    inflight_blank <= row_blank;
+                    inflight_idx   <= idx;
+                    inflight_code  <= char_code;
+                end
 
                 // A later character row takes the name it needs for the NEXT
                 // access out of the buffer as it goes.

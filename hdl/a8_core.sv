@@ -219,6 +219,26 @@ module a8_core #(
         if (rst) a2_mem_valid <= 1'b0;
         else     a2_mem_valid <= a2_mem_req;
 
+    // WHAT WAS LAST ON THE DATA BUS, whoever drove it.  emu keeps the same
+    // thing in system.c's bus_note and calls it last_bus; ANTIC's virtual
+    // playfield slot latches it instead of fetching, and the phantom P/M latch
+    // will want it too.
+    //
+    // Sampled at the CPU's DATA PHASE, which is SUB_DATA -- earlier in the
+    // machine cycle than the tick ANTIC's fetches ride on.  That ordering is
+    // the point: emu runs its latch after the access, because at tick time the
+    // bus would still be holding the PREVIOUS cycle's byte.
+    //
+    // ANTIC's own reads count as bus traffic too, so they are folded in on the
+    // cycle their data lands.
+    logic [7:0] last_bus;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)                                     last_bus <= 8'h00;
+        else if (a2_mem_valid)                       last_bus <= antic_rdata;
+        else if (c_rdy && c_sub == 8'(SUB_DATA))     last_bus <= c_rw ? c_din
+                                                                      : c_dout;
+    end
+
     antic2 #(
         .LINE_CYCLES(114), .LINES(262), .DISPLAY_TOP(8), .DISPLAY_BOTTOM(248)
     ) u_antic2 (
@@ -226,6 +246,7 @@ module a8_core #(
         .cs(cs_antic), .we(cpu_we), .addr(c_addr[3:0]), .wdata(c_dout),
         .rdata(a2_rdata), .cpu_writing(!c_rw),
         .mem_addr(a2_mem_addr), .mem_data(antic_rdata),
+        .bus_byte(last_bus),
         .mem_valid(a2_mem_valid), .mem_req(a2_mem_req),
         .nmi(a2_nmi), .wsync_take(a2_wsync_take), .dma_steal(a2_dma_steal),
         .hcount(a2_hcount), .line(a2_line),
