@@ -198,19 +198,30 @@ module tb_acid #(
     // non-zero; antic_hscrolbug's abnormal line has nine fetches before the
     // window opens, so it should read nine there.  Printed at the end of each
     // line so the value is the whole line's count, not a partial one.
+    // Its own selector, declared HERE: reaching forward to +LBDUMP's does not
+    // elaborate, because a wire must be declared before it is referenced --
+    // the third time this session that rule has bitten in a testbench.
+    int LBOINSN = -1;
+    initial if (!$value$plusargs("LBOINSN=%h", LBOINSN)) LBOINSN = -1;
     integer lbocnt = 0;
     generate if (USE_ANTIC2) begin : g_lboprobe
         always_ff @(posedge clk) begin
+            // ANCHORED ON THE INSTRUCTION, sharing +LBDUMP's selector.  Left
+            // unanchored it spent all twelve prints on the blank lines of an
+            // early frame and never reached the row under test -- the same
+            // trap the MAP probe's comment warns about.
             if (probe_on && !rst && tick && dut.u_antic2.hcount == 7'd113 &&
-                dut.u_antic2.lb_origin != 6'd0 && lbocnt < 12) begin
+                LBOINSN >= 0 && dut.u_antic2.dl_insn == 8'(LBOINSN) &&
+                lbocnt < 12) begin
                 lbocnt <= lbocnt + 1;
                 // bus_line, not `line`: the beam's counter has already stepped
                 // on by hcount 111, so the raw register reads one too high
                 // here and would disagree with the MAP probe about which
                 // scanline this is.
-                $display("LBO line=%0d insn=%02h lb_origin=%0d dma_start=%0d",
+                $display("LBO line=%0d insn=%02h lb_origin=%0d dma_start=%0d row_first=%0d",
                          bus_line, dut.u_antic2.dl_insn,
-                         dut.u_antic2.lb_origin, dut.u_antic2.pf_dma_start);
+                         dut.u_antic2.lb_origin, dut.u_antic2.pf_dma_start,
+                         dut.u_antic2.row_first);
             end
         end
     end endgenerate
