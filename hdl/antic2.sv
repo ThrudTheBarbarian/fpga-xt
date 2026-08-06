@@ -22,17 +22,16 @@
 // rewrite spent weeks on ("104" meaning two different events in two files).
 // Only hcount / line / line_start are taken from the beam.
 //
-// SCOPE: STAGE 1.  No playfield fetch and no render; DMA steal is REFRESH ONLY.
-// The playfield map and its priority/slip rules are stage 2 and reuse
-// antic_dma_sched, which is already measured correct end to end.
+// SCOPE.  The playfield fetch, the renderer, the player/missile fetch and the
+// GTIA side are all here now; antic_dma_sched arbitrates three memory clients
+// (P/M at hcount 0 and 2..5, the display list at 1/6/7, the playfield from 10)
+// and refresh underneath them.
 //
-// Refresh is in stage 1 on purpose, and the reason is a scoping check worth
-// keeping: the four gate tests all set DMACTL = $22, so DMA is on -- but they
-// MEASURE at scanlines 2-7, inside vertical blank, where the playfield never
-// fetches.  Refresh is the only thing stealing cycles there.  Without it the CPU
-// runs nine cycles a line too fast and the gate cannot pass however correct the
-// rest is; with it, and with no playfield to contend against, there is nothing
-// to arbitrate.
+// Refresh came FIRST, and the reason is a scoping check worth keeping: the four
+// gate tests all set DMACTL = $22, so DMA is on -- but they MEASURE at scanlines
+// 2-7, inside vertical blank, where the playfield never fetches.  Refresh is the
+// only thing stealing cycles there.  Without it the CPU runs nine cycles a line
+// too fast and the gate cannot pass however correct the rest is.
 //
 `timescale 1ns/1ps
 
@@ -94,15 +93,19 @@ module antic2 #(
     output wire [8:0]  px_pos,             // hi-res pixel index along the line
     output wire        px_line_start,      // 1-clk at the top of the scanline
     output wire        px_active,          // an active display line
+    // GTIA's VERTICAL BLANK, which is NOT the same thing as px_active -- see
+    // the assign below.  Gates collisions only; the objects still shift.
+    output wire        px_collide,
 
     // ---- the P/M shape store ----------------------------------------------
     // What ANTIC hands GTIA for the players and missiles.  GRACTL decides
-    // whether GTIA latches it (gtia_reg_file's pm_take), and pm_mask is
-    // VDELAY's per-bit gate, so this side only says WHAT and WHEN.
+    // whether GTIA latches it (gtia_reg_file's pm_take) and VDELAY decides
+    // WHICH fetch it shows, so this side only says what, when, and whether the
+    // byte came from a real fetch or from the phantom bus capture.
     output wire        pm_we,
     output wire [2:0]  pm_obj,             // 0 = missiles, 1..4 = players 0..3
     output wire [7:0]  pm_data,
-    output wire [7:0]  pm_mask
+    output wire        pm_fetch
 );
 
     wire        line_start;
@@ -127,7 +130,9 @@ module antic2 #(
 
     // Memory clients: the display-list executor and the playfield fetcher.
     wire [15:0] dl_mem_addr, pf_mem_addr, pf_scan_addr;
-    wire        dl_mem_req,  pf_mem_req;
+    wire        dl_mem_req,  pf_mem_req,  pm_mem_req;
+    wire [15:0] pm_mem_addr;
+    wire        pm_mem_valid;
     wire        dl_mem_valid, pf_mem_valid;
     wire        pf_load;                    // 1-clk: an LMS operand landed
 
@@ -179,6 +184,27 @@ module antic2 #(
     // positions against the colour clock even where the playfield emitted
     // nothing, and it does not compare at all during vertical blank.
     assign px_line_start = line_start;
+
+    // VERTICAL BLANK IS NOT THE SCANLINE RANGE, and antic_hiresbug is built on
+    // exactly that.  emu, system.c:200-205:
+    //
+    //     emitting = an_mode >= 2 && (dmactl & 0x20);
+    //     gt.vblank = (scanline < TOP || scanline >= BOTTOM) && !emitting;
+    //
+    // A display list that never stops -- no JVB, DL DMA still on, a real mode
+    // still latched -- keeps ANTIC emitting past the bottom of the nominal
+    // display, and GTIA goes on registering collisions there.  antic_hiresbug
+    // measures precisely that: it HITCLRs late on line 247 and then asks for the
+    // collision to come BACK on line 248, one line past DISPLAY_BOTTOM.  With a
+    // pure range gate the answer is $00 and the test reports "Collision not
+    // found with bug".
+    //
+    // This gates COLLISIONS ONLY.  emu's gtia_clock runs obj_step first and only
+    // then returns on vblank (gtia.c:224-229), so the objects keep shifting
+    // either way; and here it reaches gtia_stage's `active`, whose sole consumer
+    // is gtia_collide.  The colour path is not on this signal and does not move.
+    wire an_emitting = (dl_insn[3:0] >= 4'd2) && dmactl[5];
+    assign px_collide = px_active || an_emitting;
 
     // ---- registers ---------------------------------------------------------
     antic2_regs u_regs (
@@ -415,7 +441,12 @@ module antic2 #(
         // no case of its own: mode 1 is not a display mode, so pf_fetching is
         // already false for it, exactly as emu's `on` is.
         .lms(dl_insn[6]),
-        .dl_dma_en(dmactl[5] && pf_fetching), .missile_dma_en(dmactl[2]),
+        .dl_dma_en(dmactl[5] && pf_fetching),
+        // PLAYER DMA IMPLIES MISSILE DMA -- emu's `missile = (dmactl & 0x04) ||
+        // player`, and antic_pmdma runs a DMACTL=$39 kernel with bit 2 CLEAR
+        // that still expects missile collisions.  The 50-map testbench pins
+        // nothing here: it drives BOTH P/M enables to zero for every map.
+        .missile_dma_en(dmactl[2] || dmactl[3]),
         .player_dma_en(dmactl[3]),
         .steal(sched_steal),
         .pf_fetch(sched_pf_fetch), .pf_fetch_glyph(sched_pf_fetch_glyph)
@@ -586,26 +617,37 @@ module antic2 #(
     // earlier than cycle 10.  They are the same schedule's own slots, so this
     // is a priority mux over signals that are never both asserted, not an
     // arbiter resolving real contention.  The assertion below is the check.
-    assign mem_req  = dl_mem_req || pf_mem_req;
-    assign mem_addr = dl_mem_req ? dl_mem_addr : pf_mem_addr;
+    // A THIRD CLIENT, AND THE SAME ARGUMENT COVERS IT: the P/M fetch takes the
+    // missile cycle 0 and the player cycles 2..5, the display list has 1 (and
+    // its operands 6 and 7), and the playfield walk opens no earlier than 10.
+    // Still one schedule's own slots, still never two at once.
+    assign mem_req  = dl_mem_req || pf_mem_req || pm_mem_req;
+    assign mem_addr = pm_mem_req ? pm_mem_addr :
+                      dl_mem_req ? dl_mem_addr : pf_mem_addr;
 
     // mem_valid is mem_req delayed one clock, so remembering WHICH client
     // issued needs exactly one clock of delay too.  Without this the fetcher
     // would latch the display list's bytes into the line buffer, and the DL
     // executor would decode a playfield byte as an instruction.
-    logic vld_is_pf;
+    logic vld_is_pf, vld_is_pm;
     always_ff @(posedge clk or posedge rst) begin
-        if (rst) vld_is_pf <= 1'b0;
-        else     vld_is_pf <= pf_mem_req && !dl_mem_req;
+        if (rst) begin
+            vld_is_pf <= 1'b0;
+            vld_is_pm <= 1'b0;
+        end else begin
+            vld_is_pm <= pm_mem_req;
+            vld_is_pf <= pf_mem_req && !dl_mem_req && !pm_mem_req;
+        end
     end
+    assign pm_mem_valid = mem_valid &&  vld_is_pm;
     assign pf_mem_valid = mem_valid &&  vld_is_pf;
-    assign dl_mem_valid = mem_valid && !vld_is_pf;
+    assign dl_mem_valid = mem_valid && !vld_is_pf && !vld_is_pm;
 
 `ifndef SYNTHESIS
     always_ff @(posedge clk) begin
-        if (!rst && dl_mem_req && pf_mem_req)
-            $display("antic2: ASSERT display-list and playfield fetch collided at hcount %0d",
-                     hcount);
+        if (!rst && ((dl_mem_req && pf_mem_req) || (pm_mem_req && (dl_mem_req || pf_mem_req))))
+            $display("antic2: ASSERT two fetches collided at hcount %0d (dl=%0d pf=%0d pm=%0d)",
+                     hcount, dl_mem_req, pf_mem_req, pm_mem_req);
     end
 `endif
 
@@ -716,10 +758,33 @@ module antic2 #(
     wire pm_phantom = !dmactl[3] &&
                       (hcount >= 7'(PM_SLOT_P)) && (hcount < 7'(PM_SLOT_P + 4));
 
-    assign pm_we   = tick && pm_phantom;
-    assign pm_obj  = 3'd1 + 3'(hcount - 7'(PM_SLOT_P));
-    assign pm_data = bus_byte;
-    assign pm_mask = 8'hFF;
+    wire       phan_we  = tick && pm_phantom;
+    wire [2:0] phan_obj = 3'd1 + 3'(hcount - 7'(PM_SLOT_P));
+
+    // ---- the P/M fetch ------------------------------------------------------
+    // The phantom and the fetch are mutually exclusive by construction: the
+    // phantom's gate is `!dmactl[3]` and the fetcher's player slots need
+    // dmactl[3] set.  The missile fetch can run with the phantom (DMACTL=$25:
+    // missile DMA on, player DMA off), but they write different objects, so
+    // the priority below never actually arbitrates -- it just has to be
+    // written down somewhere.
+    wire        pmf_we;
+    wire [2:0]  pmf_obj;
+    wire [7:0]  pmf_data;
+
+    antic_pm_dma u_pm (
+        .clk(clk), .rst(rst), .tick(tick),
+        .hcount(hcount), .scanline(line),
+        .dmactl(dmactl), .pmbase(pmbase),
+        .mem_addr(pm_mem_addr), .mem_req(pm_mem_req),
+        .mem_data(mem_data), .mem_valid(pm_mem_valid),
+        .pm_we(pmf_we), .pm_obj(pmf_obj), .pm_data(pmf_data)
+    );
+
+    assign pm_we    = pmf_we || phan_we;
+    assign pm_obj   = pmf_we ? pmf_obj  : phan_obj;
+    assign pm_data  = pmf_we ? pmf_data : bus_byte;
+    assign pm_fetch = pmf_we;
 
 endmodule
 

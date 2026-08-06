@@ -1508,6 +1508,7 @@ POKEY_SRC = $(HDL_DIR)/pokey.sv $(HDL_DIR)/pokey_regs.sv \
 ANTIC2_SRC = $(HDL_DIR)/antic2.sv $(HDL_DIR)/antic2_seq.sv \
 	    $(HDL_DIR)/antic2_regs.sv $(HDL_DIR)/antic2_line.sv \
 	    $(HDL_DIR)/antic2_dl.sv $(HDL_DIR)/antic_pf_stream.sv \
+	    $(HDL_DIR)/antic_pm_dma.sv \
 	    $(HDL_DIR)/antic_emit_win.sv $(HDL_DIR)/a2_video.sv
 
 A8_CORE_SRC = $(HDL_DIR)/a8_core.sv $(ANTIC_GTIA_SRC) $(ANTIC2_SRC) \

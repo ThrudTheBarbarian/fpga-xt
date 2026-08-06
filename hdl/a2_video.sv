@@ -66,12 +66,16 @@ module a2_video (
     input  wire [8:0]  px_pos,           // hi-res pixel index along the line
     input  wire        px_line_start,    // 1-clk at the top of the scanline
     input  wire        px_active,        // an active display line
+    // GTIA's vertical blank, inverted: antic2 folds "ANTIC is still emitting"
+    // into it, so it stays HIGH past the display bottom on a list that never
+    // stops.  antic_hiresbug measures that line.  Collisions only.
+    input  wire        px_collide,
 
     // ---- P/M DMA store, for when antic2 fetches them ----------------------
     input  wire        pm_we,
     input  wire [2:0]  pm_obj,
     input  wire [7:0]  pm_data,
-    input  wire [7:0]  pm_mask,
+    input  wire        pm_fetch,
 
     // ---- console and controllers ------------------------------------------
     input  wire [7:0]  trig0, trig1, trig2, trig3,
@@ -100,7 +104,7 @@ module a2_video (
     gtia_reg_file u_regs (
         .clk(clk), .rst(rst),
         .addr(addr), .we(cs && we), .wdata(wdata), .rdata(rdata),
-        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_mask(pm_mask),
+        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_fetch(pm_fetch),
         .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl),
         .trig0(trig0), .trig1(trig1), .trig2(trig2), .trig3(trig3),
         .pal_sense(pal_sense), .consol_keys(consol_keys),
@@ -169,7 +173,7 @@ module a2_video (
     gtia_stage u_gtia (
         .clk(clk), .rst(rst),
         .line_start(px_line_start), .cc_tick(cc_tick), .cc_pos(cc_pos),
-        .active(px_active), .hitclr(hitclr),
+        .active(px_collide), .hitclr(hitclr),
         .pf_src_a(pf_cap_a), .pf_src_b(pf_cap_b),
         .an_pair(an_pair), .pf_win(win_cap),
         .hposp0(hposp0), .hposp1(hposp1), .hposp2(hposp2), .hposp3(hposp3),

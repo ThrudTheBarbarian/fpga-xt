@@ -138,7 +138,11 @@ module a8_core #(
     wire [2:0]  a2_px_pf_src;
     wire [1:0]  a2_px_val;
     wire [8:0]  a2_px_pos;
-    wire        a2_px_line_start, a2_px_active;
+    wire        a2_px_line_start, a2_px_active, a2_px_collide;
+    wire        a2_pm_we;
+    wire [2:0]  a2_pm_obj;
+    wire [7:0]  a2_pm_data;
+    wire        a2_pm_fetch;
     wire [7:0]  a2_gtia_rdata;
     wire        a2_lb_wr, a2_lb_line_start;
     wire [7:0]  a2_lb_color;
@@ -247,13 +251,15 @@ module a8_core #(
         .rdata(a2_rdata), .cpu_writing(!c_rw),
         .mem_addr(a2_mem_addr), .mem_data(antic_rdata),
         .bus_byte(last_bus),
+        .pm_we(a2_pm_we), .pm_obj(a2_pm_obj), .pm_data(a2_pm_data),
+        .pm_fetch(a2_pm_fetch),
         .mem_valid(a2_mem_valid), .mem_req(a2_mem_req),
         .nmi(a2_nmi), .wsync_take(a2_wsync_take), .dma_steal(a2_dma_steal),
         .hcount(a2_hcount), .line(a2_line),
         .px_wr(a2_px_wr), .px_pf_src(a2_px_pf_src), .px_val(a2_px_val),
         .px_hires(a2_px_hires), .px_in_window(a2_px_in_window),
         .px_pos(a2_px_pos), .px_line_start(a2_px_line_start),
-        .px_active(a2_px_active)
+        .px_active(a2_px_active), .px_collide(a2_px_collide)
     );
 
     // ---- the ANTIC->framebuffer gap ----------------------------------------
@@ -274,8 +280,9 @@ module a8_core #(
         .px_wr(a2_px_wr), .px_pf_src(a2_px_pf_src), .px_val(a2_px_val),
         .px_hires(a2_px_hires), .px_in_window(a2_px_in_window),
         .px_pos(a2_px_pos), .px_line_start(a2_px_line_start),
-        .px_active(a2_px_active),
-        .pm_we(1'b0), .pm_obj(3'd0), .pm_data(8'h00), .pm_mask(8'h00),
+        .px_active(a2_px_active), .px_collide(a2_px_collide),
+        .pm_we(a2_pm_we), .pm_obj(a2_pm_obj), .pm_data(a2_pm_data),
+        .pm_fetch(a2_pm_fetch),
         .trig0(trig0), .trig1(trig1), .trig2(trig2), .trig3(trig3),
         .pal_sense(pal_sense), .consol_keys(consol_keys),
         .lb_wr(a2_lb_wr), .lb_color(a2_lb_color),

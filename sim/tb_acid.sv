@@ -160,9 +160,10 @@ module tb_acid #(
     // "is there a window" but "which colour clock is the hit actually recorded
     // at".  Print every transition of p_pl from clear to set, with the position
     // and presence that produced it.
-    logic [15:0] ppl_prev, ppf_prev;
+    logic [15:0] ppl_prev, ppf_prev, mpl_prev;
     integer      colcnt = 0;
     integer      pfcnt  = 0;
+    integer      mplcnt = 0;
     generate if (USE_ANTIC2) begin : g_colprobe
         always_ff @(posedge clk) begin
             if (rst) ppl_prev <= 16'h0000;
@@ -190,6 +191,24 @@ module tb_acid #(
                              line);
                 end
                 ppl_prev <= dut.u_a2_video.u_gtia.u_col.p_pl;
+
+                // MISSILE-to-player is a DIFFERENT REGISTER from player-to-
+                // player, and gtia_pmoverlap reads M0PL..M3PL.  Watching p_pl
+                // for it is watching the wrong thing: on that test p_pl never
+                // moves at all (only one player is lit), so the COL probe is
+                // silent and says nothing whatever about the missiles.
+                if (probe_on && dut.u_a2_video.u_gtia.u_col.m_pl != mpl_prev &&
+                    mplcnt < 24) begin
+                    mplcnt <= mplcnt + 1;
+                    $display("MPL m_pl %04h -> %04h  cc_pos=%0d pres=%02h active=%0d win=%0d line=%0d",
+                             mpl_prev, dut.u_a2_video.u_gtia.u_col.m_pl,
+                             dut.u_a2_video.u_gtia.cc_pos,
+                             dut.u_a2_video.u_gtia.pres,
+                             dut.u_a2_video.u_gtia.active,
+                             dut.u_a2_video.u_gtia.cc_in_window,
+                             line);
+                end
+                mpl_prev <= dut.u_a2_video.u_gtia.u_col.m_pl;
             end
         end
     end endgenerate
@@ -254,6 +273,32 @@ module tb_acid #(
         end
     end endgenerate
 
+    // THE PHANTOM P/M LATCH (antic2 only), to diff against emu's PHAN.
+    //
+    // emu prints 184 of these on gtia_phantomdma and THE ONE THAT MATTERS IS
+    // THE LAST -- `sl 33 cyc 3 p0 <- $AD`.  So this must NOT be capped low
+    // enough to lose the tail: a budget that runs out before the interesting
+    // line is the same trap as an unanchored probe, one step further on.
+    // 400 is comfortably past emu's 184 and still bounded.
+    int PHANPROBE = 0;
+    initial if (!$value$plusargs("PHANPROBE=%d", PHANPROBE)) PHANPROBE = 0;
+    integer phancnt = 0;
+    generate if (USE_ANTIC2) begin : g_phanprobe
+        always_ff @(posedge clk) begin
+            // pm_take, NOT pm_we.  GRACTL decides whether GTIA latches at
+            // all, and that gate lives in gtia_reg_file -- printing the raw
+            // strobe counts cycles the register file then throws away, which
+            // is not what emu's PHAN prints.
+            if (PHANPROBE != 0 && !rst &&
+                dut.u_a2_video.u_regs.pm_take && phancnt < 400) begin
+                phancnt <= phancnt + 1;
+                $display("A2PHAN sl %0d cyc %0d p%0d <- %02h",
+                         bus_line, dut.u_antic2.hcount,
+                         dut.u_antic2.pm_obj - 3'd1, dut.u_antic2.pm_data);
+            end
+        end
+    end endgenerate
+
     // Line-buffer dump (antic2 only).  The DMA map, lb_origin and the read
     // index have all been checked against emu and agree; what has not been
     // checked is what actually landed IN the buffer.  antic_hscrolbug's own
@@ -279,6 +324,61 @@ module tb_acid #(
                 for (int k = 0; k < 48; k++)
                     $write(" %02h", dut.u_antic2.u_pf.buf_mem[k][7:0]);
                 $write("\n");
+            end
+        end
+    end endgenerate
+
+    // The GTIA-mode nibble, per colour clock, against the objects that see it.
+    // gtia_stage keeps the nibble in TWO registers -- `nib_ready` completes on
+    // the odd colour clock and `gtia_nib` is what goes on display for the next
+    // aligned pair -- and the collision path has to pick one.  Guessing between
+    // them cost two builds, so print BOTH beside `pres` and let emu's ruler
+    // OBJECT PRESENCE ALONG ONE SCANLINE.  +PRES=<scanline>.
+    //
+    // The collision probes only fire when a collision REGISTERS, so they cannot
+    // tell "the object was never drawn here" from "it was drawn and did not
+    // collide" -- and on gtia_pmoverlap that is exactly the open question: the
+    // right collisions appear two lines earlier and none at all on the line the
+    // test reads.  This prints every colour clock of one line where ANY object
+    // is present, so an empty line and a present-but-not-colliding line look
+    // different.  pres bit 0..3 = players, 4..7 = missiles.
+    int PRESLN = -1;
+    initial if (!$value$plusargs("PRES=%d", PRESLN)) PRESLN = -1;
+    integer prescnt = 0;
+    generate if (USE_ANTIC2) begin : g_pres
+        always_ff @(posedge clk) begin
+            if (!rst && PRESLN >= 0 && prescnt < 250 &&
+                dut.u_a2_video.u_gtia.cc_tick && bus_line == PRESLN &&
+                dut.u_a2_video.u_gtia.pres != 8'h00) begin
+                prescnt <= prescnt + 1;
+                $display("PRES sl %0d cc %02h pres %02h active %0d win %0d hposp0 %02h",
+                         bus_line, dut.u_a2_video.u_gtia.cc_pos,
+                         dut.u_a2_video.u_gtia.pres,
+                         dut.u_a2_video.u_gtia.active,
+                         dut.u_a2_video.u_gtia.cc_in_window,
+                         dut.u_a2_video.u_gtia.hposp0);
+            end
+        end
+    end endgenerate
+
+    // (ACID_PFPROBE, `pf` per cc) say which lines up.  +GMNIB=<scanline>.
+    int GMNIB = -1;
+    initial if (!$value$plusargs("GMNIB=%d", GMNIB)) GMNIB = -1;
+    integer gmnibcnt = 0;
+    generate if (USE_ANTIC2) begin : g_gmnib
+        always_ff @(posedge clk) begin
+            if (!rst && GMNIB >= 0 && gmnibcnt < 200 &&
+                dut.u_a2_video.u_gtia.cc_tick && bus_line == GMNIB &&
+                dut.u_a2_video.u_gtia.cc_pos >= 8'h78 &&
+                dut.u_a2_video.u_gtia.cc_pos <= 8'h98) begin
+                gmnibcnt <= gmnibcnt + 1;
+                $display("GMNIB sl %0d cc %02h pair %b rdy %h nib %h col %0d pres %02h",
+                         bus_line, dut.u_a2_video.u_gtia.cc_pos,
+                         dut.u_a2_video.u_gtia.an_pair,
+                         dut.u_a2_video.u_gtia.nib_ready,
+                         dut.u_a2_video.u_gtia.gtia_nib,
+                         dut.u_a2_video.u_gtia.col_pf,
+                         dut.u_a2_video.u_gtia.pres);
             end
         end
     end endgenerate
@@ -591,9 +691,12 @@ module tb_acid #(
         // on every DLIST write, so "no instruction is ever latched" resolves to
         // WHICH step stops: the request, the memory answer, or the decode.
         integer dlcnt = 0;
-        // cap raised: the interesting window is after DMACTL is set
+        // cap raised AGAIN: 400 events run out inside frame 1, so the histogram
+        // only ever showed the display list the loader leaves behind -- the
+        // test's own DL is not installed until frame 2.  A probe's budget has to
+        // reach the interesting part.
         always_ff @(posedge clk) begin
-            if (!rst && dlcnt < 400) begin
+            if (!rst && dlcnt < 20000) begin
                 if (dut.u_antic2.u_regs.dlist_lo_stb ||
                     dut.u_antic2.u_regs.dlist_hi_stb) begin
                     dlcnt <= dlcnt + 1;
@@ -606,8 +709,9 @@ module tb_acid #(
                 if (dut.u_antic2.u_line.line_start &&
                     dut.u_antic2.dmactl != 8'h00) begin
                     dlcnt <= dlcnt + 1;
-                    $display("DLL sl=%0d dmactl=%02h dldone=%0d rowends=%0d rowline=%0d fetch=%0d",
+                    $display("DLL sl=%0d dmactl=%02h insn=%02h dldone=%0d rowends=%0d rowline=%0d fetch=%0d",
                              dut.u_antic2.line, dut.u_antic2.dmactl,
+                             dut.u_antic2.dl_insn,
                              dut.u_antic2.dl_done, dut.u_antic2.row_ends,
                              dut.u_antic2.row_line, dut.u_antic2.dl_fetch_req);
                 end
@@ -933,8 +1037,12 @@ module tb_acid #(
         // tinguishable from an instrument that never reported anything.
         // NB d1 is CLOBBERED when assert #1 fails: _ASSERT1 does `sta d1`
         // before `jsr _testFailed`, so it holds a copy of the bad d0.
-        $display("ACID %0s: d0=%02h d1=%02h d2=%02h d3=%02h",
-                 tname, mem[16'h00C8], mem[16'h00C9], mem[16'h00CA], mem[16'h00CB]);
+        // SIX, not four.  gtia_pmoverlap's message is "Pass %d.%d: Pos=%x,
+        // Expected %x, Got %x" and the two that say what actually went wrong
+        // are d4 and d5 -- stopping at d3 reports only WHERE it failed.
+        $display("ACID %0s: d0=%02h d1=%02h d2=%02h d3=%02h d4=%02h d5=%02h",
+                 tname, mem[16'h00C8], mem[16'h00C9], mem[16'h00CA], mem[16'h00CB],
+                 mem[16'h00CC], mem[16'h00CD]);
         $finish;
     end
 

@@ -19,8 +19,9 @@
 // leaves the last shape standing, which is the ground gtia_phantomdma tests on.
 //
 // P/M DMA AND THE CPU WRITE THE SAME GRAFP/GRAFM REGISTERS, whoever wrote last
-// winning, so the DMA store arrives here as data plus a VDELAY mask and is
-// merged rather than assigned — see antic_pm_fetch for why it has to be a mask.
+// winning.  A DMA store arrives as data plus pm_fetch, and VDELAY is resolved
+// HERE rather than in ANTIC, because the delay is a one-fetch history of what
+// this file already holds — see the note above the prev_* registers.
 //
 // THE CONSOLE LINES ARE OPEN DRAIN.  A 1 in the output latch pulls its line low
 // so it reads 0; a 0 releases it and the read reflects the key input, which is
@@ -46,7 +47,11 @@ module gtia_reg_file (
     input  wire       pm_we,
     input  wire [2:0] pm_obj,          // 0 = missiles, 1..4 = players 0..3
     input  wire [7:0] pm_data,
-    input  wire [7:0] pm_mask,         // VDELAY: which bits may change
+    // 1 = this byte came from a P/M DMA FETCH, so VDELAY applies and the
+    // previous-fetch copy moves on.  0 = the PHANTOM, which captures the bus
+    // and writes straight through -- emu's phantom_latch pokes gt.grafp
+    // directly and never goes near pm_latch.
+    input  wire       pm_fetch,
 
     // ---- status in -------------------------------------------------------
     input  wire [15:0] m_pf, p_pf, m_pl, p_pl,   // four nibbles each
@@ -79,10 +84,34 @@ module gtia_reg_file (
     wire pm_take = pm_we &&
                    ((pm_obj == 3'd0) ? gractl[0] : gractl[1]);
 
-    function automatic logic [7:0] merge(input logic [7:0] old,
-                                         input logic [7:0] data,
-                                         input logic [7:0] mask);
-        merge = (old & ~mask) | (data & mask);
+    // VDELAY IS A ONE-FETCH DELAY, NOT A FREEZE, AND THE DIFFERENCE IS WHAT
+    // gtia_vdelay MEASURES.  emu (system.c:126-148) selects between the byte
+    // just fetched and the one fetched a line earlier, and then advances the
+    // previous-fetch copy EVERY latch:
+    //
+    //     grafp[i] = (vdelay & (0x10<<i)) ? pm_prev_p[i] : pm_p[i];
+    //     ...
+    //     for i: pm_prev_p[i] = pm_p[i];
+    //
+    // so with VDELAY held set the object shows fetch(N-1) on line N, fetch(N)
+    // on line N+1 -- it keeps moving, one line behind.  Masking "which bits may
+    // change" instead pins the byte at whatever it held when VDELAY went on and
+    // it never advances again.  emu's own note says why the delay is applied to
+    // the LATCH rather than by skipping a line: in two-line resolution the same
+    // byte serves both scanlines of a pair, so delaying the latch shifts the
+    // object down one scanline while PRESERVING its two-line extent -- vdelay
+    // wants on,on,off,off becoming off,on,on,off, and skipping the first line
+    // would give on,off,on,off and fail half the assertions.
+    //
+    // Missiles share GRAFM two bits each and are delayed INDEPENDENTLY, so the
+    // missile byte is assembled per pair rather than selected whole.
+    logic [7:0] prev_p0, prev_p1, prev_p2, prev_p3, prev_m;
+
+    function automatic logic [7:0] mix_m(input logic [7:0] cur,
+                                         input logic [7:0] prv,
+                                         input logic [7:0] vd);
+        for (int i = 0; i < 4; i++)
+            mix_m[2*i +: 2] = vd[i] ? prv[2*i +: 2] : cur[2*i +: 2];
     endfunction
 
     always_ff @(posedge clk or posedge rst) begin
@@ -93,6 +122,8 @@ module gtia_reg_file (
             sizem  <= 8'h00;
             grafp0 <= 8'h00; grafp1 <= 8'h00; grafp2 <= 8'h00; grafp3 <= 8'h00;
             grafm  <= 8'h00;
+            prev_p0 <= 8'h00; prev_p1 <= 8'h00;
+            prev_p2 <= 8'h00; prev_p3 <= 8'h00; prev_m <= 8'h00;
             colpm0 <= 8'h00; colpm1 <= 8'h00; colpm2 <= 8'h00; colpm3 <= 8'h00;
             colpf0 <= 8'h00; colpf1 <= 8'h00; colpf2 <= 8'h00; colpf3 <= 8'h00;
             colbk  <= 8'h00;
@@ -141,11 +172,26 @@ module gtia_reg_file (
 
             if (pm_take) begin
                 case (pm_obj)
-                    3'd0: grafm  <= merge(grafm,  pm_data, pm_mask);
-                    3'd1: grafp0 <= merge(grafp0, pm_data, pm_mask);
-                    3'd2: grafp1 <= merge(grafp1, pm_data, pm_mask);
-                    3'd3: grafp2 <= merge(grafp2, pm_data, pm_mask);
-                    default: grafp3 <= merge(grafp3, pm_data, pm_mask);
+                3'd0: begin
+                    grafm <= pm_fetch ? mix_m(pm_data, prev_m, vdelay) : pm_data;
+                    if (pm_fetch) prev_m <= pm_data;
+                end
+                3'd1: begin
+                    grafp0 <= (pm_fetch && vdelay[4]) ? prev_p0 : pm_data;
+                    if (pm_fetch) prev_p0 <= pm_data;
+                end
+                3'd2: begin
+                    grafp1 <= (pm_fetch && vdelay[5]) ? prev_p1 : pm_data;
+                    if (pm_fetch) prev_p1 <= pm_data;
+                end
+                3'd3: begin
+                    grafp2 <= (pm_fetch && vdelay[6]) ? prev_p2 : pm_data;
+                    if (pm_fetch) prev_p2 <= pm_data;
+                end
+                default: begin
+                    grafp3 <= (pm_fetch && vdelay[7]) ? prev_p3 : pm_data;
+                    if (pm_fetch) prev_p3 <= pm_data;
+                end
                 endcase
             end
         end

@@ -179,7 +179,12 @@ module antic_gtia #(
     gtia_reg_file u_gregs (
         .clk(clk), .rst(rst),
         .addr(addr), .we(we && cs_gtia), .wdata(wdata), .rdata(g_rdata),
-        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_mask(pm_mask),
+        // VDELAY MOVED INTO gtia_reg_file.  It is a one-fetch delay, not a
+        // per-bit freeze, so it needs the PREVIOUS fetch rather than a mask --
+        // and the register file is where that history already lives.  This
+        // path's `pm_mask` from antic_pm_fetch is consequently unused; every
+        // store it makes IS a fetch, hence the constant.
+        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_fetch(1'b1),
         .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl),
         .trig0(trig0), .trig1(trig1), .trig2(trig2), .trig3(trig3),
         .pal_sense(pal_sense), .consol_keys(consol_keys),

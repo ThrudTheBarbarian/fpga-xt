@@ -3,13 +3,13 @@
 // antic2_line — the start-of-line bookkeeping, transcribed from
 // emu/antic.c:line_start().
 //
-// SCOPE, STATED SO IT IS NOT MISTAKEN FOR THE WHOLE THING.  This is STAGE 1:
-// the row / display-list sequencing that antic2_seq needs to decide row_ends and
-// the DLI.  The PLAYFIELD FETCH MAP is deliberately NOT here yet -- it is stage 3
-// and it reuses antic_dma_sched, which is already measured correct end to end
-// (all 50 of antic_dmapattern's maps, and its steals map 1:1 onto the cycles the
-// CPU actually loses).  Building half of it now would make the stage-1 gate
-// ambiguous.
+// SCOPE, STATED SO IT IS NOT MISTAKEN FOR THE WHOLE THING.  This module is the
+// row / display-list sequencing that antic2_seq needs to decide row_ends and the
+// DLI, and nothing else.  The PLAYFIELD FETCH MAP is NOT here and never will be:
+// it lives in antic_dma_sched, which is measured correct end to end (all 50 of
+// antic_dmapattern's maps, and its steals map 1:1 onto the cycles the CPU
+// actually loses).  Two definitions of the fetch map is the failure this rewrite
+// exists to avoid.
 //
 // WHAT line_start DOES, in order, and what belongs where:
 //
