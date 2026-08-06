@@ -656,6 +656,17 @@ static void line_start(antic *a)
         for (int k = 0; k < 48; k++)
             fprintf(stderr, " %02x", a->linebuf[k]);
         fputc('\n', stderr);
+        /* ...and the SOURCE the display actually paints, per colour clock.
+         * The buffer being right does not make the picture right: the display
+         * window sits PF_DISPLAY_LEAD cycles after the nominal one, and an RTL
+         * port that conflates the two paints every pixel in the wrong place
+         * while every fetch-side comparison still agrees.  -1 is background. */
+        fprintf(stderr, "  PFSRC sl %3d insn $%02X:", a->scanline - 1, a->dl_insn);
+        for (int cc = 0; cc < 228; cc++) {
+            int hl = 0, src = antic_pf_at(a, cc, &hl);
+            fprintf(stderr, "%c", src < 0 ? '.' : (char)('0' + src));
+        }
+        fputc('\n', stderr);
     }
 
     a->hscrol_line = a->hscrol;           /* the clamp is per-line */
