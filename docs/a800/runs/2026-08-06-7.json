@@ -1,0 +1,224 @@
+{
+  "bitstream": "simulation",
+  "core": "antic2",
+  "date": "2026-08-06",
+  "note": "antic2: GTIA's vertical blank is not the scanline range. A display list that never stops -- no JVB, DL DMA still on, a real mode still latched -- keeps ANTIC emitting past the bottom of the nominal display, and GTIA goes on registering collisions there. emu, system.c:200-205: emitting = an_mode >= 2 && (dmactl & 0x20); vblank = (scanline < TOP || scanline >= BOTTOM) && !emitting. antic_hiresbug HITCLRs late on line 247 and asks for the collision back on line 248, one line past DISPLAY_BOTTOM; a pure range gate answers $00. Gates collisions only -- emu runs obj_step before its vblank return, so objects keep shifting, and here the signal reaches only gtia_stage's active, whose sole consumer is gtia_collide.",
+  "results": {
+    "antic_addresswrap": {
+      "s": "pass"
+    },
+    "antic_addrmirror": {
+      "s": "pass"
+    },
+    "antic_blockednmi": {
+      "s": "pass"
+    },
+    "antic_charcontrol": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "antic_default": {
+      "s": "pass"
+    },
+    "antic_dlistwrap": {
+      "s": "pass"
+    },
+    "antic_dlitiming": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "antic_dmapattern": {
+      "s": "pass"
+    },
+    "antic_hiresbug": {
+      "s": "pass"
+    },
+    "antic_hscrolbug": {
+      "s": "pass"
+    },
+    "antic_linebuffering": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "antic_nmist": {
+      "s": "pass"
+    },
+    "antic_pfstarttiming": {
+      "s": "pass"
+    },
+    "antic_pfstoptiming": {
+      "s": "pass"
+    },
+    "antic_pmdma": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "antic_vcount": {
+      "s": "pass"
+    },
+    "antic_virtdma": {
+      "s": "pass"
+    },
+    "antic_vscroldli": {
+      "s": "pass"
+    },
+    "antic_vscroll": {
+      "s": "pass"
+    },
+    "antic_wsync": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "cpu_65c816": {
+      "d": "SKIP: reached _testSkipped $1e3a",
+      "s": "na"
+    },
+    "cpu_bugs": {
+      "s": "pass"
+    },
+    "cpu_clisei": {
+      "s": "pass"
+    },
+    "cpu_decimal": {
+      "s": "pass"
+    },
+    "cpu_flags": {
+      "s": "pass"
+    },
+    "cpu_illegal": {
+      "s": "pass"
+    },
+    "cpu_illtiming": {
+      "s": "pass"
+    },
+    "cpu_insn": {
+      "s": "pass"
+    },
+    "cpu_timing": {
+      "s": "pass"
+    },
+    "gtia_addrmirror": {
+      "s": "pass"
+    },
+    "gtia_collision": {
+      "s": "pass"
+    },
+    "gtia_collision2": {
+      "s": "pass"
+    },
+    "gtia_consol": {
+      "s": "pass"
+    },
+    "gtia_default": {
+      "s": "pass"
+    },
+    "gtia_phantomdma": {
+      "s": "pass"
+    },
+    "gtia_pmoverlap": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "gtia_pmresize": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "gtia_pmretrigger": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "gtia_psuedomodee": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "gtia_vdelay": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "mmu_xlbanking": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "mod_disp80": {
+      "d": "RAN: returned to the loader park $FF60",
+      "s": "na"
+    },
+    "mod_dispmin": {
+      "d": "RAN: returned to the loader park $FF60",
+      "s": "na"
+    },
+    "mod_options": {
+      "d": "TIMEOUT: pc $381b, never reached _testEnd $1d93",
+      "s": "error"
+    },
+    "mod_scroll40": {
+      "d": "TIMEOUT: pc $5422, never reached _testEnd $1d93",
+      "s": "error"
+    },
+    "mod_vbxe80": {
+      "d": "TIMEOUT: pc $1b50, never reached _testEnd $1d93",
+      "s": "error"
+    },
+    "pia_basic": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "pia_irq": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "pokey_addrmirror": {
+      "s": "pass"
+    },
+    "pokey_asyncrecv": {
+      "s": "pass"
+    },
+    "pokey_default": {
+      "s": "pass"
+    },
+    "pokey_inittiming": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "pokey_irqtiming": {
+      "s": "pass"
+    },
+    "pokey_noise": {
+      "s": "pass"
+    },
+    "pokey_serclock": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "pokey_serdirect": {
+      "d": "SKIP: reached _testSkipped $1e3a",
+      "s": "na"
+    },
+    "pokey_seroc": {
+      "s": "pass"
+    },
+    "pokey_sertiming": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "pokey_skstat": {
+      "d": "SKIP: reached _testSkipped $1e3a",
+      "s": "na"
+    },
+    "pokey_timergranularity": {
+      "s": "pass"
+    },
+    "pokey_timerirq": {
+      "s": "pass"
+    },
+    "pokey_timertiming": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "pokey_twotone": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    }
+  },
+  "seq": 7
+}
