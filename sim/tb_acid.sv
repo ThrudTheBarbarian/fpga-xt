@@ -144,6 +144,16 @@ module tb_acid #(
                      dut.c_addr[11:0], dut.c_din, line, hcount);
     end
 
+    // The TRUE scanline.  antic2's beam counter steps on at hcount 111, so the
+    // raw register reads one too high at the end of a line; every probe that
+    // prints a scanline must use this or they disagree with each other.
+    // Declared HERE, above the probes, because a wire referenced before its
+    // declaration does not elaborate.
+    wire [8:0] bus_line = (dut.u_antic2.hcount >= 7'd111)
+                        ? ((dut.u_antic2.line == 9'd0) ? 9'd261
+                                                       : dut.u_antic2.line - 9'd1)
+                        : dut.u_antic2.line;
+
     // Collision-latch probe (antic2 only).  gtia_collision asserts that objects
     // parked in horizontal blank latch NOTHING, and the window that is supposed
     // to enforce that already exists in gtia_stage -- so the question is not
@@ -184,6 +194,84 @@ module tb_acid #(
         end
     end endgenerate
 
+    // lb_origin probe (antic2 only).  The counter has never been observed
+    // non-zero; antic_hscrolbug's abnormal line has nine fetches before the
+    // window opens, so it should read nine there.  Printed at the end of each
+    // line so the value is the whole line's count, not a partial one.
+    integer lbocnt = 0;
+    generate if (USE_ANTIC2) begin : g_lboprobe
+        always_ff @(posedge clk) begin
+            if (probe_on && !rst && tick && dut.u_antic2.hcount == 7'd113 &&
+                dut.u_antic2.lb_origin != 6'd0 && lbocnt < 12) begin
+                lbocnt <= lbocnt + 1;
+                // bus_line, not `line`: the beam's counter has already stepped
+                // on by hcount 111, so the raw register reads one too high
+                // here and would disagree with the MAP probe about which
+                // scanline this is.
+                $display("LBO line=%0d insn=%02h lb_origin=%0d dma_start=%0d",
+                         bus_line, dut.u_antic2.dl_insn,
+                         dut.u_antic2.lb_origin, dut.u_antic2.pf_dma_start);
+            end
+        end
+    end endgenerate
+
+    // Line-buffer dump (antic2 only).  The DMA map, lb_origin and the read
+    // index have all been checked against emu and agree; what has not been
+    // checked is what actually landed IN the buffer.  antic_hscrolbug's own
+    // comment gives the answer it expects -- 55 AA 55 AA ... 55 AA FF 00 -- so
+    // printing the first 48 entries at the end of the named line turns that
+    // into a diff rather than an argument.
+    //
+    // ANCHORED ON THE INSTRUCTION (+LBDUMP=<insn>, decimal), not a scanline:
+    // the same scanline recurs every frame, and the first hits are from before
+    // the test has even set its display list up -- which is what the MAP probe
+    // below already says, and what this one caught me doing.
+    int LBDUMP = -1;
+    initial if (!$value$plusargs("LBDUMP=%h", LBDUMP)) LBDUMP = -1;
+    integer lbdcnt = 0;
+    generate if (USE_ANTIC2) begin : g_lbdump
+        always_ff @(posedge clk) begin
+            if (!rst && tick && LBDUMP >= 0 && lbdcnt < 3 &&
+                dut.u_antic2.hcount == 7'd113 &&
+                dut.u_antic2.dl_insn == 8'(LBDUMP)) begin
+                lbdcnt <= lbdcnt + 1;
+                $write("LBDUMP sl %0d insn %02h org %0d:",
+                       bus_line, dut.u_antic2.dl_insn, dut.u_antic2.lb_origin);
+                for (int k = 0; k < 48; k++)
+                    $write(" %02h", dut.u_antic2.u_pf.buf_mem[k][7:0]);
+                $write("\n");
+            end
+        end
+    end endgenerate
+
+    // Per-colour-clock playfield SOURCE (antic2 only), in emu's PFSRC shape so
+    // the two lines can be diffed character for character.  The buffer being
+    // right does not make the picture right: this is the one stage between a
+    // verified fetch path and a missing collision.  '.' is background/outside.
+    // +PFSRC=<insn hex>.
+    int PFSRC = -1;
+    initial if (!$value$plusargs("PFSRC=%h", PFSRC)) PFSRC = -1;
+    logic [2:0] pfsrc_row [0:227];
+    integer pfsrccnt = 0;
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            for (int k = 0; k < 228; k++) pfsrc_row[k] <= 3'd7;   // 7 = none
+        end else if (USE_ANTIC2 && PFSRC >= 0) begin
+            if (dut.u_antic2.px_line_start)
+                for (int k = 0; k < 228; k++) pfsrc_row[k] <= 3'd7;
+            else if (dut.u_antic2.px_wr)
+                pfsrc_row[dut.u_antic2.px_pos[8:1]] <= dut.u_antic2.px_pf_src;
+            if (tick && dut.u_antic2.hcount == 7'd113 && pfsrccnt < 3 &&
+                dut.u_antic2.dl_insn == 8'(PFSRC)) begin
+                pfsrccnt <= pfsrccnt + 1;
+                $write("PFSRC sl %0d insn %02h:", bus_line, dut.u_antic2.dl_insn);
+                for (int k = 0; k < 228; k++)
+                    $write("%c", (pfsrc_row[k] == 3'd7) ? "." : ("0" + pfsrc_row[k]));
+                $write("\n");
+            end
+        end
+    end
+
     // DLI chain probe (antic2 only).  antic_nmist fails on "The DLI1 handler was
     // not called" while the VBI fires, so the break is somewhere in
     // fetch -> dl_insn[7] -> row_ends -> dli_line.  Print the whole chain once
@@ -218,10 +306,6 @@ module tb_acid #(
     int BUSLINE = 17;
     int MAPINSN = 'h42;
     initial if (!$value$plusargs("MAPINSN=%h", MAPINSN)) MAPINSN = 'h42;
-    wire [8:0] bus_line = (dut.u_antic2.hcount >= 7'd111)
-                        ? ((dut.u_antic2.line == 9'd0) ? 9'd261
-                                                       : dut.u_antic2.line - 9'd1)
-                        : dut.u_antic2.line;
     // OFF unless asked for.  A trace probe that runs by default is not free:
     // this one wrote 114 KB into every run of an unattended sweep, nobody having
     // requested a single line of it.  -1 matches no scanline.
