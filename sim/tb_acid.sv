@@ -206,10 +206,10 @@ module tb_acid #(
     integer lbocnt = 0;
     generate if (USE_ANTIC2) begin : g_lboprobe
         always_ff @(posedge clk) begin
-            // ANCHORED ON THE INSTRUCTION, sharing +LBDUMP's selector.  Left
-            // unanchored it spent all twelve prints on the blank lines of an
-            // early frame and never reached the row under test -- the same
-            // trap the MAP probe's comment warns about.
+            // ANCHORED ON THE INSTRUCTION.  Left unanchored it spent all
+            // twelve prints on the blank lines of an early frame and never
+            // reached the row under test -- the same trap the MAP probe's
+            // comment warns about.
             if (probe_on && !rst && tick && dut.u_antic2.hcount == 7'd113 &&
                 LBOINSN >= 0 && dut.u_antic2.dl_insn == 8'(LBOINSN) &&
                 lbocnt < 12) begin
@@ -222,6 +222,34 @@ module tb_acid #(
                          bus_line, dut.u_antic2.dl_insn,
                          dut.u_antic2.lb_origin, dut.u_antic2.pf_dma_start,
                          dut.u_antic2.row_first);
+            end
+        end
+    end endgenerate
+
+    // THE LATE FETCHES OF A LINE (antic2 only), for the virtual-slot work.
+    //
+    // The steal map cannot answer this: cycles from PF_HBLANK_FIRST = 106 on
+    // still fetch but steal nothing, so antic2 and emu can agree on every
+    // blocked cycle and still disagree about whether a fetch happens at 106.
+    // emu's own list stops at 103 (`LN 32 n 24 fetch: 11 ... 103`), while
+    // antic2's `pf_want_b = pairs && hit_3` would fire three cycles after the
+    // last name.  This prints every scheduled fetch at or past cycle 96 so the
+    // two can be compared directly.
+    //
+    // Its own selector, next to the probe -- see the LBO comment above.
+    int VFETINSN = -1;
+    initial if (!$value$plusargs("VFETINSN=%h", VFETINSN)) VFETINSN = -1;
+    integer vfetcnt = 0;
+    generate if (USE_ANTIC2) begin : g_vfetprobe
+        always_ff @(posedge clk) begin
+            if (probe_on && !rst && tick && VFETINSN >= 0 &&
+                dut.u_antic2.dl_insn == 8'(VFETINSN) &&
+                dut.u_antic2.hcount >= 7'd96 &&
+                dut.u_antic2.sched_pf_fetch && vfetcnt < 40) begin
+                vfetcnt <= vfetcnt + 1;
+                $display("VFET line=%0d insn=%02h cyc=%0d glyph=%0d",
+                         bus_line, dut.u_antic2.dl_insn, dut.u_antic2.hcount,
+                         dut.u_antic2.sched_pf_fetch_glyph);
             end
         end
     end endgenerate
