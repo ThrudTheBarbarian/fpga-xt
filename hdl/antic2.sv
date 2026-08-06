@@ -365,13 +365,20 @@ module antic2 #(
     // rows that matter.  pf_fetch_glyph marks the second access, and
     // antic_pf_stream calls the same distinction idx_takes.
     //
-    // ONLY ON A ROW'S FIRST LINE.  emu's map is written under
-    // `(mode >= 8 || first_line)` (antic_dma.c, spec_edges), so a later
-    // CHARACTER row marks nothing at all: it re-reads only glyphs from the
-    // character base and replays the names out of the buffer, advancing no
-    // scan address and taking no index, and its origin is zero even when the
-    // stream ran on.  A later BITMAP row fetches nothing whatever, so that
-    // half of emu's condition needs no separate test here.
+    // THE CONDITION IS `mode >= 8 || first_line`, BOTH HALVES OF IT.  emu's
+    // map is written under exactly that (antic_dma.c, spec_edges), and the two
+    // halves say different things.  A later CHARACTER row marks nothing at
+    // all: it re-reads only glyphs from the character base and replays the
+    // names out of the buffer, advancing no scan address and taking no index,
+    // so its origin is zero even when the stream ran on.  A BITMAP row is
+    // never "later" in the sense that matters -- it marks its map on EVERY
+    // scanline -- so `row_first` must not gate it.
+    //
+    // Measured, not reasoned: antic_hscrolbug's second sub-test is a mode E
+    // row with row_first low where emu counts ten carried fetches.  With only
+    // the first_line half implemented this counted none, the display read from
+    // entry 0, and the byte the test looks for never appeared under the
+    // players.
     //
     // Counted as the fetches happen rather than derived from a map at line
     // start, because the fetch is progressive and the display window opens
@@ -379,7 +386,8 @@ module antic2 #(
     always_ff @(posedge clk or posedge rst) begin
         if (rst)                   lb_origin <= 6'd0;
         else if (sched_line_start) lb_origin <= 6'd0;
-        else if (row_first && sched_pf_fetch && !sched_pf_fetch_glyph &&
+        else if ((!md_is_char || row_first) &&
+                 sched_pf_fetch && !sched_pf_fetch_glyph &&
                  hcount < pf_dma_start)
             lb_origin <= lb_origin + 6'd1;
     end
