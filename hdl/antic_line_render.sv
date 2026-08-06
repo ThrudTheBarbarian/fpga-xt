@@ -35,6 +35,16 @@ module antic_line_render (
     // ---- what to draw ----------------------------------------------------
     input  wire        start,          // 1-clk: begin this line (restarts)
     input  wire        emit_en,        // 1-clk per hi-res pixel, window-gated
+    // The window as a LEVEL, which rises a full pixel period before the first
+    // emit_en.  THE FIRST BYTE MUST NOT BE LOADED BEFORE IT.  `start` fires at
+    // the top of the scanline, and at that instant the line's bytes have not
+    // been fetched and lb_origin -- counted as the fetches happen -- is still
+    // zero, so a load there takes the PREVIOUS line's entry 0.  Every later
+    // byte is loaded on demand during emission and is correct, which is why
+    // this showed up as exactly one wrong byte at the left edge and nothing
+    // else.  Holding the first load until the window opens lets it see settled
+    // data and a settled origin.
+    input  wire        in_window,
     input  wire [3:0]  mode,
     input  wire [7:0]  bytes_per_line,
 
@@ -154,10 +164,15 @@ module antic_line_render (
             case (state)
                 S_IDLE: busy <= 1'b0;
 
+                // Re-sampled every clock while the window is shut, so the byte
+                // the shifter ends up holding is the one that was there when
+                // the display opened -- not whatever entry 0 contained at the
+                // top of the line.  Mid-line reloads pass straight through,
+                // because by then the window is open and this is one clock.
                 S_LOAD: begin
                     sh_data <= rd_data;
                     sh_load <= 1'b1;
-                    state   <= S_LOADED;
+                    if (in_window) state <= S_LOADED;
                 end
 
                 // One cycle for sh_load to land.  Without it S_EMIT would

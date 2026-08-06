@@ -403,6 +403,7 @@ module antic2 #(
     antic_line_render u_render (
         .clk(clk), .rst(rst),
         .start(sched_line_start), .emit_en(pf_emit_en),
+        .in_window(px_in_window),
         .mode(dl_insn[3:0]), .bytes_per_line(pf_bytes),
         .colbk(8'h00), .colpf0(8'h00), .colpf1(8'h00),
         .colpf2(8'h00), .colpf3(8'h00),

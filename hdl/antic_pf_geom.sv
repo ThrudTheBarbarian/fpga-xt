@@ -165,19 +165,43 @@ module antic_pf_geom (
         disp_stop  = win_stop(pf_width);
     end
 
-    // The live display window in hi-res pixels: four per machine cycle, plus the
-    // odd colour clock HSCROL can add.  The consumer compares the beam against
-    // THIS every pixel, so a mid-line DMACTL or HSCROL write moves the edge
-    // mid-line.
+    // THE DISPLAY LAGS THE FETCH, AND THE TABLE ABOVE IS THE FETCH.
+    //
+    // The header calls 28/20/12 "display starts", and that was wrong: they are
+    // where a BITMAP row begins FETCHING.  emu keeps a separate NOMINAL window
+    // -- antic_pf_nominal, 29/21/13 -- and derives both edges from it: the
+    // bitmap fetch is nominal - 1, and the display is nominal + PF_DISPLAY_LEAD
+    // with the lead fixed at 3 for every width (antic_dma.h:51, "display begins
+    // exactly PF_DISPLAY_LEAD cycles after this, for every width, so the two
+    // cannot drift apart").  Display therefore starts FOUR machine cycles after
+    // this table, at 32/24/16 -- colour clocks $40/$30/$20, which is what
+    // emu's own decode comment quotes and what antic_pmdma's left-edge
+    // collision against a narrow playfield pins.
+    //
+    // Painting the playfield four cycles early moves every pixel sixteen hi-res
+    // positions left.  The fetch is unaffected: the bytes are right and land in
+    // the right buffer slots -- verified against emu byte for byte -- and only
+    // the beam position they are painted at is wrong.  That is why the fetch
+    // path checked out link by link while the picture stayed broken.
+    localparam logic [6:0] DISP_LAG = 7'd4;
+
+    // The live display window in hi-res pixels: four per machine cycle.  The
+    // consumer compares the beam against THIS every pixel, so a mid-line DMACTL
+    // or HSCROL write moves the edge mid-line.
+    //
+    // HSCROL's ODD BIT DOES NOT REACH THE DISPLAY.  emu adds 2*(hscrol >> 1)
+    // COLOUR CLOCKS -- whole machine cycles -- and HSCROL_CC_DISPLAY, which
+    // would add the odd one, is defined 0.  hs_fine belongs to the fetch grid's
+    // sub-cycle accounting, not here.
     logic [6:0] eff_start_cyc;
     always_comb begin
-        if (hscrol_en && pf_on) eff_start_cyc = win_start(fetch_width) + {4'd0, hs_delay};
-        else                    eff_start_cyc = win_start(pf_width);
+        if (hscrol_en && pf_on) eff_start_cyc = win_start(fetch_width) + DISP_LAG
+                                              + {4'd0, hs_delay};
+        else                    eff_start_cyc = win_start(pf_width) + DISP_LAG;
     end
 
     always_comb begin
-        px_start = {eff_start_cyc, 2'b00}
-                 + ((hscrol_en && pf_on) ? {7'd0, hs_fine, 1'b0} : 9'd0);
+        px_start = {eff_start_cyc, 2'b00};
         px_stop  = px_start + {2'd0, (win_stop(pf_width) - win_start(pf_width)), 2'b00};
     end
 

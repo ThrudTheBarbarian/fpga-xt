@@ -292,6 +292,7 @@ module antic_scanline (
     antic_line_render u_render (
         .clk(clk), .rst(rst),
         .start(fetch_done), .emit_en(px_tick && in_window),
+        .in_window(in_window),
         .mode(dl_mode), .bytes_per_line(bytes_per_line),
         .colbk(colbk), .colpf0(colpf0), .colpf1(colpf1),
         .colpf2(colpf2), .colpf3(colpf3),

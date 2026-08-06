@@ -67,7 +67,7 @@ module tb_antic_pf_pair;
 
     antic_line_render u_render (
         .clk(clk), .rst(rst),
-        .start(r_start), .emit_en(1'b1),
+        .start(r_start), .emit_en(1'b1), .in_window(1'b1),
         .mode(mode), .bytes_per_line(bytes_per_line),
         .colbk(colbk), .colpf0(colpf0), .colpf1(colpf1),
         .colpf2(colpf2), .colpf3(colpf3),
