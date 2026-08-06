@@ -188,13 +188,6 @@ module gtia_stage (
         else if (cc_tick) cc_win_q <= cc_in_window;
     end
 
-    gtia_collide u_col (
-        .clk(clk), .rst(rst),
-        .start(col_start), .pres(pres), .pf_src(cur_pf),
-        .active(active && cc_win_q), .hitclr(hitclr),
-        .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl), .busy()
-    );
-
     // ---- the GTIA-mode nibble --------------------------------------------
     // Two bits per colour clock, two colour clocks to a nibble.  It takes two
     // registers, not one: the pair COMPLETES on an odd colour clock, but it must
@@ -227,6 +220,82 @@ module gtia_stage (
 
     wire       gtia_active;
     wire [7:0] gtia_color;
+
+    // ---- the collision class in a GTIA mode -------------------------------
+    // PRIOR[7:6] stops the playfield being a playfield, so the SOURCE
+    // antic_pf_source computed is not what collides.  emu/system.c:226-233 with
+    // emu/gtia.c:270-274 is the model:
+    //
+    //   mode  9  no playfield collisions at all — the byte is a LUMINANCE, so
+    //            there is no colour class to record
+    //   mode 10  the nibble's BIT 2 selects playfield and bits 1:0 the class,
+    //            so $4-$7 and $C-$F collide as PF0-PF3 and the other eight
+    //            values as nothing.  A "4..7" range check gets the low half
+    //            right and reports background for the whole top half
+    //   mode 11  no playfield collisions — sixteen hues, likewise no class
+    //
+    // gtia_special's header said the collision path in GTIA modes was unsettled
+    // and would stay as it was "until those two tests can be measured against
+    // real hardware".  emu is that measurement: it passes ACID 57/58 with this
+    // exact rule.  gtia_phantomdma runs PRIOR=$81 over a mode F list and reads
+    // P0PF; emu returns $0A (PF3 at cc $81, then PF1 at cc $85) where antic2
+    // returned $04 — the hi-res "a lit pixel collides as PF2" rule applied
+    // where GTIA is not looking at hi-res pixels at all.
+    //
+    // The gate is `gtia_active`, the SAME signal that decides whether the
+    // colour comes from gtia_special.  emu additionally requires ANTIC mode F;
+    // antic2's colour path does not, and one definition of "a GTIA mode is in
+    // force" is worth more here than matching a gate the colour path ignores.
+    // IT IS `nib_ready`, NOT `gtia_nib`, AND IT IS LATCHED AT cc_tick.
+    //
+    // `gtia_nib` is the DISPLAY nibble: it waits a whole aligned pair so both
+    // halves of a GTIA pixel show the same value, which puts it two colour
+    // clocks behind the objects.  Measured on gtia_phantomdma with +GMNIB=33
+    // against emu's ACID_PFPROBE ruler -- `nib_ready` carries $7/$6/$5/$4 over
+    // exactly the colour clocks where `pres` has player 0 lit, and `gtia_nib`
+    // carries them two clocks later.  Reading the display register gave $0F.
+    //
+    // NOT LATCHED, AND THAT IS THE FIX.  This used to be registered at cc_tick
+    // for the same reason `cc_win_q` and gtia_collide's `gate_q` are -- the walk
+    // is eighteen fabric clocks long, so a value that moves underneath it has to
+    // be pinned.  But `nib_ready` is ITSELF a register that only changes at
+    // cc_tick, so it is already constant for the whole colour clock and the
+    // extra stage bought nothing.  What it did buy was a colour clock of DELAY,
+    // and that delay was the bug.
+    //
+    // THE CLASS IS HELD FOR A PAIR OF COLOUR CLOCKS AND THE PLAYER'S LIT RUNS
+    // ARE TWO COLOUR CLOCKS WIDE, so the two windows have to be in phase: a run
+    // that straddles the boundary takes the tail of one class and the head of
+    // the next and records BOTH.  Measured on gtia_phantomdma, line 33, with
+    // +GMNIB=33 beside emu's ACID_PFPROBE=33:
+    //
+    //   emu   cc   $81 $82 | $83 $84 | $85 $86 | $87 $88     P0PF = $0A
+    //         class  3   3 |   2   2 |   1   1 |   0   0
+    //         p0   lit lit |  --  -- | lit lit |  --  --     presence ON the pairs
+    //
+    //   antic2 presence pairs (82,83) (86,87) (8a,8b), but class pairs (83,84)
+    //   (85,86) (87,88) (89,8a) -- every run with one foot in each, and (86,87)
+    //   taking PF2 AND PF1.  That is the $0F the test reports.
+    //
+    // Dropping the stage moves the class one colour clock earlier, which puts
+    // each presence pair squarely on one class pair again: (82,83) -> PF3,
+    // (86,87) -> PF1, (8a,8b) -> none.  PF3|PF1 = $0A, emu's answer.
+    //
+    // NOT a transcription of emu's `shift`: emu's `off = cc - start - 1` moves
+    // ITS class LATER against the display nibble, and antic2 was already late.
+    // The quantity that was wrong here is antic2's own pipeline depth.
+    wire [2:0] col_pf_now =
+        (prior[7:6] == 2'b10 && nib_ready[2]) ? (3'd1 + {1'b0, nib_ready[1:0]})
+                                              : 3'd0;   // SRC_BK
+
+    wire [2:0] col_pf = gtia_active ? col_pf_now : cur_pf;
+
+    gtia_collide u_col (
+        .clk(clk), .rst(rst),
+        .start(col_start), .pres(pres), .pf_src(col_pf),
+        .active(active && cc_win_q), .hitclr(hitclr),
+        .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl), .busy()
+    );
 
     gtia_special u_special (
         .gtia_mode(prior[7:6]), .nibble(gtia_nib), .colbk(colbk),
