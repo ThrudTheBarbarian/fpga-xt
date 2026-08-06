@@ -100,9 +100,22 @@ module antic2_dl (
 
     // Decoded from the LATCHED instruction, in the order emu decides them.
     wire [3:0] mode     = insn_r[3:0];
-    wire       vs       = (mode >= 4'd2) && insn_r[5];
-    wire       leaving  = vscrol_prev && !vs;
-    wire       entering = vs && !vscrol_prev;
+    // THE SCROLL EDGES ARE LATCHED, NOT COMBINATIONAL, AND THAT WAS THE BUG.
+    //
+    // emu computes `leaving`/`entering` from the PREVIOUS value and only THEN
+    // overwrites it (antic.c:374-376) -- all inside one call, so the later use
+    // still sees the right answer.  Here the update lands in S_INSN and the use
+    // is in S_DONE, a later cycle, by which time `vscrol_prev` already holds
+    // THIS instruction's `vs`.  The wires above then read
+    //     entering = vs && !vs   ->  ALWAYS FALSE
+    //     leaving  = vs && !vs   ->  ALWAYS FALSE
+    // so the whole scroll trick was dead for modes >= 2: no short first row on
+    // entry, no live VSCROL compare on exit.  Latch both AT THE FETCH, from the
+    // pre-update register, and let S_DONE consume the latched pair.
+    //
+    // The blank-line branch does NOT need this: it reads `vscrol_prev` in the
+    // same cycle as the non-blocking write, so it already sees the old value.
+    logic      entering_r, leaving_r;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -121,6 +134,8 @@ module antic2_dl (
             pf_load       <= 1'b0;
             busy          <= 1'b0;
             vscrol_prev   <= 1'b0;
+            entering_r    <= 1'b0;
+            leaving_r     <= 1'b0;
             want_operand  <= 1'b0;
             is_jump       <= 1'b0;
             insn_r        <= 8'h00;
@@ -148,6 +163,9 @@ module antic2_dl (
                 insn_stb    <= 1'b1;
                 dl_addr     <= dl_next(dl_addr);
                 vscrol_prev <= (mem_data[3:0] >= 4'd2) && mem_data[5];
+                // Latched HERE, from the pre-update `vscrol_prev`, in emu's order.
+                entering_r  <= ((mem_data[3:0] >= 4'd2) && mem_data[5]) && !vscrol_prev;
+                leaving_r   <= vscrol_prev && !((mem_data[3:0] >= 4'd2) && mem_data[5]);
 
                 // MODE 0 and MODE 1 ARE DECIDED FIRST, before bit 6 means LMS.
                 if (mem_data[3:0] == 4'h0) begin
@@ -211,8 +229,8 @@ module antic2_dl (
                 // Resolve the row height for modes >= 2, and the scroll trick.
                 if (mode >= 4'd2) begin
                     row_end      <= 4'(mode_rows - 5'd1);
-                    row_end_live <= leaving;       // -1 in emu
-                    if (entering) begin
+                    row_end_live <= leaving_r;     // -1 in emu
+                    if (entering_r) begin
                         row_line_load <= vscrol[3:0];   // start high: short row
                         row_line_set  <= 1'b1;
                     end
