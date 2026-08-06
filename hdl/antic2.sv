@@ -93,7 +93,16 @@ module antic2 #(
     output wire        px_in_window,       // LEVEL: the beam is on the playfield
     output wire [8:0]  px_pos,             // hi-res pixel index along the line
     output wire        px_line_start,      // 1-clk at the top of the scanline
-    output wire        px_active           // an active display line
+    output wire        px_active,          // an active display line
+
+    // ---- the P/M shape store ----------------------------------------------
+    // What ANTIC hands GTIA for the players and missiles.  GRACTL decides
+    // whether GTIA latches it (gtia_reg_file's pm_take), and pm_mask is
+    // VDELAY's per-bit gate, so this side only says WHAT and WHEN.
+    output wire        pm_we,
+    output wire [2:0]  pm_obj,             // 0 = missiles, 1..4 = players 0..3
+    output wire [7:0]  pm_data,
+    output wire [7:0]  pm_mask
 );
 
     wire        line_start;
@@ -252,14 +261,17 @@ module antic2 #(
     end
 
     wire [7:0] pf_bytes, pf_step;
-    wire [6:0] pf_dma_start, pf_dma_stop;
+    // The LIVE window.  `pf_dma_start`/`pf_dma_stop` -- what everything below
+    // actually consumes -- are these with any already-latched edge substituted
+    // in; see the edge latch further down.
+    wire [6:0] geom_dma_start, geom_dma_stop;
     antic_pf_geom u_geom (
         .pf_width(dmactl[1:0]),
         .hscrol_en(dl_insn[4] && (dl_insn[3:0] >= 4'd2)),
         .hscrol(hscrol[3:0]),
         .is_char(md_is_char), .bpp(md_bpp), .px_width(md_px_width),
         .pf_on(), .bytes_per_line(pf_bytes), .pf_step(pf_step),
-        .dma_start(pf_dma_start), .dma_stop(pf_dma_stop), .disp_start(), .disp_stop(),
+        .dma_start(geom_dma_start), .dma_stop(geom_dma_stop), .disp_start(), .disp_stop(),
         .px_start(pf_px_start), .px_stop(pf_px_stop), .hs_delay(), .hs_fine()
     );
 
@@ -300,6 +312,94 @@ module antic2 #(
     // sl 40 cycle 4, we wrote at cycle 5, and that was the only difference in
     // the whole line.
     wire pf_fetching = md_is_display && !dl_done && (dmactl[1:0] != 2'b00);
+
+    // ---- THE WINDOW EDGES LATCH AS THE BEAM PASSES THEM --------------------
+    //
+    // emu, antic.c:906-911, re-implemented from Altirra's LatchPlayfieldEdges:
+    //
+    //   "Each edge is a comparison against the horizontal counter, and once
+    //    that comparison has been made it cannot be un-made -- so a mid-line
+    //    DMACTL or HSCROL write moves only the edges still ahead of the beam,
+    //    and a row can end up running the OLD start against the NEW stop.  Its
+    //    byte count then belongs to neither width, which is what
+    //    antic_pfstarttiming and antic_pfstoptiming measure from opposite
+    //    sides."
+    //
+    // THE COMPARISON MUST USE THE WINDOW THE LINE HAS BEEN RUNNING, NOT THE ONE
+    // THE WRITE JUST INSTALLED, AND THAT IS THE WHOLE DIFFICULTY.  emu gets it
+    // by ORDERING -- latch_edges() is "Called BEFORE the register takes its new
+    // value" -- which an always_ff cannot borrow.  Comparing `hcount` against a
+    // target derived from the LIVE dmactl makes the target move the instant the
+    // register does: antic_pfstarttiming's late DLI writes DMACTL on cycle 17,
+    // a normal character row's target is 18 - 1 = 17, and the write shifts that
+    // target to 25 before hcount ever reaches 17.  The match never happens, the
+    // beam latches the narrow start at 25 instead, and the row answers as
+    // though the write had been early -- which is exactly the failure.
+    //
+    // So the target comes from a SECOND, otherwise identical geometry block fed
+    // from dmactl/hscrol as they stood at the START of this machine cycle.
+    // Those two are the only registers here the CPU can move mid-line;
+    // everything else is derived from dl_insn, which changes at a row boundary.
+    logic [7:0] dmactl_q, hscrol_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            dmactl_q <= 8'h00;
+            hscrol_q <= 8'h00;
+        end else if (tick) begin
+            dmactl_q <= dmactl;
+            hscrol_q <= hscrol;
+        end
+    end
+
+    wire [6:0] prev_dma_start, prev_dma_stop;
+    antic_pf_geom u_geom_prev (
+        .pf_width(dmactl_q[1:0]),
+        .hscrol_en(dl_insn[4] && (dl_insn[3:0] >= 4'd2)),
+        .hscrol(hscrol_q[3:0]),
+        .is_char(md_is_char), .bpp(md_bpp), .px_width(md_px_width),
+        .pf_on(), .bytes_per_line(), .pf_step(),
+        .dma_start(prev_dma_start), .dma_stop(prev_dma_stop),
+        .disp_start(), .disp_stop(), .px_start(), .px_stop(),
+        .hs_delay(), .hs_fine()
+    );
+
+    // The decision sits one cycle before the window for the character modes and
+    // three before it for the bitmap ones -- the SAME absolute cycle for both,
+    // since their starts differ by two (26-1 == 28-3 == 25 on a narrow line).
+    wire [2:0] edge_off = md_is_char ? 3'd1 : 3'd3;
+
+    // THE TWO EDGES LATCH INDEPENDENTLY, and that is load-bearing.  With both
+    // live, or both frozen, they stay on the same phase, the DMA clock's clear
+    // always succeeds, and the run-on antic_hscrolbug measures can never
+    // happen -- see antic_dma_sched's header.
+    logic [6:0] lat_start, lat_stop;
+    logic       lat_start_v, lat_stop_v;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            lat_start   <= 7'd0;
+            lat_stop    <= 7'd0;
+            lat_start_v <= 1'b0;
+            lat_stop_v  <= 1'b0;
+        end else if (sched_line_start) begin
+            lat_start_v <= 1'b0;        // both edges are live again at the top
+            lat_stop_v  <= 1'b0;        //   of every scanline
+        end else if (tick && pf_fetching) begin
+            if (!lat_start_v && hcount == (prev_dma_start - {4'd0, edge_off})) begin
+                lat_start   <= prev_dma_start;
+                lat_start_v <= 1'b1;
+            end
+            if (!lat_stop_v && hcount == (prev_dma_stop - {4'd0, edge_off})) begin
+                lat_stop   <= prev_dma_stop;
+                lat_stop_v <= 1'b1;
+            end
+        end
+    end
+
+    // "Live where the beam has not reached the edge yet, latched where it has"
+    // -- emu's pf_edges, antic.c:952-959.  The latch is ADDITIVE: u_geom above
+    // stays purely combinational and every consumer reads through here.
+    wire [6:0] pf_dma_start = lat_start_v ? lat_start : geom_dma_start;
+    wire [6:0] pf_dma_stop  = lat_stop_v  ? lat_stop  : geom_dma_stop;
 
     antic_dma_sched u_sched (
         .clk(clk), .rst(rst),
@@ -589,6 +689,37 @@ module antic2 #(
         .nmist(nmist), .vcount(vcount), .nmi(nmi),
         .wsync_take(wsync_take), .row_ends(row_ends), .dli_line(dli_line)
     );
+
+    // ---- the PHANTOM P/M LATCH ---------------------------------------------
+    // GTIA samples the data bus at the players' slots WHETHER OR NOT ANTIC
+    // fetched anything there.  With player DMA off nobody is driving those
+    // cycles for GTIA, so what lands in GRAFPn is the CPU's own traffic --
+    // gtia_phantomdma sets DMACTL = $21 and then requires GRAFP0 to hold $AD,
+    // the opcode fetch of its own `lda $0100`.  a8_core's header has called
+    // this out from the start: the bus VALUE is a third-party observable.
+    //
+    // CYCLES 3,4,5,6 -> PLAYERS 0,1,2,3, MEASURED, NOT ASSUMED.  emu's PHAN
+    // probe prints exactly that on every line of a passing gtia_phantomdma.
+    // Note it is NOT the same as antic2's player DMA steal, which runs 2..5:
+    // one is where ANTIC would fetch, the other where GTIA samples, and no
+    // model has had both mechanisms at once before now, so nothing has ever
+    // forced them to agree.  If a P/M test later says otherwise, this constant
+    // is the thing to move -- and it is one number.
+    //
+    // Only the PLAYER phantom exists.  emu has a missile one behind
+    // PHANTOM_PM_M, and that define is 0: dead code, not transcribed.
+    //
+    // GRACTL is NOT checked here.  gtia_reg_file's pm_take already gates on
+    // it, and putting the same condition in both places would be two
+    // definitions of one value.
+    localparam int PM_SLOT_P = 3;
+    wire pm_phantom = !dmactl[3] &&
+                      (hcount >= 7'(PM_SLOT_P)) && (hcount < 7'(PM_SLOT_P + 4));
+
+    assign pm_we   = tick && pm_phantom;
+    assign pm_obj  = 3'd1 + 3'(hcount - 7'(PM_SLOT_P));
+    assign pm_data = bus_byte;
+    assign pm_mask = 8'hFF;
 
 endmodule
 
