@@ -464,6 +464,39 @@ module tb_acid #(
             if (tick && dut.u_antic2.hcount == 7'd0) n_line  <= n_line + 1;
         end
     end
+    // ...and the PERIOD itself: the gap in machine cycles between consecutive
+    // timer-4 pulses while AUDCTL is $78 (16-bit 3+4 at 1.79MHz, AUDF 456-7).
+    // emu says that period is 456 cycles.
+    integer cyc_ctr = 0, last_t4 = 0, t4_shown = 0;
+    always_ff @(posedge clk) begin
+        if (!rst && SERRATE >= 0 && tick) begin
+            cyc_ctr <= cyc_ctr + 1;
+            if (dut.u_pokey.timer4_pulse_w) begin
+                if (t4_shown < 12 && dut.u_pokey.audctl == 8'h78) begin
+                    $display("T4GAP %0d cycles (audctl=%02h audf3=%02h audf4=%02h)",
+                             cyc_ctr - last_t4, dut.u_pokey.audctl,
+                             dut.u_pokey.audf3, dut.u_pokey.audf4);
+                    t4_shown <= t4_shown + 1;
+                end
+                last_t4 <= cyc_ctr;
+            end
+        end
+    end
+
+    // Every CPU read of IRQST ($D20E), with the four nodes on the SEROC path.
+    integer irqst_n = 0;
+    always_ff @(posedge clk) begin
+        if (!rst && SERRATE >= 0 && tick && dut.c_rw &&
+            dut.c_addr == 16'hD20E && irqst_n < 24 &&
+            dut.u_pokey.skctl_out == 8'h03) begin
+            irqst_n <= irqst_n + 1;
+            $display("IRQST rd: int_cpl=%b eff_cpl=%b shifting=%b hold=%b bitcnt=%0d skctl=%02h",
+                     dut.u_pokey.ser_out_complete_int, dut.u_pokey.ser_out_complete_eff,
+                     dut.u_pokey.u_serial.shifting_q, dut.u_pokey.u_serial.holding_valid_q,
+                     dut.u_pokey.u_serial.bitcnt_q, dut.u_pokey.skctl_out);
+        end
+    end
+
     final begin
         if (SERRATE >= 0)
             $display("SERRATE t4=%0d t2=%0d shift=%0d ready=%0d lines=%0d",

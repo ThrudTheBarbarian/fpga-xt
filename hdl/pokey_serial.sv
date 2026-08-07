@@ -105,6 +105,21 @@ module pokey_serial (
                 holding_valid_q <= 1'b1;
             end
 
+            // INIT MODE RESETS THE SERIAL PORT, it does not merely stop the
+            // clock.  emu (pokey_timer.c:779) clears ser_bits and serout_full
+            // when SKCTL[1:0] goes to 00: "The tests write skctl = 0 for
+            // exactly this and say so -- 'reset serial port to force output
+            // complete' -- and without it a transmission still in flight from
+            // an earlier sub-test leaves SEROC deasserted for good."  That is
+            // pokey_serclock's last assertion, which wants IRQST $f7 and got
+            // $ff because a byte from the 15KHz section was still shifting.
+            if (init_mode) begin
+                shifting_q       <= 1'b0;
+                bitcnt_q         <= 5'd0;
+                holding_valid_q  <= 1'b0;
+                ser_out_complete <= 1'b1;
+            end
+
             if (shift_tick) begin
                 if (shifting_q) begin
                     // A new bit every OTHER tick: advance when the count about
