@@ -555,7 +555,7 @@ $(BUILD_DIR)/tb_boot_trace.vvp: $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) ax
 	$(IVERILOG) $(SV_FLAGS) $(BOOT_DEFINES) -D COSIM_TRACE -o $@ -s tb_boot \
 	    $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) axi_slave_mem.sv peri_rp_idle.sv tb_boot.sv
 
-.PHONY: rsrc_check
+.PHONY: acid2v rsrc_check
 rsrc_check:
 	@test -f ../rsrc/sally-boot.hex || \
 	    (echo "FAIL: ../rsrc/sally-boot.hex missing (OS ROM image needed for boot sim)"; exit 1)
@@ -1541,6 +1541,36 @@ build/tb_acid2.vvp: tb_acid.sv $(A8_CORE_SRC) | build
 build/tb_acid.vvp: tb_acid.sv $(A8_CORE_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
 	    -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
+
+# THE SAME antic2 TESTBENCH, COMPILED INSTEAD OF INTERPRETED.  vvp walks a
+# decision tree per event; verilator emits C++ and lets clang optimise it.  The
+# guard counts fabric clock posedges -- 56 per machine cycle, 200M for two
+# seconds of Atari time -- so ACID is exactly the workload that difference
+# compounds over:
+#
+#     gtia_pmoverlap        vvp >105 s      verilator     5 s
+#     the full 63-test sweep vvp ~1h50      verilator  3m18s
+#
+# Verdicts are identical, not merely similar: swept side by side against the
+# same sources, every test agreed, failures included, down to the same
+# _testFailed address.  That is worth re-checking after any change that adds an
+# uninitialised register, because --x-assign/--x-initial fast make verilator
+# two-state what icarus would propagate as X, and a design that leans on X
+# would diverge here rather than in the RTL.
+#
+# -j 0 uses every core for the C++ build; the run itself is single-threaded, so
+# a sweep still wants one process per test.
+VOBJ2 = build/vobj2
+
+acid2v: $(VOBJ2)/tb_acid2v
+	@./$< +TEST=$(TEST)
+
+$(VOBJ2)/tb_acid2v: tb_acid.sv $(A8_CORE_SRC) | build
+	verilator --binary --timing -j 0 -Wno-fatal \
+	    --x-assign fast --x-initial fast \
+	    -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f -GUSE_ANTIC2=1 \
+	    --top-module tb_acid --Mdir $(VOBJ2) -o tb_acid2v \
+	    $(A8_CORE_SRC) tb_acid.sv
 
 antic_wb_adapt: build/tb_antic_wb_adapt.vvp
 	@vvp -N $<
