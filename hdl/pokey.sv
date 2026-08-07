@@ -141,8 +141,8 @@ module pokey #(
         .timer1_pulse         (timer1_pulse_w),
         .timer2_pulse         (timer2_pulse_w),
         .timer4_pulse         (timer4_pulse_w),
-        .ser_out_complete     (ser_out_complete),
-        .ser_out_ready_pulse  (ser_out_ready_pulse),
+        .ser_out_complete     (ser_out_complete_eff),
+        .ser_out_ready_pulse  (ser_out_ready_eff),
         .ser_in_byte_pulse    (ser_in_byte_pulse),
         .ser_in_byte          (ser_in_byte),
         .break_key_pulse      (break_key_pulse),
@@ -185,6 +185,37 @@ module pokey #(
         .timer2_pulse (timer2_pulse_w),
         .timer4_pulse (timer4_pulse_w)
     );
+
+    // ---- POKEY'S OWN TRANSMIT SHIFTER --------------------------------------
+    //
+    // This was written and unit-tested and then never instantiated: pokey took
+    // ser_out_complete / ser_out_ready_pulse as INPUTS for a future SIO state
+    // machine, and a8_core tied them to 1'b1 / 1'b0.  With the ready pulse
+    // wired to a constant zero the serial-output IRQ (IRQEN bit 4) could never
+    // fire at all, which is why pokey_serclock's MeasureSerOutRate returned 0
+    // where it wanted 40.
+    //
+    // The external ports stay, because a real SIO can still drive them: idle is
+    // the AND (the line is only free if both agree it is) and the ready pulse is
+    // the OR.  With a8_core's tie-offs that leaves the shifter in charge.
+    wire ser_out_ready_int, ser_out_complete_int, ser_out_bit_w;
+
+    pokey_serial u_serial (
+        .clk(clk), .rst(rst),
+        .skctl(skctl_out),
+        .timer2_pulse(timer2_pulse_w),
+        .timer4_pulse(timer4_pulse_w),
+        .ext_clk_tick(1'b0),
+        .serout_byte(serout_byte),
+        .serout_strobe(serout_strobe),
+        .ser_out_ready_pulse(ser_out_ready_int),
+        .ser_out_complete(ser_out_complete_int),
+        .ser_out_bit(ser_out_bit_w),
+        .dbg_bitcnt(), .dbg_holding_valid()
+    );
+
+    wire ser_out_complete_eff = ser_out_complete    & ser_out_complete_int;
+    wire ser_out_ready_eff    = ser_out_ready_pulse | ser_out_ready_int;
 
     // M23-7 — pokey_i2s_tx now lives at antic_top level so it can mix
     // both POKEYs (left at $D20x, right at $D21x) into the HDMI audio

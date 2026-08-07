@@ -96,11 +96,14 @@ module tb_pokey_serial;
             $display("FAIL T3c: start bit not low (got %b)", ser_out_bit); fail++;
         end
 
-        // ---- T4: a full frame is 10 shift ticks --------------------------
-        // One tick already consumed by the transfer above, so 9 more complete it.
-        for (int i = 0; i < 9; i++) t2_tick();
+        // ---- T4: a full frame is 20 shift ticks --------------------------
+        // The timer makes the serial clock's EDGES, so a bit time is TWO
+        // underflows and ten bit times are twenty ticks (emu pokey_timer.c:574,
+        // which pins it against pokey_serclock's VCOUNT delta of 40).  One tick
+        // was consumed by the transfer above, so 19 more complete it.
+        for (int i = 0; i < 19; i++) t2_tick();
         if (!ser_out_complete) begin
-            $display("FAIL T4: frame not finished after 10 ticks (bitcnt=%0d)", dbg_bitcnt);
+            $display("FAIL T4: frame not finished after 20 ticks (bitcnt=%0d)", dbg_bitcnt);
             fail++;
         end
         if (ready_count != 1) begin

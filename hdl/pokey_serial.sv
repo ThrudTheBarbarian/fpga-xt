@@ -50,7 +50,7 @@ module pokey_serial (
 
     output logic       ser_out_ready_pulse, // 1-clk: SEROUT -> shifter (bit 4)
     output logic       ser_out_complete,    // LEVEL: shifter idle    (bit 3)
-    output logic       ser_out_bit,         // serial data out
+    output wire        ser_out_bit,         // serial data out
 
     // ---- debug taps ------------------------------------------------------
     output logic [3:0] dbg_bitcnt,
@@ -68,11 +68,21 @@ module pokey_serial (
 
     logic [7:0] holding_q;
     logic       holding_valid_q;
+    // FORCE BREAK (SKCTL bit 7) DRIVES THE OUTPUT TO SPACE.  emu's ser_out_bit()
+    // tests it before anything else, and two-tone keys timer 2 off this level,
+    // so it has to be visible outside.  An idle line sits at MARK.
+    logic       ser_out_bit_q;
+    assign ser_out_bit = skctl[7] ? 1'b0 : ser_out_bit_q;
+
     logic [9:0] shifter_q;        // {stop, data[7:0], start} shifted right
-    logic [3:0] bitcnt_q;         // 0 = idle, else bits remaining
+    // TWENTY TICKS CARRY TEN BIT TIMES.  Each bit occupies TWO shift clocks --
+    // emu indexes the frame as `i = (20 - ser_bits) / 2` -- so a ten-tick frame
+    // runs the line at twice the right rate.  pokey_serclock measures it
+    // directly: with ten ticks it read 20 where the timer-4 case wants 40.
+    logic [4:0] bitcnt_q;         // 0 = idle, else TICKS remaining
     logic       shifting_q;
 
-    assign dbg_bitcnt        = bitcnt_q;
+    assign dbg_bitcnt        = bitcnt_q[3:0];
     assign dbg_holding_valid = holding_valid_q;
 
     always_ff @(posedge clk or posedge rst) begin
@@ -80,11 +90,11 @@ module pokey_serial (
             holding_q           <= 8'h00;
             holding_valid_q     <= 1'b0;
             shifter_q           <= 10'h3FF;
-            bitcnt_q            <= 4'd0;
+            bitcnt_q            <= 5'd0;
             shifting_q          <= 1'b0;
             ser_out_ready_pulse <= 1'b0;
             ser_out_complete    <= 1'b1;   // idle at reset
-            ser_out_bit         <= 1'b1;   // mark
+            ser_out_bit_q       <= 1'b1;   // mark
         end else begin
             ser_out_ready_pulse <= 1'b0;   // pulse default
 
@@ -97,29 +107,31 @@ module pokey_serial (
 
             if (shift_tick) begin
                 if (shifting_q) begin
-                    // emit the next bit; the frame is 10 ticks long
-                    ser_out_bit <= shifter_q[0];
-                    shifter_q   <= {1'b1, shifter_q[9:1]};
-                    if (bitcnt_q == 4'd1) begin
+                    // A new bit every OTHER tick: advance when the count about
+                    // to be loaded is even, which is emu's `i` stepping.
+                    if (bitcnt_q == 5'd1) begin
                         shifting_q       <= 1'b0;
-                        bitcnt_q         <= 4'd0;
+                        bitcnt_q         <= 5'd0;
                         ser_out_complete <= 1'b1;
                     end else begin
-                        bitcnt_q <= bitcnt_q - 4'd1;
+                        bitcnt_q <= bitcnt_q - 5'd1;
+                        if (bitcnt_q[0]) begin
+                            ser_out_bit_q <= shifter_q[0];
+                            shifter_q     <= {1'b1, shifter_q[9:1]};
+                        end
                     end
                 end else if (holding_valid_q) begin
                     // shifter idle and a byte is waiting: TRANSFER.  This is
                     // the instant pokey_sertiming measures.
                     shifter_q           <= {1'b1, holding_q, 1'b0};  // stop,data,start
-                    // The transfer tick ITSELF emits the start bit, so 9
-                    // remain (8 data + stop) for a 10-tick frame.  Loading 10
-                    // here makes an 11-tick frame and the bit rate is wrong.
-                    bitcnt_q            <= 4'd9;
+                    // The transfer tick ITSELF emits the start bit, so 19 of
+                    // the frame's 20 ticks remain.
+                    bitcnt_q            <= 5'd19;
                     shifting_q          <= 1'b1;
                     holding_valid_q     <= 1'b0;
                     ser_out_complete    <= 1'b0;
                     ser_out_ready_pulse <= 1'b1;
-                    ser_out_bit         <= 1'b0;                     // start bit
+                    ser_out_bit_q       <= 1'b0;                     // start bit
                 end
             end
         end

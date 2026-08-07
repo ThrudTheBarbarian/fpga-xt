@@ -446,6 +446,30 @@ module tb_acid #(
         end
     end
 
+    // POKEY SERIAL RATE CALIBRATION.  emu (pokey_timer.c:574) says a byte is
+    // TWENTY timer underflows, because the timer makes the serial clock's
+    // EDGES -- a bit time is two underflows.  If our shift_tick runs at the
+    // underflow rate rather than half it, a 20-tick frame comes out twice as
+    // fast and pokey_serclock reads 20 where it wants 40.  Count both and the
+    // ratio settles it.  +SERRATE.
+    int SERRATE = -1;
+    initial if (!$value$plusargs("SERRATE=%d", SERRATE)) SERRATE = -1;
+    integer n_t4 = 0, n_t2 = 0, n_shift = 0, n_ready = 0, n_line = 0;
+    always_ff @(posedge clk) begin
+        if (!rst && SERRATE >= 0) begin
+            if (dut.u_pokey.timer4_pulse_w)          n_t4    <= n_t4 + 1;
+            if (dut.u_pokey.timer2_pulse_w)          n_t2    <= n_t2 + 1;
+            if (dut.u_pokey.u_serial.shift_tick)     n_shift <= n_shift + 1;
+            if (dut.u_pokey.ser_out_ready_int)       n_ready <= n_ready + 1;
+            if (tick && dut.u_antic2.hcount == 7'd0) n_line  <= n_line + 1;
+        end
+    end
+    final begin
+        if (SERRATE >= 0)
+            $display("SERRATE t4=%0d t2=%0d shift=%0d ready=%0d lines=%0d",
+                     n_t4, n_t2, n_shift, n_ready, n_line);
+    end
+
     // RAW XMR CALIBRATION.  Three probes into antic2 have read as constant
     // zero while the design demonstrably works.  Before building anything else
     // on those hierarchical paths, print the raw values of every signal the
