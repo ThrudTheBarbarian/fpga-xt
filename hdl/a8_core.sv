@@ -163,13 +163,17 @@ module a8_core #(
     assign cpu_wdata = c_dout;
     assign cpu_we    = !c_rw && c_rdy && (c_sub == 8'(SUB_DATA));
 
-    // $D000-$D0FF is GTIA, $D200-$D2FF is POKEY, $D400-$D4FF is ANTIC.
+    // $D000-$D0FF is GTIA, $D200-$D2FF is POKEY, $D300-$D3FF is the PIA,
+    // $D400-$D4FF is ANTIC.
     wire cs_gtia  = (c_addr[15:8] == 8'hD0);
     wire cs_pokey = (c_addr[15:8] == 8'hD2);
+    wire cs_pia   = (c_addr[15:8] == 8'hD3);
     wire cs_antic = (c_addr[15:8] == 8'hD4);
     wire [7:0] reg_rdata;
     wire [7:0] pokey_rdata;
     wire       pokey_irq_n;
+    wire [7:0] pia_rdata;
+    wire       pia_irq_n;
 
     always_comb begin
         if      (USE_ANTIC2 && cs_antic) c_din = a2_rdata;
@@ -180,6 +184,7 @@ module a8_core #(
         else if (USE_ANTIC2 && cs_gtia)  c_din = a2_gtia_rdata;
         else if (cs_gtia || cs_antic)    c_din = reg_rdata;
         else if (cs_pokey)               c_din = pokey_rdata;
+        else if (cs_pia)                 c_din = pia_rdata;
         else                             c_din = cpu_rdata;
     end
 
@@ -187,7 +192,7 @@ module a8_core #(
         .clk(clk), .rst(rst), .phi2_tick(tick),
         .addr(c_addr), .data_in(c_din), .data_out(c_dout), .rw(c_rw),
         .rdy(c_rdy),
-        .irq_n(irq_n && pokey_irq_n), .nmi_n(nmi_n_eff),
+        .irq_n(irq_n && pokey_irq_n && pia_irq_n), .nmi_n(nmi_n_eff),
         .sync(sync), .dbg_pc(dbg_pc),
         .dbg_a(dbg_a), .dbg_x(dbg_x), .dbg_y(dbg_y),
         .dbg_s(dbg_s), .dbg_p(dbg_p),
@@ -313,6 +318,20 @@ module a8_core #(
     // is tied off. The ACID tests exercise the timers, IRQs, RANDOM and SKSTAT,
     // none of which depend on those.
     wire pokey_re = c_rw && cs_pokey && (c_sub == 8'(SUB_DATA));
+
+    // THE PIA ($D300-$D37F, mirrored to $D3FF).  It was written but never
+    // wired: a8_core had no $D3xx decode at all, so every PIA read returned
+    // open bus $FF -- which is exactly what pia_basic (wants $00) and pia_irq
+    // (wants $3F) were reporting.  The joystick pins are unwired here and read
+    // as all-released, per the module's own default.
+    pia_regs u_pia (
+        .clk(clk), .rst(rst),
+        .we(cpu_we && cs_pia), .waddr(c_addr), .wdata(c_dout),
+        .raddr(c_addr), .rdata(pia_rdata),
+        .joy_porta_in(8'hFF), .joy_portb_in(8'hFF),
+        .joy_porta_oe(), .joy_portb_oe(),
+        .pia_irq_n(pia_irq_n)
+    );
 
     pokey #(.CLK_BUS_HZ(CLK_HZ)) u_pokey (
         .clk(clk), .rst(rst), .cold_boot(cold),

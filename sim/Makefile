@@ -48,7 +48,7 @@ HDL_SRCS := \
     $(HDL_DIR)/pokey_audio.sv     \
     $(HDL_DIR)/pokey_pot.sv       \
     $(HDL_DIR)/pokey_i2s_tx.sv    \
-    $(HDL_DIR)/pokey.sv           \
+    $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv           \
     $(HDL_DIR)/sally_clock.sv     \
     $(HDL_DIR)/bank_xlat.sv       \
     $(HDL_DIR)/sally_mem.sv       \
@@ -347,7 +347,7 @@ POKEY_HDL := \
     $(HDL_DIR)/pokey_audio.sv    \
     $(HDL_DIR)/pokey_pot.sv      \
     $(HDL_DIR)/pokey_i2s_tx.sv   \
-    $(HDL_DIR)/pokey.sv
+    $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv
 
 $(BUILD_DIR)/tb_pokey.vvp: $(POKEY_HDL) tb_pokey.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pokey $(POKEY_HDL) tb_pokey.sv
@@ -499,7 +499,7 @@ BOOT_ANTIC_HDL := \
     $(HDL_DIR)/pokey_audio.sv     \
     $(HDL_DIR)/pokey_pot.sv       \
     $(HDL_DIR)/pokey_i2s_tx.sv    \
-    $(HDL_DIR)/pokey.sv           \
+    $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv           \
     $(HDL_DIR)/pcm1808_rx.sv      \
     $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_seq.sv       \
@@ -1502,7 +1502,7 @@ build/tb_antic_gtia.vvp: tb_antic_gtia.sv $(ANTIC_GTIA_SRC) | build
 # a8_core now instantiates POKEY: the design has one, and without it the
 # suite loses the whole pokey_* family plus antic_dmapattern and
 # antic_wsync, which MEASURE through RANDOM at $$D20A.
-POKEY_SRC = $(HDL_DIR)/pokey.sv $(HDL_DIR)/pokey_regs.sv \
+POKEY_SRC = $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv $(HDL_DIR)/pokey_regs.sv \
 	    $(HDL_DIR)/pokey_audio.sv $(HDL_DIR)/pokey_pot.sv
 
 ANTIC2_SRC = $(HDL_DIR)/antic2.sv $(HDL_DIR)/antic2_seq.sv \
