@@ -302,6 +302,22 @@ module pokey_audio #(
     // ch2/ch4 paired mode (AUDCTL[4]/[3]): decrement only when the
     // partner channel wraps — the 16-bit-divider behaviour.
     logic [7:0] ch1_cnt, ch2_cnt, ch3_cnt, ch4_cnt;
+
+    // ---- A LATE AUDF WRITE RE-LENGTHENS THE PERIOD IN FLIGHT ---------------
+    // emu pokey_timer.c:286-295 + 355-363.  An AUDF write does not merely set
+    // the value the NEXT reload will take: for CH_LATCH_LAG cycles after an
+    // underflow the period already running is still open to it, and the counter
+    // is re-seeded to `period - age`.  pokey_timertiming brackets the window
+    // from both sides rather than describing it -- AUDCTL $40, AUDF1 $10
+    // (period 20), STIMER, then AUDF1 := $12 (period 22): written 22 cycles
+    // after STIMER it must lengthen the next period (bit readable at
+    // 46 = 4 + 20 + 22, checked at +45 and +46) and written at 23 it must not
+    // (44 = 4 + 20 + 20, checked at +43 and +44).  The underflow is at +20, so
+    // the window admits an age of 2 and rejects 3.
+    localparam int CH_LATCH_LAG = 3;
+    logic [7:0] ch1_age;
+    logic [7:0] audf1_q;
+    wire        audf1_wr = (audf1 != audf1_q);
     logic       ch1_state, ch2_state, ch3_state, ch4_state;
 
     // High-freq mode: count on phi2_tick (1.79 MHz machine clock pulse).
@@ -497,6 +513,7 @@ module pokey_audio #(
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             ch1_cnt <= 8'h00; ch1_state <= 1'b0;
+            ch1_age <= 8'd0; audf1_q <= 8'h00;
             ch1_first <= 1'b0; ch3_first <= 1'b0;
             ext1_q <= 1'b0; ext3_q <= 1'b0;
             ch2_cnt <= 8'h00; ch2_state <= 1'b0;
@@ -516,6 +533,17 @@ module pokey_audio #(
                 end else
                     ch1_cnt <= ch1_cnt - 8'h01;
             end
+            // Cycles since ch1's reload -- emu's ch_age, cleared by the reload
+            // and by STIMER's explicit load.
+            audf1_q <= audf1;
+            if (stimer_apply)                        ch1_age <= 8'd0;
+            else if (ch1_tick && ch1_cnt == 8'h00)   ch1_age <= 8'd0;
+            else if (phi2_tick && ch1_age != 8'hFF)  ch1_age <= ch1_age + 8'd1;
+            // The rewrite itself.  Last assignment wins, so this overrides the
+            // decrement above on the cycle the write lands.  Unlinked and
+            // fast-clocked only: the linked pair has its own window.
+            if (audf1_wr && !ch12_paired && audctl[6] && ch1_age < 8'(CH_LATCH_LAG))
+                ch1_cnt <= (audf1 + 8'd3) - ch1_age;
             // ---- ch2: high timer of pair {1,2} ----
             // ch2_tick = ch1_wrap when paired (so ch2 advances on
             // every ch1 underflow); otherwise ch2 ticks on ref_tick.
