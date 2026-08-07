@@ -75,6 +75,48 @@ va_end(ap);
 
 Supported `va_arg` types: `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `float`, `double`, `string` (`u8*`), and `T*` for any pointer-to-type.
 
+### Forwarding the whole tail
+
+A variadic that only wants to *pass its arguments on* writes `...` in the
+argument position. This is the wrapper every C programmer reaches for and cannot
+write in C without a `v`-variant:
+
+```c
+void logf(string fmt, ...)
+{
+    Stdio.print("[log] ");
+    Stdio.printf(fmt, ...);        // pass my own tail through
+}
+
+logf("a=%d b=%s\n", (u16)222, "hi");   // [log] a=222 b=hi
+```
+
+It nests, so a factory can forward into a method that forwards again — which is
+how `String.withFormat` and `appendFormat` share one parse loop.
+
+Two rules, both checked:
+
+- `...` is only legal **inside a function declared `...`**.
+- That function must **not read its own arguments**. A `va_start` here has
+  already consumed the tail, so forwarding it as well is a contradiction and is
+  rejected.
+
+Nothing may follow the `...`; it forwards everything.
+
+:::note[Why this is free]
+On most targets a variadic's arguments are packed by the **caller** into a
+shared buffer, so a function that never repacks leaves them there and whatever
+it calls reads the original caller's. Forwarding is the *absence* of a repack,
+not a copy — there is no cost to it.
+
+arm9 is the exception: its varargs travel in registers, so a forwarder there
+relays its tail into the callee's argument slots. To keep that relay honest,
+an xtc variadic on arm9 starts its tail 8-byte aligned, which plain AAPCS does
+not require — without it a `double` forwarded between functions with different
+named-argument counts would be read a word out. It costs a bounded copy and is
+otherwise invisible.
+:::
+
 ### Pointer-to-struct from varargs
 
 `va_arg(ap, T*)` where `T` is a user-defined struct returns a typed pointer **into the pack buffer** pointing at the struct's raw bytes, and advances the cursor by `sizeof(T)`. Read fields through the returned pointer with `->`:

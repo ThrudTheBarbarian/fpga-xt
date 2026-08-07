@@ -54,6 +54,15 @@ u32 factorial(u16 n)
 // A default-free "out parameter" is just a pointer.
 void bump(u16* slot, u16 by) { *slot = *slot + by; }
 
+// A pure FORWARDER: it declares `...`, reads none of its own arguments, and
+// passes the tail on with `...` in the argument position. Both rules are
+// checked — a function that called `va_start` here could not also forward.
+void logf(string fmt, ...)
+{
+    Stdio.print("[log] ");
+    Stdio.printf(fmt, ...);
+}
+
 i32 main(void)
 {
     // Overloads resolve on the argument types.
@@ -74,6 +83,9 @@ i32 main(void)
 
     // Varargs.
     Stdio.printf("sum %ld\n", sumOf((u16)4, (u16)10, (u16)20, (u16)30, (u16)40));
+
+    // Forwarding the whole variadic tail — the wrapper C needs a v-variant for.
+    logf("forwarded a=%d s=%s\n", (u16)222, "hi");
 
     // Recursion.
     Stdio.printf("10! = %ld\n", factorial((u16)10));
