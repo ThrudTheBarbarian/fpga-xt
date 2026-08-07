@@ -1051,9 +1051,13 @@ module tb_acid #(
         // SIX, not four.  gtia_pmoverlap's message is "Pass %d.%d: Pos=%x,
         // Expected %x, Got %x" and the two that say what actually went wrong
         // are d4 and d5 -- stopping at d3 reports only WHERE it failed.
-        $display("ACID %0s: d0=%02h d1=%02h d2=%02h d3=%02h d4=%02h d5=%02h",
+        // EIGHT, not six.  antic_charcontrol builds its EXPECTED value at run
+        // time (testres is filled from the collision registers) and reports it
+        // in d6 -- without it the got value alone says nothing about what the
+        // glyph should have collided with.
+        $display("ACID %0s: d0=%02h d1=%02h d2=%02h d3=%02h d4=%02h d5=%02h d6=%02h d7=%02h",
                  tname, mem[16'h00C8], mem[16'h00C9], mem[16'h00CA], mem[16'h00CB],
-                 mem[16'h00CC], mem[16'h00CD]);
+                 mem[16'h00CC], mem[16'h00CD], mem[16'h00CE], mem[16'h00CF]);
         $finish;
     end
 
