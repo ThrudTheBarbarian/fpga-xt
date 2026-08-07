@@ -329,7 +329,8 @@ module pokey_audio #(
     // M23-6: timer pulses go to pokey_regs' IRQ latch (ch1/ch2/ch4 only;
     // POKEY provides no TIMER 3).
     assign timer1_pulse = ch1_wrap;
-    assign timer2_pulse = ch2_wrap;
+    // timer2_pulse is assigned below, after ch12_paired is declared --
+    // a LINKED pair's interrupt edge lags its serial-clock edge.
     assign timer4_pulse = ch4_wrap;
 
     // Per-channel "next-state" function — what the channel becomes on
@@ -362,6 +363,33 @@ module pokey_audio #(
     // period = (AUDF_low + 256·AUDF_high + 1) tick units in ref-clock
     // mode (Altirra §5.3 "Linked timers").
     wire ch12_paired = audctl[4];
+
+    // A LINKED PAIR'S INTERRUPT EDGE LAGS ITS SERIAL-CLOCK EDGE by three
+    // machine cycles.  emu carries this as PAIR_IRQ_LAG, measured rather than
+    // chosen, and pokey_timertiming is what pins it: with AUDF1 = 16 the low
+    // half's interrupt lands at 19/20 and the high half's three cycles later,
+    // so the test can require IRQST bit 1 STILL SET at +22 while bit 0 has
+    // ALREADY cleared -- both interrupts live at once.  Without the lag the
+    // pair wraps on the very ch1_wrap that raises timer 1 (AUDF2 = 0 leaves
+    // ch2_cnt at zero out of STIMER), both bits clear together, and the +22
+    // check reads "1.79MHz 16-bit hi timer triggered too early".
+    //
+    // The lag applies to EVERY pair underflow, not just the first after
+    // STIMER, and only while the pair is linked AND on the machine clock --
+    // the slow-clock and unlinked paths keep the bare wrap.
+    localparam int PAIR_IRQ_LAG = 3;
+    wire pair_irq_lagged = ch12_paired && audctl[6];
+
+    logic [PAIR_IRQ_LAG-1:0] t2_lag_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)            t2_lag_q <= '0;
+        else if (phi2_tick) t2_lag_q <= {t2_lag_q[PAIR_IRQ_LAG-2:0], ch2_wrap};
+    end
+
+    // t2_lag_q updates ON phi2_tick, so sampling it AGAINST that same tick
+    // reads the value from three ticks ago -- a one-clock pulse, delayed.
+    assign timer2_pulse = pair_irq_lagged ? (t2_lag_q[PAIR_IRQ_LAG-1] & phi2_tick)
+                                          : ch2_wrap;
     wire ch34_paired = audctl[3];
 
     // ---- Machine-clock period fudge (audit fix #7) ----
