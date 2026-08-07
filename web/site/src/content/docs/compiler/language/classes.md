@@ -21,7 +21,7 @@ class Gfx {
 
 Pick whichever fits the lifetime — the syntax tells the compiler everything it needs.
 
-In what follows, the **enclosing scope** of a declaration is the block — delimited by `{ }` or `(( ))` — that contains the declaration. That's usually a function body, a loop body, or a branch of an `if` or `switch`. When the closing brace executes, the variable falls out of scope: its storage stops being live, and (under default ARC) any heap reference it held is automatically released.
+In what follows, the **enclosing scope** of a declaration is the block — delimited by `{ }` — that contains the declaration. That's usually a function body, a loop body, or a branch of an `if` or `switch`. When the closing brace executes, the variable falls out of scope: its storage stops being live, and (under default ARC) any heap reference it held is automatically released.
 
 ### Stack instance
 
@@ -29,7 +29,24 @@ In what follows, the **enclosing scope** of a declaration is the block — delim
 MyClass mine;          // zero-filled, init() runs, storage reclaimed at scope exit
 ```
 
-A bare `MyClass mine;` allocates the instance directly in the enclosing scope's local storage — zero-page if the ivars fit, spilled to the data section otherwise. The storage is zero-filled on entry to the scope, the parameterless `init()` (if present) runs automatically, and the bytes are reused as soon as the scope closes. **No heap touch.** Safe to declare inside a loop body because the same storage is reused across iterations.
+A bare `MyClass mine;` allocates the instance directly in the enclosing scope's
+local storage. It is zero-filled on entry to the scope, the parameterless
+`init()` (if present) runs automatically, and the bytes are reused as soon as
+the scope closes. **No heap touch**, so it is safe to declare inside a loop
+body — the same storage serves every iteration.
+
+Where "local storage" actually is depends on the target, and only matters when
+you are counting bytes:
+
+| Target | A stack instance lives in |
+|---|---|
+| `arm64`, `x86_64`, `win64`, `arm9`, `m68k` | the function's stack frame, like any other local |
+| `xt6502` | the SP-relative frame, with small hot ivars promoted into zero page where they fit |
+
+The semantics are identical either way. The only practical difference is scale:
+on xt6502 a large stack instance competes for a scarce resource, so a class
+with many ivars is often better on the heap; on the register machines a stack
+frame is cheap and the question rarely arises.
 
 ### Heap instance
 

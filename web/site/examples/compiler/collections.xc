@@ -20,16 +20,10 @@ class Point : Object
 
     // `description` is what `%@` prints. Object supplies a default; override it
     // and every %@, every container dump and every debug print follows.
-    // `appending` returns a NEW string — `append` mutates the receiver.
-    String* description(void)
-    {
-        String* s = String.withCString("(");
-        s.append(String.withI32(x));
-        s.appendCString("|");
-        s.append(String.withI32(y));
-        s.appendCString(")");
-        return s;
-    }
+    //
+    // `String.withFormat` takes the same specifiers Stdio.printf does, which is
+    // what makes this one line rather than a run of appends.
+    String* description(void) { return String.withFormat("(%ld|%ld)", x, y); }
 }
 
 i32 main(void)

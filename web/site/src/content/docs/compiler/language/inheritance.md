@@ -38,7 +38,7 @@ Both chains walk all the way up to `Object`. You can write the chaining explicit
 
 ## Virtual dispatch
 
-Overridden methods dispatch through a per-class **vtable**. Every class gets a unique class-id byte, `new` stamps it into the first byte of the allocation, and a call site reads the id and indexes the class's vtable for the method slot.
+Overridden methods dispatch through a per-class **vtable**. Every class gets a unique 16-bit **class id**, `new` stamps it into the first word of the allocation, and a call site reads the id and indexes the class's vtable for the method slot. Sixteen bits, not eight — a program is not limited to 255 classes, and the RTTI check below depends on the full width.
 
 Methods that are **never overridden** keep a direct `JSR` — the vtable only kicks in when it actually has something to resolve.
 
@@ -77,7 +77,9 @@ Cat* c   = (Cat* ?)a;    // c == 0; a isn't a Cat
 Dog* d2  = (Dog*)a;      // succeeds; no check fires on match
 ```
 
-The check itself is the class-id byte `new` stamped at payload offset 0, walked up the `__class_parent` table until the target's id matches or the walk hits `Object`.
+The check itself is the 16-bit class id `new` stamped at payload offset 0, walked up the `__class_parent` table until the target's id matches or the walk hits `Object`.
+
+Slot 0 does double duty: a class that needs a vtable stores its vtable *pointer* there instead. The two are told apart by magnitude — a class id is below `0xFFFF` and any real vtable address is above it — which is why the id has to be a full 16-bit value rather than a byte.
 
 ### Rules at a glance
 

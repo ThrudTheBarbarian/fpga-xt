@@ -89,6 +89,9 @@ static void printfAt(u8 x, u8 y, string fmt, ...);
 | `%ld` | `i32` | signed decimal, 32-bit |
 | `%lu` | `u32` | unsigned decimal, 32-bit |
 | `%lx` | `u32` | hex, 8 digits |
+| `%lld` | `i64` | signed decimal, 64-bit |
+| `%llu` | `u64` | unsigned decimal, 64-bit |
+| `%llx` | `u64` | hex, 16 digits |
 | `%f` | `float` | floating-point |
 | `%lf` | `double` | double-precision floating-point |
 | `%c` | `u8` | character (no width promotion) |

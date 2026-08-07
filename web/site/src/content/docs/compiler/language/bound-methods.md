@@ -56,15 +56,6 @@ if (action == 0) { return; }
 if (action) { action(arg); }
 ```
 
-:::note
-`f == 0` on a two-word value has to compare both halves and AND the results.
-Getting that wrong produced a famously confusing bug — `f == 0` and `f != 0` were
-*both* true on one target, because the condition was being read off something
-that was not a function of the operands (compiler bug 022, since fixed). If you
-ever see that shape again, it is not an inverted predicate; `==` and `!=` cannot
-both hold.
-:::
-
 ## The receiver is part of the value
 
 Two bindings of the same method to different objects are different callbacks, and

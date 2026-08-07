@@ -12,14 +12,9 @@ asm {
     lda #$ff;
     sta $D40E;          // disable VBLANK interrupts
 }
-
-asm ((
-    lda #$ff;
-    sta $D40E;
-))
 ```
 
-`{ ... }` and `(( ... ))` are interchangeable, exactly as in xtc statement bodies.
+The body is delimited by `{ ... }`, exactly as an xtc statement body is.
 
 By default the compiler scans the block, determines which registers it thinks will be written, and emits save / restore around the block. That is usually what you want — but if your block has *intended* side effects on a register the compiler thinks you didn't touch (or vice versa), you can override with a `clobbers` annotation:
 

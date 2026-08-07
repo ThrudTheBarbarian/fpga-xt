@@ -15,7 +15,7 @@ support/
     Number.xc  String.xc  Data.xc  Array.xc  Map.xc  Set.xc  CharacterSet.xc
     Comparable.xc  Hashable.xc  Enumerable.xc  Copying.xc  Error.xc   ← protocols
     Thread.xc  Mutex.xc  Cond.xc  Sem.xc  Atomic.xc  ThreadLocal.xc  Pool.xc
-    Assert.xc  Sort.xc  Memory.xc
+    Assert.xc  Sort.xc
     Platform.xc         ← auto-included prelude
   arm64/lib/          ← macOS / Linux on 64-bit ARM
     Stdio.xc  Math.xc  Time.xc  Heap.xc  FILE.xc  Files.xc  Process.xc
@@ -30,7 +30,7 @@ support/
   atarist/lib/        ← Atari ST / TT (m68k)
     Stdio.xc  Math.xc  Time.xc  Heap.xc  FILE.xc  Gfx*.xc  Platform.xc
   xt6502/lib/         ← the banked 6502
-    Stdio.xc  Math.xc  Time.xc  Heap.xc  System.xc  Vbi.xc  FILE.xc
+    Stdio.xc  Math.xc  Time.xc  Heap.xc  System.xc  Vbi.xc  FILE.xc  Memory.xc
     Array.xc  Map.xc  Set.xc  String.xc  Data.xc  Number.xc   ← 6502 Foundation build
     Enumerable.xc  Hashable.xc                                ← 6502-width protocols
     Gfx*.xc  GfxFactory.xc  mapData.xc  symbols.xc  Platform.xc
@@ -48,7 +48,7 @@ The compiler's `#import` machinery searches the active target's directory first,
 `Platform.xc` is the odd one out: the compiler emits an implicit `#import "Platform.xc"` before every compilation, so it is the seam where a target's system bindings live and the user's source stays platform-agnostic. Every shipped copy is currently an empty placeholder.
 
 :::caution[Not everything in `generic/lib/` is portable]
-`Memory.xc` lives there but its bodies are inline **6502** assembly — a program that calls `Memory.memset` / `Memory.memclr` fails to assemble on the native backends. Treat it as an xt6502 class that happens to sit in the shared directory. `Assert` and `Sort` really are portable.
+Everything in `generic/lib/` works on every target. `Memory.xc` used to sit there and did not — its bodies are inline **6502** assembly — so it now lives in `xt6502/lib/` where it belongs. There is deliberately no placeholder: importing it on another target is a missing-class error naming the file, which is a better outcome than a class that compiles and silently does nothing.
 :::
 
 ## How `static` makes calling concise
@@ -97,7 +97,7 @@ Bare-call promotion (`use Stdio;` and the `#use` shorthand) is documented under 
 | [`System`](/compiler/api/system/) | process control (`exit`) | `xt6502/lib/` only |
 | [`Assert`](/compiler/api/assert/) | test-fixture assertion helpers; gated to no-ops by `-DNDEBUG` / `-DRELEASE` | `generic/lib/` |
 | [`Sort`](/compiler/api/sort/) | in-place quicksort with a user-supplied comparator | `generic/lib/` |
-| [`Memory`](/compiler/api/memory/) | bulk `memset` / `memclr` / `memcpy` / `memmove` | `generic/lib/`, but **xt6502 only** (see above) |
+| [`Memory`](/compiler/api/memory/) | bulk `memset` / `memclr` / `memcpy` / `memmove` | `xt6502/lib/` — **xt6502 only** |
 
 Not on the site yet, and landing in a follow-up pass: the graphics classes (`Gfx`, `Gfx6`/`7`/`8`/`15`, `GfxFactory`), `FILE` (a `stdio`-shaped file layer, on both live targets), and the `mapData` / `symbols` helpers.
 

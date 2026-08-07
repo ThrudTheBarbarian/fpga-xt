@@ -23,11 +23,24 @@ MyClass* mob = new MyClass[8];      // array of class instances
 
 ## Automatic reference counting (ARC)
 
-By default (`-farc` is on), the compiler manages reference counts automatically. Every heap block carries a 4-byte header immediately before the payload:
+By default (`-farc` is on), the compiler manages reference counts automatically. Every heap block carries a header immediately before the payload, and its shape is **per target** — one thing is common to all of them, which is that the 16-bit retain count sits at `obj-2`, so the retain/release sequence the back ends emit is the same everywhere.
+
+**xt6502** — a 7-byte header in a hand-written coalescing free list:
 
 - 15-bit size
 - 1 free-flag bit
 - 16-bit retain count
+
+The size field is 15 bits because the free flag takes the top bit of the second
+byte, so a single block caps at **32 KB** there. In practice a single allocation
+is capped lower still — one heap block lives inside one bank — see
+[Memory models](/compiler/usage/memory-models/).
+
+**arm64, x86_64, win64, arm9, m68k** — a 24-byte header over the host
+allocator, carrying a `'BOTX'` cookie, the element stride, the element count,
+the `dealloc` pointer, and the same 16-bit refcount at `obj-2`. Size is a `u32`
+count × `u32` stride, so **there is no 15-bit limit** on these targets; a block
+is bounded by what the host allocator will give you.
 
 The compiler emits retain / release operations at the right places:
 

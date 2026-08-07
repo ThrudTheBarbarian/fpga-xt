@@ -13,31 +13,45 @@ u8  a, b = 1, 2;            // a = 1, b = 2
 u8  bytes[32];              // array
 u8  rgb[]   = {255, 0, 0};  // size inferred from initialiser
 RGB white   = {255, 255, 255};
-RGB white   = [255, 255, 255]; // [..] is interchangeable with {..}
 ```
 
-You may also initialise the **raw bytes** of any value, regardless of its type, using the brace / bracket form. Trailing missing bytes are zero-filled.
+You may also initialise the **raw bytes** of any value, regardless of its type, using the brace form. Trailing missing bytes are zero-filled.
 
 ### Storage modifiers
 
-| Modifier | Storage | Persistence | Visibility | ZP cost |
-|----------|---------|-------------|-------------|---------|
-| *(default)* | ZP | local scope | current block | yes |
-| `register` | ZP (priority) | local scope | current block | yes (forced) |
-| `volatile` | ZP | local scope | current block | yes |
-| `static` | data section | permanent | current file or block | no |
-| `global static` | data section | permanent | every file | no |
+| Modifier | Storage | Persistence | Visibility |
+|----------|---------|-------------|-------------|
+| *(default)* | fast storage | local scope | current block |
+| `register` | fast storage (priority) | local scope | current block |
+| `volatile` | fast storage | local scope | current block |
+| `static` | data section | permanent | current file or block |
+| `global static` | data section | permanent | every file |
 
 Examples:
 
 ```c
 volatile u16* dosvec = (u16*)10;  // both stores happen, even at -O3
-register u16* hot = $1234;        // priority on ZP allocation
+register u16  hot = (u16)0;       // priority on the fast storage class
 static  u16  hits = 0;            // persists across calls; file-scoped
 global static u16 totalHits = 0;  // persists, visible everywhere
 ```
 
-`register` is a hint to the zero-page allocator: the compiler scans for these before ordinary allocation, so they get first pick of the ZP slots. `volatile` disables the optimiser's store-elimination — every read and write becomes an actual memory access.
+**What "fast storage" is depends on the target**, and that is the point of
+naming it this way rather than after one machine's hardware:
+
+| Target | Fast storage means |
+|---|---|
+| `xt6502` | **zero page** — one byte of address instead of two, and the only place indirect addressing works at all. It is scarce (a couple of hundred bytes for the whole program), so the allocator rations it. |
+| `arm64`, `x86_64`, `win64`, `arm9`, `m68k` | **machine registers**, assigned by the backend's register allocator, spilling to the stack frame when they run out. Plentiful by comparison. |
+
+`register` is a *hint*, not a guarantee: it asks the allocator to consider this
+variable before ordinary locals, so on a target where the resource is scarce it
+gets first pick. On the register machines the allocator's own analysis is
+usually better, and the hint rarely changes anything.
+
+`volatile` is target-neutral: it disables the optimiser's store-elimination, so
+every read and write becomes an actual memory access. That is what you want for
+a hardware register.
 
 `typedef <type> alias;` introduces a type alias; see [Types → Type aliases](/compiler/language/types/#type-aliases-typedef).
 
@@ -53,7 +67,7 @@ if (x > 10) {
 }
 ```
 
-The condition is in round brackets; the body is a block (`{ }` or `(( ))`). `else` is optional.
+The condition is in round brackets; the body is a block (`{ }`). `else` is optional.
 
 ## Switch
 

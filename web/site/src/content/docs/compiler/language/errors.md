@@ -82,9 +82,14 @@ Propagation needs no syntax. A `throws` function that calls another `throws` fun
 i32 middle(u32 n) throws { i32 v = inner(n); return v + (i32)1; }
 ```
 
-:::caution[`throws` is for free functions today]
-The keyword parses on a class method, but the effect flag is not carried onto the method declaration, so a `throw` inside a method body is rejected with *"'throw' in a function not declared 'throws'"*. Put throwing work in free functions for now.
-:::
+`throws` works the same on class methods — instance and static — and on free
+functions: declaring, throwing, catching and the checked effect all behave
+identically, so nothing below distinguishes them.
+
+```c
+u16 a = p.parse(c);      // throws method, unguarded → rejected
+u16 b = parseFree(c);    // throws function, unguarded → rejected
+```
 
 ## `throw`
 

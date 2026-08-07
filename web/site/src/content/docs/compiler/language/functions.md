@@ -8,7 +8,7 @@ description: Declarations, tuple returns, varargs, overloading, function annotat
 A function is a return type, a name, a parenthesised parameter list, and a block:
 
 ```c
-u16 add(u8 a, u8 b) {
+u16 add(u16 a, u16 b) {
     return a + b;
 }
 
@@ -16,6 +16,14 @@ void greet(string name) {
     Stdio.printf("hello, %s\n", name);
 }
 ```
+
+:::note[The parameters are `u16`, deliberately]
+`u16 add(u8 a, u8 b)` would be misleading: `a + b` is a **u8** addition that
+wraps at 8 bits, and the `u16` return type does not change that — it converts
+the already-wrapped result on the way out. Widening is what the *assignment*
+does, never what the operator does. See
+[Types → Conversions](/compiler/language/types/#conversions).
+:::
 
 Forward declarations (signature without a body, terminated with `;`) work the same as in C, but they're rarely needed — xtc lets you call a function defined later in the same compilation unit. The main use of forward declarations is to declare external functions in headers.
 
@@ -134,34 +142,57 @@ string myValue(void) { ... }
 
 Annotations sit after the parameter list, separated by `:`. They control calling convention, prologue / epilogue shape, and where in the memory map the function lives. All annotations are case-insensitive.
 
+**Almost every annotation is xt6502-only.** They exist to control a machine with
+a 256-byte hardware stack, a banked address space and an OS ROM that can be
+mapped over RAM — none of which the register targets have. Grouped by where
+they apply:
+
+| Annotation | Applies to | Purpose |
+|---|---|---|
+| `:naked` | **all targets** | no prologue / epilogue at all |
+| `:hwStack` | xt6502 | use the 6502 hardware stack |
+| `:xtcStack` | xt6502 | use the xtc software stack throughout |
+| `:irq` | xt6502 | hardware-IRQ handler, ends with `RTI` |
+| `:vbi` | xt6502 | vertical-blank handler, chains through the OS |
+| `:needsOS` | xt6502 | wrap the body with ROM enable / disable |
+| `:banked` | xt6502 | force into the code-bank window |
+| `:main` | xt6502 | force into main RAM, opting out of auto-banking |
+| `:shadow` | xt6502 | place under the OS ROM — no shipped layout declares one |
+| `:cloaked` | *(retired)* | applied to the removed `xe` family; accepted but inert |
+
+On `arm64`, `x86_64`, `win64`, `arm9` and `m68k` the placement and stack
+annotations are **ignored** — those targets have one flat code space and a
+hardware stack that is not a scarce resource, so there is nothing to choose.
+`:naked` is the exception and means the same thing everywhere.
+
 ```c
-void fn(void) :naked      { ... }    // no register save, just user code
+void fn(void) :naked      { ... }    // no register save, just user code — all targets
+
+// xt6502 only, from here down
 void fn(void) :hwStack    { ... }    // use the 6502 hardware stack
 void fn(void) :xtcStack   { ... }    // use the xtc software stack
 void fn(void) :needsOS    { ... }    // requires OS ROM mapped in
 void fn(void) :irq        { ... }    // hardware-IRQ handler, ends with RTI
-void fn(void) :vbi        { ... }    // VBI handler — install via Vbi.install()
-void fn(void) :banked     { ... }    // place in the bank window (xt)
+void fn(void) :vbi        { ... }    // VBI handler — install via Vbi.addImmediate()
+void fn(void) :banked     { ... }    // place in the bank window
 void fn(void) :main       { ... }    // place in main RAM, opt out of auto-bank
-void fn(void) :shadow     { ... }    // place in shadow RAM (layouts declaring a [shadow] section)
-void fn(void) :cloaked    { ... }    // place in a cloaked region (xe family)
-void fn(void) :cloaked(ext1) { ... } // pin to a named cloaked region
+void fn(void) :shadow     { ... }    // place in shadow RAM (no current layout has one)
 ```
 
-### Calling convention / prologue
+### Calling convention / prologue (xt6502)
 
 - `:naked` — no prologue or epilogue. The compiler does not save A / X / Y or set up a frame; you write whatever your body needs. Mutually exclusive with `:irq` / `:vbi`.
 - `:hwStack` — force the function to use the 6502 hardware stack for return addresses and saved registers. Parameters always go on the xtc software stack regardless.
 - `:xtcStack` — force the function to use the xtc software stack throughout. The hardware stack is much smaller (256 bytes), so deep recursion needs the software stack.
 
-### Interrupt handlers
+### Interrupt handlers (xt6502)
 
 - `:irq` — emitted naked, with `RTI` instead of `RTS` so the 6502 pops the flags + return PC the IRQ pushed. Install the address into `$FFFE/$FFFF` (or your platform's appropriate vector) yourself.
 - `:vbi` — Vertical-Blank-Interrupt handler. The prologue saves A/X/Y, the body runs, the epilogue restores A/X/Y and `JMP`s through `XITVBV` (`$E462`) so the OS finishes the interrupt. Install via `Vbi.addImmediate(&fn)` or `Vbi.addDeferred(&fn)`; remove with `Vbi.removeImmediate()` / `Vbi.removeDeferred()` (both routes call `SETVBV` `$E45C` for an SEI-safe atomic write).
 
 On the banked `xt` target, `:irq` and `:vbi` handlers are placed in main RAM at a stable address — the OS dispatcher `JMP`s through their vector slot directly, with no opportunity for the bank-switch trampoline to swap the right page in. The codegen handles this automatically.
 
-### Placement
+### Placement (xt6502)
 
 `:banked`, `:main`, and `:shadow` are mutually exclusive and control where in the address space the function lives. They apply to the **6502** target only; every other backend ignores them. Defaults stay as they are (free functions auto-bank on `xt`; unbanked RAM otherwise), so most programs don't need to think about them.
 
@@ -170,7 +201,7 @@ On the banked `xt` target, `:irq` and `:vbi` handlers are placed in main RAM at 
 - `:shadow` — place under the OS ROM, on a layout that declares a `[shadow]` section. No shipped layout does — `xt6502` reaches its extra RAM through the bank windows — so on the shipped targets the compiler warns and falls through to `:main`. Cross-bank-style calls work either way — but `:shadow` code is unreachable when ROM is mapped in, so don't call it from inside a `:needsOS` function.
 - `:cloaked` / `:cloaked(<id>)` — place in a layout-declared cloaked region. **Retired in practice**: it applied to the `xe`-family Atari models, which are gone, and no shipped layout declares a cloaked region — the annotation and `-fauto-cloak` are still accepted but inert. Kept because the machinery is still in the IR and a future layout could declare one. Bare `:cloaked` auto-packs into the layout's first declared region, with overflow spilling forward to the next region (and finally to `:main`). The id form pins the decl to a named region — useful when the layout has both `lib` (banking-off, exposed in main RAM) and numbered-bank `extN` regions and you want a specific one. The compiler errors on a target without cloaking support or on an unknown id; see [Linker scripts — `[cloaked]`](/compiler/usage/linker-scripts/#cloaked--code-regions-for-cloaked-decls) for the layout side. Auto-cloak (`-fauto-cloak={never,auto,always}`) promotes cloak-safe decls automatically, so most programs don't need the manual annotation.
 
-### Shadow-target helpers
+### Shadow-target helpers (xt6502)
 
 - `:needsOS` — wraps the body with ROM enable / disable on shadow targets (no-op on non-shadow). Keep `:needsOS` functions small and self-contained — many calls from one of them into shadow-resident code means the ROM swap fires repeatedly and erases the speed advantage of shadow RAM.
 

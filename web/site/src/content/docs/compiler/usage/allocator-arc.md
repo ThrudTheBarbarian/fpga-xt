@@ -43,7 +43,11 @@ u8* buf = new u8[256];
 delete buf;                     // returns the bytes to the free list
 ```
 
-The **heap allocator** is a coalescing free-list — every allocation carries a 4-byte header (15-bit size, 1 free bit, 16-bit retain count), and every free returns the block to the list and merges it with adjacent free blocks if any exist. Allocation cost is O(free-block count) for first-fit traversal; free is O(1) for the release plus O(neighbour) for coalescing.
+The **heap allocator** differs by target. On **xt6502** it is a hand-written coalescing free list: every allocation carries a 7-byte header (15-bit size, 1 free bit, 16-bit retain count), and every free returns the block to the list and merges it with adjacent free blocks if any exist. Allocation cost is O(free-block count) for first-fit traversal; free is O(1) for the release plus O(neighbour) for coalescing, and a single block caps at 32 KB because the free flag takes the top bit of the size field.
+
+On the **native targets** (`arm64`, `x86_64`, `win64`, `arm9`, `m68k`) allocation goes through the host allocator with a 24-byte header (cookie, stride, count, `dealloc` pointer, refcount), so the cost and the size limit are the host's rather than ours. The 15-bit cap does not apply there.
+
+What is identical everywhere is the **16-bit retain count at `obj-2`** — that is the contract the back ends' inline retain/release sequences are written against.
 
 Use heap when:
 

@@ -25,11 +25,14 @@ Three radix prefixes are recognised, and `_` is silently ignored anywhere inside
 ```c
 u16 a = 1234;        // decimal
 u16 b = $1234;       // hex
-u8  c = %1010_0101;  // binary, with grouping underscore
+u16 c = 0x1234;      // hex, the C spelling — identical to the line above
+u8  d = %1010_0101;  // binary, with grouping underscore
 u32 big = 16_777_216;
+u32 mask = 0xFFFF_0000;   // underscores work in either hex spelling
 ```
 
-There is no `0x` prefix; xtc inherits `$` from 6502 assembler tradition.
+`$` comes from 6502 assembler tradition and `0x` (or `0X`) from C; they mean
+exactly the same thing and either can be used anywhere. Binary keeps `%`.
 
 ## String and character literals
 
@@ -56,7 +59,19 @@ u8 tab = '\t';
 u8 a   = 'A';
 ```
 
-String literals never split across source lines.
+A single string literal never splits across source lines — but **adjacent string
+literals concatenate**, as in C, and a newline between them makes no difference:
+
+```c
+Stdio.print("one" "two\n");                 // onetwo
+
+Stdio.print("a long message that would "
+            "otherwise be one unbreakable "
+            "source line as wide as itself\n");
+```
+
+The join happens in the parser, so the pieces are one literal by the time
+anything else sees them — there is no run-time concatenation and no cost.
 
 ## Reserved words
 
@@ -74,19 +89,24 @@ A third group is meaningful only in a particular position, and is an ordinary id
 
 ## Block delimiters
 
-Both `{ ... }` and `(( ... ))` introduce a block; they are interchangeable everywhere a block is accepted (function bodies, control flow, inline-asm, and so on).
+A block is `{ ... }`.
 
 ```c
 void greet(void) {
     Stdio.print("hi\n");
 }
-
-void greet(void) ((
-    Stdio.print("hi\n");
-))
 ```
 
-The `(( ))` form exists so xtc source can be typed on an **Atari 8-bit keyboard**, which has no `{` or `}` keys. The current toolchain is cross-compiled from desktop machines so the alternative form isn't load-bearing today, but it preserves the option of editing or even self-hosting xtc on-target in the future. There is no semantic difference between the two forms.
+:::note[`(( ))` has been removed]
+xtc once accepted `(( ... ))` as an alternative block delimiter, so source could
+be typed on an **Atari 8-bit keyboard** — which has no `{` or `}` keys. It is
+gone, and the compiler now rejects it.
+
+The reason is worth recording: accepting it forced the lexer to fuse adjacent
+parentheses into a single block token, which made `((T*)p).f` ambiguous with the
+start of a block. Disambiguating needed a lookahead heuristic in the lexer — a
+lot of fragility to buy a spelling nothing in the tree used.
+:::
 
 ## Statement terminator
 
