@@ -602,7 +602,20 @@ module antic2 #(
         .clk(clk), .rst(rst),
         .start(sched_line_start), .emit_en(pf_emit_en),
         .in_window(px_in_window),
-        .mode(dl_insn[3:0]), .bytes_per_line(pf_bytes),
+        // THE RENDERER READS WHAT THE BUFFER HOLDS, NOT WHAT THE LINE FETCHES.
+        // pf_bytes is this line's fetch length and is zero when playfield DMA
+        // is off; lb_len is how much data the buffer actually holds, which a
+        // DMA-off line inherits from the row before it.  Feeding only the fetch
+        // length makes an aliased row exhaust before its first pixel and paint
+        // nothing, so nothing can collide with it -- antic_linebuffering's
+        // missiles then read back all zeroes.  Feeding only lb_len is a line
+        // late, because pf_stream loads it on the same edge the renderer
+        // latches its count.  emu keeps both and picks: the live length while
+        // the row fetches, the retained one when it does not (antic.c: "the
+        // buffer is not cleared first ... the previous contents stay and are
+        // displayed again").
+        .mode(dl_insn[3:0]),
+        .bytes_per_line(pf_bytes != 8'd0 ? pf_bytes : {1'b0, lb_len}),
         .colbk(8'h00), .colpf0(8'h00), .colpf1(8'h00),
         .colpf2(8'h00), .colpf3(8'h00),
         .rd_idx(lb_rd_idx), .rd_data(lb_rd_data), .rd_code(lb_rd_code),

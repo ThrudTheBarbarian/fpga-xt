@@ -94,14 +94,27 @@ module antic_pf_geom (
 
     assign pf_on = (pf_width != 2'd0);
 
+    // A DMACTL WIDTH OF ZERO IS NOT A WIDTH -- IT IS NO PLAYFIELD DMA AT ALL.
+    // emu's width_of() (antic.c:524) maps DMACTL[1:0] == 0 to NORMAL, and
+    // suppresses the FETCH separately: "the fetch map has to be dropped
+    // explicitly or a screen with playfield DMA off would quietly fetch a
+    // normal row".  Collapsing the geometry to zero instead takes the DISPLAY
+    // window with it, and then a line whose playfield DMA is off paints
+    // nothing -- when what ANTIC really does is re-display the line buffer it
+    // was not allowed to refill.  That is antic_linebuffering's whole "aliased"
+    // family: turn DMA off, let a row start under it, and check the stale
+    // buffer still reaches the screen.  pf_on below keeps the fetch off; this
+    // only decides where the beam paints.
+    wire [1:0] eff_width = (pf_width == 2'd0) ? 2'd2 : pf_width;
+
     // HSCROL is in colour clocks; a machine cycle is two of them.  The odd bit
     // is a one-colour-clock shift the pixel path applies, not a fetch offset.
     assign hs_delay = hscrol[3:1];
     assign hs_fine  = hscrol[0];
 
     // Scrolling fetches one width up so there is data to scroll in.
-    wire [1:0] fetch_width = (hscrol_en && pf_on && pf_width != 2'd3)
-                             ? (pf_width + 2'd1) : pf_width;
+    wire [1:0] fetch_width = (hscrol_en && pf_on && eff_width != 2'd3)
+                             ? (eff_width + 2'd1) : eff_width;
 
     // Hi-res pixels fetched, and hi-res pixels displayed.  They differ only
     // when scrolling widens the fetch.
@@ -129,7 +142,10 @@ module antic_pf_geom (
 
     wire [2:0] px_shift = pw_log2 + ((bpp == 2'd2) ? 3'd2 : 3'd3);
 
-    always_comb bytes_per_line = 8'((fetch_px >> px_shift));
+    // ...but the LENGTH stays zero, because emu's antic_pf_bytes does: it is
+    // the zero that stops antic_pf_stream reloading lb_len and so preserves
+    // the previous row's contents for the aliased cases.
+    always_comb bytes_per_line = pf_on ? 8'((fetch_px >> px_shift)) : 8'd0;
 
     // Machine cycles between playfield fetches.  This is span/bytes_per_line,
     // but writing it as a division synthesises a real divider: 22 carry chains
@@ -161,8 +177,8 @@ module antic_pf_geom (
     endfunction
 
     always_comb begin
-        disp_start = win_start(pf_width);
-        disp_stop  = win_stop(pf_width);
+        disp_start = win_start(eff_width);
+        disp_stop  = win_stop(eff_width);
     end
 
     // THE DISPLAY LAGS THE FETCH, AND THE TABLE ABOVE IS THE FETCH.
@@ -197,12 +213,12 @@ module antic_pf_geom (
     always_comb begin
         if (hscrol_en && pf_on) eff_start_cyc = win_start(fetch_width) + DISP_LAG
                                               + {4'd0, hs_delay};
-        else                    eff_start_cyc = win_start(pf_width) + DISP_LAG;
+        else                    eff_start_cyc = win_start(eff_width) + DISP_LAG;
     end
 
     always_comb begin
         px_start = {eff_start_cyc, 2'b00};
-        px_stop  = px_start + {2'd0, (win_stop(pf_width) - win_start(pf_width)), 2'b00};
+        px_stop  = px_start + {2'd0, (win_stop(eff_width) - win_start(eff_width)), 2'b00};
     end
 
     // Character modes start fetching two cycles early: name, then glyph.

@@ -414,7 +414,13 @@ module tb_acid #(
                 for (int k = 0; k < 228; k++) pfsrc_row[k] <= 3'd7;
                 pfsrc_any <= 1'b0;
             end else if (dut.u_antic2.px_wr) begin
-                pfsrc_row[dut.u_antic2.px_pos[8:1]] <= dut.u_antic2.px_pf_src;
+                // ONE EMIT COVERS TWO COLOUR CLOCKS.  A scanline is 114 machine
+                // cycles and 228 colour clocks, so px_pos advances by 4 hi-res
+                // pixels per tick and px_pos[8:1] lands only on even columns.
+                // Filling both halves makes the map a real colour-clock map
+                // rather than a comb with every other tooth missing.
+                pfsrc_row[{dut.u_antic2.px_pos[8:2], 1'b0}] <= dut.u_antic2.px_pf_src;
+                pfsrc_row[{dut.u_antic2.px_pos[8:2], 1'b1}] <= dut.u_antic2.px_pf_src;
                 pfsrc_any <= 1'b1;
             end
             // SELECT BY SCANLINE, AND ONLY ONCE THE LIST IS ACTUALLY RUNNING.
@@ -443,13 +449,18 @@ module tb_acid #(
     initial if (!$value$plusargs("RAWXMR=%d", RAWXMR)) RAWXMR = -1;
     integer rawcnt = 0;
     integer rawwr = 0;
+    integer rawlbmax = 0;
     integer rawinsn = 0;
     final begin
-        if (RAWXMR >= 0) $display("RAWSUM pxwr_ticks=%0d insn_nz_ticks=%0d shown=%0d", rawwr, rawinsn, rawcnt);
+        if (RAWXMR >= 0) $display("RAWSUM pxwr_ticks=%0d insn_nz_ticks=%0d shown=%0d lb_len_max=%0d", rawwr, rawinsn, rawcnt, rawlbmax);
     end
     always_ff @(posedge clk) begin
         if (!rst && USE_ANTIC2 && RAWXMR >= 0 && tick && dut.u_antic2.px_wr) begin
             rawwr <= rawwr + 1;
+        end
+        if (!rst && USE_ANTIC2 && RAWXMR >= 0 && tick &&
+            int'(dut.u_antic2.lb_len) > rawlbmax) begin
+            rawlbmax <= int'(dut.u_antic2.lb_len);
         end
         if (!rst && USE_ANTIC2 && RAWXMR >= 0 && tick && dut.u_antic2.dl_insn != 8'h00) begin
             rawinsn <= rawinsn + 1;
@@ -463,6 +474,10 @@ module tb_acid #(
                      dut.u_antic2.px_pf_src, dut.u_antic2.px_line_start,
                      dut.u_antic2.pf_emit_en, dut.u_antic2.px_in_window,
                      dut.u_antic2.u_render.state);
+            $display("RAW+ lb_len=%0d pf_bytes=%0d pf_on=%b fetching=%b pxstart=%0d pxstop=%0d",
+                     dut.u_antic2.lb_len, dut.u_antic2.pf_bytes,
+                     dut.u_antic2.u_geom.pf_on, dut.u_antic2.pf_fetching,
+                     dut.u_antic2.pf_px_start, dut.u_antic2.pf_px_stop);
         end
     end
 
