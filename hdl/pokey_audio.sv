@@ -339,6 +339,25 @@ module pokey_audio #(
     // STIMER+17, so a write at +22 is age 5 and must lengthen the next period
     // while +23 is age 6 and must not.  Only 6 admits the one and rejects the
     // other.
+    // ---- AND THE PAIR'S HIGH HALF, RE-SEEDING THE CASCADE ------------------
+    // An AUDF2 write inside its window re-seeds the SIXTEEN-BIT counter, not a
+    // divider of its own: emu `cnt[lo] = per - hi_age[pair]` with
+    // `per = (AUDF2<<8 | AUDF1) + LINK_FAST` (pokey_timer.c:383-393).  hi_age
+    // is cycles since the PAIR reloaded, so it is cleared on the pair's reload
+    // (emu :743) and by STIMER.
+    //
+    // The width is its own again -- three, where the low half takes six.  The
+    // test states both boundaries in prose: an AUDF2 write up to 18 cycles past
+    // STIMER still lengthens the period already loaded, so bit 1 asserts at
+    // 300 = 4 + 20 + 276, and at 19 cycles it does not.  The pair reloads at
+    // +20, so the window admits an age of 2 and rejects 3.
+    localparam int HI_LATCH_LAG = 3;
+    logic [7:0]  hi_age;
+    logic [7:0]  audf2_q;
+    wire         audf2_wr = (audf2 != audf2_q);
+    wire [15:0]  audf16   = {audf2, audf1};
+    wire [15:0]  hi_per   = audf16 + (audctl[6] ? 16'(LINK_FAST) : 16'd1);
+
     localparam int LO_LATCH_LAG = 6;
     localparam int LINK_FAST    = 7;
     localparam int TWOTONE_EX   = 2;
@@ -544,6 +563,7 @@ module pokey_audio #(
             ch1_cnt <= 8'h00; ch1_state <= 1'b0;
             ch1_age <= 8'd0; audf1_q <= 8'h00;
             lo_cnt <= 9'd0; lo_age <= 8'd0; lo_first <= 1'b0;
+            hi_age <= 8'd0; audf2_q <= 8'h00;
             ch1_first <= 1'b0; ch3_first <= 1'b0;
             ext1_q <= 1'b0; ext3_q <= 1'b0;
             ch2_cnt <= 8'h00; ch2_state <= 1'b0;
@@ -603,12 +623,29 @@ module pokey_audio #(
             // Verilog NBA last-write-wins).
             if (ch2_tick && !timer2_held) begin
                 if (ch2_cnt == 8'h00) begin
-                    ch2_cnt   <= audf2;
                     ch2_state <= next_state(audc2, ch2_state);
-                    if (ch12_paired) ch1_cnt <= audf1_reload;
+                    // A LINKED PAIR IS ONE SIXTEEN-BIT COUNTER, PERIOD
+                    // AUDF16 + LINK_FAST -- not two eight-bit ones cascaded at
+                    // AUDF1 + 4.  emu's period_of() takes the combined value
+                    // for a linked pair; cascading the low half's own period
+                    // gives AUDF16 + 4, three cycles short, and puts the pair's
+                    // reload at +17 where the test measures +20.  Timer 1 no
+                    // longer rides this counter -- it has lo_cnt -- so the
+                    // cascade can carry the serial and high-half period alone.
+                    if (ch12_paired) {ch2_cnt, ch1_cnt} <= hi_per - 16'd1;
+                    else             ch2_cnt <= audf2;
                 end else
                     ch2_cnt <= ch2_cnt - 8'h01;
             end
+            // ---- the pair's high-half rewrite window ----
+            // Cycles since the PAIR reloaded, then the re-seed.  Placed after
+            // the ch2 tick block so last-assignment-wins gives it priority.
+            audf2_q <= audf2;
+            if (stimer_apply)                       hi_age <= 8'd0;
+            else if (ch2_tick && ch2_cnt == 8'h00)  hi_age <= 8'd0;
+            else if (phi2_tick && hi_age != 8'hFF)  hi_age <= hi_age + 8'd1;
+            if (audf2_wr && ch12_paired && hi_age < 8'(HI_LATCH_LAG))
+                {ch2_cnt, ch1_cnt} <= hi_per - 16'(hi_age);
             // ---- ch3: low timer of pair {3,4} ----
             // Async-receive holds the pair in reset (frozen at the AUDF
             // reload) so no wrap occurs until a start bit releases it.
