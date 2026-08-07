@@ -1562,8 +1562,15 @@ build/tb_acid.vvp: tb_acid.sv $(A8_CORE_SRC) | build
 # a sweep still wants one process per test.
 VOBJ2 = build/vobj2
 
+# THE MEMORY IMAGE IS PART OF THE TEST.  The binary $readmemh's acid.mem and
+# acid_cfg.mem from its CWD, and +TEST= only names the result line -- it does
+# NOT select the program.  Running the binary against whatever acid.mem happens
+# to be lying in sim/ silently measures a DIFFERENT test, and that cost three
+# sessions of chasing "dead" probes whose real fault was that the display list
+# under them belonged to another program.  Generate the image every time.
 acid2v: $(VOBJ2)/tb_acid2v
-	@./$< +TEST=$(TEST)
+	@python3 ../tools/acid2mem.py $(TEST) . > /dev/null
+	@./$< +TEST=$(TEST) $(PLUSARGS)
 
 $(VOBJ2)/tb_acid2v: tb_acid.sv $(A8_CORE_SRC) | build
 	verilator --binary --timing -j 0 -Wno-fatal \
