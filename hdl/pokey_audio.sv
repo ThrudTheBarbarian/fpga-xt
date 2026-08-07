@@ -318,6 +318,35 @@ module pokey_audio #(
     logic [7:0] ch1_age;
     logic [7:0] audf1_q;
     wire        audf1_wr = (audf1 != audf1_q);
+
+    // ---- THE PAIR'S LOW HALF RUNS ITS OWN DIVIDER --------------------------
+    // In linked mode the cascade counter is the SIXTEEN-BIT one: its underflow
+    // is the HIGH half's event (emu calls underflow(ch 1) for it).  The LOW
+    // half keeps a divider of its own that raises TIMER 1 -- emu's locnt[]
+    // (pokey_timer.c:924-932, loaded at STIMER :1053).  Without it our timer 1
+    // fires when the cascade wraps $00 -> $FF, i.e. every 256 ticks instead of
+    // every AUDF1 + LINK_FAST.
+    //
+    // Its first period after STIMER is AUDF1 + 4; every period after it is
+    // AUDF1 + LINK_FAST, plus the two-tone extra when SKCTL bit 3 is set
+    // (unconditional here -- every reload past the first is by construction).
+    //
+    // Its rewrite window is its own too, and WIDER than the unlinked one: six,
+    // not three.  emu :254-262 quotes the test's prose -- "the deadline timing
+    // for writes to AUDF1 is the same as unlinked from the END of the loop,
+    // presumably due to the late reset from channel 2" -- and pins it on the
+    // 16-bit lo section: AUDCTL $50, AUDF1 $0D, low half underflows at
+    // STIMER+17, so a write at +22 is age 5 and must lengthen the next period
+    // while +23 is age 6 and must not.  Only 6 admits the one and rejects the
+    // other.
+    localparam int LO_LATCH_LAG = 6;
+    localparam int LINK_FAST    = 7;
+    localparam int TWOTONE_EX   = 2;
+    logic [8:0] lo_cnt;
+    logic [7:0] lo_age;
+    logic       lo_first;
+    wire        lo_active = ch12_paired && audctl[6];
+    wire        lo_wrap   = lo_active && phi2_tick && (lo_cnt <= 9'd1);
     logic       ch1_state, ch2_state, ch3_state, ch4_state;
 
     // High-freq mode: count on phi2_tick (1.79 MHz machine clock pulse).
@@ -358,7 +387,7 @@ module pokey_audio #(
 
     // M23-6: timer pulses go to pokey_regs' IRQ latch (ch1/ch2/ch4 only;
     // POKEY provides no TIMER 3).
-    assign timer1_pulse = ch1_wrap;
+    assign timer1_pulse = lo_active ? lo_wrap : ch1_wrap;
     // timer2_pulse is assigned below, after ch12_paired is declared --
     // a LINKED pair's interrupt edge lags its serial-clock edge.
     assign timer4_pulse = ch4_wrap;
@@ -514,6 +543,7 @@ module pokey_audio #(
         if (rst) begin
             ch1_cnt <= 8'h00; ch1_state <= 1'b0;
             ch1_age <= 8'd0; audf1_q <= 8'h00;
+            lo_cnt <= 9'd0; lo_age <= 8'd0; lo_first <= 1'b0;
             ch1_first <= 1'b0; ch3_first <= 1'b0;
             ext1_q <= 1'b0; ext3_q <= 1'b0;
             ch2_cnt <= 8'h00; ch2_state <= 1'b0;
@@ -544,6 +574,26 @@ module pokey_audio #(
             // fast-clocked only: the linked pair has its own window.
             if (audf1_wr && !ch12_paired && audctl[6] && ch1_age < 8'(CH_LATCH_LAG))
                 ch1_cnt <= (audf1 + 8'd3) - ch1_age;
+            // ---- the pair's low-half divider ----
+            if (stimer_apply) begin
+                lo_cnt   <= 9'(audf1) + 9'd4;      // first period: AUDF1 + 4
+                lo_age   <= 8'd0;
+                lo_first <= 1'b1;
+            end else if (lo_active && phi2_tick) begin
+                if (lo_cnt <= 9'd1) begin
+                    lo_cnt   <= 9'(audf1) + 9'(LINK_FAST)
+                              + (skctl[3] ? 9'(TWOTONE_EX) : 9'd0);
+                    lo_age   <= 8'd0;
+                    lo_first <= 1'b0;
+                end else begin
+                    lo_cnt <= lo_cnt - 9'd1;
+                    if (lo_age != 8'hFF) lo_age <= lo_age + 8'd1;
+                end
+            end
+            // ...and its own rewrite window (emu :323).  After the tick block
+            // so it wins on the cycle the write lands.
+            if (audf1_wr && lo_active && lo_age < 8'(LO_LATCH_LAG))
+                lo_cnt <= 9'(audf1) + 9'(LINK_FAST) - 9'(lo_age);
             // ---- ch2: high timer of pair {1,2} ----
             // ch2_tick = ch1_wrap when paired (so ch2 advances on
             // every ch1 underflow); otherwise ch2 ticks on ref_tick.
