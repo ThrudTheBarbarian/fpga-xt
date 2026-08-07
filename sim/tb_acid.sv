@@ -497,6 +497,51 @@ module tb_acid #(
         end
     end
 
+    // ---- STIMER-RELATIVE TIMER-1 PROBE (+STPROBE) --------------------------
+    // Mirrors emu's pokey_timer_probe ("STIMER at tick %llu", "-> IRQST bit %d
+    // readable at +%llu", pokey_timer.c:836-838 / 990-994) so our two numbers
+    // can be subtracted from emu's rather than guessed at.
+    //
+    // emu's reference, taken from pokey_timertiming's OWN two tables of the
+    // same timer (pokey_timer.c:505-515):
+    //     UNDERFLOW      AUDF1=0 -> +4    AUDF1=8  -> +12   (i.e. AUDF + 4)
+    //     BIT READABLE   AUDF1=0 -> +8    AUDF1=16 -> +24   (four later)
+    // If our underflow already lands at +8 then the delivery lag is buried in
+    // the period and the counter and the delivery path have to be split.
+    //
+    // Gated on AUDCTL, not on a scanline -- anchoring on a line caught a
+    // power-on frame three times.
+    int STPROBE = -1;
+    initial if (!$value$plusargs("STPROBE=%d", STPROBE)) STPROBE = -1;
+    integer st_cyc = 0;
+    integer st_at = -1;
+    integer st_shown = 0;
+    logic   st_seen_uf = 1'b0;
+    logic   st_irq_q   = 1'b0;
+    always_ff @(posedge clk) begin
+        if (!rst && STPROBE >= 0 && tick) begin
+            st_cyc   <= st_cyc + 1;
+            st_irq_q <= dut.u_pokey.u_regs.irq_latch_q[0];
+            // The STIMER strobe: a write to $D209.
+            if (!dut.c_rw && dut.c_addr == 16'hD209 && st_shown < STPROBE) begin
+                st_at      <= st_cyc;
+                st_seen_uf <= 1'b0;
+                st_shown   <= st_shown + 1;
+                $display("STIMER at %0d audctl=%02h audf1=%0d audf2=%0d irqen=%02h",
+                         st_cyc, dut.u_pokey.audctl, dut.u_pokey.audf1,
+                         dut.u_pokey.audf2, dut.u_pokey.u_regs.irqen_q);
+            end
+            if (st_at >= 0) begin
+                if (dut.u_pokey.timer1_pulse_w && !st_seen_uf) begin
+                    st_seen_uf <= 1'b1;
+                    $display("  T1 underflow at +%0d", st_cyc - st_at);
+                end
+                if (dut.u_pokey.u_regs.irq_latch_q[0] && !st_irq_q)
+                    $display("  -> IRQST bit 0 readable at +%0d", st_cyc - st_at);
+            end
+        end
+    end
+
     // WHERE THE FRAME ACTUALLY SITS.  pokey_twotone counts timer-2 interrupts
     // over vcount 0..48 (spaces) and 48..96 (marks); if our frame starts late
     // the marks slide out of the second window and the count stays at the

@@ -56,6 +56,8 @@
 
 module pokey_regs (
     input  wire        clk,
+    // Machine-cycle strobe -- clocks the IRQST in-flight countdown.
+    input  wire        phi2_tick,
     input  wire        rst,
     input  wire        cold_boot,   // SALLYRST cold-boot: power-on-clear IRQEN (+ latches)
 
@@ -196,8 +198,29 @@ module pokey_regs (
                           irq_latch_q[2],     // TIMER 4
                           irq_latch_q[1],     // TIMER 2
                           irq_latch_q[0]};    // TIMER 1
-    // IRQ_n active low whenever any IRQEN-enabled pending bit is high.
-    assign irq_n         = ~|(irq_pending & irqen_q);
+    // IRQ_n active low whenever any IRQEN-enabled pending bit is high --
+    // but the LINE runs IRQ_LINE_LAG behind the STATUS BIT.  emu raise()
+    // (pokey_timer.c:541) arms it as IRQ_LINE_LAG + lag, so a fast timer's
+    // bit is readable at +24 and its /IRQ follows at +25; pokey_irqtiming
+    // measures the line, pokey_timertiming the bit.  Only the ASSERTING edge
+    // is delayed -- an acknowledge clears the line at once.
+    localparam int IRQ_LINE_LAG = 1;
+    wire  irq_now = |(irq_pending & irqen_q);
+    logic irq_dly_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)            irq_dly_q <= 1'b0;
+        else if (phi2_tick) irq_dly_q <= irq_now;
+    end
+    assign irq_n         = ~(irq_now & irq_dly_q);
+
+    // ---- IRQST delivery lag (emu pokey_timer.c:467, 505-545) ---------------
+    // fast_for_bit(): timer 4 follows AUDCTL[5] ($20), timers 1 and 2 follow
+    // AUDCTL[6] ($40).
+    localparam int IRQST_LAG = 4;
+    logic [2:0] st_lag_q   [0:2];
+    logic       st_armed_q [0:2];
+    wire [2:0]  tmr_pulse = {timer4_pulse, timer2_pulse, timer1_pulse};
+    wire [2:0]  tmr_fast  = {audctl_q[5], audctl_q[6], audctl_q[6]};
 
     assign audf1  = audf1_q;
     assign audf2  = audf2_q;
@@ -223,6 +246,10 @@ module pokey_regs (
             audc3_q     <= 8'h00;
             audc4_q     <= 8'h00;
             audctl_q    <= 8'h00;
+            for (int i = 0; i < 3; i++) begin
+                st_lag_q[i]   <= 3'd0;
+                st_armed_q[i] <= 1'b0;
+            end
             kbcode_q    <= 8'h00;
             key_latch_q <= 1'b0;
             key_down_q  <= 1'b0;
@@ -271,9 +298,42 @@ module pokey_regs (
             // IRQEN[bit]=1. Bit 3 (SER OUT COMPLETE) is *not*
             // latched — its IRQST contribution is the live
             // ser_out_complete input (see irq_pending above).
-            if (timer1_pulse         && irqen_q[0]) irq_latch_q[0] <= 1'b1;
-            if (timer2_pulse         && irqen_q[1]) irq_latch_q[1] <= 1'b1;
-            if (timer4_pulse         && irqen_q[2]) irq_latch_q[2] <= 1'b1;
+            // A FAST-CLOCKED TIMER'S STATUS BIT IS NOT READABLE THE CYCLE IT
+            // UNDERFLOWS -- IT IS IN FLIGHT FOR IRQST_LAG MACHINE CYCLES.
+            // emu pokey_timer.c:505-523 pins it from pokey_timertiming's two
+            // tables of the SAME timer: the STIMER-preemption table measures the
+            // UNDERFLOW (AUDF1=0 at 4, AUDF1=8 at 12, i.e. AUDF+4 with nothing
+            // extra on the first period) and the IRQST table measures when the
+            // BIT CAN BE READ (AUDF1=0 at 8, AUDF1=16 at 24) -- four later on
+            // every row they share.
+            //
+            // It belongs to the DELIVERY path, not the period: emu tried it as a
+            // longer first period and recorded that this "also delayed the
+            // underflow the preemption test strobes against -- and no value
+            // could then satisfy both tables."
+            //
+            // And it is a property of the 1.79 MHz tap alone (fast_for_bit):
+            // a base-clocked channel takes no lag at all, which is what keeps
+            // pokey_inittiming's 15 kHz acknowledge where it always was.
+            for (int i = 0; i < 3; i++) begin
+                if (tmr_pulse[i]) begin
+                    if (tmr_fast[i]) begin
+                        // In flight. Arming is sampled now; a masked raise still
+                        // flies (emu's st_armed / IRQEN_ARMS_INFLIGHT).
+                        // IRQST_LAG-1: irq_latch_q is itself registered, so the
+                        // final cycle of emu's four is the latch's own.
+                        st_lag_q[i]   <= 3'(IRQST_LAG - 1);
+                        st_armed_q[i] <= irqen_q[i];
+                    end else if (irqen_q[i]) begin
+                        // No lag, so no flight to be armed during: a masked
+                        // raise on a base-clocked channel is simply lost.
+                        irq_latch_q[i] <= 1'b1;
+                    end
+                end else if (phi2_tick && st_lag_q[i] != 3'd0) begin
+                    st_lag_q[i] <= st_lag_q[i] - 3'd1;
+                    if (st_lag_q[i] == 3'd1 && st_armed_q[i]) irq_latch_q[i] <= 1'b1;
+                end
+            end
             if (ser_out_ready_pulse  && irqen_q[4]) irq_latch_q[4] <= 1'b1;
             if (ser_in_byte_pulse    && irqen_q[5]) irq_latch_q[5] <= 1'b1;
             if (kbd_event_valid      && irqen_q[6]) irq_latch_q[6] <= 1'b1;

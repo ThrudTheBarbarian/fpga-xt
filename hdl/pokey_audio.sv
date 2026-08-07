@@ -487,10 +487,10 @@ module pokey_audio #(
     // STIMER start lag: the write's reload lands 4 machine cycles later
     // (see the comment at the apply site).
     logic [2:0] stimer_lag;
-    wire        stimer_apply = (stimer_lag == 3'd1) && phi2_tick;
+    wire        stimer_apply = stimer_pulse;
     always_ff @(posedge clk or posedge rst) begin
         if (rst)                stimer_lag <= 3'd0;
-        else if (stimer_pulse)  stimer_lag <= 3'd4;      // apply on the 4th phi2 tick after the write
+        else if (stimer_pulse)  stimer_lag <= 3'd1;      // apply on the 4th phi2 tick after the write
         else if (phi2_tick && stimer_lag != 3'd0) stimer_lag <= stimer_lag - 3'd1;
     end
 

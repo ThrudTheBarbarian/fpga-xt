@@ -109,6 +109,7 @@ module pokey #(
 
     pokey_regs u_regs (
         .clk                  (clk),
+        .phi2_tick            (phi2_tick),
         .rst                  (rst),
         .cold_boot            (cold_boot),
         .we                   (we),
