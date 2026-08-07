@@ -400,25 +400,69 @@ module tb_acid #(
     // verified fetch path and a missing collision.  '.' is background/outside.
     // +PFSRC=<insn hex>.
     int PFSRC = -1;
-    initial if (!$value$plusargs("PFSRC=%h", PFSRC)) PFSRC = -1;
+    initial if (!$value$plusargs("PFSRC=%d", PFSRC)) PFSRC = -1;
+    int PFSRCN = 2;
+    initial void'($value$plusargs("PFSRCN=%d", PFSRCN));
     logic [2:0] pfsrc_row [0:227];
     integer pfsrccnt = 0;
+    logic pfsrc_any = 1'b0;
     always_ff @(posedge clk) begin
         if (rst) begin
             for (int k = 0; k < 228; k++) pfsrc_row[k] <= 3'd7;   // 7 = none
-        end else if (USE_ANTIC2 && PFSRC >= 0) begin
-            if (dut.u_antic2.px_line_start)
+        end else if (USE_ANTIC2 && PFSRC >= 0 && tick) begin
+            if (dut.u_antic2.px_line_start) begin
                 for (int k = 0; k < 228; k++) pfsrc_row[k] <= 3'd7;
-            else if (dut.u_antic2.px_wr)
+                pfsrc_any <= 1'b0;
+            end else if (dut.u_antic2.px_wr) begin
                 pfsrc_row[dut.u_antic2.px_pos[8:1]] <= dut.u_antic2.px_pf_src;
-            if (tick && dut.u_antic2.hcount == 7'd113 && pfsrccnt < 3 &&
-                dut.u_antic2.dl_insn == 8'(PFSRC)) begin
+                pfsrc_any <= 1'b1;
+            end
+            // SELECT BY SCANLINE, AND ONLY ONCE THE LIST IS ACTUALLY RUNNING.
+            // Keying on dl_insn and capping at 3 spent the whole budget on the
+            // power-on frames, where dl_insn is 00 and nothing is emitted --
+            // which is why this probe read as dead for three sessions.
+            if (dut.u_antic2.hcount == 7'd113 && pfsrccnt < PFSRCN &&
+                (PFSRC == 255 ? pfsrc_any : (dut.u_antic2.vcount == 8'(PFSRC))) &&
+                dut.u_antic2.dl_insn != 8'h00) begin
                 pfsrccnt <= pfsrccnt + 1;
-                $write("PFSRC sl %0d insn %02h:", bus_line, dut.u_antic2.dl_insn);
+                $write("PFSRC vc %0d insn %02h:", dut.u_antic2.vcount, dut.u_antic2.dl_insn);
                 for (int k = 0; k < 228; k++)
                     $write("%c", (pfsrc_row[k] == 3'd7) ? "." : ("0" + pfsrc_row[k]));
                 $write("\n");
             end
+        end
+    end
+
+    // RAW XMR CALIBRATION.  Three probes into antic2 have read as constant
+    // zero while the design demonstrably works.  Before building anything else
+    // on those hierarchical paths, print the raw values of every signal the
+    // dead probes used, unconditionally, for one window of one scanline.  If a
+    // signal reads zero here on a PASSING test it is the path that is wrong,
+    // not the model.  +RAWXMR=<scanline>.
+    int RAWXMR = -1;
+    initial if (!$value$plusargs("RAWXMR=%d", RAWXMR)) RAWXMR = -1;
+    integer rawcnt = 0;
+    integer rawwr = 0;
+    integer rawinsn = 0;
+    final begin
+        if (RAWXMR >= 0) $display("RAWSUM pxwr_ticks=%0d insn_nz_ticks=%0d shown=%0d", rawwr, rawinsn, rawcnt);
+    end
+    always_ff @(posedge clk) begin
+        if (!rst && USE_ANTIC2 && RAWXMR >= 0 && tick && dut.u_antic2.px_wr) begin
+            rawwr <= rawwr + 1;
+        end
+        if (!rst && USE_ANTIC2 && RAWXMR >= 0 && tick && dut.u_antic2.dl_insn != 8'h00) begin
+            rawinsn <= rawinsn + 1;
+        end
+        if (!rst && USE_ANTIC2 && RAWXMR >= 0 && rawcnt < 40 && tick &&
+            (dut.u_antic2.px_wr || dut.u_antic2.dl_insn != 8'h00)) begin
+            rawcnt <= rawcnt + 1;
+            $display("RAW n=%0d tick=%b hc=%0d insn=%02h pxwr=%b pxpos=%0d src=%0d ls=%b emit=%b inwin=%b st=%0d",
+                     rawcnt, tick, dut.u_antic2.hcount, dut.u_antic2.dl_insn,
+                     dut.u_antic2.px_wr, dut.u_antic2.px_pos,
+                     dut.u_antic2.px_pf_src, dut.u_antic2.px_line_start,
+                     dut.u_antic2.pf_emit_en, dut.u_antic2.px_in_window,
+                     dut.u_antic2.u_render.state);
         end
     end
 
