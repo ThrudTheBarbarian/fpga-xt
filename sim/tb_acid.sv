@@ -342,6 +342,17 @@ module tb_acid #(
     // test reads.  This prints every colour clock of one line where ANY object
     // is present, so an empty line and a present-but-not-colliding line look
     // different.  pres bit 0..3 = players, 4..7 = missiles.
+    // FRAME COUNTER FOR THE PROBES.  A scanline number alone is ambiguous: the
+    // kernel repeats every frame, so "line 35" names one line in EVERY frame and
+    // a probe anchored on it reports the FIRST one -- which is how a pass-0
+    // measurement gets mistaken for a pass-3 one.  emu's own PFPROBE prints `f%d`
+    // for the same reason; this is the matching field on this side.
+    integer a2_frame = 0;
+    always_ff @(posedge clk) begin
+        if (!rst && dut.u_antic2.line_start && dut.u_antic2.line == 9'd0)
+            a2_frame <= a2_frame + 1;
+    end
+
     int PRESLN = -1;
     initial if (!$value$plusargs("PRES=%d", PRESLN)) PRESLN = -1;
     integer prescnt = 0;
@@ -351,8 +362,8 @@ module tb_acid #(
                 dut.u_a2_video.u_gtia.cc_tick && bus_line == PRESLN &&
                 dut.u_a2_video.u_gtia.pres != 8'h00) begin
                 prescnt <= prescnt + 1;
-                $display("PRES sl %0d cc %02h pres %02h active %0d win %0d hposp0 %02h",
-                         bus_line, dut.u_a2_video.u_gtia.cc_pos,
+                $display("PRES f%0d sl %0d cc %02h hc %0d pres %02h active %0d win %0d hposp0 %02h",
+                         a2_frame, bus_line, dut.u_a2_video.u_gtia.cc_pos, dut.u_antic2.hcount,
                          dut.u_a2_video.u_gtia.pres,
                          dut.u_a2_video.u_gtia.active,
                          dut.u_a2_video.u_gtia.cc_in_window,

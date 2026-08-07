@@ -167,6 +167,57 @@ module a2_video (
     // one gives the previous one throughout.
     wire [7:0] cc_pos = px_pos[8:1] - 8'd1;
 
+    // ANTIC'S CYCLE 0 IS NOT COLOUR CLOCK 0.  GTIA's counter LEADS the machine
+    // cycle by six colour clocks -- emu states it as a constant, GTIA_CC_ORIGIN
+    // = 6, and computes every colour clock as `cc = cyc*2 + h + 6`
+    // (system.c:216).  Its comment names the test that forces the value:
+    // gtia_pmretrigger commits an HPOS write on scanline cycle 29 and requires
+    // the player to have ALREADY been drawn at $40, so cc(29) must be just past
+    // $40 = 64 = 2*29 + 6; with no offset the write lands at 58 and the first
+    // draw never happens.
+    //
+    // antic2 has no such origin: measured, cc_pos = 2*hcount + {-1,0}, i.e. the
+    // beam sits SIX COLOUR CLOCKS BEHIND emu's at the same machine cycle.
+    //
+    // THE FIX IS NOT TO SHIFT cc_pos.  Everything positional here is derived
+    // from the emit window -- the playfield source arrives with the pixel
+    // stream and the objects compare against cc_pos, both anchored to the same
+    // origin -- so moving cc_pos alone would slide the objects ACROSS the
+    // playfield and break the four playfield-timing tests that pass by
+    // measuring exactly that relative alignment.
+    //
+    // What is actually wrong is WHEN A CPU WRITE BECOMES VISIBLE TO THE BEAM,
+    // and a delay fixes that without touching any steady-state position: a
+    // position written during vertical blank is already settled long before the
+    // beam arrives, so delaying it changes nothing, while a MID-LINE write --
+    // the only thing these tests measure -- lands six colour clocks later, which
+    // is precisely emu's origin.  gtia_pmoverlap and gtia_pmretrigger are both
+    // built on that deadline.
+    localparam int HPOS_CC_DELAY = 6;
+
+    logic [7:0] hp_pipe [0:7][1:HPOS_CC_DELAY];
+    always_ff @(posedge clk) begin
+        if (cc_tick) begin
+            for (int o = 0; o < 8; o++) begin
+                for (int d = HPOS_CC_DELAY; d > 1; d--)
+                    hp_pipe[o][d] <= hp_pipe[o][d-1];
+            end
+            hp_pipe[0][1] <= hposp0;  hp_pipe[1][1] <= hposp1;
+            hp_pipe[2][1] <= hposp2;  hp_pipe[3][1] <= hposp3;
+            hp_pipe[4][1] <= hposm0;  hp_pipe[5][1] <= hposm1;
+            hp_pipe[6][1] <= hposm2;  hp_pipe[7][1] <= hposm3;
+        end
+    end
+
+    wire [7:0] dl_hposp0 = hp_pipe[0][HPOS_CC_DELAY];
+    wire [7:0] dl_hposp1 = hp_pipe[1][HPOS_CC_DELAY];
+    wire [7:0] dl_hposp2 = hp_pipe[2][HPOS_CC_DELAY];
+    wire [7:0] dl_hposp3 = hp_pipe[3][HPOS_CC_DELAY];
+    wire [7:0] dl_hposm0 = hp_pipe[4][HPOS_CC_DELAY];
+    wire [7:0] dl_hposm1 = hp_pipe[5][HPOS_CC_DELAY];
+    wire [7:0] dl_hposm2 = hp_pipe[6][HPOS_CC_DELAY];
+    wire [7:0] dl_hposm3 = hp_pipe[7][HPOS_CC_DELAY];
+
     wire       gtia_valid;
     wire [7:0] gtia_a, gtia_b;
 
@@ -176,8 +227,10 @@ module a2_video (
         .active(px_collide), .hitclr(hitclr),
         .pf_src_a(pf_cap_a), .pf_src_b(pf_cap_b),
         .an_pair(an_pair), .pf_win(win_cap),
-        .hposp0(hposp0), .hposp1(hposp1), .hposp2(hposp2), .hposp3(hposp3),
-        .hposm0(hposm0), .hposm1(hposm1), .hposm2(hposm2), .hposm3(hposm3),
+        .hposp0(dl_hposp0), .hposp1(dl_hposp1),
+        .hposp2(dl_hposp2), .hposp3(dl_hposp3),
+        .hposm0(dl_hposm0), .hposm1(dl_hposm1),
+        .hposm2(dl_hposm2), .hposm3(dl_hposm3),
         .sizep0(sizep0), .sizep1(sizep1), .sizep2(sizep2), .sizep3(sizep3),
         .sizem(sizem),
         .grafp0(grafp0), .grafp1(grafp1), .grafp2(grafp2), .grafp3(grafp3),
