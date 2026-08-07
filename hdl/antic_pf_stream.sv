@@ -163,15 +163,35 @@ module antic_pf_stream #(
     logic [2:0] glyph_row;
     logic       row_blank;
 
+    logic [6:0] pend_idx [0:1];
+    logic [1:0] pend_cnt;
+    wire [6:0] glyph_idx = pend_idx[0];
+
+    // THE NAME THIS GLYPH ACCESS BELONGS TO.  Same reason as the pending-index
+    // queue below: by the time a pair's glyph goes out, char_code has already
+    // been overwritten by the NEXT name.  The descender decode reads the
+    // character's own code, so it has to use this too -- a mode 3 row whose
+    // code is in $60..$7F takes its rows 0/1 from glyph rows 6/7 and must be
+    // BLANK where an ordinary character is not, which is what
+    // antic_charcontrol's "3 inv desc" case measures.
+    wire [7:0] glyph_code = (is_char && first_row) ? buf_mem[glyph_idx[5:0]][15:8]
+                                                   : char_code;
+
     always_comb begin
         row_blank = 1'b0;
         if (descender) begin
-            if (char_code[6:5] == 2'b11) begin
-                glyph_row = (row < 5'd2) ? (3'd6 + row[0]) : 3'(row - 5'd2);
-            end else begin
-                glyph_row = row[2:0];
-                if (row >= 5'd8) row_blank = 1'b1;
-            end
+            // A TEN-ROW CELL BLANKS BY CHARACTER, IT DOES NOT SHIFT ROWS.  The
+            // glyph row is row mod 8 for every character; what a descender
+            // (code[6:5] == 11) changes is WHICH two rows come out blank --
+            // its own 0 and 1 rather than 8 and 9.  antic_charcontrol's tables
+            // say so directly: "3 inv desc" wants rows 2..7 to match plain
+            // mode 3's rows 2..7 and its rows 8/9 to repeat mode 3's rows 0/1,
+            // which only holds if the index never moves.  Taking rows 0/1 from
+            // glyph rows 6/7 put three lit colour clocks where the test wants
+            // none.  Same rule as compositor.sv.
+            glyph_row = row[2:0];
+            row_blank = (glyph_code[6:5] == 2'b11) ? (row < 5'd2)
+                                                   : (row >= 5'd8);
         end else if (rows == 5'd16) begin
             glyph_row = row[3:1];
         end else begin
@@ -184,14 +204,37 @@ module antic_pf_stream #(
     wire [2:0] glyph_row_ctl;
     wire [7:0] glyph_data_ctl;
 
-    antic_char_ctl u_chactl (
+    // TWO INSTANCES, BECAUSE THE TWO OUTPUTS ARE CONSUMED IN DIFFERENT CYCLES
+    // AND SO NEED DIFFERENT CODES.  glyph_row feeds glyph_addr when the access
+    // is ISSUED, and the code that matters there is the one the pair's name
+    // read (glyph_code).  glyph_data rewrites the byte when it COMES BACK, and
+    // by then the code that matters is the one latched with that access
+    // (inflight_code).  Feeding both from the live char_code register meant an
+    // inverse-video character was decided by whichever name had landed most
+    // recently -- so with CHACTL invert set, a $81 cell was not inverted at
+    // all.  antic_charcontrol's chactl=$02 pass measures exactly that.
+    wire [7:0] unused_data_a;
+    antic_char_ctl u_chactl_row (
         .chactl(chactl), .is_char(is_char), .bpp(bpp), .px_width(px_width),
-        .char_code(char_code),
+        .char_code(glyph_code),
         .glyph_row_in(glyph_row), .glyph_data_in(mem_data),
-        .glyph_row(glyph_row_ctl), .glyph_data(glyph_data_ctl)
+        .glyph_row(glyph_row_ctl), .glyph_data(unused_data_a)
     );
 
-    wire [15:0] glyph_addr = {chbase[7:2], char_code[6:0], glyph_row_ctl};
+    wire [2:0] unused_row_b;
+    antic_char_ctl u_chactl_data (
+        .chactl(chactl), .is_char(is_char), .bpp(bpp), .px_width(px_width),
+        .char_code(inflight_code),
+        // THE TEN-ROW CELL'S BLANK GOES IN BEFORE THE INVERTER, NOT AFTER IT.
+        // Zeroing the byte on the way out left an inverse-video character's
+        // blank rows dark, but ANTIC blanks the GLYPH and CHACTL then flips it,
+        // so those rows come out fully LIT.  antic_charcontrol's chactl=$02
+        // mode 3 wants $f0 on row 8, and forcing the store to zero gave $00.
+        .glyph_row_in(glyph_row), .glyph_data_in(inflight_blank ? 8'h00 : mem_data),
+        .glyph_row(unused_row_b), .glyph_data(glyph_data_ctl)
+    );
+
+    wire [15:0] glyph_addr = {chbase[7:2], glyph_code[6:0], glyph_row_ctl};
 
     // ---- what this scheduled cycle is -------------------------------------
     // A later character row's single access is a GLYPH even though the schedule
@@ -217,7 +260,17 @@ module antic_pf_stream #(
     wire ptr_steps = !fetch_is_glyph;
     wire idx_takes = !pf_fetch_glyph;
 
-    wire [6:0] idx = pf_fetch_glyph ? pf_next - 7'd1 : pf_next;
+    // A GLYPH BELONGS TO THE NAME ITS PAIR READ, NOT TO THE LATEST ONE.
+    // antic_dma_sched pairs a name at cycle c with its glyph at c+3, while the
+    // names themselves come every two cycles -- so by the time the first glyph
+    // is issued, TWO names have already gone out.  `pf_next - 1` assumes the
+    // glyph immediately follows its own name and so files every glyph one cell
+    // too high: cell 0's glyph landed in entry 1, and entry 0 kept the 8'h00 it
+    // started with and drew blank.  Measured on antic_charcontrol at cycle 29.
+    //
+    // Queue the pending name indices and let each glyph take the oldest.  Two
+    // entries is enough: the names run at most two ahead of the glyphs.
+    wire [6:0] idx = pf_fetch_glyph ? glyph_idx : pf_next;
 
     // ---- the access -------------------------------------------------------
     // In flight, so the write-back knows what the data means.  mem_valid is
@@ -232,6 +285,9 @@ module antic_pf_stream #(
             scan_q         <= 16'h0000;
             char_code      <= 8'h00;
             lb_len         <= 7'd0;
+            pend_idx[0]    <= 7'd0;
+            pend_idx[1]    <= 7'd0;
+            pend_cnt       <= 2'd0;
             mem_req        <= 1'b0;
             mem_addr       <= 16'h0000;
             inflight       <= 1'b0;
@@ -253,7 +309,8 @@ module antic_pf_stream #(
             if (scan_load) scan_q <= scan_addr_in;
 
             if (line_start) begin
-                pf_next <= 7'd0;
+                pf_next  <= 7'd0;
+                pend_cnt <= 2'd0;
                 // The length is reloaded ONLY when this row actually fetches.
                 // Otherwise the buffer keeps its contents AND its length, and
                 // the previous row is displayed again -- a DMACTL width of zero
@@ -288,7 +345,7 @@ module antic_pf_stream #(
                     inflight_glyph <= fetch_is_glyph;
                     inflight_blank <= row_blank;
                     inflight_idx   <= idx;
-                    inflight_code  <= char_code;
+                    inflight_code  <= fetch_is_glyph ? glyph_code : char_code;
                 end
 
                 // A later character row takes the name it needs for the NEXT
@@ -297,6 +354,16 @@ module antic_pf_stream #(
                     char_code <= buf_mem[idx + 7'd1][15:8];
 
                 if (idx_takes) pf_next <= pf_next + 7'd1;
+
+                // Push the name's index; the glyph of that pair pops it.
+                if (pf_fetch_glyph) begin
+                    pend_idx[0] <= pend_idx[1];
+                    if (pend_cnt != 2'd0) pend_cnt <= pend_cnt - 2'd1;
+                end else if (is_char && first_row) begin
+                    if (pend_cnt == 2'd0) pend_idx[0] <= pf_next;
+                    else                  pend_idx[1] <= pf_next;
+                    if (pend_cnt != 2'd2) pend_cnt <= pend_cnt + 2'd1;
+                end
                 // The playfield counter wraps within 4 KB during the fetch, so
                 // a row crossing that boundary reads from the bottom of the
                 // same page (antic_addresswrap).
@@ -308,8 +375,7 @@ module antic_pf_stream #(
                 if (inflight_glyph) begin
                     // A blanked mode-3 row still occupies its pixels, so store
                     // zeros rather than skipping the entry.
-                    buf_mem[inflight_idx] <=
-                        {inflight_code, inflight_blank ? 8'h00 : glyph_data_ctl};
+                    buf_mem[inflight_idx] <= {inflight_code, glyph_data_ctl};
                 end else if (is_char) begin
                     // A name: hold it for the glyph access that follows, and
                     // park it in the entry so a later row can read it back.

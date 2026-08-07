@@ -472,8 +472,10 @@ module tb_acid #(
         if (!rst && USE_ANTIC2 && RAWXMR >= 0 && tick && dut.u_antic2.dl_insn != 8'h00) begin
             rawinsn <= rawinsn + 1;
         end
-        if (!rst && USE_ANTIC2 && RAWXMR >= 0 && rawcnt < 40 && tick &&
-            (dut.u_antic2.px_wr || dut.u_antic2.dl_insn != 8'h00)) begin
+        if (!rst && USE_ANTIC2 && RAWXMR >= 0 && rawcnt < 44 && tick &&
+            (dut.u_antic2.line == 9'd8) &&
+            dut.u_antic2.hcount >= 7'd25 && dut.u_antic2.hcount <= 7'd36 &&
+            dut.u_antic2.dl_insn == 8'h42) begin
             rawcnt <= rawcnt + 1;
             $display("RAW n=%0d tick=%b hc=%0d insn=%02h pxwr=%b pxpos=%0d src=%0d ls=%b emit=%b inwin=%b st=%0d",
                      rawcnt, tick, dut.u_antic2.hcount, dut.u_antic2.dl_insn,
@@ -481,6 +483,18 @@ module tb_acid #(
                      dut.u_antic2.px_pf_src, dut.u_antic2.px_line_start,
                      dut.u_antic2.pf_emit_en, dut.u_antic2.px_in_window,
                      dut.u_antic2.u_render.state);
+            $display("RAWF sl=%0d hc=%0d rf=%b fetch=%b glyph=%b req=%b val=%b data=%02h code=%02h grow=%0d",
+                     dut.u_antic2.line, dut.u_antic2.hcount,
+                     dut.u_antic2.row_first, dut.u_antic2.sched_pf_fetch,
+                     dut.u_antic2.sched_pf_fetch_glyph, dut.u_antic2.u_pf.mem_req,
+                     dut.u_antic2.u_pf.mem_valid, dut.u_antic2.mem_data,
+                     dut.u_antic2.u_pf.char_code, dut.u_antic2.row_line);
+            $display("RAWI  idx=%0d next=%0d ifidx=%0d ifglyph=%b ifcode=%02h b0=%04h b1=%04h b2=%04h",
+                     dut.u_antic2.u_pf.idx, dut.u_antic2.u_pf.pf_next,
+                     dut.u_antic2.u_pf.inflight_idx, dut.u_antic2.u_pf.inflight_glyph,
+                     dut.u_antic2.u_pf.inflight_code,
+                     dut.u_antic2.u_pf.buf_mem[0], dut.u_antic2.u_pf.buf_mem[1],
+                     dut.u_antic2.u_pf.buf_mem[2]);
             $display("RAW+ lb_len=%0d pf_bytes=%0d pf_on=%b fetching=%b pxstart=%0d pxstop=%0d",
                      dut.u_antic2.lb_len, dut.u_antic2.pf_bytes,
                      dut.u_antic2.u_geom.pf_on, dut.u_antic2.pf_fetching,
