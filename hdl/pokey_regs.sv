@@ -320,15 +320,32 @@ module pokey_regs (
                     if (tmr_fast[i]) begin
                         // In flight. Arming is sampled now; a masked raise still
                         // flies (emu's st_armed / IRQEN_ARMS_INFLIGHT).
-                        // IRQST_LAG-1: irq_latch_q is itself registered, so the
-                        // final cycle of emu's four is the latch's own.
-                        st_lag_q[i]   <= 3'(IRQST_LAG - 1);
+                        // The full IRQST_LAG.  The CPU latches read data at the
+                        // END of the read cycle, so a bit that becomes visible on
+                        // the cycle the test samples reads as ALREADY PENDING --
+                        // pokey_timertiming's "triggered too early (loop #1)"
+                        // with d1=$00.  Do not shorten this to match a probe that
+                        // prints the latch's own set cycle; d1 is the ground truth.
+                        st_lag_q[i]   <= 3'(IRQST_LAG);
                         st_armed_q[i] <= irqen_q[i];
                     end else if (irqen_q[i]) begin
                         // No lag, so no flight to be armed during: a masked
                         // raise on a base-clocked channel is simply lost.
                         irq_latch_q[i] <= 1'b1;
                     end
+                end else if (stimer_pulse && st_lag_q[i] == 3'(IRQST_LAG - 1)) begin
+                    // A STIMER STROBE CANCELS AN INTERRUPT THAT HAS ONLY JUST
+                    // UNDERFLOWED.  emu pokey_timer.c:1005-1024 tabulates the
+                    // boundary and finds it is a ONE-CYCLE window, not the four
+                    // the bit is in flight for: "STIMER reaches the counter and
+                    // the first stage of the delay that carries the underflow to
+                    // IRQST, and nothing further along it."  A bit raised on the
+                    // last tick still has its full lag standing, so "st_lag still
+                    // at its maximum" IS "raised this tick", and dropping the
+                    // countdown is the whole cancellation -- IRQST is active low
+                    // and the bit has not been cleared yet.
+                    st_lag_q[i]   <= 3'd0;
+                    st_armed_q[i] <= 1'b0;
                 end else if (phi2_tick && st_lag_q[i] != 3'd0) begin
                     st_lag_q[i] <= st_lag_q[i] - 3'd1;
                     if (st_lag_q[i] == 3'd1 && st_armed_q[i]) irq_latch_q[i] <= 1'b1;

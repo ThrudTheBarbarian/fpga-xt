@@ -538,6 +538,25 @@ module tb_acid #(
                 end
                 if (dut.u_pokey.u_regs.irq_latch_q[0] && !st_irq_q)
                     $display("  -> IRQST bit 0 readable at +%0d", st_cyc - st_at);
+
+            end
+        end
+    end
+
+    // EVERY IRQST read, NOT gated on `tick` -- a read that does not land on a
+    // machine-cycle tick is invisible to a tick-gated probe, which is how the
+    // first version of this missed the read that actually fails.
+    logic irqst_rd_q = 1'b0;
+    integer irqst_rn = 0;
+    always_ff @(posedge clk) begin
+        if (!rst && STPROBE >= 0) begin
+            irqst_rd_q <= dut.c_rw && (dut.c_addr[15:8] == 8'hD2) && (dut.c_addr[3:0] == 4'hE);
+            if (dut.c_rw && (dut.c_addr[15:8] == 8'hD2) && (dut.c_addr[3:0] == 4'hE) && !irqst_rd_q && irqst_rn < 20) begin
+                irqst_rn <= irqst_rn + 1;
+                $display("  IRQSTrd@%04h +%0d din=%02h latch0=%b irqen=%02h", dut.c_addr,
+                         st_cyc - st_at, dut.c_din,
+                         dut.u_pokey.u_regs.irq_latch_q[0],
+                         dut.u_pokey.u_regs.irqen_q);
             end
         end
     end
