@@ -527,7 +527,18 @@ module antic2 #(
     antic_pf_stream u_pf (
         .clk(clk), .rst(rst),
         .line_start(sched_line_start), .first_row(row_first),
-        .mode(dl_insn[3:0]), .row({1'b0, row_line}),
+        // THE GLYPH ROW IS THE SCANLINE'S OWN, NOT THE COUNTER'S CURRENT VALUE.
+        // emu (antic.c:872) captures it and only then advances:
+        //     a->glyph_row = a->row_line;
+        //     a->row_line  = (a->row_line + 1) & 0x0F;
+        // with the comment "captured before the counter moves on -- the
+        // progressive fetch runs after line_start has advanced it".  antic2_line
+        // folds that post-increment into the register: a row's FIRST scanline
+        // already reads row_line == 1 (antic2_line.sv:126).  Feeding it straight
+        // to the fetcher reads every character one glyph row too far down, which
+        // antic_charcontrol measures directly -- its rows come out 2,3,4,5,6,7,0
+        // instead of 0..7.
+        .mode(dl_insn[3:0]), .row({1'b0, row_line - 4'd1}),
         .chbase(chbase), .chactl(chactl[2:0]),
         .bytes_per_line(pf_bytes),
         .pf_fetch(sched_pf_fetch), .pf_fetch_glyph(sched_pf_fetch_glyph),

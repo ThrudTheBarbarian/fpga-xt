@@ -406,32 +406,39 @@ module tb_acid #(
     logic [2:0] pfsrc_row [0:227];
     integer pfsrccnt = 0;
     logic pfsrc_any = 1'b0;
+    // The print fires at hcount 113, where `line` has ALREADY advanced to the
+    // next scanline -- so label the row with the number it had at hcount 0.
+    logic [8:0] pfsrc_sl = 9'd0;
     always_ff @(posedge clk) begin
         if (rst) begin
             for (int k = 0; k < 228; k++) pfsrc_row[k] <= 3'd7;   // 7 = none
-        end else if (USE_ANTIC2 && PFSRC >= 0 && tick) begin
+        end else if (USE_ANTIC2 && PFSRC >= 0) begin
+            // SAMPLE ON EVERY CLOCK, NOT ON `tick`.  px_wr is qualified by
+            // px_tick, which fires more than once per machine cycle -- one
+            // machine cycle spans two colour clocks and the renderer emits at
+            // each.  Gating the capture on `tick` therefore records one emit in
+            // two and produces a map whose columns come in identical pairs,
+            // which reads exactly like a design that paints at half resolution.
+            // The objects in antic_charcontrol are ONE colour clock wide, so
+            // that artefact hid the whole question.
+            if (tick && dut.u_antic2.hcount == 7'd0) pfsrc_sl <= dut.u_antic2.line;
             if (dut.u_antic2.px_line_start) begin
                 for (int k = 0; k < 228; k++) pfsrc_row[k] <= 3'd7;
                 pfsrc_any <= 1'b0;
             end else if (dut.u_antic2.px_wr) begin
-                // ONE EMIT COVERS TWO COLOUR CLOCKS.  A scanline is 114 machine
-                // cycles and 228 colour clocks, so px_pos advances by 4 hi-res
-                // pixels per tick and px_pos[8:1] lands only on even columns.
-                // Filling both halves makes the map a real colour-clock map
-                // rather than a comb with every other tooth missing.
-                pfsrc_row[{dut.u_antic2.px_pos[8:2], 1'b0}] <= dut.u_antic2.px_pf_src;
-                pfsrc_row[{dut.u_antic2.px_pos[8:2], 1'b1}] <= dut.u_antic2.px_pf_src;
+                pfsrc_row[dut.u_antic2.px_pos[8:1]] <= dut.u_antic2.px_pf_src;
                 pfsrc_any <= 1'b1;
             end
             // SELECT BY SCANLINE, AND ONLY ONCE THE LIST IS ACTUALLY RUNNING.
             // Keying on dl_insn and capping at 3 spent the whole budget on the
             // power-on frames, where dl_insn is 00 and nothing is emitted --
             // which is why this probe read as dead for three sessions.
-            if (dut.u_antic2.hcount == 7'd113 && pfsrccnt < PFSRCN &&
+            if (tick && dut.u_antic2.hcount == 7'd113 && pfsrccnt < PFSRCN &&
                 (PFSRC == 255 ? pfsrc_any : (dut.u_antic2.vcount == 8'(PFSRC))) &&
                 dut.u_antic2.dl_insn != 8'h00) begin
                 pfsrccnt <= pfsrccnt + 1;
-                $write("PFSRC vc %0d insn %02h:", dut.u_antic2.vcount, dut.u_antic2.dl_insn);
+                $write("PFSRC sl %0d (raw %0d) insn %02h:", pfsrc_sl,
+                       dut.u_antic2.line, dut.u_antic2.dl_insn);
                 for (int k = 0; k < 228; k++)
                     $write("%c", (pfsrc_row[k] == 3'd7) ? "." : ("0" + pfsrc_row[k]));
                 $write("\n");
