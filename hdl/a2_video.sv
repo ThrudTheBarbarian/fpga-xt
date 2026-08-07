@@ -218,6 +218,49 @@ module a2_video (
     wire [7:0] dl_hposm2 = hp_pipe[6][HPOS_CC_DELAY];
     wire [7:0] dl_hposm3 = hp_pipe[7][HPOS_CC_DELAY];
 
+    // SIZE RIDES THE SAME DEADLINE AS POSITION.  The origin offset above is a
+    // property of the clock the objects are walked on, not of HPOS in
+    // particular, so every register the walk reads mid-line owes it the same six
+    // colour clocks -- and SIZEP/SIZEM were arriving undelayed, six clocks ahead
+    // of the positions they scale.  A write during vertical blank is unaffected
+    // either way; only the mid-line writes gtia_pmresize is built out of move.
+    // SIZEP TAKES THE SAME SIX, NOT SEVEN.  emu holds a SIZEP write pending for
+    // SIZEP_DELAY=1 colour clock before it reaches the object, but that figure
+    // is relative to emu's own write timing and does NOT stack on top of the
+    // origin offset here -- antic2's register path already carries a clock emu
+    // does not.  Swept rather than composed, because adding two constants that
+    // are measured against different origins is how you get a plausible wrong
+    // answer: over 6..9, gtia_pmresize's 4x-to-1x block fails at index 3 with 6
+    // and at index 0 with 7, 8 and 9 alike, while gtia_pmoverlap and
+    // gtia_pmretrigger are insensitive across the whole range and constrain
+    // nothing.  8 and 9 give $E0 where $80 is wanted, which is exactly the
+    // symptom emu's own notes attribute to re-deriving the bit index.
+`ifndef SIZEP_CC_DELAY
+  `define SIZEP_CC_DELAY HPOS_CC_DELAY
+`endif
+    localparam int SIZEP_CC_DELAY = `SIZEP_CC_DELAY;
+
+    logic [1:0] szp_pipe [0:3][1:SIZEP_CC_DELAY];
+    logic [7:0] szm_pipe [1:HPOS_CC_DELAY];
+    always_ff @(posedge clk) begin
+        if (cc_tick) begin
+            for (int o = 0; o < 4; o++)
+                for (int d = SIZEP_CC_DELAY; d > 1; d--)
+                    szp_pipe[o][d] <= szp_pipe[o][d-1];
+            for (int d = HPOS_CC_DELAY; d > 1; d--)
+                szm_pipe[d] <= szm_pipe[d-1];
+            szp_pipe[0][1] <= sizep0;  szp_pipe[1][1] <= sizep1;
+            szp_pipe[2][1] <= sizep2;  szp_pipe[3][1] <= sizep3;
+            szm_pipe[1]    <= sizem;
+        end
+    end
+
+    wire [1:0] dl_sizep0 = szp_pipe[0][SIZEP_CC_DELAY];
+    wire [1:0] dl_sizep1 = szp_pipe[1][SIZEP_CC_DELAY];
+    wire [1:0] dl_sizep2 = szp_pipe[2][SIZEP_CC_DELAY];
+    wire [1:0] dl_sizep3 = szp_pipe[3][SIZEP_CC_DELAY];
+    wire [7:0] dl_sizem  = szm_pipe[HPOS_CC_DELAY];
+
     wire       gtia_valid;
     wire [7:0] gtia_a, gtia_b;
 
@@ -231,8 +274,9 @@ module a2_video (
         .hposp2(dl_hposp2), .hposp3(dl_hposp3),
         .hposm0(dl_hposm0), .hposm1(dl_hposm1),
         .hposm2(dl_hposm2), .hposm3(dl_hposm3),
-        .sizep0(sizep0), .sizep1(sizep1), .sizep2(sizep2), .sizep3(sizep3),
-        .sizem(sizem),
+        .sizep0(dl_sizep0), .sizep1(dl_sizep1),
+        .sizep2(dl_sizep2), .sizep3(dl_sizep3),
+        .sizem(dl_sizem),
         .grafp0(grafp0), .grafp1(grafp1), .grafp2(grafp2), .grafp3(grafp3),
         .grafm(grafm), .prior(prior),
         .colbk(colbk), .colpf0(colpf0), .colpf1(colpf1),
