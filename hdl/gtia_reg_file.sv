@@ -63,6 +63,12 @@ module gtia_reg_file (
     output logic [7:0] hposp0, hposp1, hposp2, hposp3,
     output logic [7:0] hposm0, hposm1, hposm2, hposm3,
     output logic [1:0] sizep0, sizep1, sizep2, sizep3,
+    // 1-clk per player on a SIZEP WRITE.  A resize is an EVENT, not a change:
+    // the object walk applies a different roll rule on the clock a SIZEP write
+    // lands, and it does so whether or not the value written differs from the
+    // one already there.  A value-change detector would miss a rewrite of the
+    // same size, so the strobe is the write itself.
+    output logic [3:0] sizep_we,
     output logic [7:0] sizem,
     output logic [7:0] grafp0, grafp1, grafp2, grafp3,
     output logic [7:0] grafm,
@@ -119,6 +125,7 @@ module gtia_reg_file (
             hposp0 <= 8'h00; hposp1 <= 8'h00; hposp2 <= 8'h00; hposp3 <= 8'h00;
             hposm0 <= 8'h00; hposm1 <= 8'h00; hposm2 <= 8'h00; hposm3 <= 8'h00;
             sizep0 <= 2'd0;  sizep1 <= 2'd0;  sizep2 <= 2'd0;  sizep3 <= 2'd0;
+            sizep_we <= 4'd0;
             sizem  <= 8'h00;
             grafp0 <= 8'h00; grafp1 <= 8'h00; grafp2 <= 8'h00; grafp3 <= 8'h00;
             grafm  <= 8'h00;
@@ -131,6 +138,7 @@ module gtia_reg_file (
             vdelay <= 8'h00;
             gractl <= 8'h00;
         end else begin
+            sizep_we <= 4'd0;   // one clock only
             // The CPU write is decoded first; the DMA store below can land on
             // the same register in the same cycle and takes precedence, which
             // is the same "whoever wrote last wins" the hardware has.
@@ -144,10 +152,10 @@ module gtia_reg_file (
                     5'h05: hposm1 <= wdata;
                     5'h06: hposm2 <= wdata;
                     5'h07: hposm3 <= wdata;
-                    5'h08: sizep0 <= wdata[1:0];
-                    5'h09: sizep1 <= wdata[1:0];
-                    5'h0A: sizep2 <= wdata[1:0];
-                    5'h0B: sizep3 <= wdata[1:0];
+                    5'h08: begin sizep0 <= wdata[1:0]; sizep_we[0] <= 1'b1; end
+                    5'h09: begin sizep1 <= wdata[1:0]; sizep_we[1] <= 1'b1; end
+                    5'h0A: begin sizep2 <= wdata[1:0]; sizep_we[2] <= 1'b1; end
+                    5'h0B: begin sizep3 <= wdata[1:0]; sizep_we[3] <= 1'b1; end
                     5'h0C: sizem  <= wdata;
                     5'h0D: grafp0 <= wdata;
                     5'h0E: grafp1 <= wdata;

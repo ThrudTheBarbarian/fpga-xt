@@ -92,6 +92,7 @@ module a2_video (
     wire [7:0] hposp0, hposp1, hposp2, hposp3;
     wire [7:0] hposm0, hposm1, hposm2, hposm3;
     wire [1:0] sizep0, sizep1, sizep2, sizep3;
+    wire [3:0] sizep_we;
     wire [7:0] sizem;
     wire [7:0] grafp0, grafp1, grafp2, grafp3;
     wire [7:0] grafm;
@@ -111,6 +112,7 @@ module a2_video (
         .hposp0(hposp0), .hposp1(hposp1), .hposp2(hposp2), .hposp3(hposp3),
         .hposm0(hposm0), .hposm1(hposm1), .hposm2(hposm2), .hposm3(hposm3),
         .sizep0(sizep0), .sizep1(sizep1), .sizep2(sizep2), .sizep3(sizep3),
+        .sizep_we(sizep_we),
         .sizem(sizem),
         .grafp0(grafp0), .grafp1(grafp1), .grafp2(grafp2), .grafp3(grafp3),
         .grafm(grafm),
@@ -240,20 +242,43 @@ module a2_video (
 `endif
     localparam int SIZEP_CC_DELAY = `SIZEP_CC_DELAY;
 
+    // The WRITE EVENT rides the same pipe as the value.  The walk needs to know
+    // which colour clock a SIZEP write lands on, not merely that the size now
+    // differs, so a per-player strobe is delayed alongside sizep and emerges as
+    // a one-colour-clock pulse.  The strobe from the register file is a fabric
+    // pulse and the pipe only advances on cc_tick, so it is held until the tick
+    // that consumes it -- otherwise a write landing between ticks is lost.
     logic [1:0] szp_pipe [0:3][1:SIZEP_CC_DELAY];
+    logic       szw_pipe [0:3][1:SIZEP_CC_DELAY];
     logic [7:0] szm_pipe [1:HPOS_CC_DELAY];
-    always_ff @(posedge clk) begin
-        if (cc_tick) begin
+    logic [3:0] szw_hold;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            szw_hold <= 4'd0;
             for (int o = 0; o < 4; o++)
-                for (int d = SIZEP_CC_DELAY; d > 1; d--)
-                    szp_pipe[o][d] <= szp_pipe[o][d-1];
-            for (int d = HPOS_CC_DELAY; d > 1; d--)
-                szm_pipe[d] <= szm_pipe[d-1];
-            szp_pipe[0][1] <= sizep0;  szp_pipe[1][1] <= sizep1;
-            szp_pipe[2][1] <= sizep2;  szp_pipe[3][1] <= sizep3;
-            szm_pipe[1]    <= sizem;
+                for (int d = 1; d <= SIZEP_CC_DELAY; d++) szw_pipe[o][d] <= 1'b0;
+        end else begin
+            szw_hold <= szw_hold | sizep_we;
+            if (cc_tick) begin
+                for (int o = 0; o < 4; o++) begin
+                    for (int d = SIZEP_CC_DELAY; d > 1; d--) begin
+                        szp_pipe[o][d] <= szp_pipe[o][d-1];
+                        szw_pipe[o][d] <= szw_pipe[o][d-1];
+                    end
+                    szw_pipe[o][1] <= szw_hold[o] | sizep_we[o];
+                end
+                for (int d = HPOS_CC_DELAY; d > 1; d--)
+                    szm_pipe[d] <= szm_pipe[d-1];
+                szp_pipe[0][1] <= sizep0;  szp_pipe[1][1] <= sizep1;
+                szp_pipe[2][1] <= sizep2;  szp_pipe[3][1] <= sizep3;
+                szm_pipe[1]    <= sizem;
+                szw_hold       <= 4'd0;
+            end
         end
     end
+
+    wire [3:0] dl_resize = {szw_pipe[3][SIZEP_CC_DELAY], szw_pipe[2][SIZEP_CC_DELAY],
+                            szw_pipe[1][SIZEP_CC_DELAY], szw_pipe[0][SIZEP_CC_DELAY]};
 
     wire [1:0] dl_sizep0 = szp_pipe[0][SIZEP_CC_DELAY];
     wire [1:0] dl_sizep1 = szp_pipe[1][SIZEP_CC_DELAY];
@@ -276,6 +301,7 @@ module a2_video (
         .hposm2(dl_hposm2), .hposm3(dl_hposm3),
         .sizep0(dl_sizep0), .sizep1(dl_sizep1),
         .sizep2(dl_sizep2), .sizep3(dl_sizep3),
+        .resize(dl_resize),
         .sizem(dl_sizem),
         .grafp0(grafp0), .grafp1(grafp1), .grafp2(grafp2), .grafp3(grafp3),
         .grafm(grafm), .prior(prior),

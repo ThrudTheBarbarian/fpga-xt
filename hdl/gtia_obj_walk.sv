@@ -78,6 +78,9 @@ module gtia_obj_walk (
     input  wire [7:0] hposp0, hposp1, hposp2, hposp3,
     input  wire [7:0] hposm0, hposm1, hposm2, hposm3,
     input  wire [1:0] sizep0, sizep1, sizep2, sizep3,
+    // 1 colour clock per player: a SIZEP write reaches the object on this clock.
+    // A WRITE, not a change -- rewriting the same size still resizes.
+    input  wire [3:0] resize,
     input  wire [7:0] sizem,          // 2 bits per missile
     input  wire [7:0] grafp0, grafp1, grafp2, grafp3,
     input  wire [7:0] grafm,          // m0=[1:0] m1=[3:2] m2=[5:4] m3=[7:6]
@@ -96,6 +99,7 @@ module gtia_obj_walk (
     logic [1:0]  cnt  [0:11];
     logic [3:0]  bits [0:11];
     logic [11:0] live;
+    logic [11:0] locked;              // 1xalt lockup; see the resize clock below
 
     // ---- the walk --------------------------------------------------------
     logic [3:0] step;                 // 0..11 walking, 12 = idle
@@ -182,10 +186,48 @@ module gtia_obj_walk (
     // (smaller) size_max, so it never matches — the object stalls until the
     // 2-bit counter wraps all the way round, three colour clocks late, and the
     // shape comes out shifted a bit position ($40 where $80 is required).
-    wire       moved_a  = walking && live[sa] &&
-                          (match ? !is_missile : (cnt[sa] >= size_max));
-    wire       moved_b  = walking && !is_missile && live[sb] &&
-                          (match ? 1'b1 : (cnt[sb] >= size_max));
+    // ---- the resize clock -------------------------------------------------
+    // On the clock a SIZEP write lands the roll rule is NOT "has the phase
+    // reached the new width".  It is "are the low log2(w) bits about to CARRY",
+    // (ph & (w-1)) == (w-1), which differs only at phase 2 of width 2 -- and
+    // those four cells are exactly what gtia_pmresize's 4x-to-2x row was
+    // missing.  Neither this nor the lock below was guessed: emu's
+    // tools/pmresize-check.py searched the roll decision as twelve free
+    // booleans, one per (phase, new width), and a UNIQUE setting scores 80/80
+    // over the five non-alt transitions.  Width 4 phases 2 and 3 never arise --
+    // a run widening to 4x comes from 1x or 2x, so its phase is 0 or 1 -- so
+    // that corner is consistent with every cell the test constrains and is an
+    // inference beyond them, flagged as one.
+    //
+    // SIZEP 2 is "1xalt": it divides by one exactly as SIZEP 0 does, yet the
+    // test expects a DIFFERENT answer, and the difference is a LOCKUP.  The run
+    // advances only while the phase counter's two bits AGREE; the moment they
+    // disagree it stops dead and never advances again, emitting its current bit
+    // for the rest of the line.  That is the $FE -- every probe lit -- standing
+    // at four of the sixteen positions in each alt row.  Searched the same way:
+    // four booleans for "does phase p lock" against four for "does phase p
+    // roll", unique setting, 32/32.
+    //
+    // A locked run therefore never reaches bit 8 and never retires; only the
+    // line-start clear takes it down.  Miss that and it emits for ever.
+    wire       obj_resize = walking && !is_missile && resize[mi];
+    wire       obj_alt    = (obj_size == 2'b10);
+
+    // size_max is w-1, so "the low bits are all ones for the new width" is
+    // simply (cnt & size_max) == size_max.
+    wire       rz_roll_a  = ((cnt[sa] & size_max) == size_max);
+    wire       rz_roll_b  = ((cnt[sb] & size_max) == size_max);
+    wire       rz_lock_a  = obj_alt && (cnt[sa][1] != cnt[sa][0]);
+    wire       rz_lock_b  = obj_alt && (cnt[sb][1] != cnt[sb][0]);
+
+    wire       moved_a  = walking && live[sa] && !locked[sa] &&
+                          (match       ? !is_missile
+                         : obj_resize  ? (!rz_lock_a && rz_roll_a)
+                                       : (cnt[sa] >= size_max));
+    wire       moved_b  = walking && !is_missile && live[sb] && !locked[sb] &&
+                          (match       ? 1'b1
+                         : obj_resize  ? (!rz_lock_b && rz_roll_b)
+                                       : (cnt[sb] >= size_max));
 
     wire       fin_a    = moved_a && (bits[sa] == last_bit);
     wire       fin_b    = moved_b && (bits[sb] == 4'd7);
@@ -220,6 +262,7 @@ module gtia_obj_walk (
         if (rst) begin
             step       <= 4'd8;
             live       <= 12'h000;
+            locked     <= 12'h000;
             acc        <= 8'h00;
             pres       <= 8'h00;
             pres_valid <= 1'b0;
@@ -232,7 +275,8 @@ module gtia_obj_walk (
             pres_valid <= 1'b0;
 
             if (line_start) begin
-                live <= 12'h000;
+                live   <= 12'h000;
+                locked <= 12'h000;
                 step <= 4'd8;
                 acc  <= 8'h00;
                 pres <= 8'h00;
@@ -242,6 +286,10 @@ module gtia_obj_walk (
             end else if (walking) begin
                 sr[sa]   <= sr_next_a;
                 live[sa] <= live_next_a;
+                // A new run starts unlocked; otherwise the lock latches on the
+                // resize clock and never clears until line start.
+                if (hit_a)           locked[sa] <= 1'b0;
+                else if (obj_resize) locked[sa] <= locked[sa] | rz_lock_a;
                 cnt[sa]  <= (hit_a || moved_a) ? 2'd0
                           : (live[sa] ? cnt[sa] + 2'd1 : cnt[sa]);
                 bits[sa] <= hit_a   ? 4'd0
@@ -254,6 +302,8 @@ module gtia_obj_walk (
                 if (!is_missile) begin
                     sr[sb]   <= sr_next_b;
                     live[sb] <= live_next_b;
+                    if (hit_b)           locked[sb] <= 1'b0;
+                    else if (obj_resize) locked[sb] <= locked[sb] | rz_lock_b;
                     cnt[sb]  <= (hit_b || moved_b) ? 2'd0
                               : (live[sb] ? cnt[sb] + 2'd1 : cnt[sb]);
                     bits[sb] <= hit_b   ? 4'd0
