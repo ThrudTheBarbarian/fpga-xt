@@ -295,7 +295,7 @@ module gtia_stage (
 
     gtia_collide u_col (
         .clk(clk), .rst(rst),
-        .start(col_start), .pres(pres), .pf_src(col_pf),
+        .start(col_start), .pres(pres), .pf_src(col_pf), .prior(prior),
         .active(active && cc_win_q), .hitclr(hitclr),
         .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl), .busy()
     );

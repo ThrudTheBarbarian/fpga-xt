@@ -26,7 +26,7 @@ module tb_gtia_collide;
 
     gtia_collide dut (
         .clk(clk), .rst(rst),
-        .start(start), .pres(pres), .pf_src(pf_src),
+        .start(start), .pres(pres), .pf_src(pf_src), .prior(8'h00),
         .active(active), .hitclr(hitclr),
         .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl), .busy(busy)
     );

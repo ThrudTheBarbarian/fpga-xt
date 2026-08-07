@@ -45,6 +45,7 @@ module gtia_collide (
     input  wire       start,          // 1-clk: accumulate this colour clock
     input  wire [7:0] pres,           // [3:0] players 0-3, [7:4] missiles 0-3
     input  wire [2:0] pf_src,         // antic_pf_source encoding
+    input  wire [7:0] prior,          // PRIOR ($D01B); [7:6] selects the GTIA mode
     input  wire       active,         // this is an active display line
     input  wire       hitclr,         // 1-clk: $D01E write
 
@@ -68,7 +69,15 @@ module gtia_collide (
     // not a playfield and collides with nothing.
     logic [3:0] pf_hit;
     always_comb begin
-        if (pf_c >= SRC_PF0 && pf_c <= SRC_PF3) pf_hit = 4'b0001 << (pf_c - SRC_PF0);
+        // GTIA MODE 9 (PRIOR $40) MAKES NO PLAYFIELD COLLISIONS AT ALL: its
+        // playfield byte is a luminance, not a colour index, so there is no
+        // colour to collide with (emu gtia.c:264-271, GTIA_MODE_9 == 1).  The
+        // mode only SUPPRESSES -- it never remaps a class -- and it suppresses
+        // the PLAYFIELD collisions only: emu returns after the player-player
+        // accumulation, so p_pl/m_pl still latch.  Gating pf_hit alone gives
+        // exactly that split.
+        if (prior[7:6] == 2'b01)                pf_hit = 4'b0000;
+        else if (pf_c >= SRC_PF0 && pf_c <= SRC_PF3) pf_hit = 4'b0001 << (pf_c - SRC_PF0);
         else                                    pf_hit = 4'b0000;
     end
 
