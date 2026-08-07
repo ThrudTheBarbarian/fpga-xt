@@ -144,6 +144,8 @@ module a8_core #(
     wire [7:0]  a2_pm_data;
     wire        a2_pm_fetch;
     wire [7:0]  a2_gtia_rdata;
+    wire [6:0]  a2_px_hcount;
+    wire [3:0]  a2_px_mode;
     wire        a2_lb_wr, a2_lb_line_start;
     wire [7:0]  a2_lb_color;
     wire        gt_lb_wr, gt_lb_line_start;
@@ -263,6 +265,7 @@ module a8_core #(
         .hcount(a2_hcount), .line(a2_line),
         .px_wr(a2_px_wr), .px_pf_src(a2_px_pf_src), .px_val(a2_px_val),
         .px_hires(a2_px_hires), .px_in_window(a2_px_in_window),
+        .px_hcount(a2_px_hcount), .px_mode(a2_px_mode),
         .px_pos(a2_px_pos), .px_line_start(a2_px_line_start),
         .px_active(a2_px_active), .px_collide(a2_px_collide)
     );
@@ -284,6 +287,7 @@ module a8_core #(
         .rdata(a2_gtia_rdata),
         .px_wr(a2_px_wr), .px_pf_src(a2_px_pf_src), .px_val(a2_px_val),
         .px_hires(a2_px_hires), .px_in_window(a2_px_in_window),
+        .px_hcount(a2_px_hcount), .px_mode(a2_px_mode),
         .px_pos(a2_px_pos), .px_line_start(a2_px_line_start),
         .px_active(a2_px_active), .px_collide(a2_px_collide),
         .pm_we(a2_pm_we), .pm_obj(a2_pm_obj), .pm_data(a2_pm_data),

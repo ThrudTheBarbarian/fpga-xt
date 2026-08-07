@@ -90,6 +90,13 @@ module antic2 #(
     output wire [1:0]  px_val,
     output wire        px_hires,
     output wire        px_in_window,       // LEVEL: the beam is on the playfield
+    // ANTIC'S MACHINE CYCLE AND THE MODE IT IS RUNNING, for the one cross-chip
+    // rule that needs both: GTIA latches "is mode F hi-res this line?" once per
+    // scanline, and the answer depends on PRIOR, which lives in a2_video.  The
+    // decision has to be made against ANTIC's own hcount -- the whole of
+    // gtia_psuedomodee is one machine cycle either side of it.
+    output wire [6:0]  px_hcount,
+    output wire [3:0]  px_mode,
     output wire [8:0]  px_pos,             // hi-res pixel index along the line
     output wire        px_line_start,      // 1-clk at the top of the scanline
     output wire        px_active,          // an active display line
@@ -184,6 +191,8 @@ module antic2 #(
     // positions against the colour clock even where the playfield emitted
     // nothing, and it does not compare at all during vertical blank.
     assign px_line_start = line_start;
+    assign px_hcount     = hcount;
+    assign px_mode       = dl_insn[3:0];
 
     // VERTICAL BLANK IS NOT THE SCANLINE RANGE, and antic_hiresbug is built on
     // exactly that.  emu, system.c:200-205:

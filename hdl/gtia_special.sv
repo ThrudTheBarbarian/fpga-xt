@@ -27,13 +27,16 @@
 // pixel values, which is exactly the "pseudo" display those tests probe.  There
 // is no special case for it here: the same two bits arrive either way.
 //
-// COLLISIONS IN GTIA MODES ARE NOT SETTLED.  gtia_psuedomodee asserts particular
-// P0PF values across a mid-line PRIOR change and gtia_collision2 depends on the
-// same behaviour; neither is reproduced by simply feeding the playfield source
-// through unchanged, and guessing at it would be the sort of plausible-but-wrong
-// model this rewrite exists to avoid.  The colour path below is complete and
-// testable on its own; the collision path stays as it is until those two tests
-// can be measured against real hardware.
+// COLLISIONS ACROSS A MID-LINE PRIOR CHANGE ARE SETTLED, AND NOT HERE.  This
+// module was deferred on the grounds that gtia_psuedomodee could not be
+// reproduced without measuring real hardware.  That was wrong: emu carries the
+// measurement (system.c:25-45), and the rule is not about the nibble decode at
+// all.  GTIA latches ONCE PER SCANLINE whether ANTIC mode F is hi-res, and a
+// GTIA mode still selected at that instant disables hi-res for the whole line;
+// afterwards the mode F pair is read as a direct playfield index.  That lives
+// in a2_video, which has both PRIOR and ANTIC's machine cycle.  emu's threshold
+// is bracketed from both sides and so is ours: one cycle early and both of the
+// test's cases go pseudo, one cycle late and neither does.
 //
 // CLOCK BUDGET: a 4-bit mux and a nibble concatenation, evaluated once per GTIA
 // pixel.  There is no state.

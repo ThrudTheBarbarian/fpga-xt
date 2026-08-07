@@ -63,6 +63,8 @@ module a2_video (
     input  wire [1:0]  px_val,           // ...or the raw pair a GTIA mode reads
     input  wire        px_hires,
     input  wire        px_in_window,     // LEVEL: the beam is on the playfield
+    input  wire [6:0]  px_hcount,        // ANTIC's machine cycle
+    input  wire [3:0]  px_mode,          // ...and the mode it is running
     input  wire [8:0]  px_pos,           // hi-res pixel index along the line
     input  wire        px_line_start,    // 1-clk at the top of the scanline
     input  wire        px_active,        // an active display line
@@ -158,6 +160,50 @@ module a2_video (
     // carries one pixel whose value is already two bits wide.  That single fact
     // is the whole of "pseudo mode E" -- see gtia_special.
     wire [1:0] an_pair = px_hires ? {pv_cap_a[0], pv_cap_b[0]} : pv_cap_a;
+
+    // ---- pseudo mode E -----------------------------------------------------
+    //
+    // GTIA decides ONCE PER SCANLINE whether ANTIC mode F is hi-res, and a GTIA
+    // mode still selected at that instant disables hi-res for the WHOLE line.
+    // Leave the GTIA mode afterwards and the playfield keeps arriving with
+    // hi-res off -- and then the two bits of a mode F colour clock are read as a
+    // playfield INDEX rather than reduced to "lit or not".  Not mode E's
+    // mapping either: a DIRECT index, so `00` is PF0 and not background.  That
+    // is what the test is named for -- it looks like mode E and its colours are
+    // not mode E's.
+    //
+    // emu states the latch as two lines (system.c:202-203):
+    //     if (cyc == 0)  hires_ok = 1;
+    //     if (cyc == 15) hires_ok = !((prior >> 6) & 3);
+    // and its comment records that 15 is MEASURED and bracketed from both
+    // sides: at 14 and below gtia_psuedomodee's first case also goes pseudo, at
+    // 16 and above its second case does not go pseudo at all.  Exactly one
+    // value separates them, which is why the decision has to be made against
+    // ANTIC's own machine cycle rather than anything derived from px_pos.
+    logic [6:0] hc_q;
+    logic       hires_ok;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            hc_q     <= 7'd0;
+            hires_ok <= 1'b1;
+        end else begin
+            hc_q <= px_hcount;
+            if (px_hcount != hc_q) begin
+                if      (px_hcount == 7'd0)  hires_ok <= 1'b1;
+                else if (px_hcount == 7'd16) hires_ok <= (prior[7:6] == 2'b00);
+            end
+        end
+    end
+
+    // The pair IS the class, and only inside the playfield window -- emu's
+    // antic_pf_pair returns -1 outside it, and painting the border as PF0 would
+    // collide everywhere.  Replacing the source also drops the hi-res encoding
+    // (5/6), which is what stops gtia_collide applying "lit collides as PF2"
+    // and throwing the class away.
+    wire       pseudo_e   = !hires_ok && (px_mode == 4'hF) && win_cap;
+    wire [2:0] pseudo_src = 3'd1 + {1'b0, an_pair};
+    wire [2:0] pf_src_a_eff = pseudo_e ? pseudo_src : pf_cap_a;
+    wire [2:0] pf_src_b_eff = pseudo_e ? pseudo_src : pf_cap_b;
 
     // A colour clock starts on the even hi-res pixel.  At that same edge
     // gtia_stage samples pf_cap_a/b, which still hold the PREVIOUS colour
@@ -293,7 +339,7 @@ module a2_video (
         .clk(clk), .rst(rst),
         .line_start(px_line_start), .cc_tick(cc_tick), .cc_pos(cc_pos),
         .active(px_collide), .hitclr(hitclr),
-        .pf_src_a(pf_cap_a), .pf_src_b(pf_cap_b),
+        .pf_src_a(pf_src_a_eff), .pf_src_b(pf_src_b_eff),
         .an_pair(an_pair), .pf_win(win_cap),
         .hposp0(dl_hposp0), .hposp1(dl_hposp1),
         .hposp2(dl_hposp2), .hposp3(dl_hposp3),
