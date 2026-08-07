@@ -363,17 +363,14 @@ module compositor #(
         case (m)
             4'h5, 4'h7: r = sub[3:1];
             4'h3: begin
-                // Mode 3: codes with bits[6:5] == 11 (i.e. 96..127 of
-                // the 7-bit char code) are descenders — sub_row 0/1
-                // pull glyph rows 6/7 from the SAME glyph table; sub 2..9
-                // pull rows 0..7. Codes 0..95 use sub 0..7 → rows 0..7
-                // and sub 8/9 are blanked at the glyph-latch step.
-                if (code[6:5] == 2'b11) begin
-                    if (sub < 4'd2) r = {2'b11, sub[0]};             // 6 or 7
-                    else            r = sub[2:0] - 3'd2;             // sub-2
-                end else begin
-                    r = sub[2:0];                                     // 0..7 (8/9 → 0; blanked later)
-                end
+                // Mode 3 is TEN scan lines over an EIGHT-row glyph, and the
+                // glyph is indexed by the row counter's LOW THREE BITS -- rows
+                // 8/9 come back round to glyph rows 0/1.  There is NO row
+                // remap: which two rows go blank is the CHARACTER's choice and
+                // is made at the glyph-latch step below.  emu is explicit that
+                // a downward shift is wrong (antic.c): subtracting two puts
+                // every row one object left of where antic_charcontrol looks.
+                r = sub[2:0];
             end
             default:    r = sub[2:0];
         endcase
@@ -1446,12 +1443,14 @@ module compositor #(
                         glyph_eff = 8'h00;
                     else if ((cur_mode == 4'h2 || cur_mode == 4'h3) && chactl[1] && blanking_b7)
                         glyph_eff = mem_rdata ^ 8'hFF;
-                    // Mode 3: codes 0..95 (code[6:5] != 11) blank rows
-                    // 8/9 of the 10-scan-line cell. Codes 96..127
-                    // (descenders) use rows 6/7 of the glyph for sub 0/1
-                    // — handled by glyph_row() picking the right address.
-                    else if (cur_mode == 4'h3 && blanking_code[6:5] != 2'b11
-                             && cur_sub_row >= 4'd8)
+                    // Mode 3: the CHARACTER selects which two of the ten
+                    // scan lines blank.  Codes $60..$7F -- the lowercase
+                    // DESCENDERS -- blank rows 0..1, so the glyph hangs below
+                    // the cell; every other code blanks rows 8..9.  The rows
+                    // that do render are just (row & 7); see glyph_row.
+                    else if (cur_mode == 4'h3 &&
+                             (blanking_code[6:5] == 2'b11 ? (cur_sub_row <  4'd2)
+                                                          : (cur_sub_row >= 4'd8)))
                         glyph_eff = 8'h00;
                     else
                         glyph_eff = mem_rdata;
