@@ -497,7 +497,38 @@ module tb_acid #(
         end
     end
 
+    // WHERE THE FRAME ACTUALLY SITS.  pokey_twotone counts timer-2 interrupts
+    // over vcount 0..48 (spaces) and 48..96 (marks); if our frame starts late
+    // the marks slide out of the second window and the count stays at the
+    // free-running 48.  Print the line and the hold once per 4 vcounts.
+    logic [7:0] tt_vc_q = 8'hFF;
+    integer tt_shown = 0;
+    always_ff @(posedge clk) begin
+        if (!rst && SERRATE >= 0 && tick &&
+            dut.u_antic2.vcount != tt_vc_q && dut.u_antic2.vcount <= 8'd100 &&
+            dut.u_pokey.skctl_out[3]) begin
+            tt_vc_q <= dut.u_antic2.vcount;
+            if (dut.u_antic2.vcount[1:0] == 2'b00 && tt_shown < 30) begin tt_shown <= tt_shown + 1;
+                $display("TTPHASE vc=%0d bit=%b held=%b bitcnt=%0d shifting=%b skctl=%02h sh=%03h hold=%02h",
+                         dut.u_antic2.vcount, dut.u_pokey.ser_out_bit_w,
+                         dut.u_pokey.u_audio.timer2_held, dut.u_pokey.u_serial.bitcnt_q,
+                         dut.u_pokey.u_serial.shifting_q, dut.u_pokey.skctl_out,
+                         dut.u_pokey.u_serial.shifter_q, dut.u_pokey.u_serial.holding_q); end
+        end
+    end
+
+    integer n_held = 0, n_mark = 0, n_tt = 0;
+    always_ff @(posedge clk) begin
+        if (!rst && SERRATE >= 0 && tick) begin
+            if (dut.u_pokey.u_audio.timer2_held) n_held <= n_held + 1;
+            if (dut.u_pokey.ser_out_bit_w)       n_mark <= n_mark + 1;
+            if (dut.u_pokey.skctl_out[3])        n_tt   <= n_tt + 1;
+        end
+    end
+
     final begin
+        if (SERRATE >= 0)
+            $display("TWOTONE held=%0d mark=%0d ttmode=%0d", n_held, n_mark, n_tt);
         if (SERRATE >= 0)
             $display("SERRATE t4=%0d t2=%0d shift=%0d ready=%0d lines=%0d",
                      n_t4, n_t2, n_shift, n_ready, n_line);

@@ -131,7 +131,17 @@ module pokey_serial (
                     end else begin
                         bitcnt_q <= bitcnt_q - 5'd1;
                         if (bitcnt_q[0]) begin
-                            ser_out_bit_q <= shifter_q[0];
+                            // EMIT shifter_q[1], NOT [0].  Both assignments are
+                            // non-blocking, so [0] still holds the bit already on
+                            // the line -- taking it re-emits that bit and puts the
+                            // whole frame one position behind for ever.  The
+                            // transfer tick emits the start bit from [0]; every
+                            // advance after it emits the NEXT bit and then shifts,
+                            // so [0] and the line agree again.  pokey_twotone
+                            // catches it: its $fc frame should go three spaces
+                            // then marks, and the line sat at SPACE for the whole
+                            // measured window.
+                            ser_out_bit_q <= shifter_q[1];
                             shifter_q     <= {1'b1, shifter_q[9:1]};
                         end
                     end

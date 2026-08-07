@@ -180,6 +180,7 @@ module pokey #(
         .random_byte  (random_byte),
         .ref_tick_out       (ref_tick_w),
         .ref_tick_15khz_out (ref_tick_15khz_w),
+        .ser_out_bit        (ser_out_bit_w),
         .stimer_pulse       (stimer_pulse_w),
         .timer1_pulse (timer1_pulse_w),
         .timer2_pulse (timer2_pulse_w),

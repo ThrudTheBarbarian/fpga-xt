@@ -176,7 +176,12 @@ module pokey_regs (
     assign potgo_pulse   = we && (waddr[3:0] == 4'hB);
     assign stimer_pulse  = we && (waddr[3:0] == 4'h9);
     assign serout_strobe = we && (waddr[3:0] == 4'hD);
-    assign serout_byte   = serout_q;
+    // BYPASS THE REGISTER ON THE STROBE CYCLE.  serout_strobe is combinational
+    // on the write, but serout_q only takes wdata at the END of that cycle --
+    // so a consumer that latches on the strobe (pokey_serial does) sees the
+    // PREVIOUS byte.  pokey_twotone writes $fc and the shifter loaded $00, so
+    // its frame was all spaces and the two-tone hold had no marks to act on.
+    assign serout_byte   = serout_strobe ? wdata : serout_q;
     assign skctl_out     = skctl_q;
 
     // IRQ status: bit 3 is unlatched (live ser_out_complete level);
