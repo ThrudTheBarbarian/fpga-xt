@@ -96,7 +96,12 @@ static int desk_sel(void) { for (int i = 1; i <= n_icons; i++) if (desk[i].ob_st
  * AES_PLANE_XL through this window" — and gemd does the placing, because only gemd knows
  * the window's SCREEN rect (a client may not ask, §5). */
 #define XL_SCALE 2                      // 320x192 XL writeback -> a 640x384 work area
-static int g_xlwin;                     // window handle that owns the XL plane (0 = none)
+static int g_xlwin;
+// XL overscan capture (Settings menu): 0 = the standard 40x24 playfield
+// (default), 1 = the full displayable region (320x240, scanlines 8..247).
+// Rides bit 3 of the plane-bind scale word down to XLCTL; the window is
+// resized to match so the plane rect never scans past the surface.
+static int g_xl_ovs = 0;                     // window handle that owns the XL plane (0 = none)
 static int g_active;                    // focused window (WM_TOPPED); wind_top() ignores plane windows
 static void xl_sync(void);              // bind the XL plane to g_xlwin (M6 WIND_PLANE); see below
 
@@ -278,7 +283,8 @@ static int g_ex = 380, g_ey = 130;
 // above (the Route-A alpha hole). m68k windows stay placeholders (no core hosted yet).
 // (XL_SCALE / g_xlwin are declared up by the drag-overlay hooks.)
 static void xl_sync(void) {
-    if (g_xlwin) wind_plane_bind(g_xlwin, AES_PLANE_XL, XL_SCALE);
+    if (g_xlwin) wind_plane_bind(g_xlwin, AES_PLANE_XL,
+                                 XL_SCALE | (g_xl_ovs ? 8 : 0));
 }
 static void xl_unbind(int win) {
     if (win == g_xlwin) { wind_plane_bind(win, 0, 0); g_xlwin = 0; }
@@ -316,7 +322,7 @@ static void open_emulator(int type, const char *media, const char *boot) {
     // at XL_SCALE=2 the plane covers 640x384 — a larger work area would scan
     // DDR garbage beyond the buffer into the window.
     int pw = (type == ICT_EMU_8BIT) ? 320*XL_SCALE : 640;
-    int ph = (type == ICT_EMU_8BIT) ? 192*XL_SCALE : 400;
+    int ph = (type == ICT_EMU_8BIT) ? (g_xl_ovs ? 240 : 192)*XL_SCALE : 400;
     int bx, by, bw, bh;
     wind_calc(WC_BORDER, W_NAME|W_CLOSER|W_MOVER, g_ex, g_ey, pw, ph, &bx, &by, &bw, &bh);
     e->win = wind_create(W_NAME|W_CLOSER|W_MOVER, bx, by, bw, bh);
@@ -2271,10 +2277,10 @@ static const char *mb_show[]     = { "As icons", "As text", MENU_SEP, "Filter", 
                                      MENU_SEP, "unsorted", "By name", "By type", "By size",
                                      "By date" };
 static const char *mb_window[]   = { "Close", "Close all", MENU_SEP, "Cycle", "Duplicate", "Pin" };
-static const char *mb_settings[] = { "Main config", "Applications", "Icon Mgr", MENU_SEP, "Record script" };
+static const char *mb_settings[] = { "Main config", "Applications", "Icon Mgr", MENU_SEP, "Record script", "XL overscan" };
 static const menu_def mb_menus[] = {
     { "Desktop",  mb_desktop,  5 }, { "Object", mb_object, 12 }, { "Show", mb_show, 20 },
-    { "Window",   mb_window,   6 }, { "Settings", mb_settings, 5 },
+    { "Window",   mb_window,   6 }, { "Settings", mb_settings, 6 },
 };
 static void menu_show(void) { g_menubar = menu_build(mb_menus, 5, PW); menu_bar(g_menubar, 1); }
 
@@ -2299,6 +2305,24 @@ static void menu_sync(void) {
     menu_ienable(g_menubar, MB_OBJECT, 2, hassel);           // Open   (needs a selection)
     menu_ienable(g_menubar, MB_OBJECT, 7, haswin);           // Delete… (needs a window)
     menu_ienable(g_menubar, MB_OBJECT, 9, haswin);           // Select all
+    menu_icheck(g_menubar, MB_SETTINGS, 5, g_xl_ovs);        // XL overscan
+}
+
+// Settings > XL overscan: flip the capture mode, resize the bound window's
+// work area to the new source height (the "wind_open again resizes in place"
+// idiom), and re-bind so the new scale word reaches XLCTL.  The plane rect
+// follows the composite via gemd's plane-sync hook.
+static void xl_overscan_toggle(void) {
+    g_xl_ovs = !g_xl_ovs;
+    if (g_xlwin) {
+        int px, py, pw0, ph0, bx, by, bw, bh;
+        wind_get(g_xlwin, WF_CURRXYWH, &px, &py, &pw0, &ph0);
+        int nw = 320*XL_SCALE, nh = (g_xl_ovs ? 240 : 192)*XL_SCALE;
+        wind_calc(WC_BORDER, W_NAME|W_CLOSER|W_MOVER, 0, 0, nw, nh,
+                  &bx, &by, &bw, &bh);
+        wind_open(g_xlwin, px, py, bw, bh);
+        xl_sync();
+    }
 }
 
 // ---- Window menu actions --------------------------------------------------
@@ -2403,6 +2427,7 @@ static void menu_dispatch(int to, int io) {
         case 1: menu_stub("Applications"); break;                                        // TODO STUB
         case 2: menu_stub("Icon Mgr"); break;                                            // TODO STUB
         case 4: menu_stub("Record script"); break;                                       // TODO STUB
+        case 5: xl_overscan_toggle(); break;
         } break;
     }
 }

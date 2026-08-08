@@ -2027,6 +2027,7 @@ module fpga_xt_top (
 
     antic_wb_adapt u_antic_wb_adapt (
         .clk(clk_sys), .rst(rst_sys),
+        .overscan(xl_win_ovs),
         .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
         .lb_line_start(rw_lb_line_start), .line(rw_line),
         .pix_valid(rw_wb_pix_valid), .pix_pair(rw_wb_pix_pair),
@@ -2862,6 +2863,7 @@ module fpga_xt_top (
     // xl_win_en=0 -> legacy gp0_ctrl-scale centred placement below.
     wire [11:0] xl_win_x, xl_win_y, xl_win_w, xl_win_h;
     wire [2:0]  xl_win_scale;
+    wire        xl_win_ovs;      // XLCTL SCALE bit 3: overscan capture
     wire        xl_win_en;
     wire        xl_win_we;          // commit strobe (clk_sys)
     // Cross the XL-window rect to clk_pix on the commit strobe — multi-bit, so a
@@ -3773,6 +3775,7 @@ module fpga_xt_top (
         .xl_win_w        (xl_win_w),
         .xl_win_h        (xl_win_h),
         .xl_win_scale    (xl_win_scale),
+        .xl_win_ovs      (xl_win_ovs),
         .xl_win_en       (xl_win_en),
         .xl_win_we       (xl_win_we),
         .math_evt_data   (math_evt_data),    // math-coprocessor mailbox (0x6xx)

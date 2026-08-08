@@ -45,11 +45,29 @@ module antic_wb_adapt #(
     // graboverlay measured on hardware (2026-08-08).
     parameter int X0   = 96,      // first buffer pixel captured
     parameter int W    = 320,     // how many (must be even)
-    parameter int ROW0 = 8,       // first scanline captured
-    parameter int ROWS = 192
+    // 31, not the historical 8: commit 110334b0 moved the display list's
+    // restart to the start of display (line 8) -- it had been resuming at
+    // vblank, wrapping the whole frame so the playfield sat near line 10 --
+    // and this origin was calibrated against the wrapped picture.  With the
+    // frame in its real position the standard opener's 24 blank lines put
+    // the playfield at capture line 31 (measured on HW, graboverlay
+    // 2026-08-08; first-principles says 32 -- the +/-1 lives in this tap's
+    // line numbering and is logged in the unification plan).  31..222 =
+    // exactly the standard 40x24 screen filling the 192-row surface.
+    parameter int ROW0 = 31,      // first scanline captured (overscan OFF)
+    parameter int ROWS = 192,
+    // Overscan capture (runtime, XLCTL SCALE bit 3): the full displayable
+    // region instead of the 40x24 playfield.  Top = the pre-playfield lead-in
+    // from the display list's blank opener, bottom = the overscan rows under
+    // the standard screen.  8..247 in this tap's numbering = 240 rows, the
+    // XL surface allocation's height cap.  The desktop resizes the window and
+    // the plane clip to match when it flips the bit ("PS does config").
+    parameter int OVS_ROW0 = 8,
+    parameter int OVS_ROWS = 240
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        overscan,    // XLCTL SCALE bit 3 (clk_sys, quasi-static)
 
     // ---- from the rewrite -------------------------------------------------
     input  wire        lb_wr,
@@ -73,7 +91,9 @@ module antic_wb_adapt #(
     wire [9:0] rel = px - 10'(X0);
 
     wire [8:0] done_row = line_q;
-    wire       row_ok   = (done_row >= 9'(ROW0)) && (done_row < 9'(ROW0 + ROWS));
+    wire [8:0] row0_c   = overscan ? 9'(OVS_ROW0) : 9'(ROW0);
+    wire [8:0] rowend_c = overscan ? 9'(OVS_ROW0 + OVS_ROWS) : 9'(ROW0 + ROWS);
+    wire       row_ok   = (done_row >= row0_c) && (done_row < rowend_c);
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -94,7 +114,7 @@ module antic_wb_adapt #(
                 // belonged to the PREVIOUS line — report that one, then start
                 // counting the new one.
                 if (row_ok) begin
-                    atari_row <= 8'(done_row - 9'(ROW0));
+                    atari_row <= 8'(done_row - row0_c);
                     row_flush <= 1'b1;
                 end
                 px     <= 10'd0;

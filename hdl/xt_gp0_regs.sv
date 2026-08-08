@@ -180,6 +180,7 @@ module xt_gp0_regs (
     output reg  [11:0] xl_win_w,
     output reg  [11:0] xl_win_h,
     output reg  [2:0]  xl_win_scale,
+    output reg         xl_win_ovs,         // SCALE bit 3: overscan capture (320x240)
     output reg         xl_win_en,
     output reg         xl_win_we,          // 1-cycle commit strobe (on XL_WIN_EN write)
 
@@ -333,6 +334,7 @@ module xt_gp0_regs (
             xl_win_h       <= 12'd0;
             xl_win_scale   <= 3'd1;
             xl_win_en      <= 1'b0;
+            xl_win_ovs     <= 1'b0;
             xl_win_we      <= 1'b0;
             spr_reg_addr   <= 8'h00;
             spr_reg_data   <= 8'h00;
@@ -453,7 +455,13 @@ module xt_gp0_regs (
                                     XL_WIN_Y:     xl_win_y     <= w_data[11:0];
                                     XL_WIN_W:     xl_win_w     <= w_data[11:0];
                                     XL_WIN_H:     xl_win_h     <= w_data[11:0];
-                                    XL_WIN_SCALE: xl_win_scale <= w_data[2:0];
+                                    // bit 3 rides the SCALE word: overscan
+                                    // capture (the writeback grabs scanlines
+                                    // 8..247 instead of the 40x24 playfield).
+                                    XL_WIN_SCALE: begin
+                                                      xl_win_scale <= w_data[2:0];
+                                                      xl_win_ovs   <= w_data[3];
+                                                  end
                                     XL_WIN_EN:    begin
                                                       xl_win_en <= w_data[0];
                                                       xl_win_we <= 1'b1;   // commit the rect

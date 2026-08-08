@@ -121,6 +121,12 @@ static uint32_t g_plane_live;                             /* bitmask of active (
 long plane_window_set(int plane, int x, int y, int w, int h, int scale, int en)
 {
     if (plane < 1 || plane >= NPLANES || !plane_blk[plane]) return -19;   /* -ENODEV */
+    /* scale bit 3 = overscan capture (XLCTL SCALE bit 3): the writeback grabs
+     * the full displayable region (320x240, scanlines 8..247) instead of the
+     * standard 40x24 playfield.  The caller (gemd) sizes the window and this
+     * rect for 240 source rows when it sets the bit. */
+    int ovs = scale & 8;
+    scale &= 7;
     if (scale < 1) scale = 1;
     if (scale > 5) scale = 5;
     /* Clip to the screen: the placement regs are unsigned 12-bit, and a window may hang
@@ -147,7 +153,7 @@ long plane_window_set(int plane, int x, int y, int w, int h, int scale, int en)
     pl[1] = (uint32_t)y & 0x0FFFu;
     pl[2] = (uint32_t)w & 0x0FFFu;
     pl[3] = (uint32_t)h & 0x0FFFu;
-    pl[4] = (uint32_t)scale & 0x7u;
+    pl[4] = ((uint32_t)scale & 0x7u) | (ovs ? 0x8u : 0u);
     pl[5] = 1;                              /* EN: commit the rect (clk_pix CDC) */
     __asm__ volatile("dsb");
     if (g_plane_live && !live) {           /* last park landed: the reset arrangement returns */
