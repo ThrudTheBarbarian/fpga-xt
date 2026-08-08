@@ -560,6 +560,10 @@ module tb_acid #(
                     if (!dut.c_rw && dut.c_addr == 16'hD202)
                         $display("  AUDF2 wr=%02h at +%0d", dut.c_din, st_cyc - st_at);
                 end
+                // Init-mode timing: the SKCTL write is the anchor the
+                // inittiming test measures from.
+                if (!dut.c_rw && dut.c_addr == 16'hD20F)
+                    $display("  SKCTL wr at +%0d", st_cyc - st_at);
             end
         end
     end

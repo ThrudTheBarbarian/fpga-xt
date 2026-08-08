@@ -328,10 +328,19 @@ module pokey_regs (
                         // prints the latch's own set cycle; d1 is the ground truth.
                         st_lag_q[i]   <= 3'(IRQST_LAG);
                         st_armed_q[i] <= irqen_q[i];
-                    end else if (irqen_q[i]) begin
-                        // No lag, so no flight to be armed during: a masked
-                        // raise on a base-clocked channel is simply lost.
-                        irq_latch_q[i] <= 1'b1;
+                    end else begin
+                        // A BASE-CLOCKED UNDERFLOW TAKES ONE CYCLE TO THE
+                        // STATUS BIT.  pokey_inittiming pins both clocks'
+                        // IRQST bits one cycle later than the release-phase
+                        // tick (15 kHz visible at SKCTL+85 off the +81
+                        // release, 64 kHz likewise), while pokey_timertiming's
+                        // resync schedule pins the TICKS themselves at 22/81
+                        // -- so the cycle belongs to delivery, not the phase.
+                        // Altirra spans the same gap as its general 3-cycle
+                        // borrow on the status path.  Masked raises still fly
+                        // (one cycle) and arming follows the fast-tap rule.
+                        st_lag_q[i]   <= 3'd1;
+                        st_armed_q[i] <= irqen_q[i];
                     end
                 end else if (stimer_pulse && st_lag_q[i] == 3'(IRQST_LAG)) begin
                     // A STIMER STROBE CANCELS AN INTERRUPT THAT HAS ONLY JUST
