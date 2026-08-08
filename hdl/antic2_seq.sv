@@ -100,6 +100,7 @@ module antic2_seq #(
 
     logic       wsync_halt;
     logic       wsync_extra;
+    logic       wsync_armed_now;   // halt armed THIS cycle: release ignores it
 
     wire [6:0] wsync_release = 7'(CYC_WSYNC) + {6'd0, wsync_extra};
 
@@ -206,6 +207,7 @@ module antic2_seq #(
             nmist_set_now <= 1'b0;
             wsync_halt    <= 1'b0;
             wsync_extra   <= 1'b0;
+            wsync_armed_now <= 1'b0;
             // ARMED at reset, so the first line after the vertical-blank
             // release actually fetches (emu antic_reset: row_ends = 1).
             row_ends      <= 1'b1;
@@ -231,7 +233,27 @@ module antic2_seq #(
             // only when it is ADJACENT to the first.  Doing both unconditionally
             // re-armed a halt that was already standing.
             if (wsync_stb) begin
-                if (!wsync_halt)          wsync_halt  <= 1'b1;
+                if (!wsync_halt) begin
+                    wsync_halt      <= 1'b1;
+                    // A LATE WSYNC -- the write landing ON the release cycle
+                    // -- misses this line and halts to the next (antic_wsync
+                    // d4, "Late WSYNC").  emu gets this from ordering: its
+                    // tick evaluates the release BEFORE the write is
+                    // serviced.  Here the strobe lands mid-cycle, so mark the
+                    // fresh arm and have the release ignore it this cycle.
+                    wsync_armed_now <= 1'b1;
+                end
+                else if (cycle == wsync_release && !wsync_armed_now) begin
+                    // The RMW's SECOND write landing ON the release cycle:
+                    // emu services writes after its tick, so this one arrives
+                    // AFTER the release just consumed the halt and arms a
+                    // FRESH one for the next line (antic_wsync d5, "Late INC
+                    // WSYNC"; emu antic.c:197-226).  Marking it armed-now
+                    // suppresses this cycle's release clause, which nets the
+                    // same state: halt standing, no extra, next release a
+                    // full line away.
+                    wsync_armed_now <= 1'b1;
+                end
                 else if (!refresh_window_prev) wsync_extra <= 1'b1;
             end
             // NMIRES CLEARS THE STATUS BUT LOSES TO A SET LANDING IN THE SAME
@@ -299,7 +321,9 @@ module antic2_seq #(
                 // ---- 5. WSYNC ------------------------------------------
                 // Only the STATE is clocked here.  The stall itself is
                 // combinational below -- see the note on wsync_take.
-                if (wsync_halt && cycle == wsync_release) begin
+                wsync_armed_now <= 1'b0;
+                if (wsync_halt && cycle == wsync_release && !wsync_armed_now)
+                begin
                     wsync_halt  <= 1'b0;
                     wsync_extra <= 1'b0;
                 end
