@@ -37,7 +37,13 @@
 `timescale 1ns/1ps
 
 module antic_wb_adapt #(
-    parameter int X0   = 80,      // first buffer pixel captured
+    // 96, not the historical 80: the display window was four machine cycles
+    // early until commit 6d48767a moved it to ANTIC's real position (display
+    // begins at nominal + PF_DISPLAY_LEAD, colour clock $40 for normal
+    // width), and the capture origin was calibrated against the early
+    // picture.  Four cycles x four hi-res pixels = the 16-pixel black band
+    // graboverlay measured on hardware (2026-08-08).
+    parameter int X0   = 96,      // first buffer pixel captured
     parameter int W    = 320,     // how many (must be even)
     parameter int ROW0 = 8,       // first scanline captured
     parameter int ROWS = 192
