@@ -1059,6 +1059,7 @@ module tb_acid #(
         .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
         .pal_sense(8'h0F), .consol_keys(8'hFF),
         .lb_wr(lb_wr), .lb_color(lb_color), .lb_line_start(lb_line_start),
+        .rom_hit(rom_hit), .rom_addr(rom_addr),
         .dma_steal(dma_steal), .rdy_n(rdy_n), .nmi_n(nmi_n), .sync(sync),
         .dbg_pc(dbg_pc), .dbg_a(dbg_a), .dbg_x(dbg_x), .dbg_y(dbg_y),
         .dbg_s(dbg_s), .dbg_p(dbg_p),
@@ -1066,6 +1067,13 @@ module tb_acid #(
     );
 
     logic [7:0] mem [0:65535];
+    // The XL ROM images a8_core's banking decode indexes into: OS 16K at 0,
+    // BASIC 8K at 16K.  a8_core owns the decode (rom_hit / rom_addr); this
+    // side owns the bytes, serves reads, and blocks the write-through --
+    // the RAM underneath keeps its contents.
+    wire        rom_hit;
+    wire [14:0] rom_addr;
+    logic [7:0] rom [0:24575];
     // FOUR entries: _testEnd, _testPassed, _testFailed, _testSkipped.  Sized to
     // match acid2mem's output -- an array a slot short does not fail loudly, it
     // just reads x, and an x compares equal to nothing, so the verdict it holds
@@ -1079,8 +1087,10 @@ module tb_acid #(
                 || (cpu_addr[15:8] == 8'hD4);   // POKEY is real now, not $FF
 
     always_ff @(posedge clk) begin
-        if (cpu_we && !in_hw) mem[cpu_addr] <= cpu_wdata;
-        cpu_rdata   <= (in_hw && !is_chip) ? 8'hFF : mem[cpu_addr];
+        if (cpu_we && !in_hw && !rom_hit) mem[cpu_addr] <= cpu_wdata;
+        cpu_rdata   <= (in_hw && !is_chip) ? 8'hFF
+                     : rom_hit             ? rom[rom_addr]
+                     :                       mem[cpu_addr];
         antic_rdata <= mem[antic_addr];
     end
 
@@ -1179,6 +1189,10 @@ module tb_acid #(
         if (!$value$plusargs("PROBE=%d", probe_on)) probe_on = 1'b0;
         $readmemh("acid.mem", mem);
         $readmemh("acid_cfg.mem", cfg);
+        // ROM images resolve relative to CWD like acid.mem: sim/ carries
+        // them, and the sweep copies them into each worker directory.
+        $readmemh("atari_xl_rom.mem", rom, 0);
+        $readmemh("atari_basic_rom.mem", rom, 16384);
         test_end  = cfg[0];
         t_pass    = cfg[1];
         t_fail    = cfg[2];

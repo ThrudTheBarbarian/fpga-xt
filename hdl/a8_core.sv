@@ -93,6 +93,15 @@ module a8_core #(
     output wire        cpu_we,
     input  wire [7:0]  cpu_rdata,       // memory only; registers are muxed here
 
+    // ---- XL ROM banking --------------------------------------------------
+    // The decode lives here (PORTB is ours); the ROM bytes live with the
+    // RAM owner.  rom_hit means the CURRENT cpu_addr falls in an enabled
+    // ROM window: serve rom_addr from the 24K combined image (OS 16K at 0,
+    // BASIC 8K at 16K) instead of RAM, and BLOCK the write -- the RAM
+    // underneath keeps its contents.
+    output wire        rom_hit,
+    output wire [14:0] rom_addr,
+
     // ---- ANTIC's own read port -------------------------------------------
     output wire [15:0] antic_addr,
     input  wire [7:0]  antic_rdata,
@@ -171,6 +180,45 @@ module a8_core #(
     wire cs_pokey = (c_addr[15:8] == 8'hD2);
     wire cs_pia   = (c_addr[15:8] == 8'hD3);
     wire cs_antic = (c_addr[15:8] == 8'hD4);
+
+    // ---- XL ROM banking (PIA PORTB, mmu_xlbanking) -------------------------
+    // PORTB bit 0 enables the OS ROM at $C000-$FFFF (the $D000-$D7FF I/O
+    // window always wins), bit 1 LOW banks BASIC in at $A000-$BFFF, and bit 7
+    // LOW maps the self-test window $5000-$57FF -- which is the OS image's
+    // own $D000-$D7FF slice, and only exists while the OS is enabled too.
+    // Plain 64K XL: bits 2-6 do nothing (no extended banking), which is a
+    // configuration mmu_xlbanking's extbank section detects and accepts.
+    // The banking source is the PORTB OUTPUT LATCH (portb_out_q), the same
+    // convention bank_translator uses; the test drives DDR to $FF first.
+    // The harness boots OS-LESS: its vector/stub page lives at $FF00-$FFFF in
+    // RAM, and the PIA latch resets to $FF -- which on a real XL means "OS
+    // in".  Serving ROM from reset would shadow the stub (including the reset
+    // vector itself).  On real hardware the OS owns PORTB from the first
+    // instruction; here the first latch CHANGE since reset stands in for that
+    // ownership, and banking stays quiet until a test (or future OS) takes it.
+    wire [7:0] portb_bank;
+    logic [7:0] portb_bank_d;
+    logic       bank_armed_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            bank_armed_q <= 1'b0;
+            portb_bank_d <= 8'hFF;
+        end else begin
+            portb_bank_d <= portb_bank;
+            if (portb_bank != portb_bank_d) bank_armed_q <= 1'b1;
+        end
+    end
+    wire os_en    = portb_bank[0];
+    wire basic_en = ~portb_bank[1];
+    wire st_en    = ~portb_bank[7] & portb_bank[0];
+    wire io_page  = (c_addr[15:11] == 5'b1101_0);            // $D000-$D7FF
+    wire os_hit    = os_en    && (c_addr[15:14] == 2'b11) && !io_page;
+    wire basic_hit = basic_en && (c_addr[15:13] == 3'b101);  // $A000-$BFFF
+    wire st_hit    = st_en    && (c_addr[15:11] == 5'b0101_0); // $5000-$57FF
+    assign rom_hit  = bank_armed_q & (os_hit | basic_hit | st_hit);
+    assign rom_addr = os_hit    ? {1'b0,    c_addr[13:0]}      // OS at 0
+                    : basic_hit ? {2'b10,   c_addr[12:0]}      // BASIC at 16K
+                    :             {4'b0001, c_addr[10:0]};     // OS $1000 slice
     wire [7:0] reg_rdata;
     wire [7:0] pokey_rdata;
     wire       pokey_irq_n;
@@ -334,6 +382,7 @@ module a8_core #(
         .raddr(c_addr), .rdata(pia_rdata),
         .joy_porta_in(8'hFF), .joy_portb_in(8'hFF),
         .joy_porta_oe(), .joy_portb_oe(),
+        .portb_out_q(portb_bank),
         .pia_irq_n(pia_irq_n)
     );
 
