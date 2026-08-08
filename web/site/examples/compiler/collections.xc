@@ -68,10 +68,10 @@ i32 main(void)
     Stdio.printf("total %ld\n", total);
 
     // ---- Map ---------------------------------------------------------------
-    // The type argument gives the VALUE type; keys are anything conforming to
-    // Hashable, and String does. (One type argument per collection — there is
-    // no Map<K,V> spelling yet.)
-    Map<Point>* places = new Map();
+    // TWO type arguments: the key and the value. Written with one, the argument
+    // names the value and the key goes unchecked — anything Hashable, which
+    // String is. Prefer the pair: an unchecked key is half a typed collection.
+    Map<String, Point>* places = new Map();
     places.set(String.withCString("origin"), Point.at((i32)0, (i32)0));
     places.set(String.withCString("corner"), Point.at((i32)9, (i32)9));
     Point* corner = places.get(String.withCString("corner"));

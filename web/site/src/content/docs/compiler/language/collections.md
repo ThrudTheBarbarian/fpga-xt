@@ -27,15 +27,31 @@ The element type goes on the *declaration*. `new Array()` needs no type argument
 because it takes it from the slot it is assigned into.
 
 ```c
-Array<String>* names  = new Array();
-Array<Point>*  path   = new Array();
-Map<Point>*    places = new Map();
-Set<String>*   seen   = new Set();
+Array<String>*        names  = new Array();
+Array<Point>*         path   = new Array();
+Map<String, Point>*   places = new Map();
+Set<String>*          seen   = new Set();
 ```
 
-There is **one type argument per collection**. For `Map` it names the *value*
-type; keys are anything conforming to `Hashable`, which `String` and `Number`
-both do. There is no `Map<K,V>` spelling yet.
+`Array` and `Set` take one type argument — the element. `Map` takes **two**, the
+key and the value:
+
+```c
+Map<String, Point>* places = new Map();
+places.set(String.withCString("home"), p);   // key must be a String
+Point* home = places.get(String.withCString("home"));   // value, no cast
+```
+
+Writing a Map with **one** argument still means the *value*, and leaves the key
+unchecked — anything conforming to `Hashable`, which `String` and `Number` both
+do:
+
+```c
+Map<Point>* loose = new Map();     // value typed, key not
+```
+
+That form is not deprecated, but prefer the two-argument one: an unchecked key
+is half a typed collection.
 
 ## What the element type buys you
 
