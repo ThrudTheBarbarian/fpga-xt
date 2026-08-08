@@ -1,17 +1,25 @@
 # Next Steps / Open Work — consolidated
 
-## OPEN: XL capture vertical phase after SALLYRST
-The XL window's capture can come up VERTICALLY OFFSET (READY mid-frame, black
-band above — the "two READYs / lost-vsync" complaint) after a SALLYRST-driven
-coldstart, randomly per reset, while a PL cold-load always comes up aligned.
-Suspect: the rewrite's beam counter (antic_gtia u_beam) has NO `cold` input and
-free-runs across SALLYRST while other units (antic_dl, antic_scanline latches)
-reset — leaving a random beam-vs-frame phase the capture window (fixed rows
-31..222) then samples.  Evidence 2026-08-08 overnight: DR title/maze grabs
-aligned after full boots; READY grabs offset after some `6502 basic` resets;
-grabs are trustworthy now (plane_grab cache fix).  Rare sibling: one
-basic-from-self-test reset re-entered self-test (OPTION sampled held despite
-CONSOL=$07) — 1 in ~10, unreproduced in a 6/6 follow-up sweep.
+## OPEN: XL capture DUPLICATES the OS GR.0 frame (two READYs + band)
+CONFIRMED IN DDR CONTENT (2026-08-08 overnight, paired graboverlay + uncached
+`mem` probes of the displayed slot — the two now agree, post cache-fix): after
+a `6502 basic` READY boot the displayed slot holds the frame top TWICE — READY
+at slot row 0 AND again at row ~103, black band rows ~85..100 (probe row 100 =
+$000000FF written-black, row 8 = playfield blue).  So the WRITEBACK genuinely
+writes the playfield rows at two different slot-row ranges per frame — not a
+grab artifact, not a fixed offset.  KEY DISCRIMINATOR: game display lists
+capture PERFECTLY (DR title + gameplay grabs pixel-clean, same boot) — only
+the OS's short GR.0 list (24 blank + 192 + JVB, ~46 parked lines) duplicates.
+Suspects: the JVB park/resume path (110334b0) emitting the list twice per beam
+frame for short lists, or atari_row/beam wrap interplay in the rewrite; the
+rewrite beam (u_beam) also has no `cold` input (free-runs across SALLYRST).
+This needs the vbeam-accurate full-chain tb (in flight, tb_fid_raster) — repro
+in sim with the OS list shape before touching antic_dl/antic_beam.  Sometimes
+the capture comes up ALIGNED after a reset (first `6502 basic` sweep this
+session was clean 6/6 by PC; the duplication appeared on later resets) — phase
+of DMACTL-enable vs park state at SALLYRST likely selects the mode.
+Rare sibling: one basic-from-self-test reset re-entered self-test (OPTION
+sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in a 6/6 sweep.
 
 RESOLVED en route (2026-08-08, commits d6f2c77a + 21761b4b): the DR mid-load
 IRQ storm (IRQST=$F7 SEROC) and the random lost-doorbell SIO stalls were the
