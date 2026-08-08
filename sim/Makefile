@@ -1218,13 +1218,6 @@ build/tb_pm_collide.vvp: tb_pm_collide.sv $(HDL_DIR)/gtia_pm_collide.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pm_collide \
 	    $(HDL_DIR)/gtia_pm_collide.sv tb_pm_collide.sv
 
-gtia_stream: build/tb_gtia_stream.vvp
-	@vvp -N $<
-
-build/tb_gtia_stream.vvp: tb_gtia_stream.sv $(HDL_DIR)/gtia_stream.sv $(HDL_DIR)/color_resolver.sv | build
-	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_stream \
-	    $(HDL_DIR)/gtia_stream.sv $(HDL_DIR)/color_resolver.sv tb_gtia_stream.sv
-
 pokey_serial: build/tb_pokey_serial.vvp
 	@vvp -N $<
 
@@ -1232,28 +1225,12 @@ build/tb_pokey_serial.vvp: tb_pokey_serial.sv $(HDL_DIR)/pokey_serial.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pokey_serial \
 	    $(HDL_DIR)/pokey_serial.sv tb_pokey_serial.sv
 
-pf_serial: build/tb_pf_serial.vvp
-	@vvp -N $<
-
-build/tb_pf_serial.vvp: tb_pf_serial.sv $(HDL_DIR)/antic_pf_serial.sv $(HDL_DIR)/gtia_stream.sv $(HDL_DIR)/color_resolver.sv | build
-	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pf_serial \
-	    $(HDL_DIR)/antic_pf_serial.sv $(HDL_DIR)/gtia_stream.sv \
-	    $(HDL_DIR)/color_resolver.sv tb_pf_serial.sv
-
 antic_line_buf: build/tb_antic_line_buf.vvp
 	@vvp -N $<
 
 build/tb_antic_line_buf.vvp: tb_antic_line_buf.sv $(HDL_DIR)/antic_line_buf.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_line_buf \
 	    $(HDL_DIR)/antic_line_buf.sv tb_antic_line_buf.sv
-
-antic_expander: build/tb_antic_expander.vvp
-	@vvp -N $<
-
-build/tb_antic_expander.vvp: tb_antic_expander.sv $(HDL_DIR)/antic_expander.sv $(HDL_DIR)/antic_line_buf.sv $(HDL_DIR)/palette_lut.sv | build
-	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_expander \
-	    $(HDL_DIR)/antic_expander.sv $(HDL_DIR)/antic_line_buf.sv \
-	    $(HDL_DIR)/palette_lut.sv tb_antic_expander.sv
 
 antic_mode_tbl: build/tb_antic_mode_tbl.vvp
 	@vvp -N $<
