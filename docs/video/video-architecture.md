@@ -402,8 +402,11 @@ Notes:
 ### 10.2 Bandwidth (sanity)
 
 clk_pix = 148.4375 MHz; 2200×1125 total per frame.  Each active plane fetches
-one (scaled) source line per scanline into its line buffer — the pattern
-`fb_scanout`/`plane_fetch` already sustains for one plane on HP0.
+one source line into its line buffer **per source-row change** — a scaled
+plane presents the same row for `scale` scanlines and `plane_fetch` skips the
+duplicate fetches, so its read traffic is the surface's, not the screen's.
+A scale-1 plane fetches every scanline, the pattern `plane_fetch` sustains
+for one plane on HP0.
 
 - DDR3-1066 ×32-bit ≈ 4.3 GB/s peak, ~2.5–3 GB/s usable; each HP port ≈
   1.2 GB/s (64-bit @ 150 MHz).
