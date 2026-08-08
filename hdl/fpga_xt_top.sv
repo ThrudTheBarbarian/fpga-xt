@@ -1856,6 +1856,43 @@ module fpga_xt_top (
                               || (rw_px_cnt == 7'd41)
                               || (rw_px_cnt == 7'd62);
 
+    // ---- the display core --------------------------------------------------
+    // antic_gtia (default) or the unified antic2 shell (antic2_fabric) --
+    // phase 2 of docs/antic-unification-plan.md.  The shell is the
+    // ACID-validated core (55/58, zero fails) behind the same ports; the
+    // authority muxes below don't change.  DO NOT flip the default without a
+    // board A/B (XL window render + ACID-in-fabric + textured-background
+    // fidelity): the two cores' cycle grids differ (antic_gtia ran NMIST/NMI
+    // at 8/9 under tune compensation; antic2 pins 6/7 against ACID) and only
+    // hardware can arbitrate the pacing.  Known phase-2 gap: bus_byte_stb
+    // feeds the shell's last-bus latch from ANTIC-page register writes only,
+    // not every snooped data phase -- virtual-playfield/phantom-P/M fidelity
+    // on the fabric side is phase 3 work.
+    localparam bit USE_ANTIC2_FABRIC = 1'b0;
+
+    generate if (USE_ANTIC2_FABRIC) begin : g_antic2_fab
+    antic2_fabric u_antic2_fab (
+        .clk(clk_sys), .rst(rst_sys), .cold(sallyrst[0]),
+        .tick(rw_tick), .px_tick(rw_px_tick),
+        .cs_antic(~d4xx_n_antic), .cs_gtia(~d0xx_n_antic),
+        .addr(bus_addr_antic[7:0]),
+        .we(~bus_rw_antic & (~d4xx_n_antic | ~d0xx_n_antic)),
+        .cpu_writing(~bus_rw_antic),
+        .wdata(bus_data_in_antic),
+        .rdata(rw_rdata),
+        .rdy_n(rw_rdy_n), .nmi_n(rw_nmi_n), .dma_steal(rw_steal),
+        .mem_addr(rw_mem_addr), .mem_data(scrn_shadow_rdata),
+        .bus_byte(bus_data_in_antic),
+        .bus_byte_stb(~bus_rw_antic & (~d4xx_n_antic | ~d0xx_n_antic)),
+        .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
+        .pal_sense(8'h0F), .consol_keys(consol_keys),
+        .tune(rw_tune),
+        .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
+        .lb_line_start(rw_lb_line_start),
+        .hcount(rw_hcount), .line(rw_line), .vcount(rw_vcount_sys),
+        .nmist_o(rw_nmist_sys)
+    );
+    end else begin : g_antic_gtia
     antic_gtia u_antic_gtia (
         .clk(clk_sys), .rst(rst_sys), .cold(sallyrst[0]),
         .tick(rw_tick), .px_tick(rw_px_tick),
@@ -1891,6 +1928,7 @@ module fpga_xt_top (
         .hcount(rw_hcount), .line(rw_line), .vcount(rw_vcount_sys), .line_start(), .dlpc(),
         .nmist_o(rw_nmist_sys)
     );
+    end endgenerate
 
     // ---- VCOUNT/NMIST across to the CPU's clock -------------------------
     // The rewrite lives in clk_sys; the fid core reads these in clk_sally and

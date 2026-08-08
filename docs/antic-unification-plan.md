@@ -110,4 +110,14 @@ construction.
   NMI stretcher is parameterized (default 8 ticks) pending the phase-2
   consumer audit; `tune` is accepted but inert; antic2's one $display
   (antic2.sv:692) wants a translate_off guard before synthesis.
-- Phases 2-5: not started.
+- Phase 2: **wired, default off** — `fpga_xt_top` carries a
+  `USE_ANTIC2_FABRIC` localparam generate-muxing `antic2_fabric` against
+  `u_antic_gtia` on identical nets; both branches verilator-lint clean.
+  The consumer audit confirmed the shell's conventions (fid rdy =
+  `~rwrdy_s[1]` under rw-authority; nmi_n edge-detected per clk after a
+  2-FF — the 8-tick stretch is ample; antic2's $display was already
+  SYNTHESIS-guarded).  Known gap: `bus_byte_stb` carries ANTIC-page
+  register writes only, not every snooped data phase.  **The flip and
+  its board A/B are Simon's** — XL window render, ACID-in-fabric,
+  textured-background fidelity.
+- Phases 3-5: not started.
