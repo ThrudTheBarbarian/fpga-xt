@@ -106,6 +106,7 @@ module pokey #(
     // Audio ↔ regs IRQ-source wires (M23-6).
     wire timer1_pulse_w, timer2_pulse_w, timer4_pulse_w;
     wire stimer_pulse_w;
+    wire timer2_ser_pulse_w;
 
     pokey_regs u_regs (
         .clk                  (clk),
@@ -185,6 +186,7 @@ module pokey #(
         .stimer_pulse       (stimer_pulse_w),
         .timer1_pulse (timer1_pulse_w),
         .timer2_pulse (timer2_pulse_w),
+        .timer2_ser_pulse (timer2_ser_pulse_w),
         .timer4_pulse (timer4_pulse_w)
     );
 
@@ -205,7 +207,9 @@ module pokey #(
     pokey_serial u_serial (
         .clk(clk), .rst(rst),
         .skctl(skctl_out),
-        .timer2_pulse(timer2_pulse_w),
+        // The SERIAL edge, not the IRQ edge: a fast-linked pair's shifter
+        // clock runs its own divider (full first period), pokey_sertiming.
+        .timer2_pulse(timer2_ser_pulse_w),
         .timer4_pulse(timer4_pulse_w),
         .ext_clk_tick(1'b0),
         .serout_byte(serout_byte),

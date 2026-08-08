@@ -552,6 +552,15 @@ module tb_acid #(
                     if (dut.u_pokey.u_audio.tt_resync_q == 2'd1)
                         $display("  tt_resync lands at +%0d", st_cyc - st_at);
                 end
+                // Serial-timing visibility (pokey_sertiming, audctl $78):
+                // the SEROUT write, the raw pair wrap the serial clock should
+                // ride, and the holding->shifter transfer it measures.
+                if (dut.u_pokey.audctl == 8'h78) begin
+                    if (!dut.c_rw && dut.c_addr == 16'hD20D)
+                        $display("  SEROUT wr at +%0d", st_cyc - st_at);
+                    if (dut.u_pokey.u_audio.ch2_wrap)
+                        $display("  T2 raw wrap at +%0d", st_cyc - st_at);
+                end
                 if (dut.u_pokey.audctl == 8'h50 || dut.u_pokey.skctl_out[3]) begin
                     if (dut.u_pokey.timer2_pulse_w)
                         $display("  T2 underflow at +%0d", st_cyc - st_at);
@@ -565,6 +574,19 @@ module tb_acid #(
                 if (!dut.c_rw && dut.c_addr == 16'hD20F)
                     $display("  SKCTL wr at +%0d", st_cyc - st_at);
             end
+        end
+    end
+
+    // The shifter-load transfer is a 1-clk event registered ON the tick edge,
+    // so a tick-gated probe misses it -- follow shifting_q's edge instead.
+    logic ser_shifting_d = 1'b0;
+    always_ff @(posedge clk) begin
+        if (!rst && STPROBE >= 0 && st_at >= 0) begin
+            ser_shifting_d <= dut.u_pokey.u_serial.shifting_q;
+            if (dut.u_pokey.u_serial.shifting_q && !ser_shifting_d)
+                $display("  SHIFTER LOADED at +%0d", st_cyc - st_at);
+            if (!dut.u_pokey.u_serial.shifting_q && ser_shifting_d)
+                $display("  SHIFTER done at +%0d", st_cyc - st_at);
         end
     end
 
@@ -586,7 +608,7 @@ module tb_acid #(
     always_ff @(posedge clk) begin
         if (!rst && STPROBE >= 0) begin
             irqst_rd_q <= dut.c_rw && (dut.c_addr[15:8] == 8'hD2) && (dut.c_addr[3:0] == 4'hE);
-            if (dut.c_rw && (dut.c_addr[15:8] == 8'hD2) && (dut.c_addr[3:0] == 4'hE) && !irqst_rd_q && irqst_rn < 20) begin
+            if (dut.c_rw && (dut.c_addr[15:8] == 8'hD2) && (dut.c_addr[3:0] == 4'hE) && !irqst_rd_q && irqst_rn < 200) begin
                 irqst_rn <= irqst_rn + 1;
                 $display("  IRQSTrd@%04h +%0d din=%02h latch0=%b irqen=%02h", dut.c_addr,
                          st_cyc - st_at, dut.c_din,

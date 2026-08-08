@@ -120,6 +120,7 @@ module pokey_audio #(
     // for channels 1, 2 and 4 only (no TIMER 3).
     output wire        timer1_pulse,
     output wire        timer2_pulse,
+    output wire        timer2_ser_pulse,  // the pair's SERIAL edge (see below)
     output wire        timer4_pulse
 );
 
@@ -486,6 +487,46 @@ module pokey_audio #(
     assign timer2_pulse = pair_irq_lagged ? (t2_lag_q[PAIR_IRQ_LAG-1] & phi2_tick)
                                           : ch2_wrap;
     wire ch34_paired = audctl[3];
+
+    // ---- the pair's SERIAL-CLOCK divider ----------------------------------
+    // A LINKED PAIR'S SERIAL EDGE AND ITS INTERRUPT EDGE ARE SEPARATE EVENTS
+    // (emu pokey_timer.c:746-751).  The interrupt's first period out of
+    // STIMER is the short AUDF16+4 -- the cascade above, validated by
+    // pokey_timertiming.  The SERIAL tap takes the FULL first period, in
+    // Altirra's decomposition: a 3-cycle STIMER defer, the whole
+    // AUDF16+LINK_FAST, then the universal 3-cycle borrow.  pokey_sertiming
+    // pins the total: the shifter must load exactly 218 cycles after a
+    // SEROUT write placed 16 cycles after STIMER, i.e. STIMER + 234 =
+    // 3 + 228 + 3 for AUDF16 = 221.  Steady state both edges run at the
+    // same AUDF16+7 cadence; only the first period differs.
+    localparam int SER2_DEFER  = 3;
+    localparam int SER2_BORROW = 3;
+    logic [15:0] ser2_cnt;
+    logic [1:0]  ser2_defer_q;
+    logic [SER2_BORROW-1:0] ser2_bor_q;
+    wire ser2_run  = ch12_paired && audctl[6];
+    wire ser2_wrap = ser2_run && phi2_tick && (ser2_defer_q == 2'd0)
+                   && (ser2_cnt == 16'd0);
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            ser2_cnt <= 16'd0; ser2_defer_q <= 2'd0; ser2_bor_q <= '0;
+        end else begin
+            if (phi2_tick)
+                ser2_bor_q <= {ser2_bor_q[SER2_BORROW-2:0], ser2_wrap};
+            if (stimer_pulse) ser2_defer_q <= 2'(SER2_DEFER);
+            else if (phi2_tick && ser2_defer_q != 2'd0) begin
+                ser2_defer_q <= ser2_defer_q - 2'd1;
+                if (ser2_defer_q == 2'd1) ser2_cnt <= hi_per - 16'd1;
+            end else if (phi2_tick) begin
+                if (ser2_cnt == 16'd0) ser2_cnt <= hi_per - 16'd1;
+                else                   ser2_cnt <= ser2_cnt - 16'd1;
+            end
+        end
+    end
+    // The serial module transfers on this pulse when the pair is fast-linked;
+    // every other configuration keeps the plain timer2 edge.
+    assign timer2_ser_pulse = ser2_run ? (ser2_bor_q[SER2_BORROW-1] & phi2_tick)
+                                       : timer2_pulse;
 
     // ---- Machine-clock period fudge (audit fix #7) ----
     // Per Altirra §5.3: at 1.79 MHz the timer has 3 cycles of pipeline
