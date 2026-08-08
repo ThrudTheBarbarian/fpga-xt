@@ -1,6 +1,22 @@
 # Next Steps / Open Work — consolidated
 
+## OPEN: XL capture vertical phase after SALLYRST
+The XL window's capture can come up VERTICALLY OFFSET (READY mid-frame, black
+band above — the "two READYs / lost-vsync" complaint) after a SALLYRST-driven
+coldstart, randomly per reset, while a PL cold-load always comes up aligned.
+Suspect: the rewrite's beam counter (antic_gtia u_beam) has NO `cold` input and
+free-runs across SALLYRST while other units (antic_dl, antic_scanline latches)
+reset — leaving a random beam-vs-frame phase the capture window (fixed rows
+31..222) then samples.  Evidence 2026-08-08 overnight: DR title/maze grabs
+aligned after full boots; READY grabs offset after some `6502 basic` resets;
+grabs are trustworthy now (plane_grab cache fix).  Rare sibling: one
+basic-from-self-test reset re-entered self-test (OPTION sampled held despite
+CONSOL=$07) — 1 in ~10, unreproduced in a 6/6 follow-up sweep.
 
+RESOLVED en route (2026-08-08, commits d6f2c77a + 21761b4b): the DR mid-load
+IRQ storm (IRQST=$F7 SEROC) and the random lost-doorbell SIO stalls were the
+fid stalled-cycle write-strobe replay — fixed by exactly-once strobes; DR now
+loads to gameplay (START via the new CONSOL keypad path).
 
 # Immediate targets
 

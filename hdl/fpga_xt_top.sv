@@ -1023,7 +1023,30 @@ module fpga_xt_top (
     // pulse near window-start does both. (Banked-AXI reads, which trigger on this too, aren't
     // used by a plain OS boot; they get the active-core treatment when the hand-off lands.)
     wire       fid_mem_step = (fid_sub == 8'd2);
-    wire       mem_rdy = cpu_sel ? fid_mem_step : sally_rdy;   // sally_mem steps with the ACTIVE core
+    // ---- exactly-once WRITE strobes across stalled-cycle replays ---------
+    // "exactly ONCE per machine cycle" above was only true for cycles that
+    // ADVANCE.  A cycle that reaches its commit slot (SUB_COMMIT = N-3 = 53,
+    // mirrored the same way fid_mem_ok mirrors SUB_DATA=49) with fid_rdy LOW
+    // does not retire: the SAME cycle replays next phi2 with the same
+    // addr/data, and fid_mem_step re-fired every write strobe once per
+    // replay.  BRAM data writes are idempotent; strobe consumers are NOT:
+    //   * a $D5C7 doorbell write toggles xt_sio_mbox's req_tgl per strobe --
+    //     an even replay count cancels the doorbell entirely (the random
+    //     mid-load paravirtual-SIO stalls, HW-traced 2026-08-08);
+    //   * STA $D40A re-armed WSYNC on every replay -- the exact deadlock
+    //     sally_mem's rdy gate was built against (that gate keys on mem_rdy,
+    //     which fires on replays too for this core; the turbo core's
+    //     sally_rdy never replays, which is why only fid was affected).
+    // Suppress the step on REPLAYED WRITE presentations only: writes strobe
+    // exactly once (first presentation); reads keep re-stepping so the
+    // advancing presentation samples fresh data.
+    logic      fid_cycle_replay_q;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally)              fid_cycle_replay_q <= 1'b0;
+        else if (fid_sub == 8'd53)  fid_cycle_replay_q <= ~fid_rdy;   // stall -> next presentation is a replay
+    end
+    wire       mem_rdy = cpu_sel ? (fid_mem_step & ~(fid_cycle_replay_q & ~fid_rw))
+                                 : sally_rdy;   // sally_mem steps with the ACTIVE core
 
     // ---- Fidelity-core register inject (commit) -------------------------------
     // The fid core is the first-class debug/boot core, so its inject port is no
