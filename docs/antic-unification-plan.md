@@ -102,5 +102,12 @@ construction.
 
 ## Status
 
-- Phase 0: **done** (this commit).
-- Phases 1-5: not started.
+- Phase 0: **done**.
+- Phase 1: **done** — `hdl/antic2_fabric.sv` elaborates
+  (`make antic2_fabric_lint` in sim/).  antic2 gained `vcount_o`/`nmist_o`
+  observability ports for the fabric CDC; `rdy_n` follows the fabric's
+  convention (1 = held, despite the suffix — antic_reg_file.sv:95); the
+  NMI stretcher is parameterized (default 8 ticks) pending the phase-2
+  consumer audit; `tune` is accepted but inert; antic2's one $display
+  (antic2.sv:692) wants a translate_off guard before synthesis.
+- Phases 2-5: not started.

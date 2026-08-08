@@ -1493,6 +1493,25 @@ A8_CORE_SRC = $(HDL_DIR)/a8_core.sv $(ANTIC_GTIA_SRC) $(ANTIC2_SRC) \
 	    $(POKEY_SRC) \
 	    $(HDL_DIR)/xt6502f/xt6502f.sv
 
+# The phase-1 fabric shell (docs/antic-unification-plan.md): elaboration
+# check only — antic2 + a2_video behind antic_gtia-shaped ports.  The shared
+# GTIA stage files come via ANTIC_GTIA_SRC's tail; the shell itself must
+# elaborate with no fabric context.
+ANTIC2_FABRIC_SRC = $(HDL_DIR)/antic2_fabric.sv $(ANTIC2_SRC) \
+	    $(HDL_DIR)/antic_beam.sv $(HDL_DIR)/antic_pf_geom.sv \
+	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
+	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/antic_char_ctl.sv \
+	    $(HDL_DIR)/antic_dma_sched.sv \
+	    $(HDL_DIR)/gtia_reg_file.sv $(HDL_DIR)/gtia_stage.sv \
+	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
+	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/gtia_special.sv
+
+antic2_fabric_lint: $(ANTIC2_FABRIC_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o build/antic2_fabric_lint.vvp \
+	    -s antic2_fabric $(ANTIC2_FABRIC_SRC)
+	@echo "PASS: antic2_fabric elaborates"
+
 a8_core: build/tb_a8_core.vvp
 	@vvp -N $<
 

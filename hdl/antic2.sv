@@ -112,7 +112,15 @@ module antic2 #(
     output wire        pm_we,
     output wire [2:0]  pm_obj,             // 0 = missiles, 1..4 = players 0..3
     output wire [7:0]  pm_data,
-    output wire        pm_fetch
+    output wire        pm_fetch,
+
+    // ---- fabric observability ---------------------------------------------
+    // The CPU-visible VCOUNT/NMIST registers, exported for the fabric's
+    // clock-domain crossing to the fid core (fpga_xt_top's u_rw_vn_cdc).
+    // These are antic2_seq's own registers -- the same values a $D40B/$D40F
+    // read returns -- not a second derivation.
+    output wire [7:0]  vcount_o,
+    output wire [7:0]  nmist_o
 );
 
     wire        line_start;
@@ -121,6 +129,8 @@ module antic2 #(
     wire [7:0]  dlist_val;
     wire [7:0]  pmbase, chbase, nmien;
     wire [7:0]  nmist, vcount;
+    assign vcount_o = vcount;
+    assign nmist_o  = nmist;
     wire        wsync_stb, nmires_stb, nmien_stb;
     wire        row_ends, dli_line, dli_fired_set;
     wire [7:0]  dl_insn;

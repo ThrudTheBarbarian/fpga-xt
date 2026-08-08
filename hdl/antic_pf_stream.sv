@@ -213,6 +213,13 @@ module antic_pf_stream #(
     // inverse-video character was decided by whichever name had landed most
     // recently -- so with CHACTL invert set, a $81 cell was not inverted at
     // all.  antic_charcontrol's chactl=$02 pass measures exactly that.
+    // In flight, so the write-back knows what the data means (assigned in the
+    // access block below; declared HERE because iverilog cannot bind a port
+    // expression to a symbol declared after the instance that uses it).
+    logic       inflight, inflight_glyph, inflight_blank;
+    logic [6:0] inflight_idx;
+    logic [7:0] inflight_code;
+
     wire [7:0] unused_data_a;
     antic_char_ctl u_chactl_row (
         .chactl(chactl), .is_char(is_char), .bpp(bpp), .px_width(px_width),
@@ -274,10 +281,8 @@ module antic_pf_stream #(
 
     // ---- the access -------------------------------------------------------
     // In flight, so the write-back knows what the data means.  mem_valid is
-    // mem_req delayed exactly one clock, so one stage is enough.
-    logic       inflight, inflight_glyph, inflight_blank;
-    logic [6:0] inflight_idx;
-    logic [7:0] inflight_code;
+    // mem_req delayed exactly one clock, so one stage is enough.  (The
+    // declarations live up by u_chactl_data — see the note there.)
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
