@@ -518,10 +518,12 @@ module tb_acid #(
     integer st_shown = 0;
     logic   st_seen_uf = 1'b0;
     logic   st_irq_q   = 1'b0;
+    logic   st_irq1_q  = 1'b0;
     always_ff @(posedge clk) begin
         if (!rst && STPROBE >= 0 && tick) begin
             st_cyc   <= st_cyc + 1;
             st_irq_q <= dut.u_pokey.u_regs.irq_latch_q[0];
+            st_irq1_q <= dut.u_pokey.u_regs.irq_latch_q[1];
             // The STIMER strobe: a write to $D209.
             if (!dut.c_rw && dut.c_addr == 16'hD209 && st_shown < STPROBE) begin
                 st_at      <= st_cyc;
@@ -538,9 +540,38 @@ module tb_acid #(
                 end
                 if (dut.u_pokey.u_regs.irq_latch_q[0] && !st_irq_q)
                     $display("  -> IRQST bit 0 readable at +%0d", st_cyc - st_at);
-
+                // The 16-bit-pair section: same probe for timer 2 / IRQST bit
+                // 1, gated on AUDCTL=$50 so the 8-bit sections stay quiet.
+                // Two-tone resync visibility: the suppressed timer-1 wrap and
+                // the resync reload never reach timer1_pulse_w, so print the
+                // raw events whenever two-tone is on.
+                if (dut.u_pokey.skctl_out[3]) begin
+                    if (dut.u_pokey.u_audio.ch1_wrap &&
+                        dut.u_pokey.u_audio.tt_t1_suppress)
+                        $display("  T1 wrap SUPPRESSED at +%0d", st_cyc - st_at);
+                    if (dut.u_pokey.u_audio.tt_resync_q == 2'd1)
+                        $display("  tt_resync lands at +%0d", st_cyc - st_at);
+                end
+                if (dut.u_pokey.audctl == 8'h50 || dut.u_pokey.skctl_out[3]) begin
+                    if (dut.u_pokey.timer2_pulse_w)
+                        $display("  T2 underflow at +%0d", st_cyc - st_at);
+                    if (dut.u_pokey.u_regs.irq_latch_q[1] && !st_irq1_q)
+                        $display("  -> IRQST bit 1 readable at +%0d", st_cyc - st_at);
+                    if (!dut.c_rw && dut.c_addr == 16'hD202)
+                        $display("  AUDF2 wr=%02h at +%0d", dut.c_din, st_cyc - st_at);
+                end
             end
         end
+    end
+
+    // The regs-level STIMER strobe and the in-flight lag counter it must
+    // cancel -- NOT tick-gated, so the strobe's true alignment against the
+    // underflow cycle is visible rather than assumed.
+    always_ff @(posedge clk) begin
+        if (!rst && STPROBE >= 0 && st_at >= 0 && dut.u_pokey.u_regs.stimer_pulse)
+            $display("  STIMERpulse at +%0d st_lag0=%0d t1pulse=%b tick=%b",
+                     st_cyc - st_at, dut.u_pokey.u_regs.st_lag_q[0],
+                     dut.u_pokey.timer1_pulse_w, tick);
     end
 
     // EVERY IRQST read, NOT gated on `tick` -- a read that does not land on a

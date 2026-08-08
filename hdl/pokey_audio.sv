@@ -301,7 +301,12 @@ module pokey_audio #(
     // (effectively 1.79 MHz at the production CLK_BUS_HZ × phi2 pace).
     // ch2/ch4 paired mode (AUDCTL[4]/[3]): decrement only when the
     // partner channel wraps — the 16-bit-divider behaviour.
-    logic [7:0] ch1_cnt, ch2_cnt, ch3_cnt, ch4_cnt;
+    // ch1 is NINE bits: the fast unlinked decomposition folds the +3 pipeline
+    // fudge into the counter, and AUDF1 >= $FD overflows eight (the two-tone
+    // refreq test writes $FF and wants a 261-cycle period, not 5).  lo_cnt is
+    // [8:0] for the same reason.
+    logic [8:0] ch1_cnt;
+    logic [7:0] ch2_cnt, ch3_cnt, ch4_cnt;
 
     // ---- A LATE AUDF WRITE RE-LENGTHENS THE PERIOD IN FLIGHT ---------------
     // emu pokey_timer.c:286-295 + 355-363.  An AUDF write does not merely set
@@ -374,7 +379,7 @@ module pokey_audio #(
     wire ch3_tick = audctl[5] ? phi2_tick : ref_tick;
 
     // ch1/ch3 wrap pulses — used by paired ch2/ch4 as their tick.
-    wire ch1_wrap = ch1_tick & (ch1_cnt == 8'h00);
+    wire ch1_wrap = ch1_tick & (ch1_cnt == 9'h000);
     wire ch3_wrap = ch3_tick & (ch3_cnt == 8'h00);
 
     // Two-tone holds timer 2 while the serial line is a MARK.  emu suppresses
@@ -404,9 +409,21 @@ module pokey_audio #(
     wire ch2_wrap = ch2_tick & !timer2_held & (ch2_cnt == 8'h00);
     wire ch4_wrap = ch4_tick & (ch4_cnt == 8'h00) & ~async_recv;
 
+    // IN TWO-TONE, TIMER 2'S UNDERFLOW RESYNCS TIMER 1, TWO CYCLES BEHIND
+    // (emu TWOTONE_RESYNC, pokey_timer.c:130-147, :937-940).  The reload is
+    // applied BEFORE that tick's decrement, so a timer-1 underflow landing on
+    // the resync tick is cancelled; one the tick before still fires.  A wrap
+    // COINCIDENT with timer 2's is cancelled directly (TWOTONE_CANCELS_FRESH)
+    // -- only the IRQ pulse: the counter reload and the audio toggle stand.
+    // Unlinked only: a linked pair's timer-2 wrap already reloads the pair.
+    localparam int TWOTONE_RESYNC = 2;
+    logic [1:0] tt_resync_q;
+    wire tt_t1_suppress = (skctl[3] & ch2_wrap & ~ch12_paired)
+                        | (tt_resync_q == 2'd1);
+
     // M23-6: timer pulses go to pokey_regs' IRQ latch (ch1/ch2/ch4 only;
     // POKEY provides no TIMER 3).
-    assign timer1_pulse = lo_active ? lo_wrap : ch1_wrap;
+    assign timer1_pulse = lo_active ? lo_wrap : (ch1_wrap & ~tt_t1_suppress);
     // timer2_pulse is assigned below, after ch12_paired is declared --
     // a LINKED pair's interrupt edge lags its serial-clock edge.
     assign timer4_pulse = ch4_wrap;
@@ -512,8 +529,8 @@ module pokey_audio #(
     // Putting the mux on the adder INPUT instead (audf + (first ? 6 : 3)) puts
     // it in series with the carry chain and cost 0.2ns on clk_sally, which
     // POKEY sits on (build 90).
-    wire [7:0] audf1_p3 = audf1 + 8'd3;
-    wire [7:0] audf1_p6 = audf1 + 8'd6;
+    wire [8:0] audf1_p3 = 9'(audf1) + 9'd3;
+    wire [8:0] audf1_p6 = 9'(audf1) + 9'd6;
     wire [7:0] audf3_p3 = audf3 + 8'd3;
     wire [7:0] audf3_p6 = audf3 + 8'd6;
     // The extended FIRST period belongs to the LINKED (16-bit) case only.
@@ -539,11 +556,27 @@ module pokey_audio #(
     // A single wire cannot express that: gating on ext*_q (set AFTER wrap 1)
     // pushed the extension onto period 3, which is what the in-sim ACID
     // replica caught — the probe showed reload=$13 at wrap 1 and $16 at wrap 2.
-    wire [7:0] audf1_reload_stimer = audctl[6] ? audf1_p3 : audf1;
+    // WITH FORCE BREAK AS WELL AS TWO-TONE, ch1's FIRST period after STIMER
+    // runs three cycles longer (emu TWOTONE_FB_FIRST, pokey_timer.c:149-166,
+    // applied at :184-186 for the fast unlinked channel only).  The test's own
+    // schedule states it: AUDF1=98 underflows "105c after STIMER" = 98+4+3.
+    // STIMER-path only -- a wrap reload is never a first period.
+    localparam int TWOTONE_FB_FIRST = 3;
+    wire [8:0] audf1_reload_stimer = audctl[6]
+                            ? audf1_p3 + ((skctl[7] && skctl[3] && !ch12_paired)
+                                          ? 9'(TWOTONE_FB_FIRST) : 9'd0)
+                            : 9'(audf1);
     wire [7:0] audf3_reload_stimer = audctl[5] ? audf3_p3 : audf3;
-    wire [7:0] audf1_reload = audctl[6]
-                            ? ((ch1_first && ch12_paired) ? audf1_p6 : audf1_p3)
-                            : audf1;
+    // TWO-TONE LENGTHENS EVERY PERIOD BUT THE FIRST (emu pokey_timer.c:117-128,
+    // quoting the test's own header: 16 = 4 + 12 ordinary, 30 = 16 + 14).  This
+    // is the WRAP-reload path, and every reload it takes starts a non-first
+    // period by construction -- gating on ch1_first here would push the
+    // extension onto period 3 (ch1_first is still set AT wrap 1, see the
+    // two-reload comment above).  The STIMER reload stays short.
+    wire [8:0] audf1_reload = audctl[6]
+                            ? ((ch1_first && ch12_paired) ? audf1_p6
+                               : audf1_p3 + (skctl[3] ? 9'(TWOTONE_EX) : 9'd0))
+                            : 9'(audf1);
     wire [7:0] audf3_reload = audctl[5]
                             ? ((ch3_first && ch34_paired) ? audf3_p6 : audf3_p3)
                             : audf3;
@@ -560,7 +593,8 @@ module pokey_audio #(
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            ch1_cnt <= 8'h00; ch1_state <= 1'b0;
+            ch1_cnt <= 9'h000; ch1_state <= 1'b0;
+            tt_resync_q <= 2'd0;
             ch1_age <= 8'd0; audf1_q <= 8'h00;
             lo_cnt <= 9'd0; lo_age <= 8'd0; lo_first <= 1'b0;
             hi_age <= 8'd0; audf2_q <= 8'h00;
@@ -577,23 +611,43 @@ module pokey_audio #(
             // path uses audf1_reload (which adds +3 / +6 in machine-
             // clock mode per audit fix #7).
             if (ch1_tick) begin
-                if (ch1_cnt == 8'h00) begin
-                    ch1_cnt   <= ch12_paired ? 8'hFF : audf1_reload;
+                if (ch1_cnt == 9'h000) begin
+                    ch1_cnt   <= ch12_paired ? 9'h0FF : audf1_reload;
                     ch1_state <= next_state(audc1, ch1_state);
                 end else
-                    ch1_cnt <= ch1_cnt - 8'h01;
+                    ch1_cnt <= ch1_cnt - 9'h001;
             end
             // Cycles since ch1's reload -- emu's ch_age, cleared by the reload
             // and by STIMER's explicit load.
             audf1_q <= audf1;
             if (stimer_apply)                        ch1_age <= 8'd0;
-            else if (ch1_tick && ch1_cnt == 8'h00)   ch1_age <= 8'd0;
+            else if (ch1_tick && ch1_cnt == 9'h000)  ch1_age <= 8'd0;
             else if (phi2_tick && ch1_age != 8'hFF)  ch1_age <= ch1_age + 8'd1;
             // The rewrite itself.  Last assignment wins, so this overrides the
             // decrement above on the cycle the write lands.  Unlinked and
             // fast-clocked only: the linked pair has its own window.
-            if (audf1_wr && !ch12_paired && audctl[6] && ch1_age < 8'(CH_LATCH_LAG))
-                ch1_cnt <= (audf1 + 8'd3) - ch1_age;
+            // The window is a fixed distance before the NEXT underflow, so
+            // when two-tone lengthens the period the window moves out with it
+            // and the seed grows by the same two (emu :343-363).  Here
+            // !ch1_first IS the right gate: the write lands mid-period, after
+            // the wrap cleared it.
+            if (audf1_wr && !ch12_paired && audctl[6] &&
+                ch1_age < 8'(CH_LATCH_LAG)
+                         + ((skctl[3] && !ch1_first) ? 8'(TWOTONE_EX) : 8'd0))
+                ch1_cnt <= (9'(audf1) + 9'd3)
+                         + ((skctl[3] && !ch1_first) ? 9'(TWOTONE_EX) : 9'd0)
+                         - 9'(ch1_age);
+            // ---- the two-tone resync itself ----
+            // Set at timer 2's wrap, applied TWOTONE_RESYNC ticks later.
+            // After the tick block so the reload overrides the decrement (and
+            // any wrap reload) on the tick it lands -- emu applies it before
+            // the decrement, same effect.
+            if (skctl[3] && ch2_wrap && !ch12_paired)
+                tt_resync_q <= 2'(TWOTONE_RESYNC);
+            else if (phi2_tick && tt_resync_q != 2'd0)
+                tt_resync_q <= tt_resync_q - 2'd1;
+            if (phi2_tick && tt_resync_q == 2'd1 && !ch12_paired)
+                ch1_cnt <= audf1_reload;
             // ---- the pair's low-half divider ----
             if (stimer_apply) begin
                 lo_cnt   <= 9'(audf1) + 9'd4;      // first period: AUDF1 + 4
@@ -632,8 +686,17 @@ module pokey_audio #(
                     // reload at +17 where the test measures +20.  Timer 1 no
                     // longer rides this counter -- it has lo_cnt -- so the
                     // cascade can carry the serial and high-half period alone.
-                    if (ch12_paired) {ch2_cnt, ch1_cnt} <= hi_per - 16'd1;
-                    else             ch2_cnt <= audf2;
+                    if (ch12_paired) begin
+                        // Two-tone lengthens the pair's period too (emu
+                        // period_of, ch 0 linked) -- every wrap reload starts
+                        // a non-first period by construction, same as lo_cnt.
+                        // The rewrite-window seed does NOT take the extra
+                        // (emu audf_prime :388-392 uses the bare period).
+                        {ch2_cnt, ch1_cnt[7:0]} <= hi_per - 16'd1
+                            + (skctl[3] ? 16'(TWOTONE_EX) : 16'd0);
+                        ch1_cnt[8] <= 1'b0;
+                    end else
+                        ch2_cnt <= audf2;
                 end else
                     ch2_cnt <= ch2_cnt - 8'h01;
             end
@@ -641,11 +704,27 @@ module pokey_audio #(
             // Cycles since the PAIR reloaded, then the re-seed.  Placed after
             // the ch2 tick block so last-assignment-wins gives it priority.
             audf2_q <= audf2;
+            // The age anchor is the underflow EVENT -- emu clears hi_age where
+            // it delivers the pair's borrow (:743), and in fast-linked mode
+            // that is three cycles after the raw wrap (PAIR_IRQ_LAG, the
+            // lagged timer2_pulse).  Anchoring on the raw wrap put every write
+            // three cycles older than emu measures it and the window never
+            // admitted the test's age-2 write.
             if (stimer_apply)                       hi_age <= 8'd0;
-            else if (ch2_tick && ch2_cnt == 8'h00)  hi_age <= 8'd0;
+            else if (pair_irq_lagged ? timer2_pulse
+                                     : (ch2_tick && ch2_cnt == 8'h00))
+                                                    hi_age <= 8'd0;
             else if (phi2_tick && hi_age != 8'hFF)  hi_age <= hi_age + 8'd1;
-            if (audf2_wr && ch12_paired && hi_age < 8'(HI_LATCH_LAG))
-                {ch2_cnt, ch1_cnt} <= hi_per - 16'(hi_age);
+            // Seed so the LAGGED pulse lands at event + per, emu's cnt =
+            // per - age (:383-393).  hi_age is anchored at the lagged event,
+            // but this counter's wrap is PAIR_IRQ_LAG ahead of the pulse the
+            // IRQ path delivers, and a load of N wraps N+1 ticks later -- so
+            // the raw counter must be seeded 1 + PAIR_IRQ_LAG short.
+            if (audf2_wr && ch12_paired && hi_age < 8'(HI_LATCH_LAG)) begin
+                {ch2_cnt, ch1_cnt[7:0]} <= hi_per - 16'(hi_age)
+                                         - 16'd1 - 16'(PAIR_IRQ_LAG);
+                ch1_cnt[8] <= 1'b0;
+            end
             // ---- ch3: low timer of pair {3,4} ----
             // Async-receive holds the pair in reset (frozen at the AUDF
             // reload) so no wrap occurs until a start bit releases it.

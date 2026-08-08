@@ -333,7 +333,7 @@ module pokey_regs (
                         // raise on a base-clocked channel is simply lost.
                         irq_latch_q[i] <= 1'b1;
                     end
-                end else if (stimer_pulse && st_lag_q[i] == 3'(IRQST_LAG - 1)) begin
+                end else if (stimer_pulse && st_lag_q[i] == 3'(IRQST_LAG)) begin
                     // A STIMER STROBE CANCELS AN INTERRUPT THAT HAS ONLY JUST
                     // UNDERFLOWED.  emu pokey_timer.c:1005-1024 tabulates the
                     // boundary and finds it is a ONE-CYCLE window, not the four
@@ -344,6 +344,13 @@ module pokey_regs (
                     // at its maximum" IS "raised this tick", and dropping the
                     // countdown is the whole cancellation -- IRQST is active low
                     // and the bit has not been cleared yet.
+                    //
+                    // "At its maximum" is IRQST_LAG itself, measured: the strobe
+                    // reaches here one clk after the coincident underflow's
+                    // raise, before any phi2 decrement (st_lag0=4 in the +12c
+                    // preemption probe).  A strobe one bus cycle later arrives
+                    // after the first decrement and sees 3 -- IRQST_LAG-1 here
+                    // inverted both verdicts of the preemption pair.
                     st_lag_q[i]   <= 3'd0;
                     st_armed_q[i] <= 1'b0;
                 end else if (phi2_tick && st_lag_q[i] != 3'd0) begin
@@ -386,6 +393,18 @@ module pokey_regs (
                         // Atari hardware-manual ack semantics).
                         irqen_q     <= wdata;
                         irq_latch_q <= irq_latch_q & wdata;
+                        // A MASKED UNDERFLOW STILL ENTERS THE DELAY, AND AN
+                        // ENABLE DURING ITS FLIGHT LETS IT SURFACE.  The rule
+                        // is asymmetric on purpose: an enable arms a bit
+                        // already in flight, a disable never disarms one (emu
+                        // pokey_timer.c:232-249, :1140-1147).  The two-tone
+                        // reprogramming section enables IRQEN on the very
+                        // cycle its second period underflows and reads the
+                        // bit four cycles later.
+                        for (int i = 0; i < 3; i++)
+                            if (wdata[i] && st_lag_q[i] != 3'd0 &&
+                                !st_armed_q[i])
+                                st_armed_q[i] <= 1'b1;
                     end
                     4'hF: skctl_q  <= wdata;       // SKCTL
                     // $D209 STIMER / $D20B POTGO — strobes (no state
