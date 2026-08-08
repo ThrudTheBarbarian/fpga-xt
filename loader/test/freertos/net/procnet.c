@@ -188,9 +188,28 @@ static int gen_stats(char *buf, int cap)
     return o.n;
 }
 
+/* /OS/proc/net/ip-address — the interface's dotted-quad, one line.  dmesg's
+ * ring wraps and takes the DHCP line with it; this stays readable for ever.
+ * Empty until an address is bound (DHCP still negotiating), so `cat` shows
+ * nothing rather than 0.0.0.0. */
+static int gen_ipaddr(char *buf, int cap)
+{
+    struct xt_ifinfo ni;
+    nb o = { buf, 0, cap };
+    if (xt_netif_info(&ni) && ni.ip) {
+        /* ni.ip is the network-order value as an LE int: first octet lowest */
+        nb_d(&o, ni.ip & 0xff);         nb_c(&o, '.');
+        nb_d(&o, (ni.ip >> 8) & 0xff);  nb_c(&o, '.');
+        nb_d(&o, (ni.ip >> 16) & 0xff); nb_c(&o, '.');
+        nb_d(&o, (ni.ip >> 24) & 0xff); nb_c(&o, '\n');
+    }
+    return o.n;
+}
+
 int xt_procnet(const char *leaf, char *buf, int cap)
 {
     if (!strcmp(leaf, "stats")) return gen_stats(buf, cap);
+    if (!strcmp(leaf, "ip-address")) return gen_ipaddr(buf, cap);
     if (!strcmp(leaf, "tcp"))   return gen_tcp(buf, cap);
     if (!strcmp(leaf, "udp"))   return gen_udp(buf, cap);
     if (!strcmp(leaf, "route")) return gen_route(buf, cap);
@@ -205,7 +224,7 @@ int xt_procnet(const char *leaf, char *buf, int cap)
 }
 
 /* the leaves that exist under /OS/proc/net (for readdir + stat) */
-const char *const xt_procnet_leaves[] = { "tcp", "udp", "raw", "route", "dev", "unix", "stats", 0 };
+const char *const xt_procnet_leaves[] = { "tcp", "udp", "raw", "route", "dev", "unix", "stats", "ip-address", 0 };
 
 /* ---- SIOCGIF* ioctls on a socket fd (read-only ifconfig) ------------------
  * Fills the caller's struct ifreq/ifconf (Linux 32-bit layout: a 16-byte name
