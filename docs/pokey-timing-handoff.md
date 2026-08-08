@@ -1,32 +1,34 @@
 # POKEY timing — session handoff
 
-State: ACID **52/58**, tree carrying a sibling session's dirt
+State: ACID **54/58**, tree carrying a sibling session's dirt
 (`sim/acid.mem` / `sim/acid_cfg.mem` / `rsrc/acid800/` / the `corners.png`
 deletion must never be committed — always `git commit --only <paths> -F -`).
 
-**`pokey_timertiming`, `pokey_inittiming` and `mmu_xlbanking` all PASS.**
-The mechanisms are documented in their commits (`7864a3c`, `9e31c42`,
-`35c8faa`); the durable lessons: the pair's rewrite window anchors at the
-*lagged* underflow event; STIMER cancels a fresh raise at
+**Five of the six failures are cleared** — `pokey_timertiming`,
+`pokey_inittiming`, `mmu_xlbanking`, `antic_wsync`, `antic_dlitiming` all
+PASS. Mechanisms are in their commits (`7864a3c`, `9e31c42`, `35c8faa`,
+`4bb8ad0`, `e927949`); the durable lessons: the pair's rewrite window
+anchors at the *lagged* underflow event; STIMER cancels a fresh raise at
 `st_lag == IRQST_LAG` (not LAG−1); an IRQEN enable arms a bit in flight;
 ch1's fast counter is nine bits; two-tone lengthens every period but the
 first and resyncs timer 1 off timer 2 two cycles behind; force break +
 two-tone runs ch1's first period three longer; a base-clocked underflow
-takes one cycle to the status bit (the analogue of Altirra's universal +3
-borrow) while the release-phase ticks stay at Altirra's 22/81; and XL ROM
-banking decodes in `a8_core` (PORTB latch, banking armed by the first
-latch change since reset because the harness boots OS-less).
+takes one cycle to the status bit while the release-phase ticks stay at
+Altirra's 22/81; XL ROM banking decodes in `a8_core` (PORTB latch, armed
+by the first latch change since reset — the harness boots OS-less); a
+WSYNC write landing ON the release cycle misses this line (and an RMW's
+second write there arms a FRESH halt); and NMI takes the same two-stage
+poll as IRQ — the old third stage was compensating for the WSYNC release
+error and is gone.
 
-A bitstream with the POKEY fixes is built and timing-closed in
-`vivado/build/` (clk_sys WNS +0.187) — ready to load.
+A bitstream with the POKEY fixes is timing-closed in `vivado/build/`; a
+fresh one including the ANTIC/CPU fixes was kicked — check the scratchpad
+`bitstream_build2.log`.
 
-## The three remaining failures
+## The one remaining failure
 
-1. **`pokey_sertiming`** — "Serial output register was loaded too early."
-   Rides the serial edge; untouched by all timer work.
-2/3. **`antic_wsync`** and **`antic_dlitiming`** — both on the shared CPU
-   IRQ/NMI latency lever (`xt6502f.sv:120-123`), also relied on by
-   `pokey_irqtiming` and `antic_blockednmi`. One-test upside on a shared lever.
+**`pokey_sertiming`** — "Serial output register was loaded too early."
+Rides the serial edge; untouched by all timer work.
 
 ## The oracles — read them, don't grep them
 
