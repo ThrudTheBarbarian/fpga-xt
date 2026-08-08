@@ -115,7 +115,6 @@ module xt6502f #(
     // ---- hardware interrupts (IRQ level / NMI edge) ----
     reg       nmi_n_d;   // previous nmi_n (machine-cycle sampled) for falling-edge detect
     reg       irq_polled, nmi_polled;  // RDY-gated poll latches (see the pacing block)
-    reg       nmi_polled2;             // 3rd NMI recognition stage (see the pacing block)
     reg       irq_d1, irq_d2;  // /IRQ level pipeline: the NMOS 6502 takes an IRQ at an
                                // instruction boundary only if the line was low TWO cycles
                                // before it (ACID800 pokey_irqtiming: IRQEN write ->
@@ -354,7 +353,7 @@ module xt6502f #(
             nmi_n_d <= 1'b1; nmi_pend <= 1'b0; intr <= 1'b0; nmi_svc <= 1'b0;
             irq_d1 <= 1'b0; irq_d2 <= 1'b0;
             nmi_d1 <= 1'b0; nmi_d2 <= 1'b0;
-            irq_polled <= 1'b0; nmi_polled <= 1'b0; nmi_polled2 <= 1'b0;
+            irq_polled <= 1'b0; nmi_polled <= 1'b0;
             i_poll <= 1'b1;   // reset P = $34 -> I set
         end else begin
             // NMI falling-edge detect runs EVERY clk (decoupled from `advance`). A WSYNC or
@@ -388,12 +387,12 @@ module xt6502f #(
                 if (rdy) begin
                     irq_polled  <= irq_d1;
                     nmi_polled  <= nmi_d1;
-                    // 3rd NMI stage: the fid commit windows lag the raster's
-                    // cycle numbering by ~a cycle, so a cycle-8 /NMI edge is
-                    // visible to the previous-numbered commit and the 2-stage
-                    // chain hijacks one instruction early (co-sim measured:
-                    // delayed-odd PCL $31 where real NMOS gives $32).
-                    nmi_polled2 <= nmi_polled;
+                    // NMI and IRQ take the SAME two-stage rule -- emu polls at
+                    // the end of every cycle and decides on the penultimate
+                    // sample, for both.  A third NMI stage used to compensate
+                    // for the WSYNC release landing a cycle late in antic2;
+                    // with the release exact it made the marginal alignments
+                    // (dlitiming odd / phase-2/3) one instruction late.
                 end
             end
           if (dbg_load) begin
@@ -409,10 +408,10 @@ module xt6502f #(
                 ST_FETCH: begin
                     has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; is_rmw <= 1'b0; op <= OP_LD; sax <= 1'b0;
                     combo <= 1'b0; ushx <= 1'b0; ushx_tas <= 1'b0;
-                  if (nmi_polled2 || (irq_polled && !i_poll)) begin // HW interrupt (NMI priority): discard opcode, PC held
+                  if (nmi_polled || (irq_polled && !i_poll)) begin // HW interrupt (NMI priority): discard opcode, PC held
                                                                   // (RDY-gated poll latch: the calibrated NMOS rule)
-                    intr <= 1'b1; nmi_svc <= nmi_polled2; ir <= 8'h00;
-                    if (nmi_polled2) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_polled <= 1'b0; nmi_polled2 <= 1'b0; end
+                    intr <= 1'b1; nmi_svc <= nmi_polled; ir <= 8'h00;
+                    if (nmi_polled) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_polled <= 1'b0; end
                     state <= ST_IRQ2;
                   end else begin
                     ir <= din_r; PC <= PC + 16'd1;
@@ -794,7 +793,7 @@ module xt6502f #(
                         // Hijacked BRK: also drain the recognition pipeline so
                         // the consumed edge cannot mature into a SECOND NMI
                         // entry right after the handler starts.
-                        if (!intr) begin nmi_d1 <= 1'b0; nmi_polled <= 1'b0; nmi_polled2 <= 1'b0; end
+                        if (!intr) begin nmi_d1 <= 1'b0; nmi_polled <= 1'b0; end
                     end
                     state <= ST_BRK5; end
                 // NMOS blocked-NMI: an NMI edge landing during a genuine BRK's
@@ -806,10 +805,10 @@ module xt6502f #(
                 // entry stays pending and fires after the handler's first
                 // instruction (dli/irq coincidence calibration unchanged).
                 ST_BRK5: begin eal <= din_r;
-                    if (!intr) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_polled <= 1'b0; nmi_polled2 <= 1'b0; end
+                    if (!intr) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_polled <= 1'b0; end
                     state <= ST_BRK6; end         // read vector low
                 ST_BRK6: begin PC <= {din_r, eal}; intr <= 1'b0; nmi_svc <= 1'b0;
-                    if (!intr) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_polled <= 1'b0; nmi_polled2 <= 1'b0; end
+                    if (!intr) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_polled <= 1'b0; end
                     state <= ST_FETCH; end // vec high; PC = vector
                 // HW interrupt: 2nd cycle is a dummy read at PC (no increment); then the BRK push+vector sequence
                 ST_IRQ2: state <= ST_BRK2;
