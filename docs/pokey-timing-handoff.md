@@ -1,32 +1,30 @@
 # POKEY timing — session handoff
 
-State: ACID **51/58**, tree carrying a sibling session's dirt
+State: ACID **52/58**, tree carrying a sibling session's dirt
 (`sim/acid.mem` / `sim/acid_cfg.mem` / `rsrc/acid800/` / the `corners.png`
 deletion must never be committed — always `git commit --only <paths> -F -`).
 
-**`pokey_timertiming` and `pokey_inittiming` both PASS.** The mechanisms that
-did it are documented in their commits (`7864a3c`, `9e31c42`); the durable
-lessons: the pair's rewrite window anchors at the *lagged* underflow event;
-STIMER cancels a fresh raise at `st_lag == IRQST_LAG` (not LAG−1); an IRQEN
-enable arms a bit in flight; ch1's fast counter is nine bits; two-tone
-lengthens every period but the first and resyncs timer 1 off timer 2 two
-cycles behind; force break + two-tone runs ch1's first period three longer;
-and a base-clocked underflow takes one cycle to the status bit (the analogue
-of Altirra's universal +3 borrow) while the release-phase ticks stay at
-Altirra's 22/81.
+**`pokey_timertiming`, `pokey_inittiming` and `mmu_xlbanking` all PASS.**
+The mechanisms are documented in their commits (`7864a3c`, `9e31c42`,
+`35c8faa`); the durable lessons: the pair's rewrite window anchors at the
+*lagged* underflow event; STIMER cancels a fresh raise at
+`st_lag == IRQST_LAG` (not LAG−1); an IRQEN enable arms a bit in flight;
+ch1's fast counter is nine bits; two-tone lengthens every period but the
+first and resyncs timer 1 off timer 2 two cycles behind; force break +
+two-tone runs ch1's first period three longer; a base-clocked underflow
+takes one cycle to the status bit (the analogue of Altirra's universal +3
+borrow) while the release-phase ticks stay at Altirra's 22/81; and XL ROM
+banking decodes in `a8_core` (PORTB latch, banking armed by the first
+latch change since reset because the harness boots OS-less).
 
-## The four remaining failures
+A bitstream with the POKEY fixes is built and timing-closed in
+`vivado/build/` (clk_sys WNS +0.187) — ready to load.
+
+## The three remaining failures
 
 1. **`pokey_sertiming`** — "Serial output register was loaded too early."
    Rides the serial edge; untouched by all timer work.
-2. **`mmu_xlbanking`** — needs ROM + PORTB banking. `a8_core.sv` has **no ROM
-   decode at all**. ROMs exist: `rsrc/atari-xl.rom` (16K), `rsrc/atari-basic.rom`
-   (8K). `mmu_xlbanking.s:39-58` drives `portb` = `$c2`/`$f3`/`$f0`/`$72`
-   expecting `$0f`/`$03`/`$0d`/`$0f` — kernel, BASIC **and** self-test.
-   `pia_regs.sv:43-48` already exposes `portb_out_q`. Worth exactly **one**
-   test. Risk: ROM at `$A000`/`$C000` changes what every test sees — sweep
-   early.
-3/4. **`antic_wsync`** and **`antic_dlitiming`** — both on the shared CPU
+2/3. **`antic_wsync`** and **`antic_dlitiming`** — both on the shared CPU
    IRQ/NMI latency lever (`xt6502f.sv:120-123`), also relied on by
    `pokey_irqtiming` and `antic_blockednmi`. One-test upside on a shared lever.
 
