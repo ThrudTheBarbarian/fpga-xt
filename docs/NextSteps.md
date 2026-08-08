@@ -788,11 +788,17 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
   earlier plane_fetch line FIFO (needs compositor row+2 lookahead), or arb
   priority for the fetcher. gemd-side mitigations shipped (128-row banded engine
   blits + CPU composite during live drags) make it visually clean; hdmi-mon
-  coalesces the residual events to 1 line/5 s. **plane_fetch now skips same-row
-  refetches (commit 89c4291)** — cuts a scaled plane's read traffic by its scale
-  factor, aimed at the XL-plane ovr(x) flood (HP3 reads vs HP2 writeback on
-  their shared DDRC port); overrun rate needs HW re-measurement on the next
-  board run. *(src: gemd-plan.md §M7, hdmi.c hdmi-mon)*
+  coalesces the residual events to 1 line/5 s. **Same-row-skip attempt REVERTED
+  (89c4291 + f3d830f reverted by 0ebc6cd/f1d23fd)** — on hardware it
+  black-screened the XL window at scale 2 while the machine ran fine
+  (XEX booted, HP3 fetches active, displayed half never updated); the four
+  unit tbs (plane_fetch/vscale/compositor/cmp_fetch) all passed, so the
+  failure lives in a fabric condition they don't model — likely the real
+  vbeam's line_start/line_start_e shape vs the tb's. Before re-landing:
+  build a tb that reuses the actual u_vbeam line_start generation, and
+  reproduce the black window in sim FIRST. Simon confirms the overruns
+  cause no visible glitches (absorbed by buffering), so this is bandwidth
+  hygiene, not a fix — low priority. *(src: gemd-plan.md §M7, hdmi.c hdmi-mon)*
 - **Compositor polish (deferred)** — visible-span-only plane fetch (bandwidth);
   tear-free `front_sel` sampling at the compositor's own frame start; narrow/wide
   playfield `src_w` tracking. *(desktop-window-over-live-window occlusion is DONE —
