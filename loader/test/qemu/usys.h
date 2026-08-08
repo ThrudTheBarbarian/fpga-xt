@@ -224,6 +224,12 @@ static inline long sys_overlay(int x, int y, int w, int h, int en) {
 static inline long sys_xl_boot(const char *path, int drive) {
     return __syscall(SYS_xl_boot, (long)path, drive, 0);
 }
+/* Cold-reset the fabric 6502 KEEPING mounted media (a real power-cycle, fresh OS
+ * image): basic!=0 -> BASIC on; basic=0 -> OPTION held across the coldstart so
+ * the XL OS maps BASIC out (auto-released once sampled). */
+static inline long sys_xl_reset(int basic) {
+    return __syscall(SYS_xl_reset, basic, 0, 0);
+}
 /* Run a standalone Atari executable (.xex / DOS binary) on the fabric 6502: the
  * kernel boots the XL OS with a 1-sector fake disk, then (as the host, via the
  * GP0 debug facility) loads the segments and drives the INIT/RUN vectors -- the

@@ -8,6 +8,8 @@
  *   6502 break off              disarm the breakpoint
  *   6502 breakreset on|off      halt at the reset-vector fetch on the next SALLYRST
  *   6502 reset                  pulse SALLYRST (halts at reset if breakreset is on)
+ *   6502 basic                  full power-cycle reset, BASIC on (media stays mounted)
+ *   6502 nobasic                full power-cycle reset, BASIC off (OPTION held for you)
  *   6502 PC=$200 SP=$FF ...     write registers while halted (REG: PC A X Y SP P)
  *   6502 PC=$4000 SP=$FF go     write registers, then run
  *
@@ -273,7 +275,9 @@ static void help(void)
     line("  6502 halt               halt at the next instruction boundary");
     line("  6502 go                 resume");
     line("  6502 step [N]           single-step N instructions (default 1)");
-    line("  6502 reset              cold-reset the 6502 realm");
+    line("  6502 reset              pulse SALLYRST (raw debugger reset; CONSOL untouched)");
+    line("  6502 basic              power-cycle reset, BASIC enabled (media stays mounted)");
+    line("  6502 nobasic            power-cycle reset, BASIC disabled (OPTION held across coldstart)");
     line("  6502 run [--turbo] [--hold] <file.xex>   cold-boot + run a standalone .xex (as xexload)");
     line("  6502 break $A           break before executing the instruction at $A");
     line("  6502 break off");
@@ -329,6 +333,22 @@ void _app_entry(int argc, char **argv)
         unsigned long n = (argc >= 3) ? parse_num(argv[2]) : 1;
         if (!n) n = 1;
         wr(DBG_STEP, n); poll_halt(); status(); sys_exit(0);
+    }
+
+    /* full power-cycle reset with explicit BASIC state (SYS_xl_reset): fresh OS
+     * image + RAM scrub via the reset stub, mounted media KEPT (a mounted disk
+     * reboots).  `nobasic` holds OPTION across the coldstart; the kernel releases
+     * it automatically once the XL OS has sampled it. */
+    if (streq(cmd, "basic") || streq(cmd, "nobasic")) {
+        int basic = streq(cmd, "basic");
+        long rc = sys_xl_reset(basic);
+        on = 0;
+        if (rc == 0) {
+            os("6502 cold reset, BASIC ");
+            os(basic ? "on\n" : "off (OPTION held across coldstart)\n");
+        } else os("6502 reset failed\n");
+        flush(rc == 0 ? 1 : 2);
+        sys_exit(rc == 0 ? 0 : 1);
     }
 
     if (streq(cmd, "reset")) {
@@ -483,7 +503,7 @@ void _app_entry(int argc, char **argv)
         }
         if (!did_assign) {
             on = 0; os("usage: 6502 status|core [turbo|fid]|halt|go|step [N]|break $A|break off|"
-                       "breakreset on|off|reset|watch $A [r|w|rw]|watch off|diag|"
+                       "breakreset on|off|reset|basic|nobasic|watch $A [r|w|rw]|watch off|diag|"
                        "trace on|off|dump [N]|<secs> [path]|"
                        "REG=VAL...   (6502 -h for details)\n");
             flush(2); sys_exit(2);

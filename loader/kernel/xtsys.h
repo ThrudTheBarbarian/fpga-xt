@@ -418,6 +418,14 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * the core HALTS on its result screen instead of soft-resetting
                                 * -- `6502 status` Y then reads 00=pass / 80=fail.
                                 * (docs/OS/app-launch.md.) */
+#define SYS_xl_reset     0x609 /* (basic) -> 0/-errno: cold-reset the fabric 6502 KEEPING
+                                * mounted media — a real power-cycle (`6502 basic` /
+                                * `6502 nobasic`).  Rebuilds + re-uploads the patched OS
+                                * image (same clean power-on guarantee as a launch), then
+                                * drives CONSOL across the coldstart: basic!=0 releases
+                                * OPTION (BASIC on), basic=0 holds it (BASIC off; released
+                                * automatically once the XL OS has sampled it).  A mounted
+                                * disk reboots, like reset on a real XL with the drive on. */
 
 /* ---- services + multiplexing — block 0x500 ---------------------------------
  * The rendezvous XTOS did not have. Pipes need shared ancestry (SYS_spawn_fd), so two

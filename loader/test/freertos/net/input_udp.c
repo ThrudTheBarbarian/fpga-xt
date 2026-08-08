@@ -36,7 +36,10 @@
  *   u8  porta  PORTA pin value, ACTIVE-LOW (STICK0 bits[3:0]: bit0=up bit1=down bit2=left
  *              bit3=right; STICK1 bits[7:4]; 1=released 0=pressed; 0xFF=neutral)
  *   u8  trig   TRIG0/fire, ACTIVE-LOW (0=pressed, 1=released)
- *   u8  pad*5
+ *   u8  consol console keys, ACTIVE-HIGH pressed mask (bit0=START bit1=SELECT bit2=OPTION) —
+ *              inverted from the CONSOL register on purpose, so a zeroed pad byte from an
+ *              older sender means "none pressed", never "all three held"
+ *   u8  pad*4
  */
 #include <stdint.h>
 #include "lwip/udp.h"
@@ -49,6 +52,12 @@
 /* PL keypad->joystick override register (GP0 CTRL block 0x20 = XT_CTRL_JOY_OVR).
  * [31]=enable, [7:0]=PORTA pins (active-low STICK0/1), [8]=TRIG0 fire (active-low). */
 #define JOY_OVR_REG   (*(volatile uint32_t *)0x43C00320u)
+
+/* Console-keys register (GP0 CTRL block 0x24 = XT_CTRL_CONSOL): the value the 6502 reads
+ * as CONSOL ($D01F). ACTIVE-LOW: bit0=START bit1=SELECT bit2=OPTION, 0=pressed, $07=none.
+ * xl_boot.c also writes this (holds OPTION across a game coldstart), so we only touch it
+ * when the wire state CHANGES — steady joystick traffic never clobbers the boot hold. */
+#define CONSOL_REG    (*(volatile uint32_t *)0x43C00324u)
 
 extern void klog(const char *);
 extern void cursor_move(int x, int y);
@@ -108,10 +117,16 @@ static void in_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
         else if (b[0] == 'J') {                          /* joystick: keypad->STICK0 override */
             uint8_t porta = b[1];                        /* active-low PORTA pins (STICK0/1) */
             uint8_t trig  = b[2] & 1;                     /* active-low fire (0 = pressed) */
+            uint8_t con   = b[3] & 7;                     /* active-high consol pressed mask */
+            static uint8_t s_con;                         /* last wire mask; 0 = none pressed */
             /* enable the PL override and force the current combined stick state. A neutral
              * packet (porta 0xFF, trig 1) keeps the override latched but all pins released;
              * it never falls back to the (absent) PCAL9722 poll shadow. */
             JOY_OVR_REG = (1u << 31) | (uint32_t)porta | ((uint32_t)trig << 8);
+            if (con != s_con) {                           /* write-on-change only: see CONSOL_REG */
+                s_con = con;
+                CONSOL_REG = (uint32_t)(~con & 7u);       /* register is active-LOW */
+            }
         }
         else if (b[0] == 'K') {                          /* keyboard: inject on press only */
             if (b[4]) {

@@ -22,6 +22,7 @@
 #include "romfs.h"
 #include "vfs.h"
 #include "frtos_os.h"
+#include "pl310.h"     /* pl310_inval — SYS_plane_grab's DMA-read maintenance */
 
 #define MAXPROC 64
 #define NFD     32      /* per process; 0/1/2 are stdio (a shell juggling pipeline +
@@ -2934,6 +2935,10 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         int flags = (int)a1;
         return xex_boot((const char *)a0, flags & 1, (flags >> 1) & 1);  /* turbo, hold */
     }
+    case SYS_xl_reset: {                                    /* (basic) — task ctx (SD reads) */
+        extern int xl_reset(int);
+        return xl_reset((int)a0);
+    }
     case SYS_plane_grab: {                                  /* (plane_id, buf) -> (w<<16)|h */
         const uint32_t XL_W = 320, XL_H = 192;              /* XL_SRC_W x XL_SRC_H (RTL) */
         if ((int)a0 != XT_PLANE_XL) return -22;             /* 6502/XL plane only (m68k later) */
@@ -2946,6 +2951,23 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         uint32_t base = (*(volatile uint32_t *)0x43C0040Cu) & 0xFFF00000u;
         if (base != 0x31000000u && base != 0x31100000u && base != 0x31200000u)
             base = 0x31000000u;
+        /* The slot is PL-DMA-written (HP2) and this mapping is cacheable, so
+         * DISCARD any cached lines first — L1, then L2 (PL310 is live), then L1
+         * again (a speculative refill between the two passes can repopulate L1
+         * from a line L2 had not yet dropped; same dance as mc_dcache_inval).
+         * Without this, every grab after the first served the PREVIOUS grab's
+         * cachelines — frames that looked frozen/offset while the DDR content
+         * and the on-screen picture were fine (2026-08-08's phantom regression). */
+        {
+            uint32_t len = XL_W * XL_H * 4u;
+            for (uint32_t p = base; p < base + len; p += 32u)
+                __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(p) : "memory");  /* DCIMVAC */
+            __asm__ volatile("dsb" ::: "memory");
+            pl310_inval(base, len);
+            for (uint32_t p = base; p < base + len; p += 32u)
+                __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(p) : "memory");
+            __asm__ volatile("dsb" ::: "memory");
+        }
         const volatile uint32_t *src = (const volatile uint32_t *)base;
         for (uint32_t i = 0; i < XL_W * XL_H; i++) dst[i] = src[i];
         return (long)((XL_W << 16) | XL_H);
@@ -3130,6 +3152,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_open:    return 1;                    /* may walk a FatFs directory path */
     case SYS_xl_boot: return 1;                    /* reads the OS ROMs + the ATR off the SD */
     case SYS_xexload: return 1;                    /* reads the OS ROMs + the .xex off the SD */
+    case SYS_xl_reset: return 1;                   /* reads the OS ROMs off the SD */
     case SYS_read: {                               /* stdin + pipes + channels block */
         if (fd_is_con(fd)) return 1;               /* console alias: con_tty_readc path */
         proc_t *q = cur_proc();

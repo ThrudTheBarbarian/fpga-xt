@@ -30,6 +30,8 @@
 
 #include <stdint.h>
 #include <string.h>
+#include "FreeRTOS.h"
+#include "task.h"
 #include "xtsys.h"
 #include "mathcop.h"
 #include "vfs.h"
@@ -125,7 +127,50 @@ static const uint8_t rst_stub[] = {
 #define POKE_STA       0x6000u     /* "8D ll hh" (STA abs); operand rewritten per byte */
 #define POKE_TRAP      0x6003u     /* PC after the STA (and INIT's RTS) = our halt point */
 
-extern void vTaskDelay(uint32_t);  /* FreeRTOS: let the coldstart run before we poll */
+/* Release OPTION once the XL OS coldstart has sampled CONSOL.  The PRIMARY
+ * release is EVENT-based: the OS decides the BASIC mapping during init, BEFORE
+ * it attempts the D1: boot, so the FIRST paravirtual SIO request after a hold
+ * proves the decision is made — xl_sio_service releases there (works with no
+ * media too: the boot attempt still calls the SIOV stub).  A TIMED release
+ * (generous 15 s) is only the backstop for a realm that never issues SIO.  A
+ * fixed short timer alone was a RACE: the fidelity core's coldstart can run
+ * past 5 s, and a release landing before the OPTION sample booted the game
+ * WITH BASIC mapped — the blue/green derail (HW, 2026-08-08).  The generation
+ * counter guards back-to-back boots: only the NEWEST hold's release fires.
+ * (The old ATR path held OPTION FOREVER — games polling OPTION at their menus
+ * saw it stuck.) */
+#define CONSOL_HOLD_MS  15000u
+static volatile uint32_t g_consol_gen;
+static volatile uint8_t  g_consol_held;      /* a hold is live; first SIO releases it */
+
+static void consol_release_now(void)
+{
+    ++g_consol_gen;                          /* cancel any pending timed release */
+    g_consol_held = 0;
+    GP0_CONSOL = CONSOL_NONE; __asm__ volatile("dsb");
+}
+
+static void consol_release_task(void *arg)
+{
+    uint32_t gen = (uint32_t)arg;
+    vTaskDelay(CONSOL_HOLD_MS);
+    if (gen == g_consol_gen) {
+        g_consol_held = 0;
+        GP0_CONSOL = CONSOL_NONE; __asm__ volatile("dsb");
+    }
+    vTaskDelete(NULL);
+}
+
+static void consol_hold_option(void)
+{
+    GP0_CONSOL = CONSOL_OPTION_HELD; __asm__ volatile("dsb");
+    g_consol_held = 1;
+    uint32_t gen = ++g_consol_gen;
+    if (xTaskCreate(consol_release_task, "consol", 256, (void *)gen,
+                    tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+        /* no task memory: OPTION stays held until the SIO event (old behaviour) */
+    }
+}
 
 /* Poll DBG_STAT.halted, bounded so a wrong core / no-halt never wedges the task.
  * Returns 1 = halted, 0 = timed out. */
@@ -212,6 +257,11 @@ static void xl_unmount_all(void)
 /* ---- SIO service (runs in the mathcop worker task) ------------------------ */
 void xl_sio_service(volatile uint8_t *page)
 {
+    /* First SIO request after a hold = the XL OS is past its coldstart OPTION
+     * sample (the BASIC decision precedes the D1: boot attempt) — release it.
+     * Runs in the mathcop worker task; the flag/gen writes are benign races. */
+    if (g_consol_held) consol_release_now();
+
     volatile uint8_t *dcb  = page + MC_OFF_SIO_DCB;
     volatile uint8_t *data = page + MC_OFF_SIO_DATA;
     uint8_t  ddevic = dcb[0], dunit = dcb[1], cmd = dcb[2], dstats = dcb[3];
@@ -314,6 +364,7 @@ void xl_sio_service(volatile uint8_t *page)
 #define SIO_PTR        (*(volatile uint32_t *)0x43C00A00u)   /* XT_SIO_PTR */
 #define SIO_DAT        (*(volatile uint32_t *)0x43C00A04u)   /* XT_SIO_DAT */
 #define SIO_DONE_REG   (*(volatile uint32_t *)0x43C00604u)   /* XT_MATH_DONE: raises $D5C7.0 */
+#define SIO_STAT_REG   (*(volatile uint32_t *)0x43C00608u)   /* XT_MATH_STAT: {..,ack_tgl,req_s2,pending} */
 #define SIO_MBOX_BYTES 512u
 
 /* off and n are word-aligned by construction (the mathcop.h offsets are). */
@@ -347,15 +398,56 @@ void xl_sio_mbox_service(void)
     sio_mbox_read(0, page, 8);
     sio_mbox_read(MC_OFF_SIO_DCB, page + MC_OFF_SIO_DCB, 12);
 
+    /* Invalid magic on a doorbell: either a spurious level-IRQ re-wake (the
+     * previous request's magic already consumed — benign, drop it silently
+     * after the retry) or the 6502's magic write is IN FLIGHT (HW 2026-08-08:
+     * a game-loader SIO request stalled with a fully-valid DCB in the page and
+     * magic=0 — the write raced the doorbell's arrival at the worker).  Retry
+     * briefly before deciding; log either way so the ring shows the truth. */
+    if (page[MC_OFF_SIO_MAGIC] != MC_SIO_MAGIC) {
+        for (int tries = 0; tries < 5 && page[MC_OFF_SIO_MAGIC] != MC_SIO_MAGIC; tries++) {
+            vTaskDelay(1);
+            sio_mbox_read(0, page, 8);
+        }
+        if (page[MC_OFF_SIO_MAGIC] == MC_SIO_MAGIC) {
+            sio_mbox_read(MC_OFF_SIO_DCB, page + MC_OFF_SIO_DCB, 12);
+            klog("[xl] sio late magic (served on retry)\r\n");
+        } else {
+            /* A bare $D5C7 write from RUNNING 6502 code — games sweep/probe
+             * the CCTL page — is a doorbell with no request behind it.  Each
+             * one flips the req toggle; when two coalesce into ONE pending
+             * event the two-toggle handshake phase-slips and the NEXT real
+             * request polls $D5C7.0 forever ($CB8A stall, HW 2026-08-08).
+             * Re-align: if the toggles disagree (done reads 0) with nothing
+             * pending and no request in the page, ring DONE to restore
+             * parity.  The stub can't see the blip — it only polls AFTER its
+             * own doorbell, which flips req and drops done again. */
+            uint32_t stat = SIO_STAT_REG;
+            if (!(stat & 1u) && (((stat >> 2) & 1u) != ((stat >> 1) & 1u))) {
+                SIO_DONE_REG = MC_SIO_CHUNK; __asm__ volatile("dsb");
+                klog("[xl] sio spurious doorbell -> parity realigned\r\n");
+            } else {
+                klog("[xl] sio doorbell with no magic (dropped)\r\n");
+            }
+        }
+    }
+
     if (page[MC_OFF_SIO_MAGIC] == MC_SIO_MAGIC) {
         xl_sio_service(page);
         page[MC_OFF_SIO_MAGIC] = 0;               /* consume it */
         sio_mbox_write(0, page, 8);               /* status + flags back */
         sio_mbox_write(MC_OFF_SIO_DATA, page + MC_OFF_SIO_DATA, 256);
+        /* Ring DONE ONLY for a request actually served.  The doorbell IRQ is
+         * LEVEL-triggered, so a spurious second wake (IRQ re-fire before the
+         * event pop lands) re-enters here with the magic already consumed —
+         * ringing DONE for that flips the mbox ack toggle with no matching
+         * request and the two-toggle handshake goes PHASE-SLIPPED: $D5C7.0
+         * reads 0 forever and the stub spins at $CB8A mid-load (HW 2026-08-08,
+         * stat_word ack=1/req=0/pending=0; a manual MATH_DONE poke resumed the
+         * boot — the parity proof). */
+        SIO_DONE_REG = MC_SIO_CHUNK;              /* -> $D5C7.0: the stub may proceed */
+        __asm__ volatile("dsb");
     }
-
-    SIO_DONE_REG = MC_SIO_CHUNK;                  /* -> $D5C7.0: the stub may proceed */
-    __asm__ volatile("dsb");
 }
 
 /* ---- OS image build + patch ----------------------------------------------- */
@@ -485,11 +577,42 @@ static void upload_image(const uint8_t *img)
     romwin_write(0xD800, img + 0xD800, 0x10000 - 0xD800);
 }
 
-/* ---- the syscall ----------------------------------------------------------- */
+/* ---- the syscalls ---------------------------------------------------------- */
+
+/* The 64 KB address-space image every cold path rebuilds.  ONE buffer, file
+ * scope: xl_boot / xex_boot / xl_reset all run in the syscall task, never
+ * concurrently (this used to be two separate 64 KB function-statics). */
+static uint8_t g_osimg[0x10000];
+
+/* Cold-reset the realm KEEPING mounted media — a real power-cycle (the `6502
+ * basic` / `6502 nobasic` commands, SYS_xl_reset).  Rebuilds + re-uploads the
+ * patched OS image, so it carries the same clean power-on guarantee as a
+ * launch (RAM $1000-$9FFF scrubbed, stubs re-patched — and a realm whose BRAM
+ * was never loaded still comes up), then drives CONSOL across the coldstart:
+ * basic!=0 releases OPTION (BASIC on), basic=0 holds it (BASIC off, released
+ * automatically once the OS has sampled it).  A mounted disk reboots — exactly
+ * like pressing reset on a real XL with the drive still attached. */
+int xl_reset(int basic)
+{
+    /* Preserve ALL control bits across the cold-boot except the reset-hold
+     * itself (bit0): bit1 = core select, bit2 = ANTIC timing-machine authority. */
+    uint32_t sel = GP0_SALLYRST & ~1u;
+    GP0_SALLYRST = sel | 1u; __asm__ volatile("dsb");
+    if (build_patched_os(g_osimg) != 0) { GP0_SALLYRST = sel; return -5; }
+    upload_image(g_osimg);
+    if (basic) {
+        ++g_consol_gen;                 /* cancel any pending OPTION release */
+        GP0_CONSOL = CONSOL_NONE; __asm__ volatile("dsb");
+    } else {
+        consol_hold_option();
+    }
+    GP0_SALLYRST = sel; __asm__ volatile("dsb");
+    klog(basic ? "[xl] cold reset (BASIC)\r\n" : "[xl] cold reset (no BASIC)\r\n");
+    return 0;
+}
+
 int xl_boot(const char *path, int drive)
 {
-    static uint8_t img[0x10000];        /* kernel BSS; single caller (task ctx) */
-
     /* Preserve ALL control bits across the cold-boot except the reset-hold
      * itself (bit0): bit1 = core select (`6502 core turbo` clears it), bit2 =
      * ANTIC timing-machine authority (sallyrst[2]) — masking with CPUSEL_FID
@@ -500,12 +623,9 @@ int xl_boot(const char *path, int drive)
     if (!path) {                        /* eject everything, back to BASIC */
         GP0_SALLYRST = sel | 1u; __asm__ volatile("dsb");
         xl_unmount_all();
-        if (build_patched_os(img) != 0) { GP0_SALLYRST = sel; return -5; }
-        upload_image(img);
-        GP0_CONSOL = CONSOL_NONE; __asm__ volatile("dsb");   /* OPTION released -> BASIC on -> READY */
-        GP0_SALLYRST = sel; __asm__ volatile("dsb");
-        klog("[xl] cold boot, no media\r\n");
-        return 0;
+        int rc = xl_reset(1);           /* fresh image, OPTION released -> READY */
+        if (rc == 0) klog("[xl] cold boot, no media\r\n");
+        return rc;
     }
 
     if (drive < 1 || drive > 8) return -22;
@@ -535,16 +655,16 @@ int xl_boot(const char *path, int drive)
 
     GP0_SALLYRST = sel | 1u; __asm__ volatile("dsb");   /* the realm sleeps (core preserved) */
     xl_unmount_all();                               /* v1: one medium per session */
-    if (build_patched_os(img) != 0) {
+    if (build_patched_os(g_osimg) != 0) {
         frtos_free(buf, NULL);
         GP0_SALLYRST = sel;
         return -5;
     }
-    upload_image(img);
+    upload_image(g_osimg);
     g_drv[drive - 1].img   = buf;
     g_drv[drive - 1].len   = sz;
     g_drv[drive - 1].secsz = secsz;
-    GP0_CONSOL = CONSOL_OPTION_HELD; __asm__ volatile("dsb"); /* hold OPTION -> XL OS leaves BASIC OFF ($A000-$BFFF = RAM) */
+    consol_hold_option();                           /* OPTION across coldstart -> BASIC OFF; auto-released */
     GP0_SALLYRST = sel; __asm__ volatile("dsb");    /* coldstart; the OS boots Dn: on the selected core */
 
     klog("[xl] booted "); klog(path);
@@ -647,7 +767,6 @@ static int xex_run_init(cpu6502 *r, uint16_t initad)
 
 int xex_boot(const char *path, int turbo, int hold)
 {
-    static uint8_t img[0x10000];        /* kernel BSS; single caller (task ctx) */
     /* Core select per arg; every OTHER control bit (e.g. sallyrst[2] = ANTIC
      * timing-machine authority) is preserved — this path hardcoded sel and
      * stripped them on every xexload. */
@@ -686,17 +805,17 @@ int xex_boot(const char *path, int turbo, int hold)
     /* ---- cold-boot the OS on the selected core, halted at the boot trap ---- */
     GP0_SALLYRST = sel | 1u; __asm__ volatile("dsb");   /* hold reset + select core */
     xl_unmount_all();
-    if (build_patched_os(img) != 0) {
+    if (build_patched_os(g_osimg) != 0) {
         frtos_free(atr, NULL); frtos_free(xex, NULL);
         GP0_SALLYRST = sel; __asm__ volatile("dsb");
         return -5;
     }
-    upload_image(img);
+    upload_image(g_osimg);
     g_drv[0].img = atr; g_drv[0].len = atrsz; g_drv[0].secsz = 128;   /* D1: = boot disk */
 
     DBG_BKPT = 0x0706; __asm__ volatile("dsb");     /* trap the boot continuation */
     DBG_CFG  = 1u;      __asm__ volatile("dsb");     /* bkpt_en=1, halt_at_reset=0 */
-    GP0_CONSOL   = CONSOL_OPTION_HELD; __asm__ volatile("dsb");   /* BASIC OFF across coldstart */
+    consol_hold_option();                            /* BASIC OFF across coldstart */
     GP0_SALLYRST = sel; __asm__ volatile("dsb");                  /* release -> coldstart */
 
     int halted = 0;                                 /* yield while the OS coldstarts + boots */
@@ -715,7 +834,7 @@ int xex_boot(const char *path, int turbo, int hold)
         klog("[xl] xex: core never hit the boot trap (wrong CPU core?)\r\n");
         return -5;
     }
-    GP0_CONSOL = CONSOL_NONE; __asm__ volatile("dsb");   /* past coldstart -> release OPTION */
+    consol_release_now();                                /* past coldstart -> release OPTION */
 
     /* ---- the A9 is now the loader (atari800 loader_cont) ------------------- */
     cpu6502 reg; dbg_read_regs(&reg);
@@ -806,6 +925,7 @@ int xex_boot(const char *path, int turbo, int hold)
 void xl_sio_service(volatile uint8_t *page) { (void)page; }
 void xl_sio_mbox_service(void) { }
 int  xl_boot(const char *path, int drive) { (void)path; (void)drive; return -19; }
+int  xl_reset(int basic) { (void)basic; return -19; }
 int  xex_boot(const char *path, int turbo, int hold) { (void)path; (void)turbo; (void)hold; return -19; }
 
 #endif /* XT_HW */

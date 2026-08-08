@@ -23,6 +23,10 @@ mechanism as `/bin/mem`, `/bin/speed`, `/bin/scale`). Grammar:
 6502 halt                 # freeze the core on the next instruction boundary (state preserved)
 6502 go                   # release; run at the configured speed
 6502 reset                # cold reset pulse (SALLYRST), then halted at the reset vector
+6502 basic                # full power-cycle reset, BASIC enabled — fresh OS image uploaded,
+                          #   mounted media kept (a mounted disk reboots, with BASIC)
+6502 nobasic              # full power-cycle reset, BASIC disabled — the kernel holds OPTION
+                          #   across the coldstart and releases it once the OS has sampled it
 6502 step [N]             # run exactly N instructions (default 1), then halt; prints status
 6502 status               # dump PC A X Y SP P (flags decoded), halted?, retired-instr count
 6502 break $DE34          # arm a PC breakpoint at $DE34 (halts on fetch of that address)
