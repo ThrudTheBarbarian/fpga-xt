@@ -152,9 +152,18 @@ module plane_fetch #(
     // the row CHANGES, and flip the read half only on the line that starts
     // displaying a row that was actually fetched.  A scale-1 plane changes
     // row every line, so its behaviour is exactly as before.
+    // The row-change decision is PIPELINED: fetch_row is the compositor's
+    // combinational src_row_next (a long carry chain), and comparing it in
+    // the same cycle that samples it put the compare on clk_pix's critical
+    // path (build 4 closed at +0.019 ns; build 5's seed went negative).  So
+    // d1 does a plain capture -- the original timing shape -- and d2 runs
+    // the register-to-register compare.  The toggle fires one clk_pix later
+    // than before, which the clk_sys side never sees: fetch_row_pix is
+    // stable for a whole line either way.
     logic       ls_toggle_pix;
     logic [11:0] fetch_row_pix;
-    logic       line_start_d1;
+    logic       line_start_d1, line_start_d2;
+    logic [11:0] fetch_row_cap;      // d1's plain capture of fetch_row
     logic [11:0] prev_row_q;          // last row handed to the fetcher
     logic        flip_pend_q;         // a fetch ran last line: flip at next _e
     logic [1:0]  en_pix_sync;         // enable (quasi-static, clk_sys) -> pix
@@ -164,12 +173,15 @@ module plane_fetch #(
             fetch_row_pix <= 12'd0;
             ping_pong_rd  <= 1'b0;
             line_start_d1 <= 1'b0;
+            line_start_d2 <= 1'b0;
+            fetch_row_cap <= 12'd0;
             prev_row_q    <= 12'hFFF;
             flip_pend_q   <= 1'b0;
             en_pix_sync   <= 2'b00;
         end else begin
             en_pix_sync   <= {en_pix_sync[0], enable};
             line_start_d1 <= line_start;
+            line_start_d2 <= line_start_d1;
             // While disabled the buffer holds stale content: forget the row so
             // the first line after re-enable always fetches fresh.
             if (!en_pix_sync[1]) prev_row_q <= 12'hFFF;
@@ -177,10 +189,11 @@ module plane_fetch #(
                 ping_pong_rd <= ~ping_pong_rd;     // flip IN blanking: the
                 flip_pend_q  <= 1'b0;              // h==0 read wants the new half
             end
-            if (line_start_d1 && (fetch_row != prev_row_q)) begin
+            if (line_start_d1) fetch_row_cap <= fetch_row;
+            if (line_start_d2 && (fetch_row_cap != prev_row_q)) begin
                 ls_toggle_pix <= ~ls_toggle_pix;
-                fetch_row_pix <= fetch_row;
-                prev_row_q    <= fetch_row;
+                fetch_row_pix <= fetch_row_cap;
+                prev_row_q    <= fetch_row_cap;
                 flip_pend_q   <= 1'b1;
             end
         end
