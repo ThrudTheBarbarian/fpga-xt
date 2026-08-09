@@ -351,13 +351,51 @@ module antic_top #(
     // issued it in.  Without this the whole RANDOM-clocked ACID family read
     // phase-shifted LFSR/timer state ("$2B != $95", timers "too late") and
     // writes landed a cycle late ("serial output register loaded too late").
-    localparam int unsigned CHIPSET_PHI2_DELAY = 10;
+    localparam int unsigned CHIPSET_PHI2_DELAY = 12;
     logic [CHIPSET_PHI2_DELAY-1:0] phi2_dl = '0;
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) phi2_dl <= '0;
         else         phi2_dl <= {phi2_dl[CHIPSET_PHI2_DELAY-2:0], phi2};
     end
     wire phi2_chip = phi2_dl[CHIPSET_PHI2_DELAY-1];
+    // tick-minus-1 pre-pulse for the POKEY write skid below: one clk before
+    // the delayed tick, so an applied write is visible to that tick's
+    // tick-gated logic (same-edge apply would land a cycle late again).
+    wire phi2_pre  = phi2_dl[CHIPSET_PHI2_DELAY-2];
+    logic phi2_pre_q = 1'b0;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) phi2_pre_q <= 1'b0;
+        else         phi2_pre_q <= phi2_pre;
+    end
+    wire tick_pre = phi2_pre & ~phi2_pre_q;   // 1 clk before phi2_tick
+
+    // ---- POKEY write skid -------------------------------------------------
+    // The early $D2xx lane's arrival jitters a few clk around the chipset
+    // tick, and individual POKEY effects flipped pass/fail with the delay
+    // value (wsync green at 10, init/sertiming at 12 -- runs 2026-08-09-8 /
+    // -10-1).  Hold the write and APPLY IT AT tick-minus-1: every store lands
+    // in the same relative instant of its target cycle, deterministically,
+    // and the delay value stops being a per-test tuning knob.
+    logic       pkskid_valid;
+    logic [7:0] pkskid_addr, pkskid_data;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            pkskid_valid <= 1'b0;
+            pkskid_addr  <= 8'h00;
+            pkskid_data  <= 8'h00;
+        end else begin
+            if (pokey_wr_we) begin
+                pkskid_valid <= 1'b1;
+                pkskid_addr  <= pokey_wr_addr;
+                pkskid_data  <= pokey_wr_data;
+            end else if (tick_pre) begin
+                pkskid_valid <= 1'b0;
+            end
+        end
+    end
+    wire       pokey_apply_we   = pkskid_valid & tick_pre;
+    wire [7:0] pokey_apply_addr = pkskid_addr;
+    wire [7:0] pokey_apply_data = pkskid_data;
     logic phi2_chip_q = 1'b0;
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) phi2_chip_q <= 1'b0;
@@ -772,9 +810,9 @@ module antic_top #(
         // $D2xx writes arrive on the EARLY lane; the legacy hwreg lane
         // excludes them, so snoop_we_pokey_l never fires for CPU stores now
         // (it still ORs in for any non-CPU bus master snoops).
-        .we                   (snoop_we_pokey_l | (pokey_wr_we && !pokey_wr_addr[4])),
-        .waddr                (pokey_wr_we ? pokey_wr_addr : snoop_addr[7:0]),
-        .wdata                (pokey_wr_we ? pokey_wr_data : snoop_data),
+        .we                   (snoop_we_pokey_l | (pokey_apply_we && !pokey_apply_addr[4])),
+        .waddr                (pokey_apply_we ? pokey_apply_addr : snoop_addr[7:0]),
+        .wdata                (pokey_apply_we ? pokey_apply_data : snoop_data),
         .re                   (snoop_re_pokey_l),
         .re_addr              (snoop_addr[7:0]),
         .raddr                (read_addr_w[7:0]),
@@ -835,9 +873,9 @@ module antic_top #(
         .rst                  (rst_bus),
         .cold_boot            (cold_boot_bus),
         .phi2_tick            (phi2_tick),
-        .we                   (snoop_we_pokey_r | (pokey_wr_we && pokey_wr_addr[4])),
-        .waddr                (pokey_wr_we ? pokey_wr_addr : snoop_addr[7:0]),
-        .wdata                (pokey_wr_we ? pokey_wr_data : snoop_data),
+        .we                   (snoop_we_pokey_r | (pokey_apply_we && pokey_apply_addr[4])),
+        .waddr                (pokey_apply_we ? pokey_apply_addr : snoop_addr[7:0]),
+        .wdata                (pokey_apply_we ? pokey_apply_data : snoop_data),
         .re                   (snoop_re_pokey_r),
         .re_addr              (snoop_addr[7:0]),
         .raddr                (read_addr_w[7:0]),
