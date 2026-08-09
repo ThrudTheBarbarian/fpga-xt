@@ -1888,9 +1888,17 @@ module fpga_xt_top (
     // free-running against each other would put the steal gate on a phase the
     // CPU never sees.  Edge-detecting antic_phi2_level keeps them in lockstep
     // whichever holds authority.
+    // PAIRED with antic_top's CHIPSET_PHI2_DELAY: the exported level is the
+    // CPU's (undelayed) phi2; the observed chipset — POKEY inside antic_top
+    // and antic2 here — ticks 8 clk later so commit-slot register writes
+    // crossing the bridge land inside the cycle the program issued them in.
+    // (Replaces antic2_fabric's TICK_DELAY, which skewed GTIA writes against
+    // the pixel sub-cycle and cost gtia_pmresize.)
+    reg [7:0] rw_phi2_dl = 8'h00;
+    always_ff @(posedge clk_sys) rw_phi2_dl <= {rw_phi2_dl[6:0], antic_phi2_level};
     reg  rw_phi2_q;
-    always_ff @(posedge clk_sys) rw_phi2_q <= antic_phi2_level;
-    wire rw_tick = antic_phi2_level & ~rw_phi2_q;
+    always_ff @(posedge clk_sys) rw_phi2_q <= rw_phi2_dl[7];
+    wire rw_tick = rw_phi2_dl[7] & ~rw_phi2_q;
 
     // Four hi-res pixels to a machine cycle.  At 150 MHz against 1.79 MHz that
     // is ~84 clk_sys per cycle, so ~21 per pixel and ~42 per colour clock --
@@ -1920,14 +1928,11 @@ module fpga_xt_top (
     localparam bit USE_ANTIC2_FABRIC = 1'b1;   // antic-sally-interop: phase-2 flip — antic2 owns pixels
 
     generate if (USE_ANTIC2_FABRIC) begin : g_antic2_fab
-    antic2_fabric #(
-        // 16 clk_sys of time-base delay: the fid core's commit-slot register
-        // writes cross the mesochronous bridge and must land BEFORE the tick
-        // that processes their machine cycle (else "VSCROL took effect too
-        // late" and the whole cycle-anchor ACID family with it).  One machine
-        // cycle is ~75 clk_sys; 16 is margin without touching the next cycle.
-        .TICK_DELAY(16)
-    ) u_antic2_fab (
+    // TICK_DELAY stays 0: the chipset-wide delayed time base (rw_phi2_dl
+    // above, paired with antic_top's CHIPSET_PHI2_DELAY) supersedes the
+    // shell-local delay — writes land in-cycle for antic2 AND POKEY, and
+    // GTIA register application keeps its pixel sub-cycle alignment.
+    antic2_fabric u_antic2_fab (
         .clk(clk_sys), .rst(rst_sys), .cold(sallyrst[0]),
         .tick(rw_tick), .px_tick(rw_px_tick),
         .cs_antic(~d4xx_n_antic), .cs_gtia(~d0xx_n_antic),

@@ -335,8 +335,30 @@ module antic_top #(
             end
         end
     end
-    wire phi2_tick = phi2 & ~phi2_q;     // 1-cycle pulse on phi2 rising edge
-    wire phi2_fall = phi2_q & ~phi2;     // 1-cycle pulse on phi2 falling edge
+    // ---- the chipset time base trails the CPU's ---------------------------
+    // The fid core paces its machine cycles off the EXPORTED (undelayed)
+    // phi2 level; its register writes strobe at the commit slot and cross
+    // the mesochronous bridge, arriving a few clk after the phi2 edge.  The
+    // OBSERVED chipset (POKEY L/R and, via the paired delay on rw_tick in
+    // fpga_xt_top, antic2) therefore ticks CHIPSET_PHI2_DELAY clk later, so
+    // every CPU bus operation lands inside the chipset cycle the program
+    // issued it in.  Without this the whole RANDOM-clocked ACID family read
+    // phase-shifted LFSR/timer state ("$2B != $95", timers "too late") and
+    // writes landed a cycle late ("serial output register loaded too late").
+    localparam int unsigned CHIPSET_PHI2_DELAY = 8;
+    logic [CHIPSET_PHI2_DELAY-1:0] phi2_dl = '0;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) phi2_dl <= '0;
+        else         phi2_dl <= {phi2_dl[CHIPSET_PHI2_DELAY-2:0], phi2};
+    end
+    wire phi2_chip = phi2_dl[CHIPSET_PHI2_DELAY-1];
+    logic phi2_chip_q = 1'b0;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) phi2_chip_q <= 1'b0;
+        else         phi2_chip_q <= phi2_chip;
+    end
+    wire phi2_tick = phi2_chip & ~phi2_chip_q;   // 1-cycle pulse, DELAYED base
+    wire phi2_fall = phi2_chip_q & ~phi2_chip;   // 1-cycle pulse, DELAYED base
 
     // Dedicated, lightly-loaded launch FF for the fid-core CDC.  The fid 6502
     // (clk_sally) paces its machine cycles off ANTIC's phi2 so the two grids
