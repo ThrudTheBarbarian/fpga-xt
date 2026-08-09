@@ -1023,7 +1023,7 @@ module fpga_xt_top (
     // pulse near window-start does both. (Banked-AXI reads, which trigger on this too, aren't
     // used by a plain OS boot; they get the active-core treatment when the hand-off lands.)
     wire       fid_mem_step = (fid_sub == 8'd2);
-    // ---- exactly-once WRITE strobes across stalled-cycle replays ---------
+    // ---- WRITE strobes fire on the ADVANCING presentation, exactly once --
     // "exactly ONCE per machine cycle" above was only true for cycles that
     // ADVANCE.  A cycle that reaches its commit slot (SUB_COMMIT = N-3 = 53,
     // mirrored the same way fid_mem_ok mirrors SUB_DATA=49) with fid_rdy LOW
@@ -1037,15 +1037,17 @@ module fpga_xt_top (
     //     sally_mem's rdy gate was built against (that gate keys on mem_rdy,
     //     which fires on replays too for this core; the turbo core's
     //     sally_rdy never replays, which is why only fid was affected).
-    // Suppress the step on REPLAYED WRITE presentations only: writes strobe
-    // exactly once (first presentation); reads keep re-stepping so the
-    // advancing presentation samples fresh data.
-    logic      fid_cycle_replay_q;
-    always_ff @(posedge clk_sally or posedge rst_sally) begin
-        if (rst_sally)              fid_cycle_replay_q <= 1'b0;
-        else if (fid_sub == 8'd53)  fid_cycle_replay_q <= ~fid_rdy;   // stall -> next presentation is a replay
-    end
-    wire       mem_rdy = cpu_sel ? (fid_mem_step & ~(fid_cycle_replay_q & ~fid_rw))
+    // WHEN the single strobe fires matters as much as firing once: a stalled
+    // store's bus cycle happens when the bus is GRANTED (real SALLY /HALT
+    // semantics), so the side effect belongs to the presentation that
+    // ADVANCES -- at the commit slot, gated by fid_rdy.  Strobing the FIRST
+    // presentation instead committed WSYNC-paced colour writes mid-visible-
+    // line: the per-scanline rainbow kernels showed a vertical seam where
+    // every bar changed colour partway across (HW photo 2026-08-09).
+    // Reads keep the EARLY step (data latched by SUB_DATA); writes strobe
+    // once, at the advancing presentation's commit slot.
+    wire       fid_wr_commit = (fid_sub == 8'd53) & fid_rdy;
+    wire       mem_rdy = cpu_sel ? (fid_rw ? fid_mem_step : fid_wr_commit)
                                  : sally_rdy;   // sally_mem steps with the ACTIVE core
 
     // ---- Fidelity-core register inject (commit) -------------------------------

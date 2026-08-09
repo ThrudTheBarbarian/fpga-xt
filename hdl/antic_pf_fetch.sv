@@ -142,7 +142,16 @@ module antic_pf_fetch #(
         .glyph_row(glyph_row_ctl), .glyph_data(glyph_data_ctl)
     );
 
-    wire [15:0] glyph_addr = {chbase[7:2], char_code[6:0], glyph_row_ctl};
+    // Modes 6/7 have a 512-byte character set and SIX glyph bits — the top two
+    // character bits select the colour register, not the glyph.  Using the
+    // 1 KB modes-2..5 form here fed char bit 6 into the ADDRESS, so every
+    // colour-set-2/3 character fetched from the wrong half of the set:
+    // per-glyph garbage in coloured text while modes 2/4 stayed clean
+    // (Despatch Rider status rows, HW 2026-08-09).
+    wire        glyph_512  = (mode == 4'd6) || (mode == 4'd7);
+    wire [15:0] glyph_addr = glyph_512
+                           ? {chbase[7:1], char_code[5:0], glyph_row_ctl}
+                           : {chbase[7:2], char_code[6:0], glyph_row_ctl};
 
     // ---- the walk --------------------------------------------------------
     typedef enum logic [2:0] {
