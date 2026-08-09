@@ -45,20 +45,23 @@ Acid800 suite**, measured in two environments:
   release edges (including a write landing *on* the release cycle), DLI/NMI
   recognition alignment, display-list timing, P/M DMA, and the POKEY timer,
   init-mode, and serial-output timing families.
-- **antic2-hw — 40 of 58**: the same core on silicon, as the fabric's render
+- **antic2-hw — 44 of 58**: the same core on silicon, as the fabric's render
   and CPU-timing authority (one beam for pixels and VCOUNT/NMI/RDY — the
   unification's phase-2/3 configuration).  This is the fabric baseline the
   remaining work measures against; the previous fabric pipeline's best was
   32, on a configuration that ran two rasters at an arbitrary relative
-  phase.  The 15-test gap to antic2-sim is integration seams, by family:
-  seven absolute cycle anchors between antic2 and the CPU across the clock
-  crossing, eight POKEY-pacing seams, and two phantom-DMA tests waiting on
-  the bus-snoop widening.
+  phase.  The cycle-anchor family fell to a measured bus-arrival skew:
+  register writes cross the clock bridge a few cycles after the phi2
+  boundary, so antic2's time base now trails the crossing by a fraction of
+  a machine cycle and writes land in the cycle the program issued them in.
+  The remaining gap to antic2-sim: eight POKEY-pacing seams, two
+  phantom-DMA tests waiting on the bus-snoop widening, and the DMA-pattern
+  test.
 
 :::note
 `antic2` is now the fabric's pixel and timing authority; the remaining
 unification phases retire the superseded fabric pipeline. See
 `docs/antic-unification-plan.md` in the repo for the phase plan, and
 `docs/a800/index.html` for the per-test conformance dashboard (the
-`antic2-hw` baseline is the 2026-08-09 run).
+`antic2-hw` baseline and its tick-delay follow-up are the 2026-08-09 runs).
 :::
