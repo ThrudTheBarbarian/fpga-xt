@@ -45,7 +45,7 @@ Acid800 suite**, measured in two environments:
   release edges (including a write landing *on* the release cycle), DLI/NMI
   recognition alignment, display-list timing, P/M DMA, and the POKEY timer,
   init-mode, and serial-output timing families.
-- **antic2-hw — 44 of 58**: the same core on silicon, as the fabric's render
+- **antic2-hw — 45 of 58**: the same core on silicon, as the fabric's render
   and CPU-timing authority (one beam for pixels and VCOUNT/NMI/RDY — the
   unification's phase-2/3 configuration).  This is the fabric baseline the
   remaining work measures against; the previous fabric pipeline's best was
@@ -54,9 +54,10 @@ Acid800 suite**, measured in two environments:
   register writes cross the clock bridge a few cycles after the phi2
   boundary, so antic2's time base now trails the crossing by a fraction of
   a machine cycle and writes land in the cycle the program issued them in.
-  The remaining gap to antic2-sim: eight POKEY-pacing seams, two
-  phantom-DMA tests waiting on the bus-snoop widening, and the DMA-pattern
-  test.
+  The full bus snoop then closed the phantom-DMA family.  The remaining
+  gap to antic2-sim: eight POKEY-pacing seams, the virtual-DMA test (one
+  bus phase off; fix staged awaiting a timing-clean rebuild), and the
+  DMA-pattern test.
 
 :::note
 `antic2` is now the fabric's pixel and timing authority; the remaining

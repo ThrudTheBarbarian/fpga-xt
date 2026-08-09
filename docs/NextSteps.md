@@ -10,17 +10,22 @@ both authorities; the OS GR.0 capture duplication and the DLI band drift are
 gone with the boot default.  ACID-in-fabric: 40/58 at $0A — best fabric score
 ever (old best 32@$06 incoherent, old $0A 27) vs the sim's 55/58 ceiling 57.
 
-Remaining 21-test gap vs sim (docs/a800/runs/2026-08-09-1.json), by family:
-- 7 ANTIC cycle anchors (dlitiming, dmapattern, nmist, pfstarttiming,
-  virtdma, vscroldli, wsync): CTRL_RWTUNE bisect territory — find the fabric
-  pacing offset, do NOT retune antic2's constants (plan's risk note).
-- 8 POKEY seams (init/irq/noise/serclock/serdirect/sertiming/skstat/
-  timertiming): fabric POKEY pacing vs antic2 grid; coordinate with the
-  pokey serial rework.
-- 2 GTIA phantom (phantomdma, psuedomodee): the documented bus_byte_stb gap
-  (ANTIC-page writes only, not every snooped data phase) — unification
-  phase-3 work item.
-- mod_*/65c816 classification noise (error vs na) in the harness.
+ACID campaign 2026-08-09 evening (branch antic-sally-interop): 32 -> 40
+(one-beam) -> 44 (TICK_DELAY 16 -- bus-arrival skew: commit-slot register
+writes crossed the bridge into the NEXT machine cycle; four anchors flipped)
+-> 45 (full bus snoop for antic2's last-bus latch; gtia_phantomdma).  Staged
+but NOT yet on silicon: the last-bus CPU-phase priority flip (antic_virtdma
+reads one phase stale, 04 != $05) -- three placement directives all missed
+clk_sys setup by <0.1 ns, so it waits for the next natural rebuild or a
+timing/floorplan pass (clk_sys margin is the limiting resource on this
+design; note run-valhalla.sh directive results: Explore -0.077, AltSpread
+-0.034, ExtraNetDelay -0.080 for this netlist).  Remaining families:
+- 8 POKEY seams (incl antic_wsync, which clocks itself off POKEY RANDOM):
+  PARKED for the pokey serial rework session.
+- antic_dmapattern ("Incorrect timing for mode 02-a") -- unmoved through
+  every change; next diagnosis = read docs/Acid800/src/antic_dmapattern.s
+  to learn what it measures, likely the DMA-steal shape across the bridge.
+- mod_*/65c816 harness classification noise (error vs na).
 
 Rare sibling still open: one basic-from-self-test reset re-entered self-test
 (OPTION sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in 6/6.
