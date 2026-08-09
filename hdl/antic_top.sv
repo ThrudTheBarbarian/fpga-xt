@@ -788,15 +788,23 @@ module antic_top #(
         .ch2_out              (pokey_l_ch2),
         .ch3_out              (pokey_l_ch3),
         .ch4_out              (pokey_l_ch4),
-        // M25-4: SIO via peri_bridge ↔ peri-RP firmware
-        .ser_out_ready_pulse  (sio_bridge_out_ready_pulse),
-        .ser_out_complete     (sio_bridge_out_complete),
-        .ser_in_byte_pulse    (sio_bridge_in_byte_pulse),
-        .ser_in_byte          (sio_bridge_in_byte),
-        .break_key_pulse      (sio_bridge_break_key_pulse | kbd_break_pulse),
-        .ser_framing_err      (sio_bridge_framing_err),
-        .ser_input_overrun    (sio_bridge_input_overrun),
-        .ser_input_busy       (sio_bridge_input_busy),
+        // M25-4: SIO via peri_bridge ↔ peri-RP firmware.  The peri RP is NOT
+        // POPULATED on this board (spi_miso tied 0, spi_irq tied 1), so the
+        // bridge's ser_out_complete drops on the FIRST queued byte and never
+        // restores — serial output reads permanently incomplete, which is
+        // exactly pokey_sertiming's "output register loaded too late" and
+        // pokey_serclock's dead 1.79MHz output on HW.  Until the RP exists,
+        // tie the external serial handshake NEUTRAL (as POKEY-R below) and
+        // leave the internal shifter in charge; the bridge keeps the pots
+        // and keyboard, which do work.  Revisit with the peri-RP bring-up.
+        .ser_out_ready_pulse  (1'b0),
+        .ser_out_complete     (1'b1),
+        .ser_in_byte_pulse    (1'b0),
+        .ser_in_byte          (8'h00),
+        .break_key_pulse      (kbd_break_pulse),
+        .ser_framing_err      (1'b0),
+        .ser_input_overrun    (1'b0),
+        .ser_input_busy       (1'b0),
         .irq_n                (pokey_l_irq_n),
         .serout_byte          (pokey_l_serout_byte),
         .serout_strobe        (pokey_l_serout_strobe),
