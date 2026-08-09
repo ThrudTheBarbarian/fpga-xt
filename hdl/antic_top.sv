@@ -111,6 +111,12 @@ module antic_top #(
     // its machine cycles, so the fid CPU's cycle grid is identical to ANTIC's
     // (no second free-running divider to drift against). See fpga_xt_top.sv.
     output wire        phi2_level_o,
+    // Early POKEY write lane from the CPU top level (exactly-once, strobed
+    // at the START of the store's machine cycle so tick-gated POKEY effects
+    // land in their own cycle -- see fpga_xt_top's pkw_* block).
+    input  wire        pokey_wr_we,
+    input  wire [7:0]  pokey_wr_addr,
+    input  wire [7:0]  pokey_wr_data,
 
     // ANTIC-driven status (active-low)
     output wire        nmi_n,
@@ -345,7 +351,7 @@ module antic_top #(
     // issued it in.  Without this the whole RANDOM-clocked ACID family read
     // phase-shifted LFSR/timer state ("$2B != $95", timers "too late") and
     // writes landed a cycle late ("serial output register loaded too late").
-    localparam int unsigned CHIPSET_PHI2_DELAY = 4;
+    localparam int unsigned CHIPSET_PHI2_DELAY = 12;
     logic [CHIPSET_PHI2_DELAY-1:0] phi2_dl = '0;
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) phi2_dl <= '0;
@@ -763,9 +769,12 @@ module antic_top #(
         .rst                  (rst_bus),
         .cold_boot            (cold_boot_bus),
         .phi2_tick            (phi2_tick),
-        .we                   (snoop_we_pokey_l),
-        .waddr                (snoop_addr[7:0]),
-        .wdata                (snoop_data),
+        // $D2xx writes arrive on the EARLY lane; the legacy hwreg lane
+        // excludes them, so snoop_we_pokey_l never fires for CPU stores now
+        // (it still ORs in for any non-CPU bus master snoops).
+        .we                   (snoop_we_pokey_l | (pokey_wr_we && !pokey_wr_addr[4])),
+        .waddr                (pokey_wr_we ? pokey_wr_addr : snoop_addr[7:0]),
+        .wdata                (pokey_wr_we ? pokey_wr_data : snoop_data),
         .re                   (snoop_re_pokey_l),
         .re_addr              (snoop_addr[7:0]),
         .raddr                (read_addr_w[7:0]),
@@ -826,9 +835,9 @@ module antic_top #(
         .rst                  (rst_bus),
         .cold_boot            (cold_boot_bus),
         .phi2_tick            (phi2_tick),
-        .we                   (snoop_we_pokey_r),
-        .waddr                (snoop_addr[7:0]),
-        .wdata                (snoop_data),
+        .we                   (snoop_we_pokey_r | (pokey_wr_we && pokey_wr_addr[4])),
+        .waddr                (pokey_wr_we ? pokey_wr_addr : snoop_addr[7:0]),
+        .wdata                (pokey_wr_we ? pokey_wr_data : snoop_data),
         .re                   (snoop_re_pokey_r),
         .re_addr              (snoop_addr[7:0]),
         .raddr                (read_addr_w[7:0]),

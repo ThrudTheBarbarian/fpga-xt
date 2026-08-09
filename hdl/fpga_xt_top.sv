@@ -1149,6 +1149,36 @@ module fpga_xt_top (
     always_ff @(posedge clk_sys) snoop_tog_s <= {snoop_tog_s[1:0], snoop_tog_q};
     wire       snoop_stb = snoop_tog_s[2] ^ snoop_tog_s[1];
 
+    // ---- early POKEY write lane (clk_sally -> clk_sys) --------------------
+    // POKEY effects are tick-gated (LFSR stepping, timer reloads, init
+    // release).  The commit-slot hwreg strobe lands ~71 clk into the cycle --
+    // AFTER the chipset tick -- so tick-gated writes took effect one machine
+    // cycle late: the 9-bit RANDOM family read exactly one LFSR step behind
+    // ($2B != $95, invariant under every time-base delay), timers started a
+    // cycle late.  This lane strobes $D2xx writes at slot 2 of the FIRST
+    // presentation (replay-suppressed -- same exactly-once guarantee, earlier
+    // instant); the commit-slot lane excludes $D2xx so nothing double-applies.
+    logic       fidw_replay_q;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally)              fidw_replay_q <= 1'b0;
+        else if (fid_sub == 8'd53)  fidw_replay_q <= ~fid_rdy;
+    end
+    wire        fid_wr_d2 = cpu_sel && !fid_rw && (fid_addr[15:8] == 8'hD2);
+    logic [15:0] pkw_payload_q;      // {addr[7:0], data}
+    logic        pkw_tog_q;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally) begin
+            pkw_payload_q <= 16'h0;
+            pkw_tog_q     <= 1'b0;
+        end else if (fid_wr_d2 && (fid_sub == 8'd2) && !fidw_replay_q) begin
+            pkw_payload_q <= {fid_addr[7:0], fid_dout};
+            pkw_tog_q     <= ~pkw_tog_q;
+        end
+    end
+    (* ASYNC_REG = "TRUE" *) reg [2:0] pkw_tog_s = 3'b000;
+    always_ff @(posedge clk_sys) pkw_tog_s <= {pkw_tog_s[1:0], pkw_tog_q};
+    wire       pkw_stb = pkw_tog_s[2] ^ pkw_tog_s[1];
+
     // ---- the 2:1 bus mux (the one LUT on the clk_sally binding path, mux doc §5) ----------
     // Read data (cpu_din) fans out to both cores; only the owner's rdy is live.
     assign cpu_addr     = cpu_sel ? fid_addr : turbo_addr;
@@ -1528,7 +1558,9 @@ module fpga_xt_top (
         if (rst_sally) begin
             hwreg_wr_payload_q <= 24'h0;
             hwreg_wr_tog_q     <= 1'b0;
-        end else if (hwreg_we) begin
+        end else if (hwreg_we && hwreg_addr[15:8] != 8'hD2) begin
+            // $D2xx rides the EARLY POKEY lane (pkw_* above) -- excluding it
+            // here keeps the two lanes from double-applying one store.
             hwreg_wr_payload_q <= {hwreg_addr, hwreg_din};
             hwreg_wr_tog_q     <= ~hwreg_wr_tog_q;
         end
@@ -1804,6 +1836,10 @@ module fpga_xt_top (
         .cmp_bram_rdata     (antic_cmpram_rdata),
         // PORTB state — consumed by sally_mem for ROM vs RAM control.
         .portb_q            (portb_q),
+        // Early POKEY write lane (see pkw_* above).
+        .pokey_wr_we        (pkw_stb),
+        .pokey_wr_addr      (pkw_payload_q[15:8]),
+        .pokey_wr_data      (pkw_payload_q[7:0]),
         // ANTIC render tap → DDR3 writeback (HP3, see antic_writeback below).
         .wb_pix_valid       (antic_wb_pix_valid),
         .wb_pix_pair        (antic_wb_pix_pair),
