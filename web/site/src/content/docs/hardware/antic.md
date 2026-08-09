@@ -45,7 +45,7 @@ Acid800 suite**, measured in two environments:
   release edges (including a write landing *on* the release cycle), DLI/NMI
   recognition alignment, display-list timing, P/M DMA, and the POKEY timer,
   init-mode, and serial-output timing families.
-- **antic2-hw — 45 of 58**: the same core on silicon, as the fabric's render
+- **antic2-hw — 50 of 58**: the same core on silicon, as the fabric's render
   and CPU-timing authority (one beam for pixels and VCOUNT/NMI/RDY — the
   unification's phase-2/3 configuration).  This is the fabric baseline the
   remaining work measures against; the previous fabric pipeline's best was
