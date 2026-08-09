@@ -545,9 +545,20 @@ module antic2 #(
     // DMACTL or HSCROL write moves the window for what is still to come while
     // the bytes already fetched stay fetched.  See antic_pf_stream.sv.
     logic [3:0] pf_mode_q;
+    logic [7:0] pf_bytes_q;
     always_ff @(posedge clk or posedge rst) begin
-        if (rst) pf_mode_q <= 4'h0;
-        else     pf_mode_q <= dl_insn[3:0];
+        if (rst) begin
+            pf_mode_q  <= 4'h0;
+            pf_bytes_q <= 8'h00;
+        end else begin
+            pf_mode_q  <= dl_insn[3:0];
+            // Same argument as pf_mode_q: bytes_per_line is mode+HSCROL
+            // geometry, settled at the row boundary and consumed hundreds of
+            // clocks later -- and dl_insn[4] (the HSCROL bit) reaching
+            // buf_mem's write enables through it was the next worst clk_sys
+            // path once the mode nibble was registered.
+            pf_bytes_q <= pf_bytes;
+        end
     end
 
     antic_pf_stream u_pf (
@@ -573,7 +584,7 @@ module antic2 #(
         // clk_sys path (11 levels, 68% route, -0.2 ns on HW builds).
         .mode(pf_mode_q), .row({1'b0, row_line - 4'd1}),
         .chbase(chbase), .chactl(chactl[2:0]),
-        .bytes_per_line(pf_bytes),
+        .bytes_per_line(pf_bytes_q),
         .pf_fetch(sched_pf_fetch), .pf_fetch_glyph(sched_pf_fetch_glyph),
         .scan_addr_in(pf_addr_o), .scan_load(pf_load),
         .scan_addr_out(pf_scan_addr),
