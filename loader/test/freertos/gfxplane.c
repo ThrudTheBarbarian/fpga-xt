@@ -77,6 +77,14 @@ void gfxplane_init(void)
                                         * EN 0<->1 per grab/release glitched the compositor (link
                                         * drop); grab/release now just MOVE it, like the smooth
                                         * drag motion.  Mirrors the always-on XL plane above. */
+    /* SALLYRST boot default: fid core + REWRITE (antic2) authority — $0A, the
+     * ONE-BEAM config where pixels and CPU-visible timing (VCOUNT/NMI/rdy)
+     * come from the same core.  The RTL reset value is $06 (timing-machine
+     * authority), which runs TWO rasters at an arbitrary phase — the frame-
+     * mixing flicker and vblank-collision incoherence (acid notes).  Written
+     * once here (PS owns config); every later writer preserves these bits. */
+    { volatile uint32_t *sallyrst = (volatile uint32_t *)0x43C0031Cu;
+      *sallyrst = (*sallyrst & ~0x0Du) | 0x08u; }   /* bit3=rw_auth on, bit2=tm off, bit0 run */
     __asm__ volatile("dsb");
 }
 
