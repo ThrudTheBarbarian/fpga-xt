@@ -1483,7 +1483,8 @@ build/tb_antic_gtia.vvp: tb_antic_gtia.sv $(ANTIC_GTIA_SRC) | build
 # suite loses the whole pokey_* family plus antic_dmapattern and
 # antic_wsync, which MEASURE through RANDOM at $$D20A.
 POKEY_SRC = $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv $(HDL_DIR)/pokey_regs.sv \
-	    $(HDL_DIR)/pokey_audio.sv $(HDL_DIR)/pokey_pot.sv
+	    $(HDL_DIR)/pokey_audio.sv $(HDL_DIR)/pokey_pot.sv \
+	    $(HDL_DIR)/pokey_serial.sv
 
 ANTIC2_SRC = $(HDL_DIR)/antic2.sv $(HDL_DIR)/antic2_seq.sv \
 	    $(HDL_DIR)/antic2_regs.sv $(HDL_DIR)/antic2_line.sv \

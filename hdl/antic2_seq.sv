@@ -51,6 +51,14 @@ module antic2_seq #(
     input  wire        rst,
     input  wire        tick,               // phi2 — one machine cycle
 
+    // ---- HW bisect (GP0 CTRL_RWTUNE) --------------------------------------
+    // Signed nibbles offsetting the pinned cycle anchors — {vcount[15:12],
+    // wsync[11:8], nmi[7:4], nmist[3:0]}.  0 = exactly the parameter
+    // constants (sim ties this to 0).  The fabric pacing offset is measured
+    // with a register write instead of a bitstream per guess; do NOT fold a
+    // measured offset back into the constants here — fix the fabric seam.
+    input  wire [15:0] tune,
+
     // ---- position ---------------------------------------------------------
     input  wire [6:0]  cycle,              // 0 .. LINE_CYCLES-1
     input  wire [8:0]  scanline,
@@ -87,7 +95,7 @@ module antic2_seq #(
     // It is a PULSE because real DLI handlers never write NMIRES -- they PHA,
     // set a colour, PLA, RTI -- yet multi-DLI kernels work, so every event needs
     // its own edge.  Holding it low gives the CPU exactly ONE NMI for a run.
-    logic [1:0] nmi_arm;
+    logic [3:0] nmi_arm;
 
     // WSYNC state.  `wsync_extra` is the RMW re-arm: `inc wsync` releases one
     // cycle later than `sta wsync` because the RMW's SECOND write re-arms the
@@ -102,7 +110,24 @@ module antic2_seq #(
     logic       wsync_extra;
     logic       wsync_armed_now;   // halt armed THIS cycle: release ignores it
 
-    wire [6:0] wsync_release = 7'(CYC_WSYNC) + {6'd0, wsync_extra};
+    // ---- tuned anchors (see the tune port note) ----------------------------
+    function automatic [6:0] cyc_tuned(input [6:0] base, input [3:0] nib);
+        cyc_tuned = base + {{3{nib[3]}}, nib};              // signed nibble
+    endfunction
+    wire [6:0] cyc_nmist_t  = cyc_tuned(7'(CYC_NMIST),  tune[3:0]);
+    wire [6:0] cyc_wsync_t  = cyc_tuned(7'(CYC_WSYNC),  tune[11:8]);
+    wire [6:0] cyc_vcount_t = cyc_tuned(7'(CYC_VCOUNT), tune[15:12]);
+    // /NMI countdown start: base 1 (status-armed) or 2 (late-NMIEN), plus the
+    // signed nibble, clamped to >=1 so the pulse always fires.
+    function automatic [3:0] arm_tuned(input [3:0] base);
+        reg signed [5:0] v;
+        begin
+            v = $signed({2'b00, base}) + $signed({{2{tune[7]}}, tune[7:4]});
+            arm_tuned = (v < 6'sd1) ? 4'd1 : 4'(v);
+        end
+    endfunction
+
+    wire [6:0] wsync_release = cyc_wsync_t + {6'd0, wsync_extra};
 
     // The row's last scanline, decided at CYC_ROWEND.  The counter is FOUR BITS
     // and the test is EQUALITY, so a VSCROL that overshoots the mode's height
@@ -203,7 +228,7 @@ module antic2_seq #(
             nmist         <= 8'h00;
             vcount        <= 8'h00;
             nmi           <= 1'b0;
-            nmi_arm       <= 2'd0;
+            nmi_arm       <= 4'd0;
             nmist_set_now <= 1'b0;
             wsync_halt    <= 1'b0;
             wsync_extra   <= 1'b0;
@@ -271,9 +296,9 @@ module antic2_seq #(
                 nmist_set_now <= 1'b0;
                 // ---- 1. the NMI countdown ------------------------------
                 if (nmi) nmi <= 1'b0;
-                if (nmi_arm != 2'd0) begin
-                    nmi_arm <= nmi_arm - 2'd1;
-                    if (nmi_arm == 2'd1) nmi <= 1'b1;
+                if (nmi_arm != 4'd0) begin
+                    nmi_arm <= nmi_arm - 4'd1;
+                    if (nmi_arm == 4'd1) nmi <= 1'b1;
                 end
 
                 // ---- 2. row end and the DLI decision, at CYC_ROWEND -----
@@ -292,16 +317,16 @@ module antic2_seq #(
                 // NMIST sets REGARDLESS of NMIEN -- NMIEN gates the INTERRUPT,
                 // not the status -- and the DLI and VBI bits clear each other
                 // on arrival.
-                if (cycle == 7'(CYC_NMIST)) begin
+                if (cycle == cyc_nmist_t) begin
                     if (dli_line) begin
                         nmist <= (nmist & ~8'h40) | 8'h80;
                         nmist_set_now <= 1'b1;
-                        if (nmien & 8'h80) nmi_arm <= 2'd1;
+                        if (nmien & 8'h80) nmi_arm <= arm_tuned(4'd1);
                     end
                     if (sl_now == 9'(DISPLAY_BOTTOM)) begin
                         nmist <= (nmist & ~8'h80) | 8'h40;
                         nmist_set_now <= 1'b1;
-                        if (nmien & 8'h40) nmi_arm <= 2'd1;
+                        if (nmien & 8'h40) nmi_arm <= arm_tuned(4'd1);
                     end
                 end
 
@@ -313,9 +338,9 @@ module antic2_seq #(
                 // That single cycle is the whole of antic_vcount's rollover
                 // pair: two probes on the SAME scanline differing only in read
                 // cycle, 111 must read 131 and 112 must read 0.
-                if (cyc_eff == 7'(CYC_VCOUNT) && sl_now[0])
+                if (cyc_eff == cyc_vcount_t && sl_now[0])
                     vcount <= vcount + 8'd1;
-                if (cyc_eff == 7'(CYC_VCOUNT) + 7'd1 && sl_now == 9'(LINES - 1))
+                if (cyc_eff == cyc_vcount_t + 7'd1 && sl_now == 9'(LINES - 1))
                     vcount <= 8'd0;
 
                 // ---- 5. WSYNC ------------------------------------------
@@ -342,7 +367,7 @@ module antic2_seq #(
             // write's effect stands over the tick's own countdown.
             if (nmien_stb && nmist_set_now && !(|nmi_arm) &&
                 (|(nmist & nmien & 8'hC0)))
-                nmi_arm <= 2'd2;
+                nmi_arm <= arm_tuned(4'd2);
         end
     end
 

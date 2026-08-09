@@ -1070,6 +1070,10 @@ module tb_acid #(
             end
         end
     end
+    // (hoisted above the instance -- iverilog cannot bind a port to a later declaration)
+    wire        rom_hit;
+    wire [14:0] rom_addr;
+
 
     a8_core #(.USE_ANTIC2(USE_ANTIC2)) dut (
         .clk(clk), .rst(rst), .cold(cold),
@@ -1093,8 +1097,6 @@ module tb_acid #(
     // BASIC 8K at 16K.  a8_core owns the decode (rom_hit / rom_addr); this
     // side owns the bytes, serves reads, and blocks the write-through --
     // the RAM underneath keeps its contents.
-    wire        rom_hit;
-    wire [14:0] rom_addr;
     logic [7:0] rom [0:24575];
     // FOUR entries: _testEnd, _testPassed, _testFailed, _testSkipped.  Sized to
     // match acid2mem's output -- an array a slot short does not fail loudly, it

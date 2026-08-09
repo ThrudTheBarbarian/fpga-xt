@@ -44,6 +44,7 @@ module antic2 #(
     input  wire        clk,
     input  wire        rst,
     input  wire        tick,               // phi2
+    input  wire [15:0] tune,               // GP0 CTRL_RWTUNE anchors (0 = constants)
     // One hi-res pixel.  FOUR per machine cycle, and the display side needs it
     // because a playfield byte is two to eight pixels wide: `tick` alone cannot
     // say WHERE in the cycle a pixel lands.  Taken as an input rather than
@@ -763,7 +764,7 @@ module antic2 #(
         .LINE_CYCLES(LINE_CYCLES), .DISPLAY_TOP(DISPLAY_TOP),
         .DISPLAY_BOTTOM(DISPLAY_BOTTOM), .LINES(LINES)
     ) u_seq (
-        .clk(clk), .rst(rst), .tick(tick),
+        .clk(clk), .rst(rst), .tick(tick), .tune(tune),
         .cycle(hcount), .scanline(line),
         .row_line(row_line), .row_last(row_last),
         .dl_insn_dli(dl_insn[7]), .dli_fired(dli_fired),

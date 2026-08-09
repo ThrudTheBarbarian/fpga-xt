@@ -114,7 +114,7 @@ module antic2_fabric #(
     antic2 #(
         .LINE_CYCLES(114), .LINES(262), .DISPLAY_TOP(8), .DISPLAY_BOTTOM(248)
     ) u_antic2 (
-        .clk(clk), .rst(rst), .tick(tick), .px_tick(px_tick),
+        .clk(clk), .rst(rst), .tick(tick), .tune(tune), .px_tick(px_tick),
         .cs(cs_antic), .we(we && cs_antic), .addr(addr[3:0]), .wdata(wdata),
         .rdata(a2_rdata), .cpu_writing(cpu_writing),
         .mem_addr(mem_addr), .mem_data(mem_data),
@@ -165,7 +165,7 @@ module antic2_fabric #(
 
     // The bisect port is accepted but must stay inert until phase 3 (see
     // header).  Referenced so lint sees it consumed.
-    wire _unused_tune = ^tune | cold;
+    wire _unused_tune = cold;
 
 endmodule
 
