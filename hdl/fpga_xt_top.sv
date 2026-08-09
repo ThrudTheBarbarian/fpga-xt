@@ -1930,11 +1930,17 @@ module fpga_xt_top (
     // crossing the bridge land inside the cycle the program issued them in.
     // (Replaces antic2_fabric's TICK_DELAY, which skewed GTIA writes against
     // the pixel sub-cycle and cost gtia_pmresize.)
-    reg [3:0] rw_phi2_dl = 4'h0;
-    always_ff @(posedge clk_sys) rw_phi2_dl <= {rw_phi2_dl[2:0], antic_phi2_level};
+    // SPLIT time bases: antic2 (the CPU-visible ANTIC grid) trails by 8 --
+    // NMI edges land within the fid core's recognition cycle (the four
+    // cycle-anchor tests fail at 12) -- while POKEY inside antic_top trails
+    // by 12 so the early $D2xx write lane (~+10) beats its tick.  The two
+    // only meet through once-per-cycle stepping, so the 4-clk skew between
+    // them is sub-tick and unobservable.
+    reg [7:0] rw_phi2_dl = 8'h00;
+    always_ff @(posedge clk_sys) rw_phi2_dl <= {rw_phi2_dl[6:0], antic_phi2_level};
     reg  rw_phi2_q;
-    always_ff @(posedge clk_sys) rw_phi2_q <= rw_phi2_dl[3];
-    wire rw_tick = rw_phi2_dl[3] & ~rw_phi2_q;
+    always_ff @(posedge clk_sys) rw_phi2_q <= rw_phi2_dl[7];
+    wire rw_tick = rw_phi2_dl[7] & ~rw_phi2_q;
 
     // Four hi-res pixels to a machine cycle.  At 150 MHz against 1.79 MHz that
     // is ~84 clk_sys per cycle, so ~21 per pixel and ~42 per colour clock --
