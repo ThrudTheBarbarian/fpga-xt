@@ -10,22 +10,34 @@ both authorities; the OS GR.0 capture duplication and the DLI band drift are
 gone with the boot default.  ACID-in-fabric: 40/58 at $0A — best fabric score
 ever (old best 32@$06 incoherent, old $0A 27) vs the sim's 55/58 ceiling 57.
 
-ACID campaign 2026-08-09 evening (branch antic-sally-interop): 32 -> 40
-(one-beam) -> 44 (TICK_DELAY 16 -- bus-arrival skew: commit-slot register
-writes crossed the bridge into the NEXT machine cycle; four anchors flipped)
--> 45 (full bus snoop for antic2's last-bus latch; gtia_phantomdma).  Staged
-but NOT yet on silicon: the last-bus CPU-phase priority flip (antic_virtdma
-reads one phase stale, 04 != $05) -- three placement directives all missed
-clk_sys setup by <0.1 ns, so it waits for the next natural rebuild or a
-timing/floorplan pass (clk_sys margin is the limiting resource on this
-design; note run-valhalla.sh directive results: Explore -0.077, AltSpread
--0.034, ExtraNetDelay -0.080 for this netlist).  Remaining families:
-- 8 POKEY seams (incl antic_wsync, which clocks itself off POKEY RANDOM):
-  PARKED for the pokey serial rework session.
-- antic_dmapattern ("Incorrect timing for mode 02-a") -- unmoved through
-  every change; next diagnosis = read docs/Acid800/src/antic_dmapattern.s
-  to learn what it measures, likely the DMA-steal shape across the bridge.
-- mod_*/65c816 harness classification noise (error vs na).
+ACID campaign 2026-08-09/10 (branch antic-sally-interop): 32 -> 40 (one-beam)
+-> 44 (TICK_DELAY: bus-arrival skew) -> 45 (full bus snoop) -> 47 (chipset
+time base 8 + gtia_pmresize back) -> 48 (POKEY-L serial ties neutral, peri RP
+absent) -> 50 BEST (split time bases: antic2@8 for NMI recognition, POKEY@12
+for the early write lane) -> 49-50 phase-dependent (apply-at-tick skid).
+
+DEFINITIVE overnight finding: the marginal POKEY trio (inittiming, sertiming,
+antic_wsync) flips PER BOOT on an identical bitstream — the clk_sally/clk_sys
+mesochronous beat phase is set at PLL lock and shifts CDC arrival instants
+per boot.  NEXT STEP (the real fix): make the chipset delay tap / skid window
+GP0-programmable and add a kernel boot-time calibration (run a RANDOM-phase
+probe, steer the tap until green) — turns the lottery into determinism.
+Landed en route: early exactly-once $D2xx write lane; RANDOM read lookahead;
+POKEY write skid (apply at tick-1); two antic2 clk_sys path registrations
+(pf_mode_q, pf_bytes_q).  clk_sys closes only by directive roulette (three
+fixes in): the floorplan/fmax pass is now the gating engineering debt.
+
+Remaining reds and dispositions:
+- pokey_noise + the trio: phase-calibration item above.
+- antic_virtdma (04 != \$05): last-bus latch one phase stale; priority
+  experiments exhausted — next: trace the virtual-slot capture instant vs the
+  snoop arrival in sim with a bus-accurate tb.
+- antic_dmapattern: unmoved by everything; RANDOM-clocked like wsync so
+  partly phase-hostage; re-test after calibration.
+- pokey_serdirect / pokey_skstat: need real serial-bus NAK behavior the
+  paravirtual SIO does not produce (na in sim for the same reason) — propose
+  honest 'na (no serial bus)' classification pending peri-RP bring-up.
+- cpu_65c816: harness classification noise (error vs na).
 
 Rare sibling still open: one basic-from-self-test reset re-entered self-test
 (OPTION sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in 6/6.
@@ -331,12 +343,12 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   FSM; affine-transform blit for rotated text. *(src: docs/GEM/vdi-sw-implementation.md)*
 - **Pre-lock risk mitigation** — inventory the full FreeGEM/EmuTOS VDI op set before
   freezing the wire format; wire one full vertical slice (`v_pline`→PSSI→N6→LVGL→
-  screen) + profile fill-rate / FMC RPC roundtrip early; verify xtc stdlib gaps
+  screen) + profile fill-rate / FMC RPC roundtrip early; verify xcc stdlib gaps
   (`Array<Window@>`, `weak:` in collections). *(src: GEM-implementation.md)*
 - **Open GEM decisions** — font-render boundary (N6-rasterises vs 6502 glyph cache);
   `.RSC` format (reuse ST vs native); VBI 50 Hz-vs-60 Hz tick mismatch; per-frame DRAW
   batching; multitasking model (cooperative vs preemptive). *(src: GEM-implementation.md)*
-- **ARM-native xtc GEM client** — lands once the xtc-ARM backend lands. *(src:
+- **ARM-native xcc GEM client** — lands once the xcc-ARM backend lands. *(src:
   docs/GEM/gem-service-abi.md)*
 - **Desktop redraw de-jerk (software-first, ordered)** — (1) GEM rectangle list +
   clipped `WM_REDRAW` (foundation); (2) `wind_scroll(win,dy)` HW backing-store move;
@@ -397,15 +409,15 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   docs/OS/app-launch.md)*
 
 ## Multitasking / self-hosting / compiler
-- **xtc ARM back-end (`XTARMLowering`)** — the critical missing compiler piece
+- **xcc ARM back-end (`XTARMLowering`)** — the critical missing compiler piece
   (~3,000 lines); gates ARM-native apps, the dynamic loader, and the GEM ARM client.
   Target = **Cortex-A9 / ARMv7-A / AArch32** (port *from* the arm64 backend — a real
   ISA change, not a tweak). Consolidated port requirements (C-ABI/newlib interop,
   PIC/ET_DYN minimal-reloc, `svc #1` syscall stubs, ARC + unmanaged subset, DWARF +
-  full backtrace) in **docs/OS/xtc-on-arm9.md**. *(Phase 1; immediate next step if
-  greenlit; src: docs/MultiTasking/self-hosting.md, docs/OS/xtc-on-arm9.md)*
+  full backtrace) in **docs/OS/xcc-on-arm9.md**. *(Phase 1; immediate next step if
+  greenlit; src: docs/MultiTasking/self-hosting.md, docs/OS/xcc-on-arm9.md)*
 - **Port stdlib file I/O to the Zynq side** — SD/FAT32 driver via FreeRTOS exposed as
-  a trap class (<200 lines). Then write `xtc.xt` in xtc (self-host bootstrap), feature
+  a trap class (<200 lines). Then write `xcc.xt` in xcc (self-host bootstrap), feature
   parity (`-O1/2/3`, self-hosted 6502 back-end), benchmark a parse on the Zynq first.
   *(src: docs/MultiTasking/self-hosting.md)*
 - **6502 (SALLY) multitasking kernel** — scheduler + loader + syscall/BRK handler +
@@ -415,7 +427,7 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 - **SALLY tasking HW (decide early)** — SP_BANK/ZP_BANK per-task registers (~50 LUTs,
   fmax-neutral); optional tick IRQ + atomic CAS (preemption); HW context-switch
   instruction (~100 LUTs); wider 11-bit SP + stack-relative addressing (fmax-risky,
-  needs xtc compiler hooks); cheap IRQ auto-push A/X/Y. *(src: docs/GEM/GEM-implementation.md,
+  needs xcc compiler hooks); cheap IRQ auto-push A/X/Y. *(src: docs/GEM/GEM-implementation.md,
   docs/MultiTasking/banked-stack-context-switch.md)*
 - **ARM-A9 dynamic ELF loading** — feasible (~1-2 weeks) but deferred until a concrete
   ARM user-app use case; main risk is `-fPIE` `r9` PIC ABI vs the FreeRTOS BSP. *(src:
@@ -681,7 +693,7 @@ See docs/Design/math-coprocessor.md.  Open:
 - **OS chunk allocation** — allocate math chunks per task out of the
   screen_bank chunk stack + `$D5C8` retarget on context switch (and the
   completion-while-preempted notification path, chunk→task in the service).
-- **xtc lowering** — target the slot file as a register machine; lower array
+- **xcc lowering** — target the slot file as a register machine; lower array
   expressions to the vector ops.
 - **$D800 FP ROM patch** — route Atari BASIC's floating point through the
   coprocessor transparently (the visible payoff demo).
@@ -761,10 +773,10 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
 - **Sequencing:** gated on the m68k JIT + Falcon target maturing; not near-term. *(design
   option; no source doc yet — capture in a docs/Design/ note if it advances.)*
 
-## Compiler (xtc) — link-time vtable shrinking
+## Compiler (xcc) — link-time vtable shrinking
 
 - **Shrink vtables at link time, when the used-method set is finally known.**
-  Virtuality in xtc is inferred *whole-program*: a method earns a vtable slot only
+  Virtuality in xcc is inferred *whole-program*: a method earns a vtable slot only
   when some subclass in the same compilation overrides it, and everything else keeps
   a direct call. That inference is unsound the moment the program isn't whole, so
   `--emit-lib` now has to give **every** instance method of every exported class a
@@ -885,7 +897,7 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
 - **XTOS phases** — P1 GEM-as-C-lib draws via the blitter under FreeRTOS; P2 four-
   surface compositor WM + input/event bus with focus routing; P3 VFS + launcher +
   per-app profiles (SD VFS, image drives, SQLite-on-NAND, trashcan, shell); P4 dynamic
-  ELF loader + interface/registry + `ABIVER`; P5 IDE + on-device xtc; P6 cross-core
+  ELF loader + interface/registry + `ABIVER`; P5 IDE + on-device xcc; P6 cross-core
   source-level debugger. *(src: docs/OS/xtos-vision.md)*
 - **Dynamic-loading / syscall ABI / bootstrap (Phase 4 spec)** — uClinux model
   (spawn not fork); 3-tier ABI (`SVC #1` kernel syscalls + registry/ops-table services
@@ -971,17 +983,17 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
   the painful kind. The debug variants + env plumbing land with the debugger; the
   search-path hook is the cheap bake-in. *(src: this entry; ties to the P6 debugger +
   Reserve-now)*
-- **Reserve-now (cheap to bake in early, expensive to retrofit)** — xtc PIC/relocatable
+- **Reserve-now (cheap to bake in early, expensive to retrofit)** — xcc PIC/relocatable
   ARM codegen; service-call indirection via interface tables (never globals);
   interface/registry + `ABIVER` from day one; directory-mapped drives as a first-class
-  VFS mode; xtc restricted-DWARF debug-info emission for all 3 backends; **`xtld`
+  VFS mode; xcc restricted-DWARF debug-info emission for all 3 backends; **`xtld`
   library resolution via a search path (not a hardcoded dir)** — enables the speed/debug
   library swap above. *(src: docs/OS/xtos-vision.md)*
 - **Open XTOS decisions** — none outstanding (DWARF subset now written:
   docs/OS/dwarf-subset.md). *(DECIDED: memory protection = tier 2; debug = full
   backtrace+unwind, all 3 backends, debug-build frames; libc = newlib; front GEM
   plane = NOT building (close the emulator to run a GEM app full-desktop); boot =
-  SD-only (NAND holds the registry); **system language = xtc** (C deps
+  SD-only (NAND holds the registry); **system language = xcc** (C deps
   cross-compiled on host, on-device C deferred — no tcc). See memory-protection.md
   / xtos-vision.md.)* *(src: docs/OS/xtos-vision.md)*
 - **Fonts** — confirm `xilffs` LFN config (`FF_USE_LFN`/`FF_MAX_LFN=255`); `opsz` axis
