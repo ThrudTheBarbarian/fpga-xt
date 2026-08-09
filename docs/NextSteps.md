@@ -1,30 +1,29 @@
 # Next Steps / Open Work — consolidated
 
-## OPEN: XL capture DUPLICATES the OS GR.0 frame (two READYs + band)
-CONFIRMED IN DDR CONTENT (2026-08-08 overnight, paired graboverlay + uncached
-`mem` probes of the displayed slot — the two now agree, post cache-fix): after
-a `6502 basic` READY boot the displayed slot holds the frame top TWICE — READY
-at slot row 0 AND again at row ~103, black band rows ~85..100 (probe row 100 =
-$000000FF written-black, row 8 = playfield blue).  So the WRITEBACK genuinely
-writes the playfield rows at two different slot-row ranges per frame — not a
-grab artifact, not a fixed offset.  KEY DISCRIMINATOR: game display lists
-capture PERFECTLY (DR title + gameplay grabs pixel-clean, same boot) — only
-the OS's short GR.0 list (24 blank + 192 + JVB, ~46 parked lines) duplicates.
-Suspects: the JVB park/resume path (110334b0) emitting the list twice per beam
-frame for short lists, or atari_row/beam wrap interplay in the rewrite; the
-rewrite beam (u_beam) also has no `cold` input (free-runs across SALLYRST).
-This needs the vbeam-accurate full-chain tb (in flight, tb_fid_raster) — repro
-in sim with the OS list shape before touching antic_dl/antic_beam.  Sometimes
-the capture comes up ALIGNED after a reset (first `6502 basic` sweep this
-session was clean 6/6 by PC; the duplication appeared on later resets) — phase
-of DMACTL-enable vs park state at SALLYRST likely selects the mode.
-Rare sibling: one basic-from-self-test reset re-entered self-test (OPTION
-sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in a 6/6 sweep.
+## antic-sally-interop — one beam landed; conformance gap enumerated
+RESOLVED 2026-08-09 (branch antic-sally-interop): the pixels-vs-CPU-timing
+split brain.  USE_ANTIC2_FABRIC flipped (unification phase 2) and SALLYRST
+boots to $0A (fid + rewrite authority) — antic2 owns pixels AND VCOUNT/NMI/
+rdy, one beam.  HW: Despatch Rider renders fully correctly (status bars,
+ticker, live counters, no duplication/flicker); READY clean across resets at
+both authorities; the OS GR.0 capture duplication and the DLI band drift are
+gone with the boot default.  ACID-in-fabric: 40/58 at $0A — best fabric score
+ever (old best 32@$06 incoherent, old $0A 27) vs the sim's 55/58 ceiling 57.
 
-RESOLVED en route (2026-08-08, commits d6f2c77a + 21761b4b): the DR mid-load
-IRQ storm (IRQST=$F7 SEROC) and the random lost-doorbell SIO stalls were the
-fid stalled-cycle write-strobe replay — fixed by exactly-once strobes; DR now
-loads to gameplay (START via the new CONSOL keypad path).
+Remaining 21-test gap vs sim (docs/a800/runs/2026-08-09-1.json), by family:
+- 7 ANTIC cycle anchors (dlitiming, dmapattern, nmist, pfstarttiming,
+  virtdma, vscroldli, wsync): CTRL_RWTUNE bisect territory — find the fabric
+  pacing offset, do NOT retune antic2's constants (plan's risk note).
+- 8 POKEY seams (init/irq/noise/serclock/serdirect/sertiming/skstat/
+  timertiming): fabric POKEY pacing vs antic2 grid; coordinate with the
+  pokey serial rework.
+- 2 GTIA phantom (phantomdma, psuedomodee): the documented bus_byte_stb gap
+  (ANTIC-page writes only, not every snooped data phase) — unification
+  phase-3 work item.
+- mod_*/65c816 classification noise (error vs na) in the harness.
+
+Rare sibling still open: one basic-from-self-test reset re-entered self-test
+(OPTION sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in 6/6.
 
 # Immediate targets
 
