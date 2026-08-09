@@ -1,0 +1,1491 @@
+mads 2.1.0 build 8 (23 Dec 19)
+Source: dos.s
+     1 				; Altirra AcidOS test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 						opt		h-o-
+    23 						org		$0043
+    24 				zbufp	dta		a(0)		;Buffer pointer
+    25 				zdrva	dta		a(0)		;Drive pointer
+    26 				zsba	dta		a(0)		;Sector buffer pointer
+    27 				errno	dta		0			;Error number
+    28
+    29 						icl		'hardware.inc'
+Source: hardware.inc
+     1 				; Altirra AcidOS test suite
+     2 				; Copyright (C) 2013 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				.ifndef f_HARDWARE_INC
+    23 				.def f_HARDWARE_INC
+    24
+    25 				;==========================================================================
+    26 				; GTIA
+    27 				;
+    28 				hposp0	equ	$d000
+    29 				hposp1	equ	$d001
+    30 				hposp2	equ	$d002
+    31 				hposp3	equ	$d003
+    32 				hposm0	equ	$d004
+    33 				hposm1	equ	$d005
+    34 				hposm2	equ	$d006
+    35 				hposm3	equ	$d007
+    36 				sizep0	equ	$d008
+    37 				sizep1	equ	$d009
+    38 				sizep2	equ	$d00a
+    39 				sizep3	equ	$d00b
+    40 				sizem	equ	$d00c
+    41 				trig0	equ	$d010
+    42 				trig1	equ	$d011
+    43 				trig2	equ	$d012
+    44 				colpm0	equ	$d012
+    45 				trig3	equ	$d013
+    46 				colpm1	equ	$d013
+    47 				pal		equ	$d014
+    48 				colpm2	equ	$d014
+    49 				colpm3	equ	$d015
+    50 				colpf0	equ	$d016
+    51 				colpf1	equ	$d017
+    52 				colpf2	equ	$d018
+    53 				colpf3	equ	$d019
+    54 				colbk	equ	$d01a
+    55 				prior	equ	$d01b
+    56 				gractl	equ	$d01d
+    57 				consol	equ	$d01f
+    58
+    59 				;==========================================================================
+    60 				; POKEY
+    61 				;
+    62 				pot0	equ	$d200
+    63 				audf1	equ	$d200
+    64 				pot1	equ	$d201
+    65 				audc1	equ	$d201
+    66 				pot2	equ	$d202
+    67 				audf2	equ	$d202
+    68 				pot3	equ	$d203
+    69 				audc2	equ	$d203
+    70 				pot4	equ	$d204
+    71 				audf3	equ	$d204
+    72 				pot5	equ	$d205
+    73 				audc3	equ	$d205
+    74 				pot6	equ	$d206
+    75 				audf4	equ	$d206
+    76 				pot7	equ	$d207
+    77 				audc4	equ	$d207
+    78 				audctl	equ	$d208
+    79 				kbcode	equ	$d209
+    80 				stimer	equ	$d209
+    81 				skres	equ	$d20a
+    82 				potgo	equ	$d20b
+    83 				serin	equ	$d20d
+    84 				serout	equ	$d20d
+    85 				irqen	equ	$d20e
+    86 				irqst	equ	$d20e
+    87 				skctl	equ	$d20f
+    88 				skstat	equ	$d20f
+    89
+    90 				;==========================================================================
+    91 				; PIA
+    92 				;
+    93 				porta	equ	$d300
+    94 				portb	equ	$d301
+    95 				pactl	equ	$d302
+    96 				pbctl	equ	$d303
+    97
+    98 				;==========================================================================
+    99 				; ANTIC
+   100 				;
+   101 				dmactl	equ	$d400
+   102 				chactl	equ	$d401
+   103 				dlistl	equ	$d402
+   104 				dlisth	equ	$d403
+   105 				hscrol	equ	$d404
+   106 				vscrol	equ	$d405
+   107 				pmbase	equ	$d407
+   108 				chbase	equ	$d409
+   109 				wsync	equ	$d40a
+   110 				vcount	equ	$d40b
+   111 				penh	equ	$d40c
+   112 				penv	equ	$d40d
+   113 				nmien	equ	$d40e
+   114 				nmist	equ	$d40f
+   115 				nmires	equ	$d40f
+   116
+   117 				;==========================================================================
+   118 				; 6502
+   119 				;
+   120 				nmivec	equ	$fffa
+   121 				resvec	equ	$fffc
+   122 				irqvec	equ	$fffe
+   123
+   124 				.endif
+    30 						icl		'kerneldb.inc'
+Source: kerneldb.inc
+     1 				; Altirra AcidOS test suite
+     2 				; Copyright (C) 2013 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				.ifndef f_KERNELDB_INC
+    23 				.def f_KERNELDB_INC
+    24
+    25 				casini	= $0002			;cassette initialization vector
+    26 				ramlo	= $0004			;
+    27 				tramsz	= $0006			;temporary ram size / cart A flag
+    28 				tstdat	= $0007			;RAM test data register / cart B flag
+    29 				warmst	= $0008			;warmstart flag
+    30 				boot?	= $0009			;boot flag; 0 if none, 1 for disk, 2 for cassette
+    31 				dosvec	= $000a
+    32 				dosini	= $000c
+    33 				appmhi	= $000e
+    34 				pokmsk	= $0010
+    35 				brkkey	= $0011			;set on [BREAK]
+    36 				rtclok	= $0012
+    37 				bufadr	= $0015			;indirect buffer address pointer (temp for disk buffer)
+    38 						; $0016
+    39 				iccomt	= $0017			;CIO: command byte
+    40 				ziocb	= $0020			;zero-page IOCB
+    41 				ichidz	= $0020			;Zero page IOCB: device index ($FF = not open)
+    42 				icdnoz	= $0021			;Zero page IOCB: device number
+    43 				iccomz	= $0022			;Zero page IOCB: command byte
+    44 				icstaz	= $0023			;Zero page IOCB: status byte
+    45 				icbalz	= $0024			;Zero page IOCB: address of device/filename spec lo
+    46 				icbahz	= $0025			;Zero page IOCB: address of device/filename spec hi
+    47 				icptlz	= $0026			;Zero page IOCB: put byte address lo (-1)
+    48 				icpthz	= $0027			;Zero page IOCB: put byte address hi (-1)
+    49 				icbllz	= $0028			;Zero page IOCB: buffer length/byte count lo (-1)
+    50 				icblhz	= $0029			;Zero page IOCB: buffer length/byte count hi (-1)
+    51 				icax1z	= $002a			;Zero page IOCB: device-specific information 1
+    52 				icax2z	= $002b			;Zero page IOCB: device-specific information 2
+    53 				icax3z	= $002c			;Zero page IOCB: device-specific information 3
+    54 				icax4z	= $002d			;Zero page IOCB: device-specific information 4
+    55 				icax5z	= $002e			;Zero page IOCB: device-specific information 5
+    56 				icidno	= $002e			;CIO: call X register save/restore
+    57 				icax6z	= $002f			;Zero page IOCB: device-specific information 6
+    58 				ciochr	= $002f			;CIO: call A register save/restore
+    59 				status  = $0030			;SIO: temporay status byte
+    60 				chksum	= $0031			;SIO: temporary checksum byte (used by IRQ routines)
+    61 				bufrlo	= $0032			;SIO: buffer pointer lo (incremented by IRQ routines)
+    62 				bufrhi	= $0033			;SIO: buffer pointer hi (incremented by IRQ routines)
+    63 				bfenlo	= $0034			;SIO: buffer end lo
+    64 				bfenhi	= $0035			;SIO: buffer end hi
+    65 				ltemp	= $0036			;Relocating loader: loader temp address (XL/XE)
+    66 						; $0037
+    67 				bufrfl	= $0038			;SIO: buffer full flag
+    68 				recvdn	= $0039			;SIO: receive completed flag
+    69 				xmtdon	= $003a			;SIO: transmit completed flag
+    70 				chksnt	= $003b			;SIO: checksum sent flag
+    71 				nocksm	= $003c			;SIO: no-checksum flag
+    72 				bptr	= $003d			;Cassette: Buffer pointer
+    73 				ftype	= $003e			;Cassette: Interrecord gap (IRG) type; bit7=1 means continuous mode
+    74 				feof	= $003f			;Cassette: EOF flag
+    75 				soundr	= $0041			;SIO: noisy audio flag
+    76 				critic	= $0042			;critical flag for vbi
+    77 				zchain	= $004a			;Peripheral Handler: zero-page chain address
+    78 						; $004b
+    79 				atract	= $004d			;screen attract counter
+    80 				drkmsk	= $004e			;screen attract mask
+    81 				colrsh	= $004f			;screen attract color shift
+    82 				tmpchr	= $0050			;Screen Editor
+    83 				hold1	= $0051			;Display/Editor: temporary storage
+    84 				lmargn	= $0052			;left margin column
+    85 				rmargn	= $0053			;right margin column
+    86 				rowcrs	= $0054			;cursor row
+    87 				colcrs	= $0055			;cursor column
+    88 						; $0056
+    89 				dindex	= $0057			;display mode index
+    90 				savmsc	= $0058			;lowest address of screen region
+    91 				oldrow	= $005a			;
+    92 				oldcol	= $005b			;
+    93 				oldchr	= $005d			;cursor character save/restore
+    94 				oldadr	= $005e			;cursor memory address
+    95 						; $005f
+    96 				palnts	= $0062			;PAL/NTSC flag
+    97 				logcol	= $0063			;Display/Editor: Logical column (0-119)
+    98 				adress	= $0064			;temporary storage (display code)
+    99 						; $0065
+   100 				toadr	= $0066			;temporary storage (display code)
+   101 						; $0067
+   102 				frmadr	= $0068			;temporary storage (display code)
+   103 						; $0069
+   104 				ramtop	= $006a			;ram size
+   105 				bufcnt	= $006b
+   106 				bufstr	= $006c			;row/column of start of logical line
+   107 				bitmsk	= $006e			;Screen Editor
+   108 				shfamt	= $006f			;Screen Editor
+   109 				rowac	= $0070			;Screen Editor: line drawing
+   110 						; $0071			;
+   111 				colac	= $0072			;Screen Editor: line drawing
+   112 						; $0073			;
+   113 				endpt	= $0074			;Screen Editor: line drawing
+   114 						; $0075			;
+   115 				deltar	= $0076			;Screen Editor: delta row (line drawing)
+   116 				deltac	= $0077			;Screen Editor: delta column (line drawing)
+   117 						; $0078			;
+   118 				keydef	= $0079			;XL/XE: Keyboard definition table
+   119 						; $007a
+   120 				swpflg	= $007b			;current display var state ($00 = main, $FF = split screen)
+   121 				holdch	= $007c			;temporary key hold area prior to shift/control lock logic
+   122 				countr	= $007e			;Screen Editor: line length
+   123 						; $007f
+   124 				fr0		= $00d4			;FP: Accumulator 0
+   125 				_fr3	= $00da			;FP: Accumulator 4
+   126 				fr1		= $00e0			;FP: Accumulator 1
+   127 				_fr2	= $00e6			;FP: Accumulator 2
+   128 				_fpres2	= $00ef			;BASIC: Used in sqr() routine -- must not be touched by FP code
+   129 				_fpres	= $00f0			;BASIC: Used in sin() routine -- must not be touched by FP code
+   130 				cix		= $00f2			;FP: Character index
+   131 				inbuff	= $00f3			;FP: ASCII conversion buffer
+   132 						; $00f4
+   133 				_fpcount= $00f5
+   134 				_fptemp0= $00f6
+   135 				_fptemp1= $00f7
+   136 				flptr	= $00fc			;FP: pointer for floating-point loads and stores
+   137 				_flptr2	= $00fe
+   138
+   139 				vdslst	= $0200			;display list interrupt vector
+   140 				vprced	= $0202			;serial bus proceed interrupt vector
+   141 				vinter	= $0204			;serial bus interrupt vector
+   142 				vbreak	= $0206			;BRK instruction vector
+   143 				vkeybd	= $0208			;keyboard interrupt vector
+   144 				vserin	= $020a			;serial input ready interrupt vector
+   145 				vseror	= $020c			;serial output ready interrupt vector
+   146 				vseroc	= $020e			;serial output completed interrupt vector
+   147 				vtimr1	= $0210			;pokey timer 1 interrupt vector
+   148 				vtimr2	= $0212			;pokey timer 2 interrupt vector
+   149 				vtimr4	= $0214			;pokey timer 4 interrupt vector
+   150 				vimirq	= $0216			;immediate IRQ vector
+   151 				cdtmv1	= $0218			;countdown timer 1
+   152 				cdtmv2	= $021a			;countdown timer 2
+   153 				cdtmv3	= $021c			;countdown timer 3
+   154 				cdtmv4	= $021e			;countdown timer 4
+   155 				cdtmv5	= $0220			;countdown timer 5
+   156 				vvblki	= $0222			;vertical blank immediate vector
+   157 				vvblkd	= $0224			;vertical blank deferred vector
+   158 				cdtma1	= $0226			;timer 1 vector
+   159 				cdtma2	= $0228			;timer 2 vector
+   160 				cdtmf3	= $022a			;timer 3 flag
+   161 				srtimr	= $022b			;autorepeat timer
+   162 				cdtmf4	= $022c			;timer 4 flag
+   163 				intemp	= $022d			;temp value used by SETVBV
+   164 				cdtmf5	= $022e			;timer 5 flag
+   165 				sdmctl	= $022f			;shadow for DMACTL ($D400)
+   166 				sdlstl	= $0230			;shadow for DLISTL ($D402)
+   167 				sdlsth	= $0231			;shadow for DLISTH ($D403)
+   168 				sskctl	= $0232			;shadow for SKCTL ($D20F)
+   169 				lcount	= $0233			;Relocating loader: (XL/XE)
+   170 				lpenh	= $0234			;light pen horizontal pos
+   171 				lpenv	= $0235			;light pen vertical pos
+   172 				brkky	= $0236			;break key interrupt vector (OS B+ only)
+   173 				reladr	= $0238			;Relocating loader: temp address (XL/XE)
+   174 						; $0239
+   175 				cdevic	= $023a			;SIO: command frame device ID
+   176 				ccomnd	= $023b			;SIO: command frame command ID
+   177 				caux1	= $023c			;SIO: command aux byte 1
+   178 				caux2	= $023d			;SIO: command aux byte 2
+   179 				temp	= $023e			;SIO: temp space
+   180 				errflg	= $023f			;SIO: error flag
+   181 				dflags	= $0240			;disk boot flags
+   182 				dbsect	= $0241			;disk boot sector count
+   183 				bootad	= $0242			;disk boot address
+   184 				coldst	= $0244			;cold start flag
+   185 				reclen	= $0245			;Relocating loader: record length (XL/XE)
+   186 				dsktim	= $0246			;Disk Handler: Disk operation timeout
+   187 				pdvmsk	= $0247			;PBI device mask (XL/XE)
+   188 				shpdvs	= $0248			;PBI device selection register shadow ($D1FF) (XL/XE)
+   189 				fine	= $026e			;fine scrolling flag (XL/XE)
+   190 				gprior	= $026f			;shadow for PRIOR ($D01B)
+   191 				paddl0	= $0270			;shadow for POT0 ($D200)
+   192 				paddl1	= $0271			;shadow for POT1 ($D201)
+   193 				paddl2	= $0272			;shadow for POT2 ($D202)
+   194 				paddl3	= $0273			;shadow for POT3 ($D203)
+   195 				paddl4	= $0274			;shadow for POT4 ($D204)
+   196 				paddl5	= $0275			;shadow for POT5 ($D205)
+   197 				paddl6	= $0276			;shadow for POT6 ($D206)
+   198 				paddl7	= $0277			;shadow for POT7 ($D207)
+   199 				stick0	= $0278			;shadow for PORTA lo ($D300)
+   200 				stick1	= $0279			;shadow for PORTA hi ($D300)
+   201 				stick2	= $027A			;shadow for PORTB lo ($D302)
+   202 				stick3	= $027B			;shadow for PORTB hih ($D302)
+   203 				ptrig0	= $027c			;paddle trigger 0
+   204 				ptrig1	= $027d			;paddle trigger 1
+   205 				ptrig2	= $027e			;paddle trigger 2
+   206 				ptrig3	= $027f			;paddle trigger 3
+   207 				ptrig4	= $0280			;paddle trigger 4
+   208 				ptrig5	= $0281			;paddle trigger 5
+   209 				ptrig6	= $0282			;paddle trigger 6
+   210 				ptrig7	= $0283			;paddle trigger 7
+   211 				strig0	= $0284			;shadow for TRIG0 ($D001)
+   212 				strig1	= $0285			;shadow for TRIG1 ($D002)
+   213 				strig2	= $0286			;shadow for TRIG2 ($D003)
+   214 				strig3	= $0287			;shadow for TRIG3 ($D004)
+   215 				hibyte	= $0288			;Relocating loader (XL/XE)
+   216 				wmode	= $0289			;Cassette: Write mode (00 = read, 80 = write)
+   217 				blim	= $028a			;Cassette: Buffer limit
+   218 				jveck	= $028c			;XL/XE: IRQ jump vector
+   219 				newadr	= $028e			;Relocating loader (XL/XE)
+   220 				txtrow	= $0290
+   221 				txtcol	= $0291
+   222 						; $0292
+   223 				tindex	= $0293			;text mode index
+   224 				txtmsc	= $0294			;text window pointer
+   225 						; $0295
+   226 				cretry	= $029c			;SIO: command retries (XL/XE)
+   227 				hold3	= $029d			;Screen Editor
+   228 				hold2	= $029f			;Screen Editor
+   229 				dmask	= $02a0			;Display/Editor: Graphics merge mask
+   230 				tmplbt	= $02a1			
+   231 				escflg	= $02a2			;Display/Editor: Escape next character
+   232 				tabmap	= $02a3			;Display/Editor: Bitfield indicating tabs (note reversed bit positions)
+   233 				logmap	= $02b2			;Display/Editor: Logical line start map (4 bytes)
+   234 				tmprow	= $02b8			;Screen Editor
+   235 				tmpcol	= $02b9			;Screen Editor
+   236 						; $02ba
+   237 				scrflg	= $02bb			;Display/Editor: Scroll counter
+   238 				hold4	= $02bc			;Screen Editor
+   239 				dretry	= $02bd			;SIO: device retries (XL/XE)
+   240 				shflok	= $02be			;shift/control lock flags
+   241 				botscr	= $02bf			;number of text rows in text window
+   242 				pcolr0	= $02c0			;shadow for COLPM0 ($D012)
+   243 				pcolr1	= $02c1			;shadow for COLPM1 ($D013)
+   244 				pcolr2	= $02c2			;shadow for COLPM2 ($D014)
+   245 				pcolr3	= $02c3			;shadow for COLPM3 ($D015)
+   246 				color0	= $02c4			;shadow for COLPF0 ($D016)
+   247 				color1	= $02c5			;shadow for COLPF1 ($D017)
+   248 				color2	= $02c6			;shadow for COLPF2 ($D018)
+   249 				color3	= $02c7			;shadow for COLPF3 ($D019)
+   250 				color4	= $02c8			;shadow for COLBK ($D01A)
+   251 				runadr	= $02c9			;Relocating loader: run address (XL/XE)
+   252 						; $02ca
+   253 				hiused	= $02cb			;Relocating loader: Next available memory location (out) (XL/XE)
+   254 						; $02cc
+   255 				zhiuse	= $02cd			;Relocating loader: Next available zero-page address (out) (XL/XE)
+   256 						; $02ce
+   257 				gbytea	= $02cf			;Relocating loader: GET BYTE address (XL/XE)
+   258 						; $02d0
+   259 				loadad	= $02d1			;Relocating loader: Load address (XL/XE)
+   260 						; $02d2
+   261 				zloada	= $02d3			;Relocating loader: Zero-page load address (XL/XE)
+   262 						; $02d4
+   263 				dsctln	= $02d5			;Disk sector size (XL/XE)
+   264 				pbpnt	= $02de			;Printer: Buffer index (XL/XE location)
+   265 				pbufsz	= $02df			;Printer: Record size (XL/XE location)
+   266 				runad	= $02e0
+   267 				initad	= $02e2
+   268 				ramsiz	= $02e4			;ram size in pages
+   269 				memtop	= $02e5			;highest location for programs and data
+   270 				memlo	= $02e7			;base of application memory
+   271 				hndlod	= $02e9			;CIO: Handler load flag (XL/XE)
+   272 				dvstat	= $02ea			;DISK: Status request buffer area (4 bytes)
+   273 						; $02eb
+   274 						; $02ec
+   275 						; $02ed
+   276 				crsinh	= $02f0			;Display/Editor: cursor inhibit flag
+   277 				keydel	= $02f1			;keyboard debounce delay (set to 3 vblanks per key)
+   278 				ch1		= $02f2			;last keyboard code read
+   279 				chact	= $02f3			;shadow for CHACTL ($D401)
+   280 				chbas	= $02f4			;shadow for CHBASE ($D409)
+   281 				rowinc	= $02f8			;Screen Editor: row direction (XL/XE location)
+   282 				colinc	= $02f9			;Screen Editor: col direction (XL/XE location)
+   283 				atachr	= $02fb			;Screen Editor
+   284 				ch		= $02fc			;keyboard FIFO byte
+   285 				fildat	= $02fd			;Screen Editor: fill color
+   286 				dspflg	= $02fe			;enable/disable of control codes by screen editor (E:)
+   287 				ssflag	= $02ff			;display/screen editor suspend flag
+   288 				ddevic	= $0300			;serial bus ID
+   289 				dunit	= $0301			;device number
+   290 				dcomnd	= $0302			;command byte
+   291 				dstats	= $0303			;status byte
+   292 				dbuflo	= $0304			;buffer address lo
+   293 				dbufhi	= $0305			;buffer address hi
+   294 				dtimlo	= $0306			;disk timeout value
+   295 				dbytlo	= $0308			;byte count lo
+   296 				dbythi	= $0309			;byte count hi
+   297 				daux1	= $030a			;sector number lo
+   298 				daux2	= $030b			;sector number hi
+   299 				timer1	= $030c			;SIO: baud rate determination - first timer value
+   300 				addcor	= $030e			;SIO: baud rate determination - correction value
+   301 				casflg	= $030f			;SIO: cassette I/O flag (0=normal, nonzero=cassette)
+   302 				timer2	= $0310			;SIO: baud rate determination - second timer value
+   303 				temp1	= $0312			;SIO: baud rate determination - temp
+   304 						; $0313
+   305 				ptimot	= $0314			;Printer: Timeout (XL/XE location)
+   306 				temp3	= $0315			;SIO: baud rate determination - temp
+   307 				timflg	= $0317			;SIO: operation timeout flag (set by countdown timer 1 IRQ)
+   308 				stackp	= $0318			;SIO: stack pointer save
+   309 				hatabs	= $031a			;handler table
+   310 				pupbt1	= $033d			;(XL/XE) Power-up boot flag #1 - $5C
+   311 				pupbt2	= $033e			;(XL/XE) Power-up boot flag #2 - $93
+   312 				pupbt3	= $033f			;(XL/XE) Power-up boot flag #3 - $25
+   313 				ichid	= $0340			;IOCB #0 handler ID
+   314 				icdno	= $0341			;IOCB #0 device number
+   315 				iccmd	= $0342			;IOCB #0 command byte
+   316 				icsta	= $0343			;IOCB #0 status
+   317 				icbal	= $0344			;IOCB #0 buffer address lo
+   318 				icbah	= $0345			;IOCB #0 buffer address hi
+   319 				icptl	= $0346			;IOCB #0 PUT address lo
+   320 				icpth	= $0347			;IOCB #0 PUT address hi
+   321 				icbll	= $0348			;IOCB #0 buffer length/byte count lo
+   322 				icblh	= $0349			;IOCB #0 buffer length/byte count hi
+   323 				icax1	= $034a			;IOCB #0 auxiliary information lo
+   324 				icax2	= $034b			;IOCB #0 auxiliary information hi
+   325 				icax3	= $034c			;
+   326 				icax4	= $034d			;
+   327 				icax5	= $034e			;
+   328 				icax6	= $034f			;
+   329 				prnbuf	= $03c0			;printer buffer
+   330 				ckey	= $03e9			;cassette boot key
+   331 				basicf	= $03f8			;XL/XE: ROM BASIC flag. 0 = enabled
+   332 				gintlk	= $03fa			;XL/XE: Cartridge interlock (clone of TRIG3). 
+   333 				chlink	= $03fb			;XL/XE: Relocated loader chain
+   334 				casbuf	= $03fd			;Cassette buffer (03FD-047F)
+   335 				lbuff	= $0580			;
+   336 				plyarg	= $05e0			;FP: Polynomial evaluation temp register
+   337
+   338 				afp		equ		$d800
+   339 				fasc	equ		$d8e6
+   340 				ipf		equ		$d9aa
+   341 				fpi		equ		$d9d2
+   342 				zfr0	equ		$da44
+   343 				zf1		equ		$da46
+   344 				fsub	equ		$da60
+   345 				fadd	equ		$da66
+   346 				fmul	equ		$dadb
+   347 				fdiv	equ		$db28
+   348 				plyevl	equ		$dd40
+   349 				fld0r	equ		$dd89
+   350 				fld0p	equ		$dd8d
+   351 				fld1r	equ		$dd98
+   352 				fld1p	equ		$dd9c
+   353 				fst0r	equ		$dda7
+   354 				fst0p	equ		$ddab
+   355 				fmove	equ		$ddb6
+   356 				exp		equ		$ddc0
+   357 				exp10	equ		$ddcc
+   358 				log		equ		$decd
+   359 				log10	equ		$ded1
+   360
+   361 				dskinv	= $e453
+   362 				ciov	= $e456
+   363 				setvbv	= $e45c
+   364 				sysvbv	= $e45f
+   365 				xitvbv	= $e462
+   366
+   367 				.endif
+    31 						icl		'cio.inc'
+Source: cio.inc
+     1 				;	Altirra - Atari 800/800XL/5200 emulator
+     2 				;	Modular Kernel ROM - Character Input/Output Definitions
+     3 				;	Copyright (C) 2008-2012 Avery Lee
+     4 				;
+     5 				;	This program is free software; you can redistribute it and/or modify
+     6 				;	it under the terms of the GNU General Public License as published by
+     7 				;	the Free Software Foundation; either version 2 of the License, or
+     8 				;	(at your option) any later version.
+     9 				;
+    10 				;	This program is distributed in the hope that it will be useful,
+    11 				;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+    12 				;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    13 				;	GNU General Public License for more details.
+    14 				;
+    15 				;	You should have received a copy of the GNU General Public License
+    16 				;	along with this program; if not, write to the Free Software
+    17 				;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+    18
+    19 				.ifndef f_CIO_INC
+    20 				.def f_CIO_INC
+    21
+    22 				CIOStatBreak		= $80	;break key abort
+    23 				CIOStatIOCBInUse	= $81	;IOCB in use
+    24 				CIOStatUnkDevice	= $82	;unknown device
+    25 				CIOStatWriteOnly	= $83	;opened for write only
+    26 				CIOStatInvalidCmd	= $84	;invalid command
+    27 				CIOStatNotOpen		= $85	;device or file not open
+    28 				CIOStatInvalidIOCB	= $86	;invalid IOCB number
+    29 				CIOStatReadOnly		= $87	;opened for read only
+    30 				CIOStatEndOfFile	= $88	;end of file reached
+    31 				CIOStatTruncRecord	= $89	;record truncated
+    32 				CIOStatTimeout		= $8A	;device timeout
+    33 				CIOStatNAK			= $8B	;device NAK
+    34 				CIOStatSerFrameErr	= $8C	;serial bus framing error
+    35 				CIOStatCursorRange	= $8D	;cursor out of range
+    36 				CIOStatSerOverrun	= $8E	;serial frame overrun error
+    37 				CIOStatSerChecksum	= $8F	;serial checksum error
+    38 				CIOStatDeviceDone	= $90	;device done error
+    39 				CIOStatBadScrnMode	= $91	;bad screen mode
+    40 				CIOStatNotSupported	= $92	;function not supported by handler
+    41 				CIOStatOutOfMemory	= $93	;not enough memory
+    42 				CIOStatDriveNumErr	= $A0	;disk drive # error
+    43 				CIOStatTooManyFiles	= $A1	;too many open disk files
+    44 				CIOStatDiskFull		= $A2	;disk full
+    45 				CIOStatFatalDiskIO	= $A3	;fatal disk I/O error
+    46 				CIOStatFileNumDiff	= $A4	;internal file # mismatch
+    47 				CIOStatFileNameErr	= $A5	;filename error
+    48 				CIOStatPointDLen	= $A6	;point data length error
+    49 				CIOStatFileLocked	= $A7	;file locked
+    50 				CIOStatInvDiskCmd	= $A8	;invalid command for disk
+    51 				CIOStatDirFull		= $A9	;directory full (64 files)
+    52 				CIOStatFileNotFound	= $AA	;file not found
+    53 				CIOStatInvPoint		= $AB	;invalid point
+    54
+    55 				CIOCmdOpen			= $03
+    56 				CIOCmdGetRecord		= $05
+    57 				CIOCmdGetChars		= $07
+    58 				CIOCmdPutRecord		= $09
+    59 									; $0A	;PUT CHARS alias (required by K-Razy Shoot Out)
+    60 				CIOCmdPutChars		= $0B
+    61 				CIOCmdClose			= $0C
+    62 				CIOCmdGetStatus		= $0D
+    63 				CIOCmdSpecial		= $0E	;$0E and up is escape
+    64
+    65 				.endif
+    32 						icl		'sio.inc'
+Source: sio.inc
+     1 				.ifndef f_SIO_INC
+     2 				.def f_SIO_INC
+     3
+     4 				SIOSuccess			= $01
+     5 				SIOErrorTimeout		= $8A
+     6 				SIOErrorNAK			= $8B
+     7 				SIOErrorBadFrame	= $8C
+     8 				SIOErrorOverrun		= $8E
+     9 				SIOErrorChecksum	= $8F
+    10 				SIOErrorDeviceError	= $90
+    11
+    12 				.endif
+    33
+    34 						opt		o+
+    35 						org		$0700
+    36 						
+    37 				base:
+    38 0700 00					dta		0			;flags
+    39 0701 03					dta		3
+    40 0702 00 07				dta		a($0700)
+    41 0704 09 08				dta		a(DOSInit)
+    42 0706 4C 14 07				jmp		boot					;$0706 ($0714)
+    43 0709 03			bcb_maxfiles	dta		3				;$0709 ($03)
+    44 070A 01			bcb_drivebits	dta		1				;$070A ($03)
+    45 070B 00			bcb_allocdirc	dta		0				;$070B ($00) (unused)
+    46 070C 3E 0C		bcb_secbuf		dta		a(dos_sectorbuffers)	;$070C ($1A7C)
+    47 070E 01			bcb_bootflag	dta		$01				;$070E ($01)
+    48 070F 04 00		bcb_firstsec	dta		a(4)			;$070F ($0004) first sector of DOS.SYS
+    49 0711 7D			bcb_linkoffset	dta		125				;$0711 ($7D)
+    50 0712 80 08		bcb_loadaddr	dta		a($0880)		;$0712 ($07CB)
+    51 						
+    52 0714			boot:
+    53 						;replace serial vectors
+    54 0714 A2 03				ldx		#3
+    55 0716 BD 6C 07 9D 0A 02 + 		mva:rpl	newvecs,x vserin,x-
+    56 						
+    57 						;read sectors
+    58 071F AD 12 07 8D 04 03 + 		mwa		bcb_loadaddr dbuflo
+    59 072B A9 52 8D 02 03			mva		#'R' dcomnd
+    60
+    61 0730 AD 0F 07				lda		bcb_firstsec
+    62 0733 AE 10 07				ldx		bcb_firstsec+1
+    63 0736			next_sector:
+    64 0736 8D 0A 03				sta		daux1
+    65 0739 8E 0B 03				stx		daux2
+    66 073C 20 53 E4				jsr		dskinv
+    67 073F 30 29				bmi		error
+    68 						
+    69 0741 AD 04 03				lda		dbuflo
+    70 0744 85 47				sta		zsba
+    71 0746 18					clc
+    72 0747 6D 11 07				adc		bcb_linkoffset
+    73 074A 8D 04 03				sta		dbuflo
+    74 074D AD 05 03				lda		dbufhi
+    75 0750 85 48				sta		zsba+1
+    76 0752 69 00				adc		#0
+    77 0754 8D 05 03				sta		dbufhi
+    78 						
+    79 0757 AC 11 07				ldy		bcb_linkoffset
+    80 075A B1 47				lda		(zsba),y
+    81 075C 29 03				and		#$03
+    82 075E AA					tax
+    83 075F C8					iny
+    84 0760 B1 47				lda		(zsba),y
+    85 0762 D0 D2				bne		next_sector
+    86 0764 E0 00				cpx		#0
+    87 0766 D0 CE				bne		next_sector
+    88 0768 18					clc
+    89 0769 60					rts
+    90 076A			error:
+    91 076A 38					sec
+    92 076B 60					rts
+    93 						
+    94 076C			newvecs:
+    95 076C 70 07				dta		a(SIOInputReadyHandler)
+    96 076E BF 07				dta		a(SIOOutputReadyHandler)
+    97 				//		dta		a(SIOOutputCompleteHandler)
+    98
+    99 				;==============================================================================
+   100 				; SIO serial input routine
+   101 				;
+   102 				; DOS 2.0S replaces (VSERIN), so it's critical that this routine follow the
+   103 				; rules compatible with DOS. The rules are as follows:
+   104 				;
+   105 				;	BUFRLO/BUFRHI:	Points to next byte to read. Note that this is different
+   106 				;					from (VSEROR)!
+   107 				;	BFENLO/BFENHI:	Points one after last byte in buffer.
+   108 				;	BUFRFL:			Set when all data bytes have been read.
+   109 				;	NOCKSM:			Set if no checksum byte is expected. Cleared after checked.
+   110 				;	RECVDN:			Set when receive is complete, including any checksum.	
+   111 				;
+   112 0770			.proc SIOInputReadyHandler
+   113 0770 A5 38			lda		bufrfl
+   114 0772 D0 20			bne		receiveChecksum
+   115
+   116 					;receive data byte
+   117 0774 98				tya
+   118 0775 48				pha
+   119 0776 AD 0D D2			lda		serin
+   120 0779 A0 00			ldy		#$00
+   121 077B 91 32			sta		(bufrlo),y
+   122 077D 18				clc
+   123 077E 65 31			adc		chksum
+   124 0780 69 00			adc		#$00
+   125 0782 85 31			sta		chksum
+   126 					
+   127 					;bump buffer pointer
+   128 0784 E6 32 D0 02 E6 33		inw		bufrlo
+   129 					
+   130 					;check for EOB
+   131 078A A5 32			lda		bufrlo
+   132 078C C5 34			cmp		bfenlo
+   133 078E F0 15			beq		possiblyEnd
+   134 0790			xit:
+   135 0790 68				pla
+   136 0791 A8				tay
+   137 0792 68				pla
+   138 0793 40				rti
+   139 					
+   140 0794			receiveChecksum:
+   141 					;read and compare checksum
+   142 0794 AD 0D D2			lda		serin
+   143 0797 C5 31			cmp		chksum
+   144 0799 F0 04			beq		checksumOK
+   145 					
+   146 079B A9 8F 85 30			mva		#SIOErrorChecksum	status
+   147 079F			checksumOK:
+   148 					
+   149 					;set receive done flag
+   150 079F A9 FF 85 39			mva		#$ff	recvdn
+   151
+   152 					;exit
+   153 07A3 68				pla
+   154 07A4 40				rti
+   155 					
+   156 07A5			possiblyEnd:	
+   157 07A5 A5 33			lda		bufrhi
+   158 07A7 C5 35			cmp		bfenhi
+   159 07A9 D0 E5			bne		xit
+   160
+   161 07AB A9 FF 85 38			mva		#$ff	bufrfl
+   162 					
+   163 					;should there be a checksum?
+   164 07AF A5 3C			lda		nocksm
+   165 07B1 D0 03			bne		skipChecksum
+   166 07B3 4C 90 07			jmp		xit
+   167
+   168 07B6			skipChecksum:
+   169 					;set receive done flag
+   170 07B6 85 39			sta		recvdn
+   171 					
+   172 					;clear no checksum flag
+   173 07B8 A9 00			lda		#0
+   174 07BA 85 3C			sta		nocksm
+   175 07BC 4C 90 07			jmp		xit
+   176 				.endp
+   177
+   178 				;==============================================================================
+   179 				; SIO serial output ready routine
+   180 				;
+   181 				; DOS 2.0S replaces (VSEROR), so it's critical that this routine follow the
+   182 				; rules compatible with DOS. The rules are as follows:
+   183 				;
+   184 				;	BUFRLO/BUFRHI:	On entry, points to one LESS than the next byte to write.
+   185 				;	BFENLO/BFENHI:	Points to byte immediately after buffer.
+   186 				;	CHKSUM:			Holds running checksum as bytes are output.
+   187 				;	CHKSNT:			$00 if checksum not yet sent, $FF if checksum sent.
+   188 				;	POKMSK:			Used to enable the serial output complete IRQ after sending
+   189 				;					checksum.
+   190 				;
+   191 07BF			.proc SIOOutputReadyHandler
+   192 					;increment buffer pointer
+   193 07BF E6 32			inc		bufrlo
+   194 07C1 D0 02			bne		addrcc
+   195 07C3 E6 33			inc		bufrhi
+   196 07C5			addrcc:
+   197
+   198 					;compare against buffer end
+   199 07C5 A5 32			lda		bufrlo
+   200 07C7 C5 34			cmp		bfenlo
+   201 07C9 A5 33			lda		bufrhi
+   202 07CB E5 35			sbc		bfenhi			;set flags according to (dst - end)
+   203 07CD B0 13			bcs		doChecksum
+   204
+   205 					;save Y
+   206 07CF 98				tya
+   207 07D0 48				pha
+   208
+   209 					;send out next byte
+   210 07D1 A0 00			ldy		#0
+   211 07D3 B1 32			lda		(bufrlo),y
+   212 07D5 8D 0D D2			sta		serout
+   213 					
+   214 					;update checksum
+   215 07D8 65 31			adc		chksum
+   216 07DA 69 00			adc		#0
+   217 07DC 85 31			sta		chksum
+   218
+   219 					;restore registers and exit
+   220 07DE 68				pla
+   221 07DF A8				tay
+   222 07E0 68				pla
+   223 07E1 40				rti
+   224 					
+   225 07E2			doChecksum:
+   226 					;send checksum
+   227 07E2 A5 31			lda		chksum
+   228 07E4 8D 0D D2			sta		serout
+   229 					
+   230 					;set checksum sent flag
+   231 07E7 A9 FF 85 3B			mva		#$ff	chksnt
+   232 					
+   233 					;enable output complete IRQ and disable serial output IRQ
+   234 07EB A5 10			lda		pokmsk
+   235 07ED 09 08			ora		#$08
+   236 07EF 29 EF			and		#$ef
+   237 07F1 85 10			sta		pokmsk
+   238 07F3 8D 0E D2			sta		irqen
+   239 					
+   240 07F6 68				pla
+   241 07F7 40				rti
+   242 				.endp
+   243
+   244 				;==============================================================================
+   245 07F8			.proc SIOOutputCompleteHandler
+   246 					;check that we've sent the checksum
+   247 07F8 A5 3B			lda		chksnt
+   248 07FA F0 0B			beq		xit
+   249 					
+   250 					;we're done sending the checksum
+   251 07FC 85 3A			sta		xmtdon
+   252 					
+   253 					;need to shut off this interrupt as it is not latched
+   254 07FE A5 10			lda		pokmsk
+   255 0800 29 F7			and		#$f7
+   256 0802 85 10			sta		pokmsk
+   257 0804 8D 0E D2			sta		irqen
+   258
+   259 0807			xit:
+   260 0807 68				pla
+   261 0808 40				rti
+   262 				.endp
+   263
+   264 				;==========================================================================
+   265 0809			.proc DOSInit
+   266 0809 A2 00				ldx		#0
+   267 080B			search_loop:
+   268 080B BD 1A 03				lda		hatabs,x
+   269 080E F0 08				beq		found_slot
+   270 0810 E8					inx
+   271 0811 E8					inx
+   272 0812 E8					inx
+   273 0813 E0 21				cpx		#33
+   274 0815 D0 F4				bne		search_loop
+   275 0817 60					rts
+   276 						
+   277 0818			found_slot:
+   278 0818 A9 44 9D 1A 03			mva		#'D' hatabs,x
+   279 081D A9 C3 9D 1B 03 A9 + 		mwa		#DOSHandlerTable hatabs+1,x
+   280 						
+   281 						;set MEMLO
+   282 0827 AE 09 07				ldx		bcb_maxfiles
+   283 082A E8					inx
+   284 082B 8A					txa
+   285 082C 0A					asl
+   286 082D A8					tay
+   287 082E A9 00				lda		#0
+   288 0830 6A					ror
+   289 0831 69 3E				adc		#<dos_sectorbuffers
+   290 0833 8D E7 02				sta		memlo
+   291 0836 98					tya
+   292 0837 69 0C				adc		#>dos_sectorbuffers
+   293 0839 8D E8 02				sta		memlo+1
+   294 						
+   295 						;attempt to load AUTORUN.SYS with IOCB #1
+   296 083C A9 03 8D 52 03			mva		#CIOCmdOpen iccmd+$10
+   297 0841 A9 71 8D 54 03 A9 + 		mwa		#autorunsys_fname icbal+$10
+   298 084B A9 04 8D 5A 03			mva		#$04 icax1+$10
+   299 0850 A2 10				ldx		#$10
+   300 0852 20 56 E4				jsr		ciov
+   301 0855 30 0B				bmi		load_failed
+   302 						
+   303 						;load the executable
+   304 0857 20 7F 08				jsr		DOSLoadExecutable
+   305 085A B0 06				bcs		load_failed
+   306 						
+   307 085C 20 67 08				jsr		close_iocb
+   308 085F 6C E0 02				jmp		(runad)
+   309 						
+   310 0862			load_failed:
+   311 						;close IOCB #1
+   312 0862 20 67 08				jsr		close_iocb
+   313 						
+   314 						
+   315 0865 18					clc
+   316 0866 60					rts
+   317 						
+   318 0867			close_iocb:
+   319 0867 A9 0C 8D 52 03			mva		#CIOCmdClose iccmd+$10
+   320 086C A2 10				ldx		#$10
+   321 086E 4C 56 E4				jmp		ciov
+   322 						
+   323 0871			autorunsys_fname:
+   324 0871 44 3A 41 55 54 4F + 		dta		'D:AUTORUN.SYS',$9b
+   325 				.endp
+   326
+   327 				;==========================================================================
+   328 087F			.proc DOSLoadExecutable
+   329 087F A9 02 8D E0 02 A9 + 		mwa		#default_run runad
+   330 0889			segment_loop:
+   331 0889 A9 02 8D E2 02 A9 + 		mwa		#default_run initad
+   332 						
+   333 0893 A9 BF 8D 54 03 A9 + 		mwa		#dos_segadrs icbal+$10
+   334 089D A9 02 8D 58 03 A9 + 		mwa		#2 icbll+$10
+   335 08A7 A9 07 8D 52 03			mva		#CIOCmdGetChars iccmd+$10
+   336 08AC 20 56 E4				jsr		ciov
+   337 08AF 10 06				bpl		startaddr_ok
+   338 08B1 C0 88				cpy		#CIOStatEndOfFile
+   339 08B3 D0 4D				bne		load_error
+   340 08B5 18					clc
+   341 08B6 60					rts
+   342
+   343 08B7			startaddr_ok:
+   344 						;check for $FFFF marker
+   345 08B7 AD BF 09				lda		dos_segadrs
+   346 08BA 2D C0 09				and		dos_segadrs+1
+   347 08BD C9 FF				cmp		#$ff
+   348 08BF F0 C8				beq		segment_loop
+   349
+   350 08C1 A9 C1 8D 54 03 A9 + 		mwa		#dos_segadrs+2 icbal+$10
+   351 08CB 20 56 E4				jsr		ciov
+   352 08CE 30 32				bmi		load_error
+   353 						
+   354 08D0 38 AD C1 09 ED BF + 		sbw		dos_segadrs+2 dos_segadrs icbll+$10
+   355 08E3 EE 58 03 D0 03 EE + 		inw		icbll+$10
+   356 08EB AD BF 09 8D 54 03 + 		mwa		dos_segadrs icbal+$10
+   357 08F7 20 56 E4				jsr		ciov
+   358 08FA 30 06				bmi		load_error
+   359 						
+   360 08FC 20 04 09				jsr		do_init
+   361 08FF 4C 89 08				jmp		segment_loop
+   362 						
+   363 0902			default_run:
+   364 0902			load_error:
+   365 0902 38					sec
+   366 0903 60					rts
+   367 						
+   368 0904			do_init:
+   369 0904 6C E2 02				jmp		(initad)
+   370 				.endp
+   371
+   372 				;==========================================================================
+   373 				.struct FCB
+   374 = 0000			secbuf	.byte
+   375 = 0001			offset	.byte
+   376 = 0002			sector	.word
+   377 = 0004			pad1	.dword
+   378 = 0008			pad2	.dword
+   379 = 000C			pad3	.dword
+   380 				.ends
+   381
+   382 				;==========================================================================
+   383 0907 FF 00 00 00 00 00 + dos_fcb_table dta FCB [8] (255,0,0,0,0,0)
+   384
+   385 0997			dos_secbuf_seclo:
+   386 0997 00 00 00 00 00 00 + 		:8 dta 0
+   387
+   388 099F			dos_secbuf_sechi:
+   389 099F 00 00 00 00 00 00 + 		:8 dta 0
+   390 						
+   391 09A7			dos_secbuf_fcbidx:
+   392 09A7 FF FF FF FF FF FF + 		:8 dta $ff
+   393 						
+   394 09AF			dos_filename:
+   395 09AF 00 00 00 00 00 00 + 		:11 dta 0
+   396 						
+   397 09BA 00			dos_iocb	dta		0
+   398 09BB 00			dos_dsidx	dta		0			;dirent scan: directory sector index
+   399 09BC 00			dos_secbidx	dta		0
+   400 09BD 00			dos_seclo	dta		0
+   401 09BE 00			dos_sechi	dta		0
+   402 09BF 00 00 00 00		dos_segadrs	dta		a(0), a(0)
+   403
+   404 				;==========================================================================
+   405 09C3			.proc DOSHandlerTable
+   406 09C3 CE 09				dta		a(DOSOpen-1)
+   407 09C5 BC 0A				dta		a(DOSClose-1)
+   408 09C7 CF 0A				dta		a(DOSGetByte-1)
+   409 09C9 83 0B				dta		a(DOSPutByte-1)
+   410 09CB 8D 0B				dta		a(DOSGetStatus-1)
+   411 09CD 9A 0B				dta		a(DOSSpecial-1)
+   412 				.endp
+   413
+   414 				;==========================================================================
+   415 09CF			.proc DOSOpen
+   416 						;check if FCB is already open
+   417 09CF AD 07 09				lda		dos_fcb_table[0].secbuf
+   418 09D2 30 09				bmi		fcb_closed
+   419 09D4 A0 81				ldy		#CIOStatIOCBInUse
+   420 09D6 60					rts
+   421
+   422 09D7			too_many_open:
+   423 09D7 A0 A1				ldy		#CIOStatTooManyFiles
+   424 09D9 60					rts
+   425
+   426 09DA			fnerr:
+   427 09DA A0 A5				ldy		#CIOStatFileNameErr
+   428 09DC 60					rts
+   429
+   430 09DD			fcb_closed:
+   431 						;try to find an available sector buffer
+   432 09DD 20 98 0A				jsr		DOSFindOpenBuffer
+   433 09E0 F0 F5				beq		too_many_open
+   434
+   435 09E2 A0 00				ldy		#0
+   436 09E4 B1 24				lda		(icbalz),y
+   437 09E6 C9 44				cmp		#'D'
+   438 09E8 F0 02				beq		drvlet_ok
+   439 09EA A0 82				ldy		#CIOStatUnkDevice
+   440 09EC			drvlet_ok:
+   441 09EC C8					iny
+   442 						
+   443 						;validate optional digit
+   444 09ED B1 24				lda		(icbalz),y
+   445 09EF C9 31				cmp		#'1'
+   446 09F1 90 07				bcc		not_digit
+   447 09F3 C9 3A				cmp		#'9'+1
+   448 09F5 B0 03				bcs		not_digit
+   449 09F7 C8					iny
+   450 09F8 B1 24				lda		(icbalz),y
+   451 09FA			not_digit:
+   452
+   453 						;validate colon
+   454 09FA C9 3A				cmp		#':'
+   455 09FC D0 DC				bne		fnerr
+   456 09FE C8					iny
+   457 						
+   458 						;parse filename
+   459 09FF 8E BA 09				stx		dos_iocb
+   460 0A02 A2 00				ldx		#0
+   461
+   462 0A04 B1 24				lda		(icbalz),y
+   463 0A06 C9 2A				cmp		#'*'
+   464 0A08 D0 04				bne		filename_notstar
+   465 0A0A			filename_starfill:
+   466 0A0A A9 3F				lda		#'?'
+   467 0A0C D0 1E				bne		filename_fill_loop
+   468 0A0E			filename_notstar:
+   469 0A0E 20 AF 0A				jsr		DOSIsupperWild
+   470 0A11			filename_1stok:
+   471 0A11 9D AF 09				sta		dos_filename,x
+   472 0A14 E8					inx
+   473 0A15 C8					iny
+   474 						
+   475 0A16			filename_loop:
+   476 0A16 B1 24				lda		(icbalz),y
+   477 0A18 C9 2A				cmp		#'*'
+   478 0A1A F0 EE				beq		filename_starfill
+   479 0A1C 20 A5 0A				jsr		DOSIsalnumWild
+   480 0A1F B0 09				bcs		filename_done
+   481 0A21 9D AF 09				sta		dos_filename,x
+   482 0A24 C8					iny
+   483 0A25 E8					inx
+   484 0A26 E0 08				cpx		#8
+   485 0A28 D0 EC				bne		filename_loop
+   486 						
+   487 0A2A			filename_done:
+   488 						;pad filename to spaces
+   489 0A2A A9 20				lda		#' '
+   490 0A2C			filename_fill_loop:
+   491 0A2C E0 08				cpx		#8
+   492 0A2E F0 06				beq		filename_full
+   493 0A30 9D AF 09				sta		dos_filename,x
+   494 0A33 E8					inx
+   495 0A34 D0 F6				bne		filename_fill_loop
+   496 0A36			filename_full:
+   497
+   498 0A36 B1 24				lda		(icbalz),y
+   499 0A38 C9 2E				cmp		#'.'
+   500 0A3A D0 19				bne		ext_done
+   501 0A3C C8					iny
+   502
+   503 						;parse extension
+   504 0A3D			ext_loop:
+   505 0A3D B1 24				lda		(icbalz),y
+   506 0A3F C9 2A				cmp		#'*'
+   507 0A41 D0 04				bne		ext_notstar
+   508 0A43 A9 3F				lda		#'?'
+   509 0A45 D0 10				bne		ext_fill_loop
+   510 0A47			ext_notstar:
+   511 0A47 20 A5 0A				jsr		DOSIsalnumWild
+   512 0A4A B0 09				bcs		ext_done
+   513 0A4C 9D AF 09				sta		dos_filename,x
+   514 0A4F C8					iny
+   515 0A50 E8					inx
+   516 0A51 E0 0B				cpx		#11
+   517 0A53 D0 E8				bne		ext_loop
+   518 						
+   519 0A55			ext_done:
+   520 						;pad filename to spaces
+   521 0A55 A9 20				lda		#' '
+   522 0A57			ext_fill_loop:
+   523 0A57 E0 0B				cpx		#11
+   524 0A59 F0 06				beq		ext_full
+   525 0A5B 9D AF 09				sta		dos_filename,x
+   526 0A5E E8					inx
+   527 0A5F D0 F6				bne		ext_fill_loop
+   528 0A61			ext_full:
+   529
+   530 						;search directory
+   531 0A61 20 9C 0B				jsr		DOSSearchFilename
+   532 0A64 10 01				bpl		found
+   533 0A66 60					rts
+   534 						
+   535 0A67			found:
+   536 						;restore IOCB#
+   537 0A67 AE BA 09				ldx		dos_iocb
+   538 						
+   539 						;set up FCB
+   540 0A6A 18					clc
+   541 0A6B 69 03				adc		#3
+   542 0A6D A8					tay
+   543 0A6E B1 47				lda		(zsba),y
+   544 0A70 9D 09 09				sta		dos_fcb_table[0].sector,x
+   545 0A73 C8					iny
+   546 0A74 B1 47				lda		(zsba),y
+   547 0A76 9D 0A 09				sta		dos_fcb_table[0].sector+1,x
+   548 						
+   549 0A79 A9 00				lda		#0
+   550 0A7B 9D 08 09				sta		dos_fcb_table[0].offset,x
+   551
+   552 						;find open sector buffer (we confirmed there was one earlier)
+   553 0A7E 20 98 0A				jsr		DOSFindOpenBuffer
+   554 0A81 9D 07 09				sta		dos_fcb_table[0].secbuf,x
+   555 0A84 8A					txa
+   556 0A85 99 A7 09				sta		dos_secbuf_fcbidx,y
+   557 						
+   558 						;read first sector
+   559 0A88 BC 0A 09				ldy		dos_fcb_table[0].sector+1,x
+   560 0A8B BD 09 09				lda		dos_fcb_table[0].sector,x
+   561 0A8E 48					pha
+   562 0A8F BD 07 09				lda		dos_fcb_table[0].secbuf,x
+   563 0A92 AA					tax
+   564 0A93 68					pla
+   565 0A94 20 E3 0B				jsr		DOSReadSector
+   566
+   567 0A97 60					rts
+   568 				.endp
+   569
+   570 				;==========================================================================
+   571 0A98			.proc DOSFindOpenBuffer
+   572 0A98 AC 09 07				ldy		bcb_maxfiles
+   573 0A9B			search_loop:
+   574 0A9B B9 A7 09				lda		dos_secbuf_fcbidx,y
+   575 0A9E 30 03				bmi		found_unused
+   576 0AA0 88					dey
+   577 0AA1 D0 F8				bne		search_loop
+   578 0AA3			found_unused:
+   579 0AA3 98					tya
+   580 0AA4 60					rts
+   581 				.endp
+   582
+   583 				;==========================================================================
+   584 				; Result:
+   585 				;	C=0		Alphanumeric or ?
+   586 				;	C=1		Not alphanumeric or ?
+   587 				;
+   588 = 0AAF			DOSIsupperWild = DOSIsalnumWild.isupperwild_entry
+   589 0AA5			.proc DOSIsalnumWild
+   590 0AA5 C9 30				cmp		#'0'
+   591 0AA7 90 04				bcc		not_digit
+   592 0AA9 C9 3A				cmp		#'9'+1
+   593 0AAB 90 0F				bcc		done
+   594 0AAD			not_digit:
+   595 0AAD 29 DF				and		#$df
+   596 0AAF			isupperwild_entry:
+   597 0AAF C9 41				cmp		#'A'
+   598 0AB1 90 08				bcc		fail
+   599 0AB3 C9 5B				cmp		#'Z'+1
+   600 0AB5 90 05				bcc		done
+   601 0AB7 C9 3F				cmp		#'?'
+   602 0AB9 F0 01				beq		done
+   603 0ABB			fail:
+   604 0ABB 38					sec
+   605 0ABC			done:
+   606 0ABC 60					rts
+   607 				.endp
+   608
+   609 				;==========================================================================
+   610 0ABD			.proc DOSClose
+   611 0ABD A0 85				ldy		#CIOStatNotOpen
+   612 0ABF BD 07 09				lda		dos_fcb_table[0].secbuf,x
+   613 0AC2 30 09				bmi		done
+   614 0AC4 A8					tay
+   615 0AC5 A9 FF				lda		#$ff
+   616 0AC7 99 A7 09				sta		dos_secbuf_fcbidx,y
+   617 0ACA 9D 07 09				sta		dos_fcb_table[0].secbuf,x
+   618 0ACD			done:
+   619 0ACD A0 01				ldy		#1
+   620 0ACF 60					rts
+   621 				.endp
+   622
+   623 				;==========================================================================
+   624 0AD0			.proc DOSGetByte
+   625 						;check if the FCB is open
+   626 0AD0 A0 85				ldy		#CIOStatNotOpen
+   627 0AD2 BD 07 09				lda		dos_fcb_table[0].secbuf,x
+   628 0AD5 10 01				bpl		is_open
+   629 0AD7 60					rts
+   630 0AD8			is_open:
+   631 						;stash IOCB#
+   632 0AD8 8E BA 09				stx		dos_iocb
+   633 						
+   634 						;set sector pointer
+   635 0ADB BD 07 09				lda		dos_fcb_table[0].secbuf,x
+   636 0ADE AA					tax
+   637 0ADF 20 2E 0C				jsr		DOSSetSectorPointer
+   638 						
+   639 						;get byte offset
+   640 0AE2 AE BA 09				ldx		dos_iocb
+   641 0AE5 BD 08 09				lda		dos_fcb_table[0].offset,x
+   642 						
+   643 						;check if we're at the end of the data area
+   644 0AE8 A0 7F				ldy		#127
+   645 0AEA D1 47				cmp		(zsba),y
+   646 0AEC D0 34				bne		still_bytes
+   647 						
+   648 						;yes -- read next sector
+   649 0AEE A8					tay
+   650 0AEF B1 47				lda		(zsba),y
+   651 0AF1 29 03				and		#3
+   652 0AF3 8D BE 09				sta		dos_sechi
+   653 0AF6 C8					iny
+   654 0AF7 B1 47				lda		(zsba),y
+   655 0AF9 8D BD 09				sta		dos_seclo
+   656 0AFC D0 08				bne		nextsec_valid
+   657 0AFE AC BE 09				ldy		dos_sechi
+   658 0B01 D0 03				bne		nextsec_valid
+   659 						
+   660 						;huh... we're at EOF.
+   661 0B03 A0 88				ldy		#CIOStatEndOfFile
+   662 0B05 60					rts
+   663 						
+   664 0B06			nextsec_valid:
+   665 0B06 BD 07 09				lda		dos_fcb_table[0].secbuf,x
+   666 0B09 AA					tax
+   667 0B0A 20 E9 0B				jsr		DOSReadSectorByVar
+   668 						
+   669 						;stash new sector number
+   670 0B0D AE BA 09				ldx		dos_iocb
+   671 0B10 AD BD 09 8D 09 09 + 		mwa		dos_seclo dos_fcb_table[0].sector
+   672 						
+   673 						;reset offset
+   674 0B1C A9 00				lda		#0
+   675 0B1E 8D 08 09				sta		dos_fcb_table[0].offset
+   676 0B21 A8					tay
+   677 						
+   678 0B22			still_bytes:
+   679 						;check if we can burst (retaddr >= $c000, cmd=get byte)
+   680 0B22 BA					tsx
+   681 0B23 BC 02 01				ldy		$0102,x
+   682 0B26 C0 C0				cpy		#$c0
+   683 0B28 90 34				bcc		no_burst
+   684 0B2A A4 22				ldy		iccomz
+   685 0B2C C0 07				cpy		#CIOCmdGetChars
+   686 0B2E D0 2E				bne		no_burst
+   687 						
+   688 0B30 48					pha
+   689 0B31 A0 7F				ldy		#127
+   690 0B33 B1 47				lda		(zsba),y
+   691 0B35 85 43				sta		zbufp
+   692 0B37 C6 43				dec		zbufp
+   693 0B39 68					pla
+   694 0B3A A8					tay
+   695 0B3B A2 00				ldx		#0
+   696 0B3D F0 1A				beq		burst_loop_start
+   697
+   698 0B3F			burst_loop:
+   699 0B3F A5 28				lda		icbllz
+   700 0B41 4A					lsr
+   701 0B42 05 29				ora		icblhz
+   702 0B44 F0 19				beq		burst_exit
+   703 						
+   704 0B46 B1 47				lda		(zsba),y
+   705 0B48 81 24				sta		(icbalz,x)
+   706 0B4A E6 24 D0 02 E6 25			inw		icbalz
+   707 0B50 A5 28 D0 02 C6 29 + 		dew		icbllz
+   708 0B58 C8					iny
+   709 0B59			burst_loop_start:
+   710 0B59 C4 43				cpy		zbufp
+   711 0B5B D0 E2				bne		burst_loop
+   712 0B5D 98					tya
+   713 						
+   714 0B5E			no_burst:
+   715 0B5E A8					tay
+   716 0B5F			burst_exit:
+   717 0B5F B1 47				lda		(zsba),y
+   718 0B61 48					pha
+   719 0B62 C8					iny
+   720 0B63 AE BA 09				ldx		dos_iocb
+   721 0B66 98					tya
+   722 0B67 9D 08 09				sta		dos_fcb_table[0].offset,x
+   723 0B6A 98					tya
+   724 0B6B A0 7F				ldy		#127
+   725 0B6D D1 47				cmp		(zsba),y
+   726 0B6F D0 0F				bne		not_at_eof
+   727 						
+   728 0B71			at_eof:
+   729 						;check if sector link is zero
+   730 0B71 A0 7D				ldy		#125
+   731 0B73 B1 47				lda		(zsba),y
+   732 0B75 29 03				and		#3
+   733 0B77 C8					iny
+   734 0B78 11 47				ora		(zsba),y
+   735 0B7A D0 04				bne		not_at_eof
+   736 						
+   737 						;return EOF imminent
+   738 0B7C 68					pla
+   739 0B7D A0 03				ldy		#3
+   740 0B7F 60					rts
+   741 						
+   742 0B80			not_at_eof:
+   743 0B80 68					pla
+   744 0B81 A0 01				ldy		#1
+   745 0B83 60					rts
+   746 				.endp
+   747
+   748 				;==========================================================================
+   749 0B84			.proc DOSPutByte
+   750 0B84 A0 85				ldy		#CIOStatNotOpen
+   751 0B86 BD 07 09				lda		dos_fcb_table[0].secbuf,x
+   752 0B89 30 02				bmi		not_open
+   753 0B8B A0 87				ldy		#CIOStatReadOnly
+   754 0B8D			not_open:
+   755 0B8D 60					rts
+   756 				.endp
+   757
+   758 				;==========================================================================
+   759 0B8E			.proc DOSGetStatus
+   760 0B8E A0 85				ldy		#CIOStatNotOpen
+   761 0B90 BD 07 09				lda		dos_fcb_table[0].secbuf,x
+   762 0B93 30 03				bmi		not_open
+   763 0B95 A0 01				ldy		#1
+   764 0B97 60					rts
+   765 0B98			not_open:
+   766 0B98 A4 49				ldy		errno
+   767 0B9A 60					rts
+   768 				.endp
+   769
+   770 				;==========================================================================
+   771 0B9B			.proc DOSSpecial
+   772 0B9B 60					rts
+   773 				.endp
+   774
+   775 				;==========================================================================
+   776 				; Search for a filename.
+   777 				;
+   778 				; Entry:
+   779 				;	dos_filename	Filename pattern to search for
+   780 				;
+   781 				; Exit:
+   782 				;	Y		CIO status
+   783 				;	A		Base index of directory entry
+   784 				;	ZSBA	Directory sector
+   785 				;
+   786 0B9C			.proc DOSSearchFilename
+   787 						;start with sector 361
+   788 0B9C A9 69				lda		#<361
+   789 0B9E 8D BB 09				sta		dos_dsidx
+   790 						
+   791 0BA1			dirsec_loop:
+   792 0BA1 A2 00				ldx		#0
+   793 0BA3 A0 01				ldy		#>361
+   794 0BA5 AD BB 09				lda		dos_dsidx
+   795 0BA8 20 E3 0B				jsr		DOSReadSector
+   796 						
+   797 						;check if this is the end of the directory
+   798 0BAB A0 00				ldy		#0
+   799 0BAD B1 47				lda		(zsba),y
+   800 0BAF F0 2F				beq		terminate_search
+   801 						
+   802 						;check if entry is deleted
+   803 0BB1 30 1A				bmi		no_match
+   804 						
+   805 						;check each filename for a match
+   806 0BB3 A0 05				ldy		#5
+   807 0BB5			dirent_loop:
+   808 0BB5 A2 F5				ldx		#$f5
+   809 0BB7			fntest_loop:
+   810 0BB7 BD BA 08				lda		dos_filename-$f5,x
+   811 0BBA C9 3F				cmp		#'?'
+   812 0BBC D0 00				bne		skip_wild
+   813 0BBE			skip_wild:
+   814 0BBE D1 47				cmp		(zsba),y
+   815 0BC0 D0 0B				bne		no_match
+   816 0BC2 C8					iny
+   817 0BC3 E8					inx
+   818 0BC4 D0 F1				bne		fntest_loop
+   819 						
+   820 0BC6 98					tya
+   821 0BC7 38					sec
+   822 0BC8 E9 10				sbc		#$10
+   823 0BCA A0 01				ldy		#1
+   824 0BCC 60					rts
+   825 						
+   826 0BCD			no_match:
+   827 0BCD 98					tya
+   828 0BCE 29 F0				and		#$f0
+   829 0BD0 18					clc
+   830 0BD1 69 15				adc		#16+5
+   831 0BD3 A8					tay
+   832 0BD4 10 DF				bpl		dirent_loop
+   833 						
+   834 						;next directory sector
+   835 0BD6 EE BB 09				inc		dos_dsidx
+   836 0BD9 AD BB 09				lda		dos_dsidx
+   837 0BDC C9 71				cmp		#<369
+   838 0BDE D0 C1				bne		dirsec_loop
+   839 						
+   840 0BE0			terminate_search:
+   841 						;not found
+   842 0BE0 A0 AA				ldy		#CIOStatFileNotFound
+   843 0BE2 60					rts
+   844 				.endp
+   845
+   846 				;==========================================================================
+   847 				; Entry:
+   848 				;	Y:A		Sector number
+   849 				;	X		Sector buffer index
+   850 				;
+   851 = 0BE9			DOSReadSectorByVar = DOSReadSector.by_var
+   852 0BE3			.proc DOSReadSector
+   853 0BE3 8D BD 09				sta		dos_seclo
+   854 0BE6 8C BE 09				sty		dos_sechi
+   855 0BE9			by_var:
+   856 0BE9 20 2E 0C				jsr		DOSSetSectorPointer
+   857
+   858 0BEC DD 97 09				cmp		dos_secbuf_seclo,x
+   859 0BEF D0 09				bne		wrong_sector
+   860 0BF1 98					tya
+   861 0BF2 DD 9F 09				cmp		dos_secbuf_sechi,x
+   862 0BF5 D0 03				bne		wrong_sector
+   863 						
+   864 						;we already have this sector
+   865 0BF7 A0 01				ldy		#1
+   866 0BF9 60					rts
+   867
+   868 0BFA			wrong_sector:
+   869 						;stash the sector buffer index
+   870 0BFA 8E BC 09				stx		dos_secbidx
+   871 						
+   872 						;issue a disk sector read
+   873 0BFD AD BD 09 8D 0A 03 + 		mwa		dos_seclo daux1
+   874 0C09 A5 47 8D 04 03 A5 + 		mwa		zsba dbuflo
+   875 0C13 A9 52 8D 02 03			mva		#'R' dcomnd
+   876 0C18 20 53 E4				jsr		dskinv
+   877 0C1B 30 10				bmi		error
+   878 						
+   879 						;update the cached sector index
+   880 0C1D AE BC 09				ldx		dos_secbidx
+   881 0C20 AD BD 09 9D 97 09			mva		dos_seclo dos_secbuf_seclo,x
+   882 0C26 AD BE 09 9D 9F 09			mva		dos_sechi dos_secbuf_sechi,x
+   883 						
+   884 						;all done
+   885 0C2C 98					tya
+   886 0C2D			error:
+   887 0C2D 60					rts
+   888 				.endp
+   889
+   890 				;==========================================================================
+   891 				; Set ZSBA to sector buffer.
+   892 				;
+   893 				; Entry:
+   894 				;	
+   895 				;
+   896 0C2E			.proc DOSSetSectorPointer
+   897 0C2E 8A					txa
+   898 0C2F 4A					lsr
+   899 0C30 A8					tay
+   900 0C31 A9 00				lda		#0
+   901 0C33 6A					ror
+   902 0C34 69 3E				adc		#<dos_sectorbuffers
+   903 0C36 85 47				sta		zsba
+   904 0C38 98					tya
+   905 0C39 69 0C				adc		#>dos_sectorbuffers
+   906 0C3B 85 48				sta		zsba+1
+   907 0C3D 60					rts
+   908 				.endp
+   909
+   910 				;==========================================================================
+   911
+   912 0C3E			dos_sectorbuffers:
+   913
+   914 				;==========================================================================
+   915
+   916
+   917 						end

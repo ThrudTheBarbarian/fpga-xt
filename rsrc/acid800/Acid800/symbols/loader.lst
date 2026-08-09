@@ -1,0 +1,120 @@
+mads 2.1.0 build 8 (23 Dec 19)
+Source: loader.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 						opt		h-o-
+    23 						org		$0080
+    24
+    25 = 02E5			memtop	equ	$02e5
+    26 = D400			dmactl	equ	$d400
+    27 = D402			dlistl	equ	$d402
+    28 = D40A			wsync	equ	$d40a
+    29 = D40B			vcount	equ	$d40b
+    30 = D40E			nmien	equ	$d40e
+    31 						
+    32 				a0		dta		a(0)
+    33 				a1		dta		a(0)
+    34 				a2		dta		a(0)
+    35 				a3		dta		a(0)
+    36
+    37 = 02E0			runad	equ	$02e0
+    38 = 02E2			initad	equ	$02e2
+    39
+    40 						opt		o+
+    41 						org		$0700
+    42 						
+    43 				base:
+    44 0700 00					dta		0			;flags
+    45 0701 13					dta		[testtable - base + $7f] / $80 + 2
+    46 0702 00 07				dta		a($0700)
+    47 0704 08 07				dta		a(main)
+    48 0706 18					clc
+    49 0707 60					rts
+    50
+    51 0708			main:
+    52 						;move test table up to $1900
+    53 0708 A2 00				ldx		#0
+    54 070A			copyloop:
+    55 070A BD 80 0F				lda		testtable,x
+    56 070D 9D 00 19				sta		$1900,x
+    57 0710 E8					inx
+    58 0711 D0 F7				bne		copyloop
+    59
+    60 						;begin relocation
+    61 0713 A9 27 8D E0 02 A9 + 		mwa		#relocloop runad
+    62 071D A9 8D 85 80 A9 07 + 		mwa		#relocdata a0
+    63 0725 A0 00				ldy		#0
+    64 0727			relocloop:
+    65 						;load starting address
+    66 0727 B1 80 85 82				mva		(a0),y a1
+    67 072B E6 80 D0 02 E6 81			inw		a0
+    68 0731 B1 80 85 83				mva		(a0),y a1+1
+    69 0735 E6 80 D0 02 E6 81			inw		a0
+    70 						
+    71 						;skip $ffff words
+    72 073B A5 82				lda		a1
+    73 073D 25 83				and		a1+1
+    74 073F C9 FF				cmp		#$ff
+    75 0741 F0 E4				beq		relocloop
+    76 						
+    77 						;load ending address
+    78 0743 B1 80 85 84				mva		(a0),y a2
+    79 0747 E6 80 D0 02 E6 81			inw		a0
+    80 074D B1 80 85 85				mva		(a0),y a2+1
+    81 0751 E6 80 D0 02 E6 81			inw		a0
+    82 						
+    83 0757 E6 84 D0 02 E6 85			inw		a2
+    84 						
+    85 075D A9 8C 8D E2 02 A9 + 		mwa		#definit initad
+    86 								
+    87 						;copy data (slow, but oh well)
+    88 0767			copyloop2:
+    89 0767 B1 80				lda		(a0),y
+    90 0769 91 82				sta		(a1),y
+    91 076B E6 80 D0 02 E6 81			inw		a0
+    92 0771 E6 82 D0 02 E6 83			inw		a1
+    93 0777 A5 82				lda		a1
+    94 0779 C5 84				cmp		a2
+    95 077B D0 EA				bne		copyloop2
+    96 077D A5 83				lda		a1+1
+    97 077F C5 85				cmp		a2+1
+    98 0781 D0 E4				bne		copyloop2
+    99 						
+   100 						;init a segment
+   101 0783 20 89 07				jsr		doinit
+   102 0786 6C E0 02				jmp		(runad)
+   103
+   104 0789			doinit:
+   105 0789 6C E2 02				jmp		(initad)
+   106 						
+   107 078C			definit:
+   108 078C 60					rts
+   109
+   110 				;==========================================================================
+   111
+   112 078D			relocdata:
+   113 078D FF FF 00 1A 06 1A + 		ins		'menu.obx'
+   114 						
+   115 0F4E 00 00 00 00 00 00 + 		:((0-*)&$7f) dta 0
+   116 0F80			testtable:
+   117
+   118 						end

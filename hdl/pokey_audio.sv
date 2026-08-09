@@ -362,11 +362,14 @@ module pokey_audio #(
     logic [7:0]  audf2_q;
     wire         audf2_wr = (audf2 != audf2_q);
     wire [15:0]  audf16   = {audf2, audf1};
-    wire [15:0]  hi_per   = audf16 + (audctl[6] ? 16'(LINK_FAST) : 16'd1);
-
     localparam int LO_LATCH_LAG = 6;
     localparam int LINK_FAST    = 7;
     localparam int TWOTONE_EX   = 2;
+    // The linked pair is ONE machine (a shared cascade + its own dividers),
+    // so its config wire lives here, above every consumer -- iverilog cannot
+    // bind a later declaration.
+    wire ch12_paired = audctl[4];
+    wire [15:0]  hi_per   = audf16 + (audctl[6] ? 16'(LINK_FAST) : 16'd1);
     logic [8:0] lo_cnt;
     logic [7:0] lo_age;
     logic       lo_first;
@@ -458,7 +461,7 @@ module pokey_audio #(
     // simultaneously when the high counter underflows. Combined
     // period = (AUDF_low + 256·AUDF_high + 1) tick units in ref-clock
     // mode (Altirra §5.3 "Linked timers").
-    wire ch12_paired = audctl[4];
+    // (ch12_paired declared up with the pair constants.)
 
     // A LINKED PAIR'S INTERRUPT EDGE LAGS ITS SERIAL-CLOCK EDGE by three
     // machine cycles.  emu carries this as PAIR_IRQ_LAG, measured rather than

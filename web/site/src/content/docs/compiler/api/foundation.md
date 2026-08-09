@@ -217,7 +217,7 @@ String* back  = String.join(fields, String.withCString("-"));  // "a-b--c"
 |---|---|
 | **Build** | `String.withCString(p)`, `withString(s)`, `withBytes(p, n)` |
 | **Numbers** | `String.withI32(v)`, `withU32(v)`, `withI16(v)`, `withU16(v)`, `withFloat(v)` |
-| **Read** | `length()`, `isEmpty()`, `charAt(i)`, `cString()` |
+| **Read** | `length()`, `isEmpty()`, `charAt(i)`, `cString()`, `copyCString()` |
 | **Search** | `indexOf(needle)`, `indexOfChar(c)`, `lastIndexOfChar(c)`, `contains(s)`, `hasPrefix(s)`, `hasSuffix(s)` |
 | **Slice** | `substring(from, len)`, `substringFrom(from)`, `substringTo(to)` |
 | **Mutate** | `append(s)`, `appendChar(c)`, `appendCString(p)` — and `appending(s)`, which returns a new String instead |
@@ -233,6 +233,15 @@ is three fields. That is what a CSV needs; filter the empties out if you want to
 
 Ordering is lexicographic by unsigned byte, then by length — so a prefix sorts before its
 extension (`"go"` before `"gone"`).
+
+**`cString()` is a borrow.** It returns a pointer into the String's own buffer, and any
+mutation that grows the String — `append`, `appendChar`, `appendCString`, `appendFormat`,
+`insert` — may reallocate that buffer and free the old one. The pointer is valid until the
+String is next grown; after that it dangles, and it *usually still appears to work*, which
+is exactly the failure that survives testing. A `string` is not a class pointer, so holding
+one neither retains the String nor stops it growing. If the bytes must outlive the next
+mutation, take a copy: `copyCString()` returns a fresh heap copy that the caller owns (and
+frees with `delete`).
 
 ## `Data`
 

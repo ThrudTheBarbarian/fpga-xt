@@ -49,7 +49,8 @@ HDL_SRCS := \
     $(HDL_DIR)/pokey_pot.sv       \
     $(HDL_DIR)/pokey_serial.sv    \
     $(HDL_DIR)/pokey_i2s_tx.sv    \
-    $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv           \
+    $(HDL_DIR)/pokey.sv           \
+    $(HDL_DIR)/pokey_serial.sv    \
     $(HDL_DIR)/sally_clock.sv     \
     $(HDL_DIR)/bank_xlat.sv       \
     $(HDL_DIR)/sally_mem.sv       \
@@ -500,7 +501,8 @@ BOOT_ANTIC_HDL := \
     $(HDL_DIR)/pokey_audio.sv     \
     $(HDL_DIR)/pokey_pot.sv       \
     $(HDL_DIR)/pokey_i2s_tx.sv    \
-    $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv           \
+    $(HDL_DIR)/pokey.sv           \
+    $(HDL_DIR)/pokey_serial.sv    \
     $(HDL_DIR)/pcm1808_rx.sv      \
     $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_seq.sv       \

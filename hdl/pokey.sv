@@ -108,6 +108,14 @@ module pokey #(
     wire stimer_pulse_w;
     wire timer2_ser_pulse_w;
 
+    // Serial-shifter wires, declared before the u_regs/u_audio instances that
+    // consume them (iverilog cannot bind a port to a later declaration).  The
+    // shifter itself (u_serial) and the story behind the _eff composition live
+    // further down.
+    wire ser_out_ready_int, ser_out_complete_int, ser_out_bit_w;
+    wire ser_out_complete_eff = ser_out_complete    & ser_out_complete_int;
+    wire ser_out_ready_eff    = ser_out_ready_pulse | ser_out_ready_int;
+
     pokey_regs u_regs (
         .clk                  (clk),
         .phi2_tick            (phi2_tick),
@@ -202,8 +210,6 @@ module pokey #(
     // The external ports stay, because a real SIO can still drive them: idle is
     // the AND (the line is only free if both agree it is) and the ready pulse is
     // the OR.  With a8_core's tie-offs that leaves the shifter in charge.
-    wire ser_out_ready_int, ser_out_complete_int, ser_out_bit_w;
-
     pokey_serial u_serial (
         .clk(clk), .rst(rst),
         .skctl(skctl_out),
@@ -220,8 +226,7 @@ module pokey #(
         .dbg_bitcnt(), .dbg_holding_valid()
     );
 
-    wire ser_out_complete_eff = ser_out_complete    & ser_out_complete_int;
-    wire ser_out_ready_eff    = ser_out_ready_pulse | ser_out_ready_int;
+    // (ser_out_*_eff composition declared up with the IRQ-source wires.)
 
     // M23-7 — pokey_i2s_tx now lives at antic_top level so it can mix
     // both POKEYs (left at $D20x, right at $D21x) into the HDMI audio

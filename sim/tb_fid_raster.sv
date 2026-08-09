@@ -1370,12 +1370,12 @@ module tb_fid_raster;
             && ((u_antic_top.ar_scanline == 9'd39 && u_antic_top.ar_phi2_in_line <= 8'd14)
                 || (u_antic_top.ar_scanline == 9'd248 && u_antic_top.ar_phi2_in_line <= 8'd14)
                 || (u_antic_top.ar_scanline == 9'd247 && u_antic_top.ar_phi2_in_line >= 8'd98)))
-            $display("[nmi] commit @ scan=%0d cyc=%0d PC=%04h IR=%02h st=%0d pend=%b d1=%b p1=%b p2=%b svc=%b intr=%b",
+            $display("[nmi] commit @ scan=%0d cyc=%0d PC=%04h IR=%02h st=%0d pend=%b d1=%b p1=%b svc=%b intr=%b",
                      u_antic_top.ar_scanline,
                      u_antic_top.ar_phi2_in_line, fdbg_pc, fdbg_ir,
                      u_fid_core.state,
                      u_fid_core.nmi_pend, u_fid_core.nmi_d1,
-                     u_fid_core.nmi_polled, u_fid_core.nmi_polled2,
+                     u_fid_core.nmi_polled,
                      u_fid_core.nmi_svc, u_fid_core.intr);
     end
     // Parse-path probe: count start_parse pulses + dl_start kicks, and dump

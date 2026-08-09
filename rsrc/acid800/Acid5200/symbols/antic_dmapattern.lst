@@ -1,0 +1,2463 @@
+mads 2.1.0 build 8 (23 Dec 19)
+Source: antic_dmapattern.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 FFFF0001					_SAP_HEADER "ANTIC: DMA pattern"
+Macro: _SAP_HEADER [Source: library.s]
+Source: antic_dmapattern.s
+    23
+    24 						opt		h+o+
+    25
+    26 						icl		'library.s'
+Source: library.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				;==========================================================================
+    23 				; MEMORY MAP (800)
+    24 				;
+    25 				;	$0000-007F		OS zero page
+    26 				;	$0080-00BF		Module zero page
+    27 				;	$00C0-00DF		Library zero page
+    28 				;	$00E0-00EF		80-column zero page
+    29 				;	$0100-01FF		6502 stack
+    30 				;	$0200-03FF		OS database
+    31 				;	$0400-09FF		Boot loader / unused
+    32 				;	$0A00-0AFF		Boot loader / Veronica support resident page
+    33 				;	$0B00-0BFF		Boot loader / sector load buffer
+    34 				;	$0C00-0FFF		Boot loader / 16K display
+    35 				;	$1000-18FF		Resident test driver (full suite only)
+    36 				;	$1900-19FF		Segment tables (full suite only)
+    37 				;	$1A00-1FFF		Library code
+    38 				;	$2000-3FFF		Module run area
+    39 				;	$4000-5FFF		Segment load area / Extended memory window
+    40 				;	$6000-7FFF		80-column screen A / Extended memory window
+    41 				;	$9000-9BFF		80-column driver
+    42 				;	$9C00-9FFF		Unused (display list if cart)
+    43 				;	$A000-BFFF		80-column screen B
+    44 				;
+    45 				; MEMORY MAP (5200)
+    46 				;
+    47 				;	$0000-001F		OS zero page
+    48 				;	$0020-003F		Display zero page
+    49 				;	$0080-00BF		Module zero page
+    50 				;	$00C0-00DF		Library zero page
+    51 				;	$0100-01FF		6502 stack
+    52 				;	$0200-021F		OS database
+    53 				;	$0220-027F		Unused
+    54 				;	$0280-02FF		Library database
+    55 				;	$0300-07FF		Display memory
+    56 				;	$0800-0FFF		Unused
+    57 				;	$1000-1FFF		LZ decompression history window
+    58 				;	$2000-3FFF		Module run area
+    59 				;	$4000-BFFF		Cartridge library code and module store
+    60 				;
+    61 				; MEMORY MAP (SAP)
+    62 				;
+    63 				;	$0080-00BF		Module zero page
+    64 				;	$00C0-00DF		Library zero page
+    65 				;	$0280-02FF		Library database
+    66 				;	$0300-07FF		Display memory
+    67 				;	$2000-3FFF		Module run area
+    68 				;	$4000-BFFF		Module store
+    69
+    70 				;==========================================================================
+    71 				; CONFIGURATION
+    72 				;
+    73 						.ifndef SYS800
+    74 = 0001					SEGS_IN_ROM = 1
+    75 						.else
+    76 						SEGS_MIN_MEM = 1
+    77 						.endif
+    78 						
+    79 						.ifdef SYS5200
+    80 = 0001					SEGS_LZPACK = 1
+    81 						.endif
+    82
+    83 				;==========================================================================
+    84 				; HARDWARE INCLUDES
+    85 				;
+    86 				.ifdef SYS5200
+    87 				;GTIA
+    88 = C000			gtia = $c000
+    89 = C000			m0pf	equ	$c000
+    90 = C001			m1pf	equ	$c001
+    91 = C002			m2pf	equ	$c002
+    92 = C003			m3pf	equ	$c003
+    93 = C004			p0pf	equ	$c004
+    94 = C005			p1pf	equ	$c005
+    95 = C006			p2pf	equ	$c006
+    96 = C007			p3pf	equ	$c007
+    97 = C008			m0pl	equ	$c008
+    98 = C009			m1pl	equ	$c009
+    99 = C00A			m2pl	equ	$c00a
+   100 = C00B			m3pl	equ	$c00b
+   101 = C00C			p0pl	equ	$c00c
+   102 = C00D			p1pl	equ	$c00d
+   103 = C00E			p2pl	equ	$c00e
+   104 = C00F			p3pl	equ	$c00f
+   105 = C000			hposp0	equ	$c000
+   106 = C001			hposp1	equ	$c001
+   107 = C002			hposp2	equ	$c002
+   108 = C003			hposp3	equ	$c003
+   109 = C004			hposm0	equ	$c004
+   110 = C005			hposm1	equ	$c005
+   111 = C006			hposm2	equ	$c006
+   112 = C007			hposm3	equ	$c007
+   113 = C008			sizep0	equ	$c008
+   114 = C009			sizep1	equ	$c009
+   115 = C00A			sizep2	equ	$c00a
+   116 = C00B			sizep3	equ	$c00b
+   117 = C00C			sizem	equ	$c00c
+   118 = C00D			grafp0	equ	$c00d
+   119 = C00E			grafp1	equ	$c00e
+   120 = C00F			grafp2	equ	$c00f
+   121 = C010			grafp3	equ	$c010
+   122 = C010			trig0	equ	$c010
+   123 = C011			grafm	equ	$c011
+   124 = C012			colpm0	equ	$c012
+   125 = C013			colpm1	equ	$c013
+   126 = C014			colpm2	equ	$c014
+   127 = C014			pal		equ	$c014
+   128 = C015			colpm3	equ	$c015
+   129 = C016			colpf0	equ	$c016
+   130 = C017			colpf1	equ	$c017
+   131 = C018			colpf2	equ	$c018
+   132 = C019			colpf3	equ	$c019
+   133 = C01A			colbk	equ	$c01a
+   134 = C01B			prior	equ	$c01b
+   135 = C01C			vdelay	equ	$c01c
+   136 = C01D			gractl	equ	$c01d
+   137 = C01E			hitclr	equ	$c01e
+   138 = C01F			consol	equ	$c01f
+   139
+   140 				;POKEY
+   141 = E800			pokey = $e800
+   142 = E800			audf1	equ	$e800
+   143 = E801			audc1	equ	$e801
+   144 = E802			audf2	equ	$e802
+   145 = E803			audc2	equ	$e803
+   146 = E804			audf3	equ	$e804
+   147 = E805			audc3	equ	$e805
+   148 = E806			audf4	equ	$e806
+   149 = E807			audc4	equ	$e807
+   150 = E808			audctl	equ	$e808
+   151 = E809			stimer	equ	$e809
+   152 = E80A			random	equ	$e80a
+   153 = E80A			skres	equ	$e80a
+   154 = E80D			serin	equ	$e80d
+   155 = E80D			serout	equ	$e80d
+   156 = E80E			irqen	equ	$e80e
+   157 = E80E			irqst	equ	$e80e
+   158 = E80F			skctl	equ	$e80f
+   159 = E80F			skstat	equ	$e80f
+   160 				.else
+   161 				;GTIA
+   162 				gtia = $d000
+   163 				m0pf	equ	$d000
+   164 				m1pf	equ	$d001
+   165 				m2pf	equ	$d002
+   166 				m3pf	equ	$d003
+   167 				p0pf	equ	$d004
+   168 				p1pf	equ	$d005
+   169 				p2pf	equ	$d006
+   170 				p3pf	equ	$d007
+   171 				m0pl	equ	$d008
+   172 				m1pl	equ	$d009
+   173 				m2pl	equ	$d00a
+   174 				m3pl	equ	$d00b
+   175 				p0pl	equ	$d00c
+   176 				p1pl	equ	$d00d
+   177 				p2pl	equ	$d00e
+   178 				p3pl	equ	$d00f
+   179 				hposp0	equ	$d000
+   180 				hposp1	equ	$d001
+   181 				hposp2	equ	$d002
+   182 				hposp3	equ	$d003
+   183 				hposm0	equ	$d004
+   184 				hposm1	equ	$d005
+   185 				hposm2	equ	$d006
+   186 				hposm3	equ	$d007
+   187 				sizep0	equ	$d008
+   188 				sizep1	equ	$d009
+   189 				sizep2	equ	$d00a
+   190 				sizep3	equ	$d00b
+   191 				sizem	equ	$d00c
+   192 				grafp0	equ	$d00d
+   193 				grafp1	equ	$d00e
+   194 				grafp2	equ	$d00f
+   195 				grafp3	equ	$d010
+   196 				trig0	equ	$d010
+   197 				grafm	equ	$d011
+   198 				colpm0	equ	$d012
+   199 				colpm1	equ	$d013
+   200 				colpm2	equ	$d014
+   201 				pal		equ	$d014
+   202 				colpm3	equ	$d015
+   203 				colpf0	equ	$d016
+   204 				colpf1	equ	$d017
+   205 				colpf2	equ	$d018
+   206 				colpf3	equ	$d019
+   207 				colbk	equ	$d01a
+   208 				prior	equ	$d01b
+   209 				vdelay	equ	$d01c
+   210 				gractl	equ	$d01d
+   211 				hitclr	equ	$d01e
+   212 				consol	equ	$d01f
+   213
+   214 				;POKEY
+   215 				pokey = $d200
+   216 				audf1	equ	$d200
+   217 				audc1	equ	$d201
+   218 				audf2	equ	$d202
+   219 				audc2	equ	$d203
+   220 				audf3	equ	$d204
+   221 				audc3	equ	$d205
+   222 				audf4	equ	$d206
+   223 				audc4	equ	$d207
+   224 				audctl	equ	$d208
+   225 				stimer	equ	$d209
+   226 				kbcode	equ	$d209
+   227 				random	equ	$d20a
+   228 				skres	equ	$d20a
+   229 				serin	equ	$d20d
+   230 				serout	equ	$d20d
+   231 				irqen	equ	$d20e
+   232 				irqst	equ	$d20e
+   233 				skctl	equ	$d20f
+   234 				skstat	equ	$d20f
+   235
+   236 				;PIA
+   237 				porta	equ	$d300
+   238 				portb	equ	$d301
+   239 				pactl	equ	$d302
+   240 				pbctl	equ	$d303
+   241 				.endif
+   242
+   243 				;ANTIC
+   244 = D400			dmactl	equ	$d400
+   245 = D401			chactl	equ	$d401
+   246 = D402			dlistl	equ	$d402
+   247 = D403			dlisth	equ	$d403
+   248 = D404			hscrol	equ	$d404
+   249 = D405			vscrol	equ	$d405
+   250 = D407			pmbase	equ	$d407
+   251 = D409			chbase	equ	$d409
+   252 = D40A			wsync	equ	$d40a
+   253 = D40B			vcount	equ	$d40b
+   254 = D40E			nmien	equ	$d40e
+   255 = D40F			nmires	equ	$d40f
+   256 = D40F			nmist	equ	$d40f
+   257
+   258 				;==========================================================================
+   259 				; OS INCLUDES (5200)
+   260 				;
+   261 				.ifdef SYS5200
+   262 = 0000			pokmsk	equ		$00
+   263 = 0001			rtclok	equ		$01
+   264 				;		equ		$02
+   265 = 0003			critic	equ		$03
+   266 = 0004			atract	equ		$04
+   267 = 0005			sdlstl	equ		$05
+   268 = 0006			sdlsth	equ		$06
+   269 = 0007			sdmctl	equ		$07
+   270 = 0008			pcolr0	equ		$08
+   271 = 0009			pcolr1	equ		$09
+   272 = 000A			pcolr2	equ		$0a
+   273 = 000B			pcolr3	equ		$0b
+   274 = 000C			color0	equ		$0c
+   275 = 000D			color1	equ		$0d
+   276 = 000E			color2	equ		$0e
+   277 = 000F			color3	equ		$0f
+   278 = 0010			color4	equ		$10
+   279
+   280 = 0200			vimirq	equ		$0200		;IRQ immediate vector
+   281 = 0202			vvblki	equ		$0202		;VBI immediate vector
+   282 = 0204			vvblkd	equ		$0204		;VBI deferred vector
+   283 = 0206			vdslst	equ		$0206		;display list vector
+   284 = 0208			vkybdi	equ		$0208		;keyboard immediate vector
+   285 = 020A			vkybdf	equ		$020a		;keyboard deferred vector
+   286 				.endif
+   287
+   288 				;==========================================================================
+   289 				; OS INCLUDES (800)
+   290 				;
+   291 				.ifndef SYS5200
+   292 				pokmsk	equ	$10
+   293 				rtclok	equ	$12
+   294 				savmsc	equ	$58
+   295 				ramtop	equ	$6a
+   296
+   297 				vdslst	equ	$0200
+   298 				vkeybd	equ	$0208
+   299 				vimirq	equ	$0216
+   300 				cdtmv1	equ	$0218
+   301 				vvblki	equ	$0222
+   302 				vvblkd	equ	$0224
+   303 				cdtma1	equ	$0226
+   304 				sdmctl	equ	$022f
+   305 				sdlstl	equ	$0230
+   306 				sdlsth	equ	$0231
+   307 				sskctl	equ	$0232
+   308 				runad	equ	$02e0
+   309 				initad	equ	$02e2
+   310 				memtop	equ	$02e5
+   311 				ch1		equ	$02f2
+   312 				ch		equ	$02fc
+   313
+   314 				ddevic	equ	$0300
+   315 				dunit	equ	$0301
+   316 				dcomnd	equ	$0302
+   317 				dstats	equ	$0303
+   318 				dbuflo	equ	$0304
+   319 				dbufhi	equ	$0305
+   320 				dtimlo	equ	$0306
+   321 				dbytlo	equ	$0308
+   322 				dbythi	equ	$0309
+   323 				daux1	equ	$030a
+   324 				daux2	equ	$030b
+   325
+   326 				ichid	equ	$0340
+   327 				iccmd	equ	$0342
+   328 				icbal	equ	$0344
+   329 				icbah	equ	$0345
+   330 				icptl	equ	$0346
+   331 				icpth	equ	$0347
+   332 				icbll	equ	$0348
+   333 				icblh	equ	$0349
+   334 				icax1	equ	$034a
+   335 				icax2	equ	$034b
+   336
+   337 				basicf	equ	$03f8
+   338
+   339 				dskinv	equ	$e453
+   340 				ciov	equ	$e456
+   341 				siov	equ	$e459
+   342 				xitvbv	equ	$e462
+   343 				.endif
+   344
+   345 				;==========================================================================
+   346 				; LIBRARY ZP
+   347 				;
+   348 = 00C0			a0		equ	$c0
+   349 = 00C2			a1		equ	$c2
+   350 = 00C4			a2		equ	$c4
+   351 = 00C6			a3		equ	$c6
+   352 = 00C8			d0		equ	$c8
+   353 = 00C9			d1		equ	$c9
+   354 = 00CA			d2		equ	$ca
+   355 = 00CB			d3		equ	$cb
+   356 = 00CC			d4		equ	$cc
+   357 = 00CD			d5		equ	$cd
+   358 = 00CE			d6		equ	$ce
+   359 = 00CF			d7		equ	$cf
+   360
+   361 				;==========================================================================
+   362 				; LIBRARY VARS
+   363 				;
+   364 						opt o-
+   365
+   366 				.ifdef SYS5200
+   367 						opt f-
+   368 				.else
+   369 				.ifdef STANDALONE
+   370 						opt o+
+   371 				.endif
+   372 				.ifdef GENLIBRARY
+   373 						opt o+
+   374 				.endif
+   375 				.endif
+   376
+   377 						.ifdef SYSSAP
+   378 						org	$0280
+   379 						.endif
+   380 						
+   381 						.ifdef SYS5200
+   382 						org	$0280
+   383 						.endif
+   384 						
+   385 						.ifdef SYS800
+   386 						org	$1a20
+   387 						.endif		
+   388 				_intsOff	dta		0
+   389 				_scrnOff	dta		0
+   390 				_prevIRQ	dta		a(0)
+   391 				_prevVBI	dta		a(0)
+   392 				_exitTest	dta		a(0)
+   393 				_exitTestS	dta		$ff
+   394 				_vputchar	dta		a(0)
+   395
+   396 						.ifdef SYS800
+   397 				_vputunhook	dta		a(0)
+   398 						.endif
+   399
+   400 = 0000				CPUMODE_6502 = 0
+   401 = 0001				CPUMODE_65C02 = 1
+   402 = 0080				CPUMODE_65C816_16 = 0x80
+   403 = 0081				CPUMODE_65C816_24 = 0x81
+   404 				_cpuMode	dta		0
+   405
+   406 				_veronica	dta		0
+   407
+   408 						.ifdef SYS5200
+   409 				sskctl		dta		0
+   410 				ch			dta		0
+   411 				keydel		dta		0
+   412
+   413 							org		$02e0
+   414 				runad		dta		a(0)
+   415 				initad		dta		a(0)
+   416 						.endif
+   417
+   418 						.ifdef SEGS_IN_ROM
+   419 				_lastMod	dta		0
+   420 						.endif
+   421 						.ifdef SEGS_MIN_MEM
+   422 				_lastMod	dta		0
+   423 						.endif
+   424
+   425 						.ifdef SYS5200
+   426 						.ifdef STANDALONE
+   427 						opt o+f+
+   428 						.endif
+   429 						.ifdef GENLIBRARY
+   430 						opt o+f+
+   431 						.endif
+   432
+   433 						.ifdef LIBBASE
+   434 						org	LIBBASE
+   435 						.else
+   436 						org	$4000
+   437 						.endif
+   438 						.endif
+   439 						
+   440 						.ifdef SYSSAP
+   441 						org		$4000
+   442 						.endif
+   443
+   444 				;==========================================================================
+   445 				; MACROS
+   446 				;
+   447 				.macro _INITTEST
+   448 					jsr		_imTestInit
+   449 					dta		:1,0
+   450 				.endm
+   451
+   452 				.macro _ASSERT1
+   453 					lda	:1
+   454 					cmp	#:2
+   455 					beq	pass
+   456 					
+   457 					sta	d1
+   458 					jsr	_testFailed
+   459 					dta	:3,0
+   460 				pass:
+   461 				.endm
+   462
+   463 				.macro _ASSERT1_DUAL
+   464 					lda	:1
+   465 					cmp	#:2
+   466 					beq	pass
+   467 					cmp	#:3
+   468 					beq	pass
+   469 					
+   470 					sta	d1
+   471 					jsr	_testFailed
+   472 					dta	:4,0
+   473 				pass:
+   474 				.endm
+   475
+   476 				.macro _ASSERTA
+   477 					cmp	#:1
+   478 					beq	pass
+   479 					
+   480 					sta	d1
+   481 					jsr	_testFailed
+   482 					dta	:2,0
+   483 				pass:
+   484 				.endm
+   485
+   486 				.macro _ASSERTX
+   487 					cpx	#:1
+   488 					beq	pass
+   489 					
+   490 					stx	d1
+   491 					jsr	_testFailed
+   492 					dta	:2,0
+   493 				pass:
+   494 				.endm
+   495
+   496 				.macro _ASSERTY
+   497 					cpy	#:1
+   498 					beq	pass
+   499 					
+   500 					sty	d1
+   501 					jsr	_testFailed
+   502 					dta	:2,0
+   503 				pass:
+   504 				.endm
+   505
+   506 				.macro _FAIL
+   507 					jsr		_testFailed
+   508 					dta		:1,0
+   509 				.endm
+   510
+   511 				.macro _SKIP
+   512 					jsr		_testSkipped
+   513 					dta		:1,0
+   514 				.endm
+   515
+   516 				.macro _SAP_HEADER
+   517 					.ifdef GENSAP
+   518 						opt		o+h-f-
+   519 						org		$0700
+   520 						dta		c"SAP",$0d,$0a
+   521 						dta		c"AUTHOR ",$22,c"Avery Lee",$22,$0d,$0a
+   522 						dta		c"NAME ",$22,c":1",$22,$0d,$0a
+   523 						dta		c"TYPE D",$0d,$0a
+   524 						dta		c"INIT 2000",$0d,$0a
+   525 						dta		c"TIME 00:",c"05",$0d,$0a
+   526 						dta		a($ffff)
+   527 					.endif
+   528 				.endm
+   529
+   530 				;==========================================================================
+   531 				.nowarn .proc	_crt0init
+   532 				.ifdef SYSSAP
+   533 					jsr		_crt0init_sap
+   534 				.endif
+   535
+   536 					;clear zero page and database
+   537 				.ifdef SYS5200
+   538 					ldx		#$20
+   539 					lda		#0
+   540 				zploop:
+   541 					sta		0,x
+   542 					inx
+   543 					bne		zploop
+   544 					ldx		#$80
+   545 				dbloop:
+   546 					sta		$0200,x
+   547 					inx
+   548 					bne		dbloop
+   549 				.endif
+   550
+   551 					;clear options (keep in sync with options.s)
+   552 					ldx		#6
+   553 					lda		#0
+   554 					.ifdef SYS5200
+   555 					sta:rpl	$02f0,x-
+   556 					.else
+   557 					sta:rpl	$1a00,x-
+   558 					.endif
+   559 					
+   560 					;detect CPU
+   561 					ldy		#CPUMODE_6502
+   562 					sed
+   563 					lda		#$99
+   564 					clc
+   565 					adc		#$01
+   566 					cld
+   567 					bne		detdone
+   568 					
+   569 					;we have at least a 65C02... check for 65C816
+   570 					ldy		#CPUMODE_65C02
+   571
+   572 					sec
+   573 					opt		c+
+   574 					rep		#$01
+   575 					bcs		detdone
+   576 					sep		#$01
+   577 					bcc		detdone
+   578 					
+   579 					ldy		#CPUMODE_65C816_16
+   580 					
+   581 					;check for 24-bit addressing
+   582 					lda		d3+$10000
+   583 					tax
+   584 					eor		#$f5
+   585 					sta		d3
+   586 					txa
+   587 					cmp		d3+$10000
+   588 					sne
+   589 					iny
+   590 					
+   591 					opt		c-
+   592 					
+   593 				detdone:
+   594 					sty		_cpuMode
+   595
+   596 				.ifdef SYS5200
+   597 					jsr		_crt0init_5200
+   598 				.endif
+   599
+   600 				.ifdef SYS800
+   601 					;init putchar handler
+   602 					mwa		icptl _vputchar
+   603 					inw		_vputchar
+   604 				.endif
+   605
+   606 					rts
+   607 				.endp
+   608
+   609 				;==========================================================================
+   610 				.nowarn .proc	_interruptsOff
+   611 					lda	_intsOff
+   612 					bmi	xit
+   613 					sei
+   614 					mwa	vimirq _prevIRQ
+   615 					mva	#$ff _intsOff
+   616 				xit:
+   617 					rts
+   618 				.endp
+   619
+   620 				;==========================================================================
+   621 				.nowarn .proc	_interruptsOn
+   622 					lda	_intsOff
+   623 					bpl	xit
+   624 					sei
+   625 					mwa	_prevIRQ vimirq
+   626 					mva	pokmsk irqen
+   627 					mva	#$00 _intsOff
+   628 					cli
+   629 				xit:
+   630 					rts
+   631 				.endp
+   632
+   633 				;==========================================================================
+   634 				.nowarn .proc _screenOn
+   635 					.ifndef SYSSAP
+   636 					lda	_scrnOff
+   637 					bpl	xit
+   638 					
+   639 					jsr	_waitVBL
+   640 					
+   641 					sei
+   642 					lda	#0
+   643 					sta	wsync
+   644 					sta	nmien
+   645 					mva	#$22 dmactl
+   646 					mwa	sdlstl dlistl
+   647 					mwa	_prevVBI vvblki
+   648 					lda	#$40
+   649 					sta	nmien
+   650 					cli
+   651 					
+   652 					jsr	_waitVBL
+   653 					sta	wsync
+   654 					sta	wsync
+   655 					jsr	_waitVBL
+   656 					.endif
+   657
+   658 					mva	#$00 _scrnOff
+   659 				xit:
+   660 					rts
+   661 				.endp
+   662
+   663 				;==========================================================================
+   664 				.nowarn .proc _screenOff
+   665 					.ifndef SYSSAP
+   666 					lda	_scrnOff
+   667 					bmi	xit
+   668 					
+   669 					jsr	_waitVBL
+   670 						
+   671 					php
+   672 					sei
+   673 					lda	#0
+   674 					sta	wsync
+   675 					sta	nmien
+   676 					sta	dmactl
+   677 					mwa	vvblki _prevVBI
+   678 					plp
+   679 					.endif
+   680
+   681 					mva	#$ff _scrnOff
+   682 				xit:
+   683 					rts
+   684 				.endp
+   685
+   686 				;==========================================================================
+   687 				.nowarn .proc _waitVBL
+   688 					lda	#123
+   689 					cmp:rne vcount
+   690 					cmp:req vcount
+   691 					rts
+   692 				.endp
+   693
+   694 				;==========================================================================
+   695 				.nowarn .proc _waitFrame
+   696 					inc	wsync
+   697 					inc	wsync
+   698 					jmp	_waitVBL
+   699 				.endp
+   700
+   701 				;==========================================================================
+   702 				.nowarn .proc _waitKeyPrompt
+   703 					jsr		_imprint
+   704 					dta		c"Press a key...",0
+   705 					.ifdef SYS5200
+   706 					mva		#$ff ch
+   707 					lda:rmi	ch
+   708 					.else
+   709 					lda		#0
+   710 					sta		ch
+   711 					sta		ch1
+   712 					lda:req	ch
+   713 					.endif
+   714 					jsr		_imprint
+   715 					dta		$9c,0
+   716 					rts
+   717 				.endp
+   718
+   719 				;==========================================================================
+   720 				.nowarn .proc _resetAV
+   721 					lda	#0
+   722 					sta	gractl
+   723 					sta	grafp0
+   724 					sta	grafp1
+   725 					sta	grafp2
+   726 					sta	grafp3
+   727 					sta	grafm
+   728 					sta	audc1
+   729 					sta	audc2
+   730 					sta	audc3
+   731 					sta	audc4
+   732 					rts
+   733 				.endp
+   734
+   735 				;==========================================================================
+   736 				.nowarn .proc _imprint
+   737 					pla
+   738 					tax
+   739 					pla
+   740 					tay
+   741 					inx
+   742 					sne:iny
+   743 					txa
+   744 					jsr	_print
+   745 					lda	a0+1
+   746 					pha
+   747 					lda	a0
+   748 					pha
+   749 					rts	
+   750 				.endp
+   751
+   752 				;==========================================================================
+   753 				.nowarn .proc _imprintf
+   754 					pla
+   755 					tax
+   756 					pla
+   757 					tay
+   758 					inx
+   759 					sne:iny
+   760 					txa
+   761 					jsr	_printf
+   762 					lda	a0+1
+   763 					pha
+   764 					lda	a0
+   765 					pha
+   766 					rts	
+   767 				.endp
+   768
+   769 				;==========================================================================
+   770 				.nowarn .proc _print
+   771 					sta	a0
+   772 					sty	a0+1
+   773 				charloop:
+   774 					ldy	#0
+   775 					lda	(a0),y
+   776 					beq	done
+   777 					inw	a0
+   778 					jsr	_printf.putbyte
+   779 					jmp	charloop
+   780 				done:
+   781 					rts
+   782 				.endp
+   783
+   784 				;==========================================================================
+   785 				.nowarn .proc _println
+   786 					jsr		_imprint
+   787 					dta		$9b,0
+   788 					rts
+   789 				.endp
+   790 				;==========================================================================
+   791 				.nowarn .proc _printf
+   792 					sta	a0
+   793 					sty	a0+1
+   794 					ldy	#0
+   795 					sty	d0
+   796 				charloop:
+   797 					lda	(a0),y
+   798 					beq	done
+   799 					inw	a0
+   800 					cmp	#'%'
+   801 					beq	special
+   802 				escaped:
+   803 					jsr	putbyte
+   804 				nextchar:
+   805 					ldy	#0
+   806 					jmp	charloop
+   807 				done:
+   808 					rts
+   809 				special:
+   810 					inc	d0
+   811 					ldx	d0
+   812 					lda	(a0),y
+   813 					inw	a0
+   814 					cmp #'d'
+   815 					bne	notdec
+   816 					tya
+   817 					sty	a1
+   818 					ldy	#6
+   819 					sei
+   820 					sed
+   821 				decloop1:
+   822 					rol	d0,x
+   823 					adc	a1
+   824 					sta	a1
+   825 					dey
+   826 					bne	decloop1
+   827 					sty	a1+1
+   828 					ldy	#2
+   829 				decloop2:
+   830 					rol	d0,x
+   831 					adc	a1
+   832 					sta	a1
+   833 					rol	a1+1
+   834 					dey
+   835 					bne	decloop2
+   836 					cld
+   837 					cli
+   838 					lda	a1+1
+   839 					beq	decdigit2
+   840 					tax
+   841 					lda	_hexdig,x
+   842 					jsr	putbyte
+   843 					lda	a1
+   844 					jsr	puthex
+   845 					jmp	nextchar
+   846 				decdigit2:
+   847 					lda	a1
+   848 					cmp	#$10
+   849 					bcc	decdigit1
+   850 					jsr	puthex
+   851 					jmp	nextchar
+   852 				decdigit1:
+   853 					tax
+   854 					lda	_hexdig,x
+   855 					jmp	escaped
+   856
+   857 				notdec:
+   858 					cmp	#'x'
+   859 					bne	nothex
+   860 					lda	d0,x
+   861 					jsr	puthex
+   862 					jmp	nextchar
+   863
+   864 				nothex:
+   865 					cmp	#'X'
+   866 					bne	nothexword
+   867 					inc	d0
+   868 					lda	d1,x
+   869 					jsr	puthex
+   870 					ldx	d0
+   871 					lda	d0-1,x
+   872 					jsr	puthex
+   873 					jmp	nextchar
+   874
+   875 				nothexword:
+   876 					cmp #'D'
+   877 					bne	notdecword
+   878
+   879 					ldy	#8
+   880 					lda	#0
+   881 					sta	a1
+   882 					sta a1+1
+   883 					sta	a2
+   884 					sei
+   885 					sed
+   886 				decword1:
+   887 					rol	d1,x
+   888 					lda	a1
+   889 					adc	a1
+   890 					sta	a1
+   891 					lda	a1+1
+   892 					adc	a1+1
+   893 					sta	a1+1
+   894 					dey
+   895 					bne	decword1
+   896 					
+   897 					ldy	#8
+   898 				decword2:
+   899 					rol	d0,x
+   900 					lda	a1
+   901 					adc	a1
+   902 					sta	a1
+   903 					lda	a1+1
+   904 					adc	a1+1
+   905 					sta	a1+1
+   906 					lda	a2
+   907 					adc	a2
+   908 					sta	a2
+   909 					dey
+   910 					bne	decword2
+   911 					cld
+   912 					cli
+   913 					
+   914 					tax
+   915 					beq	decword3
+   916 					jsr	puthexcond
+   917 					lda	a1+1
+   918 					jsr	puthex
+   919 					lda	a1
+   920 					jsr	puthex
+   921 					jmp	nextchar
+   922
+   923 				decword3:
+   924 					lda	a1+1
+   925 					beq	decword4
+   926 					lda	a1
+   927 					jsr	puthex
+   928 					jmp	nextchar
+   929 					
+   930 				decword4:
+   931 					lda	a1
+   932 					jsr	puthex
+   933 					jmp	nextchar
+   934
+   935 				notdecword:
+   936 					cmp #'c'
+   937 					bne	notchar
+   938 					inc	d0
+   939 					lda	d0,x
+   940 					jsr	putbyte
+   941 					jmp	nextchar
+   942 					
+   943 				notchar:
+   944 					cmp #'s'
+   945 					bne	notstr
+   946 					
+   947 					inc	d0
+   948 					lda	d0,x
+   949 					sta	a1
+   950 					lda	d0+1,x
+   951 					sta	a1+1
+   952
+   953 				strloop:
+   954 					ldy	#0
+   955 					lda	(a1),y
+   956 					beq	strdone
+   957 					jsr	putbyte2
+   958 					inw	a1
+   959 					jmp	strloop
+   960
+   961 				strdone:
+   962 					jmp	nextchar
+   963 					
+   964 				notstr:
+   965 					dec	d0
+   966 					jmp	escaped
+   967 					
+   968 				puthexcond:
+   969 					cmp	#$10
+   970 					bcs	puthex
+   971 					tax
+   972 					lda	_hexdig,x
+   973 					jmp	putbyte	
+   974 				puthex:	
+   975 					pha
+   976 					lsr
+   977 					lsr
+   978 					lsr
+   979 					lsr
+   980 					tax
+   981 					lda	_hexdig,x
+   982 					jsr	putbyte
+   983 					pla
+   984 					and	#$0f
+   985 					tax
+   986 					lda	_hexdig,x
+   987 					jmp	putbyte
+   988
+   989 				putbyte:
+   990 					tax
+   991 					jsr	putbyte2
+   992 					txa
+   993 					rts
+   994 					
+   995 				putbyte2:
+   996 					jmp	(_vputchar)
+   997 				.endp
+   998
+   999 				;==========================================================================
+  1000 				.nowarn .proc	_jam
+  1001 				loop:
+  1002 					jmp	loop
+  1003 				.endp
+  1004
+  1005 				;==========================================================================
+  1006 				.nowarn .proc	_waitVCount
+  1007 					cmp:rne	vcount
+  1008 					rts
+  1009 				.endp
+  1010
+  1011 				;=========================================================================
+  1012 				.nowarn .proc	_imTestInit
+  1013 					pla
+  1014 					sta		a0
+  1015 					tay
+  1016 					pla
+  1017 					sta		a0+1
+  1018 					
+  1019 					inw		a0
+  1020
+  1021 					mva		#0 a1
+  1022 					mva		a0+1 a1+1	
+  1023 				skiploop:
+  1024 					lda		(a1),y
+  1025 					beq		skipdone
+  1026 					iny
+  1027 					sne:inc a1+1
+  1028 					jmp		skiploop
+  1029 				skipdone:
+  1030 					lda		a1+1
+  1031 					pha
+  1032 					tya
+  1033 					pha
+  1034 					lda		a0
+  1035 					ldy		a0+1
+  1036 					jmp		_testInit
+  1037 				.endp
+  1038
+  1039 				;=========================================================================
+  1040 				.nowarn .proc	_testInit
+  1041 					.ifdef STANDALONE
+  1042 					pha
+  1043 					tya
+  1044 					pha
+  1045
+  1046 				.ifdef SYS800
+  1047 					;MaxFlash carts run executables with E: closed. Check for this and
+  1048 					;reopen it if necessary.
+  1049 					lda		ichid
+  1050 					bpl		iocb0_open
+  1051
+  1052 					;reopen IOCB 0
+  1053 					mva		#$03 iccmd
+  1054 					mwa		#e_name icbal
+  1055 					ldx		#0
+  1056 					stx		icax1
+  1057 					mva		#$0c icax2
+  1058 					jsr		ciov
+  1059 					
+  1060 				iocb0_open:
+  1061 				.endif
+  1062
+  1063 					jsr		_crt0init
+  1064 					
+  1065 					pla
+  1066 					tay
+  1067 					pla
+  1068 					.endif
+  1069 					
+  1070 					jsr	_print
+  1071 					jsr	_imprint
+  1072 					dta	c"...",0
+  1073 					
+  1074 					.ifdef STANDALONE
+  1075 					mwa	#_testEnd _exitTest
+  1076 					.else
+  1077 					:10 nop
+  1078 					.endif
+  1079 					
+  1080 					rts
+  1081 					
+  1082 				msg:
+  1083 					dta	c"...",0
+  1084 				e_name:
+  1085 					dta		'E',$9B
+  1086 				.endp
+  1087
+  1088 				;=========================================================================
+  1089 				.nowarn .proc	_testEnd
+  1090 					.ifdef SYSSAP
+  1091 						.ifdef STANDALONE
+  1092 							jmp	_sap_testEnd
+  1093 						.else
+  1094 							jmp	_jam
+  1095 						.endif
+  1096 					.else
+  1097 						.ifdef SYS5200
+  1098 							jmp	_jam
+  1099 						.else
+  1100 							;wait for key
+  1101 							sei
+  1102 							lda		#0
+  1103 							sta		nmien
+  1104 							sta		irqen
+  1105 							mva		#3 skctl
+  1106 							mva		#$40 irqen
+  1107 							bit:rne	irqst
+  1108 							
+  1109 							;initiate soft reset
+  1110 							jmp		($fffc)
+  1111 						.endif
+  1112 					.endif
+  1113 				.endp
+  1114
+  1115 				;=========================================================================
+  1116 				.nowarn .proc	_testRestore
+  1117 					cld
+  1118 					php
+  1119 					sei
+  1120 					
+  1121 					;check if the screen is off; if so, make sure we kill DLIs
+  1122 					lda		_scrnOff
+  1123 					beq		scrnOK
+  1124 					
+  1125 					lda		#0
+  1126 					inc		wsync
+  1127 					sta		nmien
+  1128 					
+  1129 				scrnOK:
+  1130
+  1131 					mva		sskctl skctl
+  1132 						
+  1133 					.ifdef SYSSAP
+  1134 					;kill PIA port A interrupt
+  1135 					mva		#$3c pactl
+  1136 					
+  1137 					;force kernel ROMs back _out_
+  1138 					mva		#$38 pbctl
+  1139 					mva		#$ff portb
+  1140 					mva		#$3c pbctl
+  1141 					mva		#$82 portb
+  1142 					.endif
+  1143 					
+  1144 					.ifdef SYS5200
+  1145 					mva		#$00 prior
+  1146 					mva		#$f8 chbase
+  1147 					mva		#$02 chactl
+  1148 					mva		#$04 consol
+  1149 					.endif
+  1150 					
+  1151 					.ifdef SYS800
+  1152 					;kill PIA port A interrupt
+  1153 					mva		#$3c pactl
+  1154 					
+  1155 					;force kernel ROMs back in	
+  1156 					mva		#$38 pbctl
+  1157 					mva		#$00 portb
+  1158 					mva		#$3c pbctl
+  1159 					mva		#$83 portb
+  1160 					
+  1161 					;kill OS timer 1
+  1162 					ldx		#$ff
+  1163 					stx		wsync
+  1164 					stx		cdtmv1
+  1165 					inx
+  1166 					stx		cdtmv1
+  1167 					stx		cdtmv1+1
+  1168 					.endif
+  1169
+  1170 					plp
+  1171 					jsr	_interruptsOn
+  1172 					jsr	_screenOn
+  1173 					jsr	_resetAV
+  1174 					
+  1175 					;unmask interrupts
+  1176 					cli
+  1177 					rts
+  1178 				.endp
+  1179
+  1180 				;=========================================================================
+  1181 				.nowarn .proc	_testPassed
+  1182 					jsr	_testRestore
+  1183
+  1184 					jsr	_imprint
+  1185 					dta	c"Pass",$9b,0
+  1186 					
+  1187 					ldx	_exitTestS
+  1188 					txs
+  1189 					ldy	#0
+  1190 					jmp	(_exitTest)
+  1191 				.endp
+  1192
+  1193 				;=========================================================================
+  1194 				.nowarn .proc	_testFailed
+  1195 					jsr	_testRestore
+  1196
+  1197 					jsr	_imprint
+  1198 					dta	c"FAIL.",$9b,0
+  1199
+  1200 				nomsgentry:
+  1201 					pla
+  1202 					tax
+  1203 					pla
+  1204 					tay
+  1205 					inx
+  1206 					sne:iny
+  1207 					txa
+  1208 					jsr	_printf
+  1209 					jsr	_println
+  1210 					
+  1211 					ldx	_exitTestS
+  1212 					txs
+  1213 					ldy	#$80
+  1214 					jmp	(_exitTest)
+  1215
+  1216 				msg2:
+  1217 					dta	$9b,0
+  1218 				.endp
+  1219
+  1220 				;=========================================================================
+  1221 				.nowarn .proc	_testFailed2
+  1222 					jsr	_testRestore
+  1223 					jmp	_testFailed.nomsgentry
+  1224 				.endp
+  1225
+  1226 				;=========================================================================
+  1227 				.nowarn .proc	_testSkipped
+  1228 					jsr		_testRestore
+  1229
+  1230 					jsr		_imprint
+  1231 					dta		c"Skipped",$9b,0
+  1232 					
+  1233 					pla
+  1234 					tax
+  1235 					pla
+  1236 					tay
+  1237 					inx
+  1238 					sne:iny
+  1239 					txa
+  1240 					jsr		_printf
+  1241 					
+  1242 					jsr		_println
+  1243 					
+  1244 					ldx		_exitTestS
+  1245 					txs
+  1246 					ldy		#$40
+  1247 					jmp		(_exitTest)
+  1248 				.endp
+  1249
+  1250 				;==========================================================================
+  1251 				; _loadSeg()
+  1252 				;
+  1253 				; Module loader.
+  1254 				;
+  1255 				;	X = index of module to load
+  1256 				;
+  1257 				.ifdef SEGS_MIN_MEM
+  1258 				.nowarn .proc	_loadSeg
+  1259 					;get starting sector
+  1260 					mva		segaddrlo,x	daux1
+  1261 					mva		segaddrhi,x	daux2
+  1262 						
+  1263 					;get ending sector
+  1264 					lda		segaddrlo+1,x
+  1265 					sub		daux1
+  1266 					sta		d7
+  1267
+  1268 					;setup sector load command and relocation
+  1269 					mva		#'R' dcomnd
+  1270 					mva		#1 dunit
+  1271 					lda		#$00
+  1272 					sta		dbuflo
+  1273 					sta		a0
+  1274 					sta		runad+1
+  1275 					lda		#$0b
+  1276 					sta		dbufhi
+  1277 					sta		a0+1
+  1278 					
+  1279 					;preload first two sectors
+  1280 					jsr		step_sector
+  1281 				relocloop:
+  1282 					;load starting address
+  1283 					mva		(a0),y a1
+  1284 					iny:sne:jsr step_sector
+  1285 					mva		(a0),y a1+1
+  1286 					iny:sne:jsr step_sector
+  1287 					
+  1288 					;skip $ffff words
+  1289 					lda		a1
+  1290 					and		a1+1
+  1291 					cmp		#$ff
+  1292 					beq		relocloop
+  1293 					
+  1294 					;load ending address
+  1295 					mva		(a0),y a2
+  1296 					iny:sne:jsr step_sector
+  1297 					mva		(a0),y a2+1
+  1298 					iny:sne:jsr step_sector
+  1299 					inw		a2
+  1300
+  1301 					mwa		#definit initad
+  1302 					
+  1303 					;copy data (slow, but oh well)
+  1304 					ldx		#0
+  1305 				copyloop:
+  1306 					lda		(a0),y
+  1307 					sta		(a1,x)
+  1308 					iny:sne:jsr step_sector
+  1309 					inw		a1
+  1310 					lda		a1
+  1311 					cmp		a2
+  1312 					bne		copyloop
+  1313 					lda		a1+1
+  1314 					cmp		a2+1
+  1315 					bne		copyloop
+  1316 					
+  1317 					;init a segment
+  1318 					jsr		doinit
+  1319 					
+  1320 					;check if we're done
+  1321 					lda		runad+1
+  1322 					beq		relocloop
+  1323 					rts
+  1324
+  1325 				doinit:
+  1326 					jmp		(initad)
+  1327 					
+  1328 				step_sector:
+  1329 					lda		d7
+  1330 					beq		no_sectors_left
+  1331 					jsr		dskinv
+  1332 					dec		d7
+  1333 					inw		daux1
+  1334 					lda		dbuflo
+  1335 					eor		#$80
+  1336 					sta		dbuflo
+  1337 					bne		step_sector
+  1338 				no_sectors_left:
+  1339 					ldy		#0
+  1340 					ldx		#0
+  1341 				definit:
+  1342 					rts
+  1343 				.endp
+  1344 				.else
+  1345 				.nowarn .proc	_loadSeg
+  1346 				.ifdef SEGS_IN_ROM
+  1347 					stx		_lastMod
+  1348 					rts
+  1349 				.else
+  1350 					;get starting sector
+  1351 					mva		segaddrlo,x	daux1
+  1352 					mva		segaddrhi,x	daux2
+  1353 						
+  1354 					;get ending sector
+  1355 					mva		segaddrlo+1,x	a0
+  1356 					mva		segaddrhi+1,x	a0+1
+  1357
+  1358 					;load sectors starting at $4000
+  1359 				sectorloop:
+  1360 					mva		#'R' dcomnd
+  1361 					mva		#1 dunit
+  1362 					mwa		#$4000 dbuflo
+  1363 						
+  1364 					jsr		dskinv
+  1365 					tya
+  1366 					bmi		sectorloop
+  1367 					
+  1368 					lda		#$80
+  1369 					eor		dbuflo
+  1370 					sta		dbuflo
+  1371 					sne:inc	dbufhi
+  1372 					
+  1373 					inc		daux1
+  1374 					sne:inc	daux2
+  1375 					
+  1376 					lda		daux1
+  1377 					cmp		a0
+  1378 					bne		sectorloop
+  1379 					lda		daux2
+  1380 					cmp		a0+1
+  1381 					bne		sectorloop
+  1382 					rts
+  1383 				.endif
+  1384 				.endp
+  1385 				.endif
+  1386
+  1387 				;==========================================================================
+  1388 				; _runSeg()
+  1389 				;
+  1390 				; Module relocator and executor.
+  1391 				;
+  1392 				; The last segment loaded by _loadSeg() is relocated and executed.
+  1393 				;
+  1394
+  1395 				.ifdef SEGS_MIN_MEM
+  1396
+  1397 				;-----------------------------------------------
+  1398 				; Minimum memory implementation.
+  1399 				.nowarn .proc _runSeg
+  1400 					jmp		(runad)
+  1401 				.endp
+  1402
+  1403 				.else
+  1404
+  1405 				;-----------------------------------------------
+  1406 				.nowarn .proc _runSeg
+  1407 					
+  1408 					;begin relocation
+  1409 					mwa		#relocloop runad
+  1410
+  1411 					.ifdef SEGS_IN_ROM
+  1412 					ldx		_lastMod
+  1413 					mva		segaddrlo,x a0
+  1414 					mva		segaddrhi,x a0+1
+  1415 					.else
+  1416 					mwa		#$4000 a0
+  1417 					.endif
+  1418 					
+  1419 					.ifndef SEGS_LZPACK
+  1420 					
+  1421 					;==== uncompressed version
+  1422
+  1423 					ldy		#0
+  1424 				relocloop:
+  1425 					;load starting address
+  1426 					mva		(a0),y a1
+  1427 					inw		a0
+  1428 					mva		(a0),y a1+1
+  1429 					inw		a0
+  1430 					
+  1431 					;skip $ffff words
+  1432 					lda		a1
+  1433 					and		a1+1
+  1434 					cmp		#$ff
+  1435 					beq		relocloop
+  1436 					
+  1437 					;load ending address
+  1438 					mva		(a0),y a2
+  1439 					inw		a0
+  1440 					mva		(a0),y a2+1
+  1441 					inw		a0
+  1442 					inw		a2
+  1443 					
+  1444 					;copy data (slow, but oh well)
+  1445 				copyloop:
+  1446 					lda		(a0),y
+  1447 					sta		(a1),y
+  1448 					inw		a0
+  1449 					inw		a1
+  1450 					lda		a1
+  1451 					cmp		a2
+  1452 					bne		copyloop
+  1453 					lda		a1+1
+  1454 					cmp		a2+1
+  1455 					bne		copyloop
+  1456 					
+  1457 					;init a segment
+  1458 					mwa		#definit initad
+  1459 					jsr		doinit
+  1460 					jmp		(runad)
+  1461
+  1462 				doinit:
+  1463 					jmp		(initad)
+  1464 					
+  1465 				definit:
+  1466 					rts
+  1467
+  1468 					.else
+  1469 					
+  1470 					;==== compressed version
+  1471 					;
+  1472 					;loader:
+  1473 					;	a3		destination
+  1474 					;	d6/d7	segment end address
+  1475 					;
+  1476 					;decompressor:
+  1477 					;	a0		raw source stream
+  1478 					;	a1		run source pointer
+  1479 					;	a2		window pointer ($1000-1fff)
+  1480 					;	d0		literal/run flag bits
+  1481 					;	d1		remaining flag bits shifter
+  1482 					;	d2		run length counter
+  1483 					;	d3		temporary
+  1484 					;	d4		superflag bits
+  1485 					;	d5		superflag shifter
+  1486
+  1487 					lda		#0
+  1488 					sta		d0
+  1489 					sta		d1
+  1490 					sta		d2
+  1491 					sta		d5
+  1492 					sta		a2
+  1493 					lda		#$10
+  1494 					sta		a2+1
+  1495 				relocloop:
+  1496 					ldy		#0
+  1497 					;load starting address
+  1498 					jsr		getbyte
+  1499 					sta		a3
+  1500 					jsr		getbyte
+  1501 					sta		a3+1
+  1502 					
+  1503 					;skip $ffff words
+  1504 					and		a3
+  1505 					cmp		#$ff
+  1506 					beq		relocloop
+  1507 					
+  1508 					;load ending address
+  1509 					jsr		getbyte
+  1510 					sta		d6
+  1511 					jsr		getbyte
+  1512 					sta		d7
+  1513 					inw		d6
+  1514 					
+  1515 					;copy data (slow, but oh well)
+  1516 				copyloop:
+  1517 					jsr		getbyte
+  1518 					sta		(a3),y
+  1519 					inw		a3
+  1520 					lda		a3
+  1521 					cmp		d6
+  1522 					bne		copyloop
+  1523 					lda		a3+1
+  1524 					cmp		d7
+  1525 					bne		copyloop
+  1526 					
+  1527 					;init a segment
+  1528 					mwa		#definit initad
+  1529 					jsr		doinit
+  1530 					jmp		(runad)
+  1531
+  1532 				doinit:
+  1533 					jmp		(initad)
+  1534 					
+  1535 				getbyte:
+  1536 					;check if we have a run in progress
+  1537 					lda		d2
+  1538 					bne		getrunbyte
+  1539
+  1540 					;check if we need to reload flag bits
+  1541 					asl		d1
+  1542 					bne		havebits
+  1543 					
+  1544 					;check if we need to reload superflag bits
+  1545 					asl		d5
+  1546 					bne		havesuperbits
+  1547 					
+  1548 					;load next superflag byte
+  1549 					jsr		getrawbyte
+  1550 					sta		d4
+  1551 					lda		#$7f
+  1552 					sta		d5
+  1553 					
+  1554 				havesuperbits:
+  1555 					;pull next superflag and check if it's all literals (0)
+  1556 					asl		d4
+  1557 					bcc		all_literals
+  1558 					
+  1559 					;nope... read next byte as flags byte
+  1560 					jsr		getrawbyte
+  1561 					sta		d0
+  1562
+  1563 				all_literals:
+  1564 					lda		#$7f
+  1565 					sta		d1
+  1566 				havebits:
+  1567 					asl		d0
+  1568 					bcs		isrun
+  1569 					
+  1570 					;store byte into window
+  1571 					jsr		getrawbyte
+  1572 					jmp		putwinbyte
+  1573
+  1574 				isrun:
+  1575 					;load offset/run bytes
+  1576 					jsr		getrawbyte
+  1577 					sta		d3
+  1578 					jsr		getrawbyte
+  1579 					sta		d2
+  1580 					
+  1581 					;compute run source from current position and offset
+  1582 					lda		a2
+  1583 					clc
+  1584 					sbc		d3
+  1585 					sta		a1
+  1586 					lda		a2+1
+  1587 					sbc		d2
+  1588 					and		#$0f
+  1589 					ora		#$10
+  1590 					sta		a1+1
+  1591 					
+  1592 					;compute length and stash run length
+  1593 					lda		d2
+  1594 					lsr
+  1595 					lsr
+  1596 					lsr
+  1597 					lsr
+  1598 					add		#3
+  1599 					sta		d2
+  1600 				getrunbyte:
+  1601 					dec		d2
+  1602 					ldy		#0
+  1603 					lda		(a1),y
+  1604 					inc		a1
+  1605 					bne		putwinbyte
+  1606 					inc		a1+1
+  1607 					pha
+  1608 					lda		a1+1
+  1609 					and		#$0f
+  1610 					ora		#$10
+  1611 					sta		a1+1
+  1612 					pla
+  1613 					jmp		putwinbyte
+  1614 					
+  1615 				getrawbyte:
+  1616 					lda		(a0),y
+  1617 					inw		a0
+  1618 					rts
+  1619 					
+  1620 				putwinbyte:
+  1621 					sta		(a2),y
+  1622 					inc		a2
+  1623 					seq:rts
+  1624 					ldy		a2+1
+  1625 					iny
+  1626 					cpy		#$20
+  1627 					sne:ldy	#$10
+  1628 					sty		a2+1
+  1629 					ldy		#0
+  1630 				definit:
+  1631 					rts	
+  1632 					
+  1633 					.endif
+  1634 				.endp
+  1635 				.endif
+  1636
+  1637 				;==========================================================================
+  1638 				_hexdig	dta		c"0123456789ABCDEF"
+  1639
+  1640 				;==========================================================================
+  1641 				; segment table
+  1642 				;
+  1643 				.ifndef SYS800
+  1644 = BF00			segaddrlo	equ	$bf00
+  1645 = BF80			segaddrhi	equ	$bf80
+  1646 				.else
+  1647 				segaddrlo	equ	$1900
+  1648 				segaddrhi	equ	$1980
+  1649 				.endif
+  1650
+  1651 = 0900			_veronicaLaunch = $0900
+  1652
+  1653 				;==========================================================================
+  1654 				; platform-specific library
+  1655 				;
+  1656 				.ifdef SYS5200
+  1657 					icl		'lib5200.s'
+Source: lib5200.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				.proc _crt0init_5200
+    23 					lda		#$02
+    24 					sta		sskctl
+    25 					sta		skctl
+    26 					
+    27 					mva		#$04 consol
+    28 					mva		#$00 keydel
+    29 					
+    30 					php
+    31 					sei
+    32 					
+    33 					lda		pokmsk
+    34 					ora		#$c0
+    35 					sta		pokmsk
+    36 					sta		irqen
+    37
+    38 					mwa		#_kybd_handler vkybdf
+    39 					mwa		#_vbd_handler vvblkd
+    40 					
+    41 					plp
+    42 					rts
+    43 				.endp
+    44
+    45 				;==========================================================================
+    46 				.proc _kybd_handler
+    47 					;The bass-ackward design of the 5200 keyboard causes an IRQ to occur
+    48 					;every 32 scanlines while a key is held down. We require keys to be
+    49 					;released for at least one full frame before we recognize another
+    50 					;one.
+    51 					ldx		keydel
+    52 					sne:sta	ch
+    53 					lda		#2
+    54 					sta		keydel
+    55 					pla
+    56 					tay
+    57 					pla
+    58 					tax
+    59 					pla
+    60 					rti
+    61 				.endp
+    62
+    63 				;==========================================================================
+    64 				.proc _vbd_handler
+    65 					lda		keydel
+    66 					seq:dec	keydel
+    67 					
+    68 					plr
+    69 					rti
+    70 				.endp
+    71
+  1658 				.endif
+  1659 				.ifdef SYSSAP
+  1660 					icl		'libsap.s'
+  1661 				.endif
+  1662
+  1663 				;==========================================================================
+  1664 				.ifndef STANDALONE
+  1665 				.ifdef SYS5200
+  1666 					opt	o+
+  1667 				.else
+  1668 					opt	h+o+
+  1669 				.endif
+  1670 				.endif
+    27
+    28 						org		$0080
+    29 				quickrs:
+    30 FFFF> 0080-009A> 00 00 + 		:16 dta $00
+    31 0090 00			rand1	dta		0			;first random value
+    32 0091 00			rand2	dta		0			;second random value, 114 cycles past first
+    33 0092 00 00		randpos	dta		a(0)		;random position index (1-511)
+    34 0094 00 00		testptr	dta		a(0)		;pointer to current test data
+    35
+    36 0096 00			delyidx	dta		0			;profiling cycle delay (doubled; must be even)
+    37 0097 00			profrdy	dta		0			;set when DLI handler should execute test
+    38 0098 00			dispslc	dta		0			;display slice (0-3)
+    39
+    40 0099 00			xsave	dta		0			;DLI X register save
+    41 009A 00			ysave	dta		0			;DLI Y register save
+    42
+    43 009B					org		$2000
+    44
+    45 				;==========================================================================
+    46 				; ANTIC DMA pattern test
+    47 				;
+    48 				; This test involves quite a bit more trickery than usual, so it deserves
+    49 				; some explanation.
+    50 				;
+    51 				; What we're trying to do is determine which cycles are blocked by ANTIC
+    52 				; DMA during a scan line. However, the CPU can't monitor this directly
+    53 				; since it's halted, and there isn't a convenient and reliable cycle
+    54 				; timer on the A8. High-speed POTs *almost* work for this but have a glitch
+    55 				; in HBLANK. Therefore, we use trusty RANDOM instead. In 9-bit mode, we
+    56 				; can *almost* read the entire LFSR, but unfortunately we're short one bit.
+    57 				; To determine the true position, we take two samples exactly one scanline
+    58 				; apart. We can then look up through a series of carefully constructed
+    59 				; tables:
+    60 				;
+    61 				;	lfsrtab		RANDOM values in cycle order (Pad byte + 511 entries).
+    62 				;	lfsrlo/hi0	One-based index given RANDOM value, assuming high bit = 0.
+    63 				;	lfsrlo/hi1	One-based index given RANDOM value, assuming high bit = 1.
+    64 				;
+    65 				; Given the first value, we can look up its two possible indices, and
+    66 				; check the second value 114 cycles later in the sequence table to select
+    67 				; the right once. We then walk down the expected bitmask and LFSR sequence
+    68 				; in parallel, counting off the *unhalted* cycles, and checking the LFSR
+    69 				; values against the recorded RANDOM values in the scanline. We can't
+    70 				; just search the sequence, because all values except 00 occur twice, and
+    71 				; the duplicates are sometimes very close (FF FF occurs in it).
+    72 				;
+    73 				; That leaves sampling RANDOM during the scanline. We can't possibly do it
+    74 				; every cycle; the best that the 6502 can do is once every 7 cycles.
+    75 				; To work around this we need seven sampling passes all skewed by one
+    76 				; cycle apart.
+    77 				;
+    78 				; Optimizing the sampling passes
+    79 				; ------------------------------
+    80 				; We have 50 tests to do and 7 passes to do on each test. Older versions
+    81 				; of this test used to do one pass a frame, which was annoyingly long
+    82 				; at six seconds. The display list has been tightened up and four passes
+    83 				; are now done a frame, speeding the test up to a second and a half.
+    84 				; The main obstacle to further speedups is the LFSR scanning routine, which
+    85 				; takes a few dozen scanlines to analyze the results of a pass.
+    86
+    87 2000			main:
+    88 2000-20C1> A0 23				ldy		#>testname
+    89 2002 A9 E4				lda		#<testname
+    90 2004 20 19 A3				jsr		_testInit
+    91 						
+    92 						;generate 9-bit LFSR tables
+    93 2007 20 EC 21				jsr		genlfsr9
+    94 						
+    95 						;kill screen
+    96 200A 20 C5 A0				jsr		_screenOff
+    97 200D 20 4B A0				jsr		_interruptsOff
+    98
+    99 						;wait for vertical blank and swap in new display list
+   100 2010 20 ED A0				jsr		_waitVBL
+   101 						
+   102 2013 A9 A0 8D 06 02 A9 + 		mwa		#dli vdslst
+   103 201D A9 00 8D 02 D4 A9 + 		mwa		#dlist dlistl
+   104 2027 A9 22 8D 00 D4			mva		#$22 dmactl
+   105 202C A9 80 8D 0E D4			mva		#$80 nmien
+   106
+   107 						;switch to 9-bit lfsr
+   108 2031 A9 80 8D 08 E8			mva		#$80 audctl
+   109 						
+   110 						;begin test loop
+   111 2036 A9 00 85 94 A9 38 + 		mwa		#testdata testptr
+   112 						
+   113 						;============================ MODE LOOP =============================
+   114 						;This is where we loop through each ANTIC mode in turn.
+   115 203E			testloop:
+   116 203E A2 00				ldx		#0
+   117 						
+   118 						;=========================== OFFSET LOOP ============================
+   119 						;This is where we loop through unblocked cycle offsets 0-6 for the
+   120 						;mode line.
+   121 2040			offsetloop:
+   122 2040 86 96				stx		delyidx
+   123 						
+   124 						;wait for scanline 16 every four display slices, as that's what fits
+   125 2042 A5 98				lda		dispslc
+   126 2044 E6 98				inc		dispslc
+   127 2046 29 03				and		#3
+   128 2048 D0 07				bne		nowaitvbl
+   129 						
+   130 204A A9 08				lda		#8
+   131 204C CD 0B D4 D0 FB			cmp:rne	vcount
+   132 						
+   133 2051			nowaitvbl:
+   134 						;turn off playfield and display list DMA
+   135 2051 A9 00 8D 00 D4			mva		#0 dmactl
+   136 						
+   137 						;wait for end of scanline
+   138 2056 8D 0A D4				sta		wsync
+   139 						
+   140 						;reset display list -- it's a little too tight to do this before the
+   141 						;the display list read, so we safely wait past it and blow a scanline;
+   142 						;this requires a minimum of 18 cycles of delay
+   143 2059 48 68				pha:pla
+   144 205B 48 68				pha:pla
+   145 205D 68 68				pla:pla
+   146 205F A9 00 8D 02 D4 A9 + 		mwa		#dlist dlistl
+   147 						
+   148 						;wait for wsync again and turn display DMA back on
+   149 2069 A9 22				lda		#$22
+   150 206B 8D 0A D4				sta		wsync
+   151 206E 8D 00 D4				sta		dmactl
+   152
+   153 						;signal DLI handler to run
+   154 2071 A9 FF 85 97				mva		#$ff profrdy
+   155 						
+   156 						;wait for DLI to occur
+   157 2075 A5 97 D0 FC				lda:rne	profrdy
+   158 						
+   159 						;set up LFSR index to point to the right location -- we need to be four
+   160 						;scanlines + 7 cycles past (106 -> 113) = 463 cycles ahead, but we need
+   161 						;one cycle less since we increment at the start below
+   162 2079 A5 C0				lda		a0
+   163 207B 18					clc
+   164 207C 69 5C				adc		#<[462-114]
+   165 207E 85 C0				sta		a0
+   166 2080 A5 C1				lda		a0+1
+   167 2082 29 01				and		#$01
+   168 2084 69 01				adc		#>[462-114]
+   169 2086			lfsrptrnorm:
+   170 2086 C9 02				cmp		#2
+   171 2088 90 0B				bcc		lfsrptrok
+   172 208A 29 01				and		#1
+   173 208C E6 C0				inc		a0
+   174 208E D0 05				bne		lfsrptrok
+   175 2090 18					clc
+   176 2091 69 01				adc		#1
+   177 2093 90 F1				bcc		lfsrptrnorm
+   178 2095			lfsrptrok:
+   179 2095 09 30				ora		#>lfsrtab
+   180 2097 85 C1				sta		a0+1
+   181 						
+   182 						;compute the initial index in unblocked cycles; we need to skip this many
+   183 						;in the data.
+   184 2099 A5 96				lda		delyidx
+   185 209B 4A					lsr
+   186 209C AA					tax
+   187 209D E8					inx
+   188 						
+   189 						;============================ SCAN LOOP =============================
+   190 						;Here we walk through the test data every 7 unblocked cycles, checking
+   191 						;that LFSR values are as expected.
+   192 						;
+   193 						;	X		Number of unblocked cycles left to advance
+   194 						;	Y		Index into test data
+   195 						;	A0		Current LFSR data pointer
+   196 						;	D0		Current test data; shifted left
+   197 						;	D1		Bit counter ($01, $02, $04....)
+   198 						;	D2		Temporary
+   199 						;	D3		result index
+   200 						
+   201 						;reset result index
+   202 209E A9 00 85 CB				mva		#0 d3
+   203 						
+   204 						;load first test byte and bit indicator
+   205 20A2 A0 01				ldy		#1
+   206 20A4 84 C9				sty		d1
+   207 20A6 18 A5 94 69 02 8D + 		adw		testptr #2 testpt2
+   208 20B5 B1 94 85 C8				mva		(testptr),y d0
+   209 						
+   210 20B9 A4 C0				ldy		a0
+   211 20BB A9 00 85 C0				mva		#0 a0
+   212 20BF 4C 26 21				jmp		sevenloop
+   213 						
+   214 20C2					.align	256
+   215
+   216 2100			lfsrinc2:
+   217 2100-23F6> 48				pha
+   218 2101 E6 C1				inc		a0+1
+   219 2103 A5 C1				lda		a0+1
+   220 2105 C9 32				cmp		#$32
+   221 2107 68					pla
+   222 2108 90 21				bcc		lfsrinc1
+   223 210A C8					iny
+   224 210B 48					pha
+   225 210C A9 30 85 C1				mva		#>lfsrtab a0+1
+   226 2110 68					pla
+   227 2111 B0 18				bcs		lfsrinc1
+   228
+   229 2113			load_new_byte:		
+   230 						;load next test byte
+   231 2113 AD 00 00				lda.w	$0
+   232 = 2114			testpt2 = *-2
+   233
+   234 2116 EE 14 21 D0 03 EE + 		inw		testpt2
+   235 						
+   236 						;check if we're done
+   237 211E C9 A5				cmp		#$a5
+   238 2120 F0 5C				beq		bitscancomplete
+   239 						
+   240 						;reset byte flag
+   241 2122 E6 C9				inc		d1
+   242 2124 D0 0C				bne		samebyte
+   243
+   244 2126			sevenloop:
+   245 2126 A5 C8				lda		d0
+   246 2128			bitloop:
+   247 2128			isblocked:
+   248 						;advance to next LFSR index
+   249 2128 C8					iny
+   250 2129 F0 D5				beq		lfsrinc2
+   251 212B			lfsrinc1:
+   252
+   253 						;advance to next bit in test stream
+   254 212B 2A					rol
+   255 212C 26 CA				rol		d2
+   256 212E 06 C9				asl		d1
+   257 2130 B0 E1				bcs		load_new_byte		
+   258 2132			samebyte:
+   259 						;keep going if this is a blocked cycle
+   260 2132 66 CA				ror		d2
+   261 2134 B0 F2				bcs		isblocked
+   262 						
+   263 						;keep going if we still need to skip unblocked cycles
+   264 2136 CA					dex
+   265 2137 D0 EF				bne		bitloop
+   266 						
+   267 2139 85 C8				sta		d0
+   268 						
+   269 						;check if the LFSR value matches
+   270 213B A6 CB				ldx		d3
+   271 213D E6 CB				inc		d3
+   272 213F B5 80				lda		quickrs,x
+   273 2141 D1 C0				cmp		(a0),y
+   274 2143 D0 05				bne		randfail
+   275
+   276 						;go back to check another value 7 unblocked cycles later
+   277 2145 A2 07				ldx		#7
+   278 2147 4C 26 21				jmp		sevenloop
+   279 						
+   280 214A			randfail:
+   281 						;uh oh....
+   282 214A A0 00				ldy		#0
+   283 214C B1 94				lda		(testptr),y
+   284 214E 4A					lsr
+   285 214F 4A					lsr
+   286 2150 85 C9				sta		d1
+   287 2152 B1 94				lda		(testptr),y
+   288 2154 29 03				and		#3
+   289 2156 18					clc
+   290 2157 69 61				adc		#'a'
+   291 2159 85 CA				sta		d2
+   292 215B					_FAIL	c"Incorrect timing for mode %x-%c"
+Macro: _FAIL [Source: library.s]
+     1 215B 20 82 A3			jsr		_testFailed
+     2 215E 49 6E 63 6F 72 72 + 	dta		c"Incorrect timing for mode %x-%c",0
+Source: antic_dmapattern.s
+   293 						
+   294 217E			bitscancomplete:
+   295 						;========================== END SCAN LOOP ===========================
+   296 						
+   297 						;continue until we've done all 7 offsets
+   298 217E A6 96				ldx		delyidx
+   299 2180 E8					inx
+   300 2181 E8					inx
+   301 2182 E0 0E				cpx		#14
+   302 2184 F0 03 4C 40 20			seq:jmp	offsetloop
+   303 						
+   304 						;========================= END OFFSET LOOP ==========================
+   305 						
+   306 						;bump up test pointer by test size (16 bytes)
+   307 2189 A5 94				lda		testptr
+   308 218B 18					clc
+   309 218C 69 10				adc		#16
+   310 218E 85 94				sta		testptr
+   311 2190 90 02 E6 95				scc:inc	testptr+1
+   312 						
+   313 						;continue if we still have tests
+   314 2194 A0 00				ldy		#0
+   315 2196 B1 94				lda		(testptr),y
+   316 2198 F0 03				beq		done
+   317 219A 4C 3E 20				jmp		testloop
+   318 						
+   319 219D			done:
+   320 						;all done!
+   321 219D 4C 6D A3				jmp		_testPassed
+   322 					
+   323 				;=========================================================================
+   324 21A0			.proc	dli
+   325 21A0 48					pha
+   326 								
+   327 						;check if we've should run
+   328 21A1 A5 97				lda		profrdy
+   329 21A3 F0 2C				beq		xit
+   330 						
+   331 						;immediately block to prevent recursion
+   332 21A5 E6 97				inc		profrdy
+   333 						
+   334 						;save X/Y
+   335 21A7 84 9A				sty		ysave
+   336 21A9 86 99				stx		xsave
+   337
+   338 						;modify display list mode byte
+   339 21AB A0 00				ldy		#0
+   340 21AD B1 94				lda		(testptr),y
+   341 21AF 4A					lsr
+   342 21B0 08					php
+   343 21B1 4A					lsr
+   344 21B2 09 40				ora		#$40
+   345 21B4 8D 02 28				sta		dlmode
+   346 						
+   347 21B7 A9 21				lda		#$21
+   348 21B9 69 00				adc		#0
+   349 21BB 8D 00 D4				sta		dmactl
+   350 21BE 28					plp
+   351 						
+   352 						;check if we need to skip an extra line
+   353 21BF 90 03				bcc		noxline
+   354 21C1 8D 0A D4				sta		wsync			;end scanline 16
+   355 21C4			noxline:
+   356
+   357 21C4 8D 0A D4				sta		wsync			;end scanline 16/17
+   358
+   359 						;dispatch to routine
+   360 21C7 20 D3 21				jsr		doProfile
+   361 						
+   362 						;decode the starting offset
+   363 21CA 20 68 22				jsr		unrand
+   364
+   365 21CD A6 99				ldx		xsave
+   366 21CF A4 9A				ldy		ysave
+   367
+   368 21D1			xit:
+   369 21D1 68					pla
+   370 21D2 40					rti
+   371
+   372 21D3			doProfile:
+   373 21D3 A6 96				ldx		delyidx
+   374 21D5 BD DF 21				lda		routines+1,x
+   375 21D8 48					pha
+   376 21D9 BD DE 21				lda		routines,x
+   377 21DC 48					pha
+   378 21DD 60					rts
+   379 						
+   380 21DE			routines:
+   381 21DE 2E 23				dta		a(profileDelay0-1)
+   382 21E0 46 23				dta		a(profileDelay1-1)
+   383 21E2 5E 23				dta		a(profileDelay2-1)
+   384 21E4 77 23				dta		a(profileDelay3-1)
+   385 21E6 91 23				dta		a(profileDelay4-1)
+   386 21E8 AC 23				dta		a(profileDelay5-1)
+   387 21EA C7 23				dta		a(profileDelay6-1)
+   388 				.endp
+   389
+   390 				;=========================================================================	
+   391 21EC			.proc genlfsr9
+   392 21EC A9 00 85 CA				mva		#0 d2
+   393 21F0 A0 01				ldy		#1
+   394 21F2 A9 00 85 C0 A9 30 + 		mwa		#lfsrtab a0
+   395 21FA A9 FF				lda		#$ff
+   396 21FC 85 C8				sta		d0
+   397 21FE 18					clc
+   398 21FF 08					php
+   399 2200			loop2:
+   400 2200 28					plp
+   401 2201			loop:
+   402 2201 A5 C8 91 C0				mva		d0	(a0),y
+   403 2205 AA					tax
+   404 2206 98					tya
+   405 2207 90 0A				bcc		low
+   406 2209 9D 00 36				sta		lfsrlo1,x
+   407 220C A5 CA 9D 00 37			mva		d2 lfsrhi1,x
+   408 2211 B0 08				bcs		hi
+   409 2213			low:
+   410 2213 9D 00 34				sta		lfsrlo0,x
+   411 2216 A5 CA 9D 00 35			mva		d2 lfsrhi0,x
+   412 221B			hi:
+   413 221B 66 C8				ror		d0
+   414 221D 66 C9				ror		d1
+   415 221F 8A					txa
+   416 2220 2A					rol
+   417 2221 2A					rol
+   418 2222 45 C9				eor		d1
+   419 2224 2A					rol
+   420 2225 C8					iny
+   421 2226 D0 D9				bne		loop
+   422 2228 08					php
+   423 2229 E6 C1				inc		a0+1
+   424 222B E6 CA				inc		d2
+   425 222D A5 CA				lda		d2
+   426 222F C9 02				cmp		#2
+   427 2231 D0 CD				bne		loop2
+   428 2233 28					plp
+   429 						
+   430 						;add 114 to all values (needed by unrand)
+   431 2234 A2 00				ldx		#0
+   432 2236			addloop:
+   433 2236 BD 00 34 85 92			mva		lfsrlo0,x randpos
+   434 223B BD 00 35 85 93			mva		lfsrhi0,x randpos+1
+   435 2240 20 BB 22				jsr		add114
+   436 2243 A5 C0 9D 00 34			mva		a0 lfsrlo0,x
+   437 2248 A5 C1 9D 00 35			mva		a0+1 lfsrhi0,x
+   438
+   439 224D BD 00 36 85 92			mva		lfsrlo1,x randpos
+   440 2252 BD 00 37 85 93			mva		lfsrhi1,x randpos+1
+   441 2257 20 BB 22				jsr		add114
+   442 225A A5 C0 9D 00 36			mva		a0 lfsrlo1,x
+   443 225F A5 C1 9D 00 37			mva		a0+1 lfsrhi1,x
+   444 						
+   445 2264 E8					inx
+   446 2265 D0 CF				bne		addloop
+   447 						
+   448 2267 60					rts
+   449 				.endp
+   450
+   451 				;=========================================================================
+   452 				; unrand
+   453 				;
+   454 				; Converts rand1/rand2 pair into randpos index.
+   455 				;
+   456 2268			.proc	unrand
+   457 						;try first with high bit = 0
+   458 2268 A6 90				ldx		rand1
+   459 226A BD 00 34 85 C0			mva		lfsrlo0,x a0
+   460 226F BD 00 35 85 C1			mva		lfsrhi0,x a0+1
+   461 2274 A0 00				ldy		#0
+   462 2276 A5 91				lda		rand2
+   463 2278 D1 C0				cmp		(a0),y
+   464 227A F0 3E				beq		foundit
+   465 						
+   466 						;nope... try with high bit = 1
+   467 227C A6 90				ldx		rand1
+   468 227E BD 00 36 85 C0			mva		lfsrlo1,x a0
+   469 2283 BD 00 37 85 C1			mva		lfsrhi1,x a0+1
+   470 2288 A5 91				lda		rand2
+   471 228A D1 C0				cmp		(a0),y
+   472 228C F0 2C				beq		foundit
+   473 						
+   474 						;whoops... we can't decode this pair!
+   475 228E A5 90 85 C9				mva		rand1 d1
+   476 2292 A5 91 85 CA				mva		rand2 d2
+   477 2296					_FAIL	c"Cannot decode random pair: %x %x"
+Macro: _FAIL [Source: library.s]
+     1 2296 20 82 A3			jsr		_testFailed
+     2 2299 43 61 6E 6E 6F 74 + 	dta		c"Cannot decode random pair: %x %x",0
+Source: antic_dmapattern.s
+   478 						
+   479 22BA			foundit:
+   480 22BA 60					rts
+   481 				.endp
+   482
+   483 22BB			.proc add114
+   484 22BB A5 92				lda		randpos
+   485 22BD 18					clc
+   486 22BE 69 72				adc		#114
+   487 22C0 85 C0				sta		a0
+   488 22C2 A5 93				lda		randpos+1
+   489 22C4 69 00				adc		#0
+   490 22C6 C9 02				cmp		#2
+   491 22C8 90 08				bcc		add114_nocarry
+   492 						
+   493 						;whoops, we've wrapped... subtract 511.
+   494 22CA A9 00				lda		#0
+   495 22CC E6 C0				inc		a0
+   496 22CE D0 02 A9 01				sne:lda	#1
+   497 22D2			add114_nocarry:
+   498 22D2 09 30				ora		#>lfsrtab
+   499 22D4 85 C1				sta		a0+1
+   500 22D6 60					rts
+   501 				.endp
+   502
+   503 				;=========================================================================	
+   504 22D7			.proc profile
+   505 22D7 AD FF FF				lda		$ffff				;106, 107, 108, 109
+   506 22DA AD 0A E8 85 80			mva		random quickrs+0	;110, 111, 112, [113]...
+   507 22DF AD 0A E8 85 81			mva		random quickrs+1
+   508 22E4 AD 0A E8 85 82			mva		random quickrs+2
+   509 22E9 AD 0A E8 85 83			mva		random quickrs+3
+   510 22EE AD 0A E8 85 84			mva		random quickrs+4
+   511 22F3 AD 0A E8 85 85			mva		random quickrs+5
+   512 22F8 AD 0A E8 85 86			mva		random quickrs+6
+   513 22FD AD 0A E8 85 87			mva		random quickrs+7
+   514 2302 AD 0A E8 85 88			mva		random quickrs+8
+   515 2307 AD 0A E8 85 89			mva		random quickrs+9
+   516 230C AD 0A E8 85 8A			mva		random quickrs+10
+   517 2311 AD 0A E8 85 8B			mva		random quickrs+11
+   518 2316 AD 0A E8 85 8C			mva		random quickrs+12
+   519 231B AD 0A E8 85 8D			mva		random quickrs+13
+   520 2320 AD 0A E8 85 8E			mva		random quickrs+14
+   521 2325 AD 0A E8 85 8F			mva		random quickrs+15
+   522 232A 86 90				stx		rand1
+   523 232C 84 91				sty		rand2
+   524 232E 60					rts
+   525 				.endp
+   526
+   527 				;=========================================================================	
+   528 232F			.proc profileDelay0
+   529 232F 8D 0A D4				sta		wsync		;end of scanline 19/20
+   530 2332 AE 0A E8				ldx		random
+   531 2335 8D 0A D4				sta		wsync		;end of scanline 20/21
+   532 2338 AC 0A E8				ldy		random
+   533 233B 8D 0A D4				sta		wsync		;end of scanline 21/22
+   534 233E 8D 0A D4				sta		wsync		;end of scanline 22/23
+   535 2341 8D 0A D4				sta		wsync		;end of scanline 23/24
+   536 2344 4C D7 22				jmp		profile		;*, 104, 105
+   537 				.endp
+   538
+   539 				;=========================================================================	
+   540 2347			.proc profileDelay1
+   541 2347 8D 0A D4				sta		wsync
+   542 234A AE 0A E8				ldx		random
+   543 234D 8D 0A D4				sta		wsync
+   544 2350 AC 0A E8				ldy		random
+   545 2353 8D 0A D4				sta		wsync
+   546 2356 8D 0A D4				sta		wsync
+   547 2359 EE 0A D4				inc		wsync
+   548 235C 4C D7 22				jmp		profile
+   549 				.endp
+   550
+   551 				;=========================================================================	
+   552 235F			.proc profileDelay2
+   553 235F 8D 0A D4				sta		wsync
+   554 2362 AE 0A E8				ldx		random
+   555 2365 8D 0A D4				sta		wsync
+   556 2368 AC 0A E8				ldy		random
+   557 236B 8D 0A D4				sta		wsync
+   558 236E 8D 0A D4				sta		wsync
+   559 2371 8D 0A D4				sta		wsync
+   560 2374 EA					nop
+   561 2375 4C D7 22				jmp		profile
+   562 				.endp
+   563
+   564 				;=========================================================================	
+   565 2378			.proc profileDelay3
+   566 2378 8D 0A D4				sta		wsync
+   567 237B AE 0A E8				ldx		random
+   568 237E 8D 0A D4				sta		wsync
+   569 2381 AC 0A E8				ldy		random
+   570 2384 8D 0A D4				sta		wsync
+   571 2387 8D 0A D4				sta		wsync
+   572 238A 8D 0A D4				sta		wsync
+   573 238D A5 FF				lda		$ff
+   574 238F 4C D7 22				jmp		profile
+   575 				.endp
+   576
+   577 				;=========================================================================	
+   578 2392			.proc profileDelay4
+   579 2392 8D 0A D4				sta		wsync
+   580 2395 AE 0A E8				ldx		random
+   581 2398 8D 0A D4				sta		wsync
+   582 239B AC 0A E8				ldy		random
+   583 239E 8D 0A D4				sta		wsync
+   584 23A1 8D 0A D4				sta		wsync
+   585 23A4 8D 0A D4				sta		wsync
+   586 23A7 AD FF FF				lda		$ffff
+   587 23AA 4C D7 22				jmp		profile
+   588 				.endp
+   589
+   590 				;=========================================================================	
+   591 23AD			.proc profileDelay5
+   592 23AD 8D 0A D4				sta		wsync
+   593 23B0 AE 0A E8				ldx		random
+   594 23B3 8D 0A D4				sta		wsync
+   595 23B6 AC 0A E8				ldy		random
+   596 23B9 8D 0A D4				sta		wsync
+   597 23BC 8D 0A D4				sta		wsync
+   598 23BF 8D 0A D4				sta		wsync
+   599 23C2 A5 FF				lda		$ff
+   600 23C4 EA					nop
+   601 23C5 4C D7 22				jmp		profile
+   602 				.endp
+   603
+   604 				;=========================================================================	
+   605 23C8			.proc profileDelay6
+   606 23C8 8D 0A D4				sta		wsync
+   607 23CB AE 0A E8				ldx		random
+   608 23CE 8D 0A D4				sta		wsync
+   609 23D1 AC 0A E8				ldy		random
+   610 23D4 8D 0A D4				sta		wsync
+   611 23D7 8D 0A D4				sta		wsync
+   612 23DA 8D 0A D4				sta		wsync
+   613 23DD AD FF FF				lda		$ffff
+   614 23E0 EA					nop
+   615 23E1 4C D7 22				jmp		profile
+   616 				.endp
+   617
+   618 				;=========================================================================	
+   619 						
+   620 23E4			testname:
+   621 23E4 41 4E 54 49 43 3A + 		dta		c"ANTIC: DMA pattern",0	
+   622
+   623 23F7					org		$2800
+   624 2800			dlist:
+   625 2800-2807> 80				dta		$80
+   626 2801 40					dta		$40
+   627 2802			dlmode:
+   628 2802 21 E4 23				dta		$21,a(testname)	;dummy data
+   629 2805			dljam:
+   630 						;we purposely use a jump here instead of JVB, as you can't break
+   631 						;out of a JVB manually
+   632 2805 01 05 28				dta		$01,a(dljam)
+   633
+   634 = 3000			lfsrtab	equ		$3000		;512 bytes (first byte is not used)
+   635 = 3400			lfsrlo0	equ		$3400
+   636 = 3500			lfsrhi0	equ		$3500
+   637 = 3600			lfsrlo1	equ		$3600
+   638 = 3700			lfsrhi1	equ		$3700
+   639
+   640 2808					org		$3800
+   641
+   642 				; Test data
+   643 				;
+   644 				; The first byte is mode*2 + second_line; the subsequent bytes are the
+   645 				; DMA cycle pattern.
+   646 3800			testdata:		
+   647 				;narrow playfield
+   648 				;				                                                                                                                                  1           1
+   649 				;				                  1           2           3             4           5           6           7             8           9           0           1
+   650 				;				      0123456  78901234  56789012  34567890  12345678  90123456  78901234  56789012  34567890  12345678  90123456  78901234  56789012  34567890
+   651 3800-3B20> 08 43 00 00 + mode2a	dta		$08,%01000011,%00000000,%00000000,%01101111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11110000,%00000000,%00000000,$A5
+   652 3810 09 00 00 00 47 77 + mode2b	dta		$09,%00000000,%00000000,%00000000,%01000111,%01110111,%01110111,%01110111,%01110101,%01010101,%01010101,%01010101,%01010000,%00000000,%00000000,$A5
+   653 3820 0C 43 00 00 6F FF + mode3a	dta		$0c,%01000011,%00000000,%00000000,%01101111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11110000,%00000000,%00000000,$A5
+   654 3830 0D 00 00 00 47 77 + mode3b	dta		$0d,%00000000,%00000000,%00000000,%01000111,%01110111,%01110111,%01110111,%01110101,%01010101,%01010101,%01010101,%01010000,%00000000,%00000000,$A5
+   655 3840 10 43 00 00 6F FF + mode4a	dta		$10,%01000011,%00000000,%00000000,%01101111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11110000,%00000000,%00000000,$A5
+   656 3850 11 00 00 00 47 77 + mode4b	dta		$11,%00000000,%00000000,%00000000,%01000111,%01110111,%01110111,%01110111,%01110101,%01010101,%01010101,%01010101,%01010000,%00000000,%00000000,$A5
+   657 3860 10 43 00 00 6F FF + mode5a	dta		$10,%01000011,%00000000,%00000000,%01101111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11110000,%00000000,%00000000,$A5
+   658 3870 11 00 00 00 47 77 + mode5b	dta		$11,%00000000,%00000000,%00000000,%01000111,%01110111,%01110111,%01110111,%01110101,%01010101,%01010101,%01010101,%01010000,%00000000,%00000000,$A5
+   659 3880 18 43 00 00 67 77 + mode6a	dta		$18,%01000011,%00000000,%00000000,%01100111,%01110111,%01110111,%01110111,%01110110,%01100110,%01100110,%01100110,%01000000,%00000000,%00000000,$A5
+   660 3890 19 00 00 00 46 66 + mode6b	dta		$19,%00000000,%00000000,%00000000,%01000110,%01100110,%01100110,%01100110,%01100100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,$A5
+   661 38A0 1C 43 00 00 67 77 + mode7a	dta		$1c,%01000011,%00000000,%00000000,%01100111,%01110111,%01110111,%01110111,%01110110,%01100110,%01100110,%01100110,%01000000,%00000000,%00000000,$A5
+   662 38B0 1D 00 00 00 46 66 + mode7b	dta		$1d,%00000000,%00000000,%00000000,%01000110,%01100110,%01100110,%01100110,%01100100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,$A5
+   663 38C0 20 43 00 00 4C 4C + mode8a	dta		$20,%01000011,%00000000,%00000000,%01001100,%01001100,%01001100,%01001100,%01001000,%00001000,%00001000,%00001000,%00000000,%00000000,%00000000,$A5
+   664 38D0 21 00 00 00 44 44 + mode8b	dta		$21,%00000000,%00000000,%00000000,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,%00000000,%00000000,%00000000,%00000000,$A5
+   665 38E0 24 43 00 00 4C 4C + mode9a	dta		$24,%01000011,%00000000,%00000000,%01001100,%01001100,%01001100,%01001100,%01001000,%00001000,%00001000,%00001000,%00000000,%00000000,%00000000,$A5
+   666 38F0 25 00 00 00 44 44 + mode9b	dta		$25,%00000000,%00000000,%00000000,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,%00000000,%00000000,%00000000,%00000000,$A5
+   667 3900 28 43 00 00 4C CC + modeaa	dta		$28,%01000011,%00000000,%00000000,%01001100,%11001100,%11001100,%11001100,%11001000,%10001000,%10001000,%10001000,%10000000,%00000000,%00000000,$A5
+   668 3910 29 00 00 00 44 44 + modeab	dta		$29,%00000000,%00000000,%00000000,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,%00000000,%00000000,%00000000,%00000000,$A5
+   669 3920 2C 43 00 00 4C CC + modeba	dta		$2c,%01000011,%00000000,%00000000,%01001100,%11001100,%11001100,%11001100,%11001000,%10001000,%10001000,%10001000,%10000000,%00000000,%00000000,$A5
+   670 3930 2D 00 00 00 44 44 + modebb	dta		$2d,%00000000,%00000000,%00000000,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,%00000000,%00000000,%00000000,%00000000,$A5
+   671 3940 30 43 00 00 4C CC + modeca	dta		$30,%01000011,%00000000,%00000000,%01001100,%11001100,%11001100,%11001100,%11001000,%10001000,%10001000,%10001000,%10000000,%00000000,%00000000,$A5
+   672 3950 34 43 00 00 4E EE + modeda	dta		$34,%01000011,%00000000,%00000000,%01001110,%11101110,%11101110,%11101110,%11101010,%10101010,%10101010,%10101010,%10100000,%00000000,%00000000,$A5
+   673 3960 35 00 00 00 44 44 + modedb	dta		$35,%00000000,%00000000,%00000000,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,%00000000,%00000000,%00000000,%00000000,$A5
+   674 3970 38 43 00 00 4E EE + modeea	dta		$38,%01000011,%00000000,%00000000,%01001110,%11101110,%11101110,%11101110,%11101010,%10101010,%10101010,%10101010,%10100000,%00000000,%00000000,$A5
+   675 3980 3C 43 00 00 4E EE + modefa	dta		$3c,%01000011,%00000000,%00000000,%01001110,%11101110,%11101110,%11101110,%11101010,%10101010,%10101010,%10101010,%10100000,%00000000,%00000000,$A5
+   676 				;normal playfield
+   677 				;				                                                                                                                                  1           1
+   678 				;				                  1           2           3             4           5           6           7             8           9           0           1
+   679 				;				      0123456  78901234  56789012  34567890  12345678  90123456  78901234  56789012  34567890  12345678  90123456  78901234  56789012  34567890    
+   680 3990 0A 43 00 2F FF FF + mode2c	dta		$0a,%01000011,%00000000,%00101111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11110000,%00000000,$A5
+   681 39A0 0B 00 00 05 77 77 + mode2d	dta		$0b,%00000000,%00000000,%00000101,%01110111,%01110111,%01110111,%01110111,%01110101,%01010101,%01010101,%01010101,%01010101,%01010000,%00000000,$A5
+   682 39B0 0E 43 00 2F FF FF + mode3c	dta		$0e,%01000011,%00000000,%00101111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11110000,%00000000,$A5
+   683 39C0 0F 00 00 05 77 77 + mode3d	dta		$0f,%00000000,%00000000,%00000101,%01110111,%01110111,%01110111,%01110111,%01110101,%01010101,%01010101,%01010101,%01010101,%01010000,%00000000,$A5
+   684 39D0 12 43 00 2F FF FF + mode4c	dta		$12,%01000011,%00000000,%00101111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11110000,%00000000,$A5
+   685 39E0 13 00 00 05 77 77 + mode4d	dta		$13,%00000000,%00000000,%00000101,%01110111,%01110111,%01110111,%01110111,%01110101,%01010101,%01010101,%01010101,%01010101,%01010000,%00000000,$A5
+   686 39F0 16 43 00 2F FF FF + mode5c	dta		$16,%01000011,%00000000,%00101111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11111111,%11110000,%00000000,$A5
+   687 3A00 17 00 00 05 77 77 + mode5d	dta		$17,%00000000,%00000000,%00000101,%01110111,%01110111,%01110111,%01110111,%01110101,%01010101,%01010101,%01010101,%01010101,%01010000,%00000000,$A5
+   688 3A10 1A 43 00 26 77 77 + mode6c	dta		$1a,%01000011,%00000000,%00100110,%01110111,%01110111,%01110111,%01110111,%01110110,%01100110,%01100110,%01100110,%01100110,%01000000,%00000000,$A5
+   689 3A20 1B 00 00 04 66 66 + mode6d	dta		$1b,%00000000,%00000000,%00000100,%01100110,%01100110,%01100110,%01100110,%01100100,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,$A5
+   690 3A30 1E 43 00 26 77 77 + mode7c	dta		$1e,%01000011,%00000000,%00100110,%01110111,%01110111,%01110111,%01110111,%01110110,%01100110,%01100110,%01100110,%01100110,%01000000,%00000000,$A5
+   691 3A40 1F 00 00 04 66 66 + mode7d	dta		$1f,%00000000,%00000000,%00000100,%01100110,%01100110,%01100110,%01100110,%01100100,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,$A5
+   692 3A50 22 43 00 08 4C 4C + mode8c	dta		$22,%01000011,%00000000,%00001000,%01001100,%01001100,%01001100,%01001100,%01001000,%00001000,%00001000,%00001000,%00001000,%00000000,%00000000,$A5
+   693 3A60 23 00 00 00 44 44 + mode8d	dta		$23,%00000000,%00000000,%00000000,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,%00000000,%00000000,%00000000,%00000000,$A5
+   694 3A70 26 43 00 08 4C 4C + mode9c	dta		$26,%01000011,%00000000,%00001000,%01001100,%01001100,%01001100,%01001100,%01001000,%00001000,%00001000,%00001000,%00001000,%00000000,%00000000,$A5
+   695 3A80 27 00 00 00 44 44 + mode9d	dta		$27,%00000000,%00000000,%00000000,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,%00000000,%00000000,%00000000,%00000000,$A5
+   696 3A90 2A 43 00 08 CC CC + modeac	dta		$2a,%01000011,%00000000,%00001000,%11001100,%11001100,%11001100,%11001100,%11001000,%10001000,%10001000,%10001000,%10001000,%10000000,%00000000,$A5
+   697 3AA0 2B 00 00 00 44 44 + modead	dta		$2b,%00000000,%00000000,%00000000,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,%00000000,%00000000,%00000000,%00000000,$A5
+   698 3AB0 2E 43 00 08 CC CC + modebc	dta		$2e,%01000011,%00000000,%00001000,%11001100,%11001100,%11001100,%11001100,%11001000,%10001000,%10001000,%10001000,%10001000,%10000000,%00000000,$A5
+   699 3AC0 2F 00 00 00 44 44 + modebd	dta		$2f,%00000000,%00000000,%00000000,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,%00000000,%00000000,%00000000,%00000000,$A5
+   700 3AD0 32 43 00 08 CC CC + modecc	dta		$32,%01000011,%00000000,%00001000,%11001100,%11001100,%11001100,%11001100,%11001000,%10001000,%10001000,%10001000,%10001000,%10000000,%00000000,$A5
+   701 3AE0 36 43 00 0A EE EE + modedc	dta		$36,%01000011,%00000000,%00001010,%11101110,%11101110,%11101110,%11101110,%11101010,%10101010,%10101010,%10101010,%10101010,%10100000,%00000000,$A5
+   702 3AF0 37 00 00 00 44 44 + modedd	dta		$37,%00000000,%00000000,%00000000,%01000100,%01000100,%01000100,%01000100,%01000000,%00000000,%00000000,%00000000,%00000000,%00000000,%00000000,$A5
+   703 3B00 3A 43 00 0A EE EE + modeec	dta		$3a,%01000011,%00000000,%00001010,%11101110,%11101110,%11101110,%11101110,%11101010,%10101010,%10101010,%10101010,%10101010,%10100000,%00000000,$A5
+   704 3B10 3E 43 00 0A EE EE + modefc	dta		$3e,%01000011,%00000000,%00001010,%11101110,%11101110,%11101110,%11101110,%11101010,%10101010,%10101010,%10101010,%10101010,%10100000,%00000000,$A5
+   705 3B20 00					dta		$00
+   706
+   707 02E0-02E1> 00 20				run		$2000
+   708 						end

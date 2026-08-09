@@ -1,0 +1,3584 @@
+mads 2.1.0 build 8 (23 Dec 19)
+Source: cpu_insn.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 FFFF0001					_SAP_HEADER "CPU: Basic instructions"
+Macro: _SAP_HEADER [Source: library.s]
+Source: cpu_insn.s
+    23
+    24 						opt		h+o+
+    25
+    26 						icl		'library.s'
+Source: library.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				;==========================================================================
+    23 				; MEMORY MAP (800)
+    24 				;
+    25 				;	$0000-007F		OS zero page
+    26 				;	$0080-00BF		Module zero page
+    27 				;	$00C0-00DF		Library zero page
+    28 				;	$00E0-00EF		80-column zero page
+    29 				;	$0100-01FF		6502 stack
+    30 				;	$0200-03FF		OS database
+    31 				;	$0400-09FF		Boot loader / unused
+    32 				;	$0A00-0AFF		Boot loader / Veronica support resident page
+    33 				;	$0B00-0BFF		Boot loader / sector load buffer
+    34 				;	$0C00-0FFF		Boot loader / 16K display
+    35 				;	$1000-18FF		Resident test driver (full suite only)
+    36 				;	$1900-19FF		Segment tables (full suite only)
+    37 				;	$1A00-1FFF		Library code
+    38 				;	$2000-3FFF		Module run area
+    39 				;	$4000-5FFF		Segment load area / Extended memory window
+    40 				;	$6000-7FFF		80-column screen A / Extended memory window
+    41 				;	$9000-9BFF		80-column driver
+    42 				;	$9C00-9FFF		Unused (display list if cart)
+    43 				;	$A000-BFFF		80-column screen B
+    44 				;
+    45 				; MEMORY MAP (5200)
+    46 				;
+    47 				;	$0000-001F		OS zero page
+    48 				;	$0020-003F		Display zero page
+    49 				;	$0080-00BF		Module zero page
+    50 				;	$00C0-00DF		Library zero page
+    51 				;	$0100-01FF		6502 stack
+    52 				;	$0200-021F		OS database
+    53 				;	$0220-027F		Unused
+    54 				;	$0280-02FF		Library database
+    55 				;	$0300-07FF		Display memory
+    56 				;	$0800-0FFF		Unused
+    57 				;	$1000-1FFF		LZ decompression history window
+    58 				;	$2000-3FFF		Module run area
+    59 				;	$4000-BFFF		Cartridge library code and module store
+    60 				;
+    61 				; MEMORY MAP (SAP)
+    62 				;
+    63 				;	$0080-00BF		Module zero page
+    64 				;	$00C0-00DF		Library zero page
+    65 				;	$0280-02FF		Library database
+    66 				;	$0300-07FF		Display memory
+    67 				;	$2000-3FFF		Module run area
+    68 				;	$4000-BFFF		Module store
+    69
+    70 				;==========================================================================
+    71 				; CONFIGURATION
+    72 				;
+    73 						.ifndef SYS800
+    74 = 0001					SEGS_IN_ROM = 1
+    75 						.else
+    76 						SEGS_MIN_MEM = 1
+    77 						.endif
+    78 						
+    79 						.ifdef SYS5200
+    80 = 0001					SEGS_LZPACK = 1
+    81 						.endif
+    82
+    83 				;==========================================================================
+    84 				; HARDWARE INCLUDES
+    85 				;
+    86 				.ifdef SYS5200
+    87 				;GTIA
+    88 = C000			gtia = $c000
+    89 = C000			m0pf	equ	$c000
+    90 = C001			m1pf	equ	$c001
+    91 = C002			m2pf	equ	$c002
+    92 = C003			m3pf	equ	$c003
+    93 = C004			p0pf	equ	$c004
+    94 = C005			p1pf	equ	$c005
+    95 = C006			p2pf	equ	$c006
+    96 = C007			p3pf	equ	$c007
+    97 = C008			m0pl	equ	$c008
+    98 = C009			m1pl	equ	$c009
+    99 = C00A			m2pl	equ	$c00a
+   100 = C00B			m3pl	equ	$c00b
+   101 = C00C			p0pl	equ	$c00c
+   102 = C00D			p1pl	equ	$c00d
+   103 = C00E			p2pl	equ	$c00e
+   104 = C00F			p3pl	equ	$c00f
+   105 = C000			hposp0	equ	$c000
+   106 = C001			hposp1	equ	$c001
+   107 = C002			hposp2	equ	$c002
+   108 = C003			hposp3	equ	$c003
+   109 = C004			hposm0	equ	$c004
+   110 = C005			hposm1	equ	$c005
+   111 = C006			hposm2	equ	$c006
+   112 = C007			hposm3	equ	$c007
+   113 = C008			sizep0	equ	$c008
+   114 = C009			sizep1	equ	$c009
+   115 = C00A			sizep2	equ	$c00a
+   116 = C00B			sizep3	equ	$c00b
+   117 = C00C			sizem	equ	$c00c
+   118 = C00D			grafp0	equ	$c00d
+   119 = C00E			grafp1	equ	$c00e
+   120 = C00F			grafp2	equ	$c00f
+   121 = C010			grafp3	equ	$c010
+   122 = C010			trig0	equ	$c010
+   123 = C011			grafm	equ	$c011
+   124 = C012			colpm0	equ	$c012
+   125 = C013			colpm1	equ	$c013
+   126 = C014			colpm2	equ	$c014
+   127 = C014			pal		equ	$c014
+   128 = C015			colpm3	equ	$c015
+   129 = C016			colpf0	equ	$c016
+   130 = C017			colpf1	equ	$c017
+   131 = C018			colpf2	equ	$c018
+   132 = C019			colpf3	equ	$c019
+   133 = C01A			colbk	equ	$c01a
+   134 = C01B			prior	equ	$c01b
+   135 = C01C			vdelay	equ	$c01c
+   136 = C01D			gractl	equ	$c01d
+   137 = C01E			hitclr	equ	$c01e
+   138 = C01F			consol	equ	$c01f
+   139
+   140 				;POKEY
+   141 = E800			pokey = $e800
+   142 = E800			audf1	equ	$e800
+   143 = E801			audc1	equ	$e801
+   144 = E802			audf2	equ	$e802
+   145 = E803			audc2	equ	$e803
+   146 = E804			audf3	equ	$e804
+   147 = E805			audc3	equ	$e805
+   148 = E806			audf4	equ	$e806
+   149 = E807			audc4	equ	$e807
+   150 = E808			audctl	equ	$e808
+   151 = E809			stimer	equ	$e809
+   152 = E80A			random	equ	$e80a
+   153 = E80A			skres	equ	$e80a
+   154 = E80D			serin	equ	$e80d
+   155 = E80D			serout	equ	$e80d
+   156 = E80E			irqen	equ	$e80e
+   157 = E80E			irqst	equ	$e80e
+   158 = E80F			skctl	equ	$e80f
+   159 = E80F			skstat	equ	$e80f
+   160 				.else
+   161 				;GTIA
+   162 				gtia = $d000
+   163 				m0pf	equ	$d000
+   164 				m1pf	equ	$d001
+   165 				m2pf	equ	$d002
+   166 				m3pf	equ	$d003
+   167 				p0pf	equ	$d004
+   168 				p1pf	equ	$d005
+   169 				p2pf	equ	$d006
+   170 				p3pf	equ	$d007
+   171 				m0pl	equ	$d008
+   172 				m1pl	equ	$d009
+   173 				m2pl	equ	$d00a
+   174 				m3pl	equ	$d00b
+   175 				p0pl	equ	$d00c
+   176 				p1pl	equ	$d00d
+   177 				p2pl	equ	$d00e
+   178 				p3pl	equ	$d00f
+   179 				hposp0	equ	$d000
+   180 				hposp1	equ	$d001
+   181 				hposp2	equ	$d002
+   182 				hposp3	equ	$d003
+   183 				hposm0	equ	$d004
+   184 				hposm1	equ	$d005
+   185 				hposm2	equ	$d006
+   186 				hposm3	equ	$d007
+   187 				sizep0	equ	$d008
+   188 				sizep1	equ	$d009
+   189 				sizep2	equ	$d00a
+   190 				sizep3	equ	$d00b
+   191 				sizem	equ	$d00c
+   192 				grafp0	equ	$d00d
+   193 				grafp1	equ	$d00e
+   194 				grafp2	equ	$d00f
+   195 				grafp3	equ	$d010
+   196 				trig0	equ	$d010
+   197 				grafm	equ	$d011
+   198 				colpm0	equ	$d012
+   199 				colpm1	equ	$d013
+   200 				colpm2	equ	$d014
+   201 				pal		equ	$d014
+   202 				colpm3	equ	$d015
+   203 				colpf0	equ	$d016
+   204 				colpf1	equ	$d017
+   205 				colpf2	equ	$d018
+   206 				colpf3	equ	$d019
+   207 				colbk	equ	$d01a
+   208 				prior	equ	$d01b
+   209 				vdelay	equ	$d01c
+   210 				gractl	equ	$d01d
+   211 				hitclr	equ	$d01e
+   212 				consol	equ	$d01f
+   213
+   214 				;POKEY
+   215 				pokey = $d200
+   216 				audf1	equ	$d200
+   217 				audc1	equ	$d201
+   218 				audf2	equ	$d202
+   219 				audc2	equ	$d203
+   220 				audf3	equ	$d204
+   221 				audc3	equ	$d205
+   222 				audf4	equ	$d206
+   223 				audc4	equ	$d207
+   224 				audctl	equ	$d208
+   225 				stimer	equ	$d209
+   226 				kbcode	equ	$d209
+   227 				random	equ	$d20a
+   228 				skres	equ	$d20a
+   229 				serin	equ	$d20d
+   230 				serout	equ	$d20d
+   231 				irqen	equ	$d20e
+   232 				irqst	equ	$d20e
+   233 				skctl	equ	$d20f
+   234 				skstat	equ	$d20f
+   235
+   236 				;PIA
+   237 				porta	equ	$d300
+   238 				portb	equ	$d301
+   239 				pactl	equ	$d302
+   240 				pbctl	equ	$d303
+   241 				.endif
+   242
+   243 				;ANTIC
+   244 = D400			dmactl	equ	$d400
+   245 = D401			chactl	equ	$d401
+   246 = D402			dlistl	equ	$d402
+   247 = D403			dlisth	equ	$d403
+   248 = D404			hscrol	equ	$d404
+   249 = D405			vscrol	equ	$d405
+   250 = D407			pmbase	equ	$d407
+   251 = D409			chbase	equ	$d409
+   252 = D40A			wsync	equ	$d40a
+   253 = D40B			vcount	equ	$d40b
+   254 = D40E			nmien	equ	$d40e
+   255 = D40F			nmires	equ	$d40f
+   256 = D40F			nmist	equ	$d40f
+   257
+   258 				;==========================================================================
+   259 				; OS INCLUDES (5200)
+   260 				;
+   261 				.ifdef SYS5200
+   262 = 0000			pokmsk	equ		$00
+   263 = 0001			rtclok	equ		$01
+   264 				;		equ		$02
+   265 = 0003			critic	equ		$03
+   266 = 0004			atract	equ		$04
+   267 = 0005			sdlstl	equ		$05
+   268 = 0006			sdlsth	equ		$06
+   269 = 0007			sdmctl	equ		$07
+   270 = 0008			pcolr0	equ		$08
+   271 = 0009			pcolr1	equ		$09
+   272 = 000A			pcolr2	equ		$0a
+   273 = 000B			pcolr3	equ		$0b
+   274 = 000C			color0	equ		$0c
+   275 = 000D			color1	equ		$0d
+   276 = 000E			color2	equ		$0e
+   277 = 000F			color3	equ		$0f
+   278 = 0010			color4	equ		$10
+   279
+   280 = 0200			vimirq	equ		$0200		;IRQ immediate vector
+   281 = 0202			vvblki	equ		$0202		;VBI immediate vector
+   282 = 0204			vvblkd	equ		$0204		;VBI deferred vector
+   283 = 0206			vdslst	equ		$0206		;display list vector
+   284 = 0208			vkybdi	equ		$0208		;keyboard immediate vector
+   285 = 020A			vkybdf	equ		$020a		;keyboard deferred vector
+   286 				.endif
+   287
+   288 				;==========================================================================
+   289 				; OS INCLUDES (800)
+   290 				;
+   291 				.ifndef SYS5200
+   292 				pokmsk	equ	$10
+   293 				rtclok	equ	$12
+   294 				savmsc	equ	$58
+   295 				ramtop	equ	$6a
+   296
+   297 				vdslst	equ	$0200
+   298 				vkeybd	equ	$0208
+   299 				vimirq	equ	$0216
+   300 				cdtmv1	equ	$0218
+   301 				vvblki	equ	$0222
+   302 				vvblkd	equ	$0224
+   303 				cdtma1	equ	$0226
+   304 				sdmctl	equ	$022f
+   305 				sdlstl	equ	$0230
+   306 				sdlsth	equ	$0231
+   307 				sskctl	equ	$0232
+   308 				runad	equ	$02e0
+   309 				initad	equ	$02e2
+   310 				memtop	equ	$02e5
+   311 				ch1		equ	$02f2
+   312 				ch		equ	$02fc
+   313
+   314 				ddevic	equ	$0300
+   315 				dunit	equ	$0301
+   316 				dcomnd	equ	$0302
+   317 				dstats	equ	$0303
+   318 				dbuflo	equ	$0304
+   319 				dbufhi	equ	$0305
+   320 				dtimlo	equ	$0306
+   321 				dbytlo	equ	$0308
+   322 				dbythi	equ	$0309
+   323 				daux1	equ	$030a
+   324 				daux2	equ	$030b
+   325
+   326 				ichid	equ	$0340
+   327 				iccmd	equ	$0342
+   328 				icbal	equ	$0344
+   329 				icbah	equ	$0345
+   330 				icptl	equ	$0346
+   331 				icpth	equ	$0347
+   332 				icbll	equ	$0348
+   333 				icblh	equ	$0349
+   334 				icax1	equ	$034a
+   335 				icax2	equ	$034b
+   336
+   337 				basicf	equ	$03f8
+   338
+   339 				dskinv	equ	$e453
+   340 				ciov	equ	$e456
+   341 				siov	equ	$e459
+   342 				xitvbv	equ	$e462
+   343 				.endif
+   344
+   345 				;==========================================================================
+   346 				; LIBRARY ZP
+   347 				;
+   348 = 00C0			a0		equ	$c0
+   349 = 00C2			a1		equ	$c2
+   350 = 00C4			a2		equ	$c4
+   351 = 00C6			a3		equ	$c6
+   352 = 00C8			d0		equ	$c8
+   353 = 00C9			d1		equ	$c9
+   354 = 00CA			d2		equ	$ca
+   355 = 00CB			d3		equ	$cb
+   356 = 00CC			d4		equ	$cc
+   357 = 00CD			d5		equ	$cd
+   358 = 00CE			d6		equ	$ce
+   359 = 00CF			d7		equ	$cf
+   360
+   361 				;==========================================================================
+   362 				; LIBRARY VARS
+   363 				;
+   364 						opt o-
+   365
+   366 				.ifdef SYS5200
+   367 						opt f-
+   368 				.else
+   369 				.ifdef STANDALONE
+   370 						opt o+
+   371 				.endif
+   372 				.ifdef GENLIBRARY
+   373 						opt o+
+   374 				.endif
+   375 				.endif
+   376
+   377 						.ifdef SYSSAP
+   378 						org	$0280
+   379 						.endif
+   380 						
+   381 						.ifdef SYS5200
+   382 						org	$0280
+   383 						.endif
+   384 						
+   385 						.ifdef SYS800
+   386 						org	$1a20
+   387 						.endif		
+   388 				_intsOff	dta		0
+   389 				_scrnOff	dta		0
+   390 				_prevIRQ	dta		a(0)
+   391 				_prevVBI	dta		a(0)
+   392 				_exitTest	dta		a(0)
+   393 				_exitTestS	dta		$ff
+   394 				_vputchar	dta		a(0)
+   395
+   396 						.ifdef SYS800
+   397 				_vputunhook	dta		a(0)
+   398 						.endif
+   399
+   400 = 0000				CPUMODE_6502 = 0
+   401 = 0001				CPUMODE_65C02 = 1
+   402 = 0080				CPUMODE_65C816_16 = 0x80
+   403 = 0081				CPUMODE_65C816_24 = 0x81
+   404 				_cpuMode	dta		0
+   405
+   406 				_veronica	dta		0
+   407
+   408 						.ifdef SYS5200
+   409 				sskctl		dta		0
+   410 				ch			dta		0
+   411 				keydel		dta		0
+   412
+   413 							org		$02e0
+   414 				runad		dta		a(0)
+   415 				initad		dta		a(0)
+   416 						.endif
+   417
+   418 						.ifdef SEGS_IN_ROM
+   419 				_lastMod	dta		0
+   420 						.endif
+   421 						.ifdef SEGS_MIN_MEM
+   422 				_lastMod	dta		0
+   423 						.endif
+   424
+   425 						.ifdef SYS5200
+   426 						.ifdef STANDALONE
+   427 						opt o+f+
+   428 						.endif
+   429 						.ifdef GENLIBRARY
+   430 						opt o+f+
+   431 						.endif
+   432
+   433 						.ifdef LIBBASE
+   434 						org	LIBBASE
+   435 						.else
+   436 						org	$4000
+   437 						.endif
+   438 						.endif
+   439 						
+   440 						.ifdef SYSSAP
+   441 						org		$4000
+   442 						.endif
+   443
+   444 				;==========================================================================
+   445 				; MACROS
+   446 				;
+   447 				.macro _INITTEST
+   448 					jsr		_imTestInit
+   449 					dta		:1,0
+   450 				.endm
+   451
+   452 				.macro _ASSERT1
+   453 					lda	:1
+   454 					cmp	#:2
+   455 					beq	pass
+   456 					
+   457 					sta	d1
+   458 					jsr	_testFailed
+   459 					dta	:3,0
+   460 				pass:
+   461 				.endm
+   462
+   463 				.macro _ASSERT1_DUAL
+   464 					lda	:1
+   465 					cmp	#:2
+   466 					beq	pass
+   467 					cmp	#:3
+   468 					beq	pass
+   469 					
+   470 					sta	d1
+   471 					jsr	_testFailed
+   472 					dta	:4,0
+   473 				pass:
+   474 				.endm
+   475
+   476 				.macro _ASSERTA
+   477 					cmp	#:1
+   478 					beq	pass
+   479 					
+   480 					sta	d1
+   481 					jsr	_testFailed
+   482 					dta	:2,0
+   483 				pass:
+   484 				.endm
+   485
+   486 				.macro _ASSERTX
+   487 					cpx	#:1
+   488 					beq	pass
+   489 					
+   490 					stx	d1
+   491 					jsr	_testFailed
+   492 					dta	:2,0
+   493 				pass:
+   494 				.endm
+   495
+   496 				.macro _ASSERTY
+   497 					cpy	#:1
+   498 					beq	pass
+   499 					
+   500 					sty	d1
+   501 					jsr	_testFailed
+   502 					dta	:2,0
+   503 				pass:
+   504 				.endm
+   505
+   506 				.macro _FAIL
+   507 					jsr		_testFailed
+   508 					dta		:1,0
+   509 				.endm
+   510
+   511 				.macro _SKIP
+   512 					jsr		_testSkipped
+   513 					dta		:1,0
+   514 				.endm
+   515
+   516 				.macro _SAP_HEADER
+   517 					.ifdef GENSAP
+   518 						opt		o+h-f-
+   519 						org		$0700
+   520 						dta		c"SAP",$0d,$0a
+   521 						dta		c"AUTHOR ",$22,c"Avery Lee",$22,$0d,$0a
+   522 						dta		c"NAME ",$22,c":1",$22,$0d,$0a
+   523 						dta		c"TYPE D",$0d,$0a
+   524 						dta		c"INIT 2000",$0d,$0a
+   525 						dta		c"TIME 00:",c"05",$0d,$0a
+   526 						dta		a($ffff)
+   527 					.endif
+   528 				.endm
+   529
+   530 				;==========================================================================
+   531 				.nowarn .proc	_crt0init
+   532 				.ifdef SYSSAP
+   533 					jsr		_crt0init_sap
+   534 				.endif
+   535
+   536 					;clear zero page and database
+   537 				.ifdef SYS5200
+   538 					ldx		#$20
+   539 					lda		#0
+   540 				zploop:
+   541 					sta		0,x
+   542 					inx
+   543 					bne		zploop
+   544 					ldx		#$80
+   545 				dbloop:
+   546 					sta		$0200,x
+   547 					inx
+   548 					bne		dbloop
+   549 				.endif
+   550
+   551 					;clear options (keep in sync with options.s)
+   552 					ldx		#6
+   553 					lda		#0
+   554 					.ifdef SYS5200
+   555 					sta:rpl	$02f0,x-
+   556 					.else
+   557 					sta:rpl	$1a00,x-
+   558 					.endif
+   559 					
+   560 					;detect CPU
+   561 					ldy		#CPUMODE_6502
+   562 					sed
+   563 					lda		#$99
+   564 					clc
+   565 					adc		#$01
+   566 					cld
+   567 					bne		detdone
+   568 					
+   569 					;we have at least a 65C02... check for 65C816
+   570 					ldy		#CPUMODE_65C02
+   571
+   572 					sec
+   573 					opt		c+
+   574 					rep		#$01
+   575 					bcs		detdone
+   576 					sep		#$01
+   577 					bcc		detdone
+   578 					
+   579 					ldy		#CPUMODE_65C816_16
+   580 					
+   581 					;check for 24-bit addressing
+   582 					lda		d3+$10000
+   583 					tax
+   584 					eor		#$f5
+   585 					sta		d3
+   586 					txa
+   587 					cmp		d3+$10000
+   588 					sne
+   589 					iny
+   590 					
+   591 					opt		c-
+   592 					
+   593 				detdone:
+   594 					sty		_cpuMode
+   595
+   596 				.ifdef SYS5200
+   597 					jsr		_crt0init_5200
+   598 				.endif
+   599
+   600 				.ifdef SYS800
+   601 					;init putchar handler
+   602 					mwa		icptl _vputchar
+   603 					inw		_vputchar
+   604 				.endif
+   605
+   606 					rts
+   607 				.endp
+   608
+   609 				;==========================================================================
+   610 				.nowarn .proc	_interruptsOff
+   611 					lda	_intsOff
+   612 					bmi	xit
+   613 					sei
+   614 					mwa	vimirq _prevIRQ
+   615 					mva	#$ff _intsOff
+   616 				xit:
+   617 					rts
+   618 				.endp
+   619
+   620 				;==========================================================================
+   621 				.nowarn .proc	_interruptsOn
+   622 					lda	_intsOff
+   623 					bpl	xit
+   624 					sei
+   625 					mwa	_prevIRQ vimirq
+   626 					mva	pokmsk irqen
+   627 					mva	#$00 _intsOff
+   628 					cli
+   629 				xit:
+   630 					rts
+   631 				.endp
+   632
+   633 				;==========================================================================
+   634 				.nowarn .proc _screenOn
+   635 					.ifndef SYSSAP
+   636 					lda	_scrnOff
+   637 					bpl	xit
+   638 					
+   639 					jsr	_waitVBL
+   640 					
+   641 					sei
+   642 					lda	#0
+   643 					sta	wsync
+   644 					sta	nmien
+   645 					mva	#$22 dmactl
+   646 					mwa	sdlstl dlistl
+   647 					mwa	_prevVBI vvblki
+   648 					lda	#$40
+   649 					sta	nmien
+   650 					cli
+   651 					
+   652 					jsr	_waitVBL
+   653 					sta	wsync
+   654 					sta	wsync
+   655 					jsr	_waitVBL
+   656 					.endif
+   657
+   658 					mva	#$00 _scrnOff
+   659 				xit:
+   660 					rts
+   661 				.endp
+   662
+   663 				;==========================================================================
+   664 				.nowarn .proc _screenOff
+   665 					.ifndef SYSSAP
+   666 					lda	_scrnOff
+   667 					bmi	xit
+   668 					
+   669 					jsr	_waitVBL
+   670 						
+   671 					php
+   672 					sei
+   673 					lda	#0
+   674 					sta	wsync
+   675 					sta	nmien
+   676 					sta	dmactl
+   677 					mwa	vvblki _prevVBI
+   678 					plp
+   679 					.endif
+   680
+   681 					mva	#$ff _scrnOff
+   682 				xit:
+   683 					rts
+   684 				.endp
+   685
+   686 				;==========================================================================
+   687 				.nowarn .proc _waitVBL
+   688 					lda	#123
+   689 					cmp:rne vcount
+   690 					cmp:req vcount
+   691 					rts
+   692 				.endp
+   693
+   694 				;==========================================================================
+   695 				.nowarn .proc _waitFrame
+   696 					inc	wsync
+   697 					inc	wsync
+   698 					jmp	_waitVBL
+   699 				.endp
+   700
+   701 				;==========================================================================
+   702 				.nowarn .proc _waitKeyPrompt
+   703 					jsr		_imprint
+   704 					dta		c"Press a key...",0
+   705 					.ifdef SYS5200
+   706 					mva		#$ff ch
+   707 					lda:rmi	ch
+   708 					.else
+   709 					lda		#0
+   710 					sta		ch
+   711 					sta		ch1
+   712 					lda:req	ch
+   713 					.endif
+   714 					jsr		_imprint
+   715 					dta		$9c,0
+   716 					rts
+   717 				.endp
+   718
+   719 				;==========================================================================
+   720 				.nowarn .proc _resetAV
+   721 					lda	#0
+   722 					sta	gractl
+   723 					sta	grafp0
+   724 					sta	grafp1
+   725 					sta	grafp2
+   726 					sta	grafp3
+   727 					sta	grafm
+   728 					sta	audc1
+   729 					sta	audc2
+   730 					sta	audc3
+   731 					sta	audc4
+   732 					rts
+   733 				.endp
+   734
+   735 				;==========================================================================
+   736 				.nowarn .proc _imprint
+   737 					pla
+   738 					tax
+   739 					pla
+   740 					tay
+   741 					inx
+   742 					sne:iny
+   743 					txa
+   744 					jsr	_print
+   745 					lda	a0+1
+   746 					pha
+   747 					lda	a0
+   748 					pha
+   749 					rts	
+   750 				.endp
+   751
+   752 				;==========================================================================
+   753 				.nowarn .proc _imprintf
+   754 					pla
+   755 					tax
+   756 					pla
+   757 					tay
+   758 					inx
+   759 					sne:iny
+   760 					txa
+   761 					jsr	_printf
+   762 					lda	a0+1
+   763 					pha
+   764 					lda	a0
+   765 					pha
+   766 					rts	
+   767 				.endp
+   768
+   769 				;==========================================================================
+   770 				.nowarn .proc _print
+   771 					sta	a0
+   772 					sty	a0+1
+   773 				charloop:
+   774 					ldy	#0
+   775 					lda	(a0),y
+   776 					beq	done
+   777 					inw	a0
+   778 					jsr	_printf.putbyte
+   779 					jmp	charloop
+   780 				done:
+   781 					rts
+   782 				.endp
+   783
+   784 				;==========================================================================
+   785 				.nowarn .proc _println
+   786 					jsr		_imprint
+   787 					dta		$9b,0
+   788 					rts
+   789 				.endp
+   790 				;==========================================================================
+   791 				.nowarn .proc _printf
+   792 					sta	a0
+   793 					sty	a0+1
+   794 					ldy	#0
+   795 					sty	d0
+   796 				charloop:
+   797 					lda	(a0),y
+   798 					beq	done
+   799 					inw	a0
+   800 					cmp	#'%'
+   801 					beq	special
+   802 				escaped:
+   803 					jsr	putbyte
+   804 				nextchar:
+   805 					ldy	#0
+   806 					jmp	charloop
+   807 				done:
+   808 					rts
+   809 				special:
+   810 					inc	d0
+   811 					ldx	d0
+   812 					lda	(a0),y
+   813 					inw	a0
+   814 					cmp #'d'
+   815 					bne	notdec
+   816 					tya
+   817 					sty	a1
+   818 					ldy	#6
+   819 					sei
+   820 					sed
+   821 				decloop1:
+   822 					rol	d0,x
+   823 					adc	a1
+   824 					sta	a1
+   825 					dey
+   826 					bne	decloop1
+   827 					sty	a1+1
+   828 					ldy	#2
+   829 				decloop2:
+   830 					rol	d0,x
+   831 					adc	a1
+   832 					sta	a1
+   833 					rol	a1+1
+   834 					dey
+   835 					bne	decloop2
+   836 					cld
+   837 					cli
+   838 					lda	a1+1
+   839 					beq	decdigit2
+   840 					tax
+   841 					lda	_hexdig,x
+   842 					jsr	putbyte
+   843 					lda	a1
+   844 					jsr	puthex
+   845 					jmp	nextchar
+   846 				decdigit2:
+   847 					lda	a1
+   848 					cmp	#$10
+   849 					bcc	decdigit1
+   850 					jsr	puthex
+   851 					jmp	nextchar
+   852 				decdigit1:
+   853 					tax
+   854 					lda	_hexdig,x
+   855 					jmp	escaped
+   856
+   857 				notdec:
+   858 					cmp	#'x'
+   859 					bne	nothex
+   860 					lda	d0,x
+   861 					jsr	puthex
+   862 					jmp	nextchar
+   863
+   864 				nothex:
+   865 					cmp	#'X'
+   866 					bne	nothexword
+   867 					inc	d0
+   868 					lda	d1,x
+   869 					jsr	puthex
+   870 					ldx	d0
+   871 					lda	d0-1,x
+   872 					jsr	puthex
+   873 					jmp	nextchar
+   874
+   875 				nothexword:
+   876 					cmp #'D'
+   877 					bne	notdecword
+   878
+   879 					ldy	#8
+   880 					lda	#0
+   881 					sta	a1
+   882 					sta a1+1
+   883 					sta	a2
+   884 					sei
+   885 					sed
+   886 				decword1:
+   887 					rol	d1,x
+   888 					lda	a1
+   889 					adc	a1
+   890 					sta	a1
+   891 					lda	a1+1
+   892 					adc	a1+1
+   893 					sta	a1+1
+   894 					dey
+   895 					bne	decword1
+   896 					
+   897 					ldy	#8
+   898 				decword2:
+   899 					rol	d0,x
+   900 					lda	a1
+   901 					adc	a1
+   902 					sta	a1
+   903 					lda	a1+1
+   904 					adc	a1+1
+   905 					sta	a1+1
+   906 					lda	a2
+   907 					adc	a2
+   908 					sta	a2
+   909 					dey
+   910 					bne	decword2
+   911 					cld
+   912 					cli
+   913 					
+   914 					tax
+   915 					beq	decword3
+   916 					jsr	puthexcond
+   917 					lda	a1+1
+   918 					jsr	puthex
+   919 					lda	a1
+   920 					jsr	puthex
+   921 					jmp	nextchar
+   922
+   923 				decword3:
+   924 					lda	a1+1
+   925 					beq	decword4
+   926 					lda	a1
+   927 					jsr	puthex
+   928 					jmp	nextchar
+   929 					
+   930 				decword4:
+   931 					lda	a1
+   932 					jsr	puthex
+   933 					jmp	nextchar
+   934
+   935 				notdecword:
+   936 					cmp #'c'
+   937 					bne	notchar
+   938 					inc	d0
+   939 					lda	d0,x
+   940 					jsr	putbyte
+   941 					jmp	nextchar
+   942 					
+   943 				notchar:
+   944 					cmp #'s'
+   945 					bne	notstr
+   946 					
+   947 					inc	d0
+   948 					lda	d0,x
+   949 					sta	a1
+   950 					lda	d0+1,x
+   951 					sta	a1+1
+   952
+   953 				strloop:
+   954 					ldy	#0
+   955 					lda	(a1),y
+   956 					beq	strdone
+   957 					jsr	putbyte2
+   958 					inw	a1
+   959 					jmp	strloop
+   960
+   961 				strdone:
+   962 					jmp	nextchar
+   963 					
+   964 				notstr:
+   965 					dec	d0
+   966 					jmp	escaped
+   967 					
+   968 				puthexcond:
+   969 					cmp	#$10
+   970 					bcs	puthex
+   971 					tax
+   972 					lda	_hexdig,x
+   973 					jmp	putbyte	
+   974 				puthex:	
+   975 					pha
+   976 					lsr
+   977 					lsr
+   978 					lsr
+   979 					lsr
+   980 					tax
+   981 					lda	_hexdig,x
+   982 					jsr	putbyte
+   983 					pla
+   984 					and	#$0f
+   985 					tax
+   986 					lda	_hexdig,x
+   987 					jmp	putbyte
+   988
+   989 				putbyte:
+   990 					tax
+   991 					jsr	putbyte2
+   992 					txa
+   993 					rts
+   994 					
+   995 				putbyte2:
+   996 					jmp	(_vputchar)
+   997 				.endp
+   998
+   999 				;==========================================================================
+  1000 				.nowarn .proc	_jam
+  1001 				loop:
+  1002 					jmp	loop
+  1003 				.endp
+  1004
+  1005 				;==========================================================================
+  1006 				.nowarn .proc	_waitVCount
+  1007 					cmp:rne	vcount
+  1008 					rts
+  1009 				.endp
+  1010
+  1011 				;=========================================================================
+  1012 				.nowarn .proc	_imTestInit
+  1013 					pla
+  1014 					sta		a0
+  1015 					tay
+  1016 					pla
+  1017 					sta		a0+1
+  1018 					
+  1019 					inw		a0
+  1020
+  1021 					mva		#0 a1
+  1022 					mva		a0+1 a1+1	
+  1023 				skiploop:
+  1024 					lda		(a1),y
+  1025 					beq		skipdone
+  1026 					iny
+  1027 					sne:inc a1+1
+  1028 					jmp		skiploop
+  1029 				skipdone:
+  1030 					lda		a1+1
+  1031 					pha
+  1032 					tya
+  1033 					pha
+  1034 					lda		a0
+  1035 					ldy		a0+1
+  1036 					jmp		_testInit
+  1037 				.endp
+  1038
+  1039 				;=========================================================================
+  1040 				.nowarn .proc	_testInit
+  1041 					.ifdef STANDALONE
+  1042 					pha
+  1043 					tya
+  1044 					pha
+  1045
+  1046 				.ifdef SYS800
+  1047 					;MaxFlash carts run executables with E: closed. Check for this and
+  1048 					;reopen it if necessary.
+  1049 					lda		ichid
+  1050 					bpl		iocb0_open
+  1051
+  1052 					;reopen IOCB 0
+  1053 					mva		#$03 iccmd
+  1054 					mwa		#e_name icbal
+  1055 					ldx		#0
+  1056 					stx		icax1
+  1057 					mva		#$0c icax2
+  1058 					jsr		ciov
+  1059 					
+  1060 				iocb0_open:
+  1061 				.endif
+  1062
+  1063 					jsr		_crt0init
+  1064 					
+  1065 					pla
+  1066 					tay
+  1067 					pla
+  1068 					.endif
+  1069 					
+  1070 					jsr	_print
+  1071 					jsr	_imprint
+  1072 					dta	c"...",0
+  1073 					
+  1074 					.ifdef STANDALONE
+  1075 					mwa	#_testEnd _exitTest
+  1076 					.else
+  1077 					:10 nop
+  1078 					.endif
+  1079 					
+  1080 					rts
+  1081 					
+  1082 				msg:
+  1083 					dta	c"...",0
+  1084 				e_name:
+  1085 					dta		'E',$9B
+  1086 				.endp
+  1087
+  1088 				;=========================================================================
+  1089 				.nowarn .proc	_testEnd
+  1090 					.ifdef SYSSAP
+  1091 						.ifdef STANDALONE
+  1092 							jmp	_sap_testEnd
+  1093 						.else
+  1094 							jmp	_jam
+  1095 						.endif
+  1096 					.else
+  1097 						.ifdef SYS5200
+  1098 							jmp	_jam
+  1099 						.else
+  1100 							;wait for key
+  1101 							sei
+  1102 							lda		#0
+  1103 							sta		nmien
+  1104 							sta		irqen
+  1105 							mva		#3 skctl
+  1106 							mva		#$40 irqen
+  1107 							bit:rne	irqst
+  1108 							
+  1109 							;initiate soft reset
+  1110 							jmp		($fffc)
+  1111 						.endif
+  1112 					.endif
+  1113 				.endp
+  1114
+  1115 				;=========================================================================
+  1116 				.nowarn .proc	_testRestore
+  1117 					cld
+  1118 					php
+  1119 					sei
+  1120 					
+  1121 					;check if the screen is off; if so, make sure we kill DLIs
+  1122 					lda		_scrnOff
+  1123 					beq		scrnOK
+  1124 					
+  1125 					lda		#0
+  1126 					inc		wsync
+  1127 					sta		nmien
+  1128 					
+  1129 				scrnOK:
+  1130
+  1131 					mva		sskctl skctl
+  1132 						
+  1133 					.ifdef SYSSAP
+  1134 					;kill PIA port A interrupt
+  1135 					mva		#$3c pactl
+  1136 					
+  1137 					;force kernel ROMs back _out_
+  1138 					mva		#$38 pbctl
+  1139 					mva		#$ff portb
+  1140 					mva		#$3c pbctl
+  1141 					mva		#$82 portb
+  1142 					.endif
+  1143 					
+  1144 					.ifdef SYS5200
+  1145 					mva		#$00 prior
+  1146 					mva		#$f8 chbase
+  1147 					mva		#$02 chactl
+  1148 					mva		#$04 consol
+  1149 					.endif
+  1150 					
+  1151 					.ifdef SYS800
+  1152 					;kill PIA port A interrupt
+  1153 					mva		#$3c pactl
+  1154 					
+  1155 					;force kernel ROMs back in	
+  1156 					mva		#$38 pbctl
+  1157 					mva		#$00 portb
+  1158 					mva		#$3c pbctl
+  1159 					mva		#$83 portb
+  1160 					
+  1161 					;kill OS timer 1
+  1162 					ldx		#$ff
+  1163 					stx		wsync
+  1164 					stx		cdtmv1
+  1165 					inx
+  1166 					stx		cdtmv1
+  1167 					stx		cdtmv1+1
+  1168 					.endif
+  1169
+  1170 					plp
+  1171 					jsr	_interruptsOn
+  1172 					jsr	_screenOn
+  1173 					jsr	_resetAV
+  1174 					
+  1175 					;unmask interrupts
+  1176 					cli
+  1177 					rts
+  1178 				.endp
+  1179
+  1180 				;=========================================================================
+  1181 				.nowarn .proc	_testPassed
+  1182 					jsr	_testRestore
+  1183
+  1184 					jsr	_imprint
+  1185 					dta	c"Pass",$9b,0
+  1186 					
+  1187 					ldx	_exitTestS
+  1188 					txs
+  1189 					ldy	#0
+  1190 					jmp	(_exitTest)
+  1191 				.endp
+  1192
+  1193 				;=========================================================================
+  1194 				.nowarn .proc	_testFailed
+  1195 					jsr	_testRestore
+  1196
+  1197 					jsr	_imprint
+  1198 					dta	c"FAIL.",$9b,0
+  1199
+  1200 				nomsgentry:
+  1201 					pla
+  1202 					tax
+  1203 					pla
+  1204 					tay
+  1205 					inx
+  1206 					sne:iny
+  1207 					txa
+  1208 					jsr	_printf
+  1209 					jsr	_println
+  1210 					
+  1211 					ldx	_exitTestS
+  1212 					txs
+  1213 					ldy	#$80
+  1214 					jmp	(_exitTest)
+  1215
+  1216 				msg2:
+  1217 					dta	$9b,0
+  1218 				.endp
+  1219
+  1220 				;=========================================================================
+  1221 				.nowarn .proc	_testFailed2
+  1222 					jsr	_testRestore
+  1223 					jmp	_testFailed.nomsgentry
+  1224 				.endp
+  1225
+  1226 				;=========================================================================
+  1227 				.nowarn .proc	_testSkipped
+  1228 					jsr		_testRestore
+  1229
+  1230 					jsr		_imprint
+  1231 					dta		c"Skipped",$9b,0
+  1232 					
+  1233 					pla
+  1234 					tax
+  1235 					pla
+  1236 					tay
+  1237 					inx
+  1238 					sne:iny
+  1239 					txa
+  1240 					jsr		_printf
+  1241 					
+  1242 					jsr		_println
+  1243 					
+  1244 					ldx		_exitTestS
+  1245 					txs
+  1246 					ldy		#$40
+  1247 					jmp		(_exitTest)
+  1248 				.endp
+  1249
+  1250 				;==========================================================================
+  1251 				; _loadSeg()
+  1252 				;
+  1253 				; Module loader.
+  1254 				;
+  1255 				;	X = index of module to load
+  1256 				;
+  1257 				.ifdef SEGS_MIN_MEM
+  1258 				.nowarn .proc	_loadSeg
+  1259 					;get starting sector
+  1260 					mva		segaddrlo,x	daux1
+  1261 					mva		segaddrhi,x	daux2
+  1262 						
+  1263 					;get ending sector
+  1264 					lda		segaddrlo+1,x
+  1265 					sub		daux1
+  1266 					sta		d7
+  1267
+  1268 					;setup sector load command and relocation
+  1269 					mva		#'R' dcomnd
+  1270 					mva		#1 dunit
+  1271 					lda		#$00
+  1272 					sta		dbuflo
+  1273 					sta		a0
+  1274 					sta		runad+1
+  1275 					lda		#$0b
+  1276 					sta		dbufhi
+  1277 					sta		a0+1
+  1278 					
+  1279 					;preload first two sectors
+  1280 					jsr		step_sector
+  1281 				relocloop:
+  1282 					;load starting address
+  1283 					mva		(a0),y a1
+  1284 					iny:sne:jsr step_sector
+  1285 					mva		(a0),y a1+1
+  1286 					iny:sne:jsr step_sector
+  1287 					
+  1288 					;skip $ffff words
+  1289 					lda		a1
+  1290 					and		a1+1
+  1291 					cmp		#$ff
+  1292 					beq		relocloop
+  1293 					
+  1294 					;load ending address
+  1295 					mva		(a0),y a2
+  1296 					iny:sne:jsr step_sector
+  1297 					mva		(a0),y a2+1
+  1298 					iny:sne:jsr step_sector
+  1299 					inw		a2
+  1300
+  1301 					mwa		#definit initad
+  1302 					
+  1303 					;copy data (slow, but oh well)
+  1304 					ldx		#0
+  1305 				copyloop:
+  1306 					lda		(a0),y
+  1307 					sta		(a1,x)
+  1308 					iny:sne:jsr step_sector
+  1309 					inw		a1
+  1310 					lda		a1
+  1311 					cmp		a2
+  1312 					bne		copyloop
+  1313 					lda		a1+1
+  1314 					cmp		a2+1
+  1315 					bne		copyloop
+  1316 					
+  1317 					;init a segment
+  1318 					jsr		doinit
+  1319 					
+  1320 					;check if we're done
+  1321 					lda		runad+1
+  1322 					beq		relocloop
+  1323 					rts
+  1324
+  1325 				doinit:
+  1326 					jmp		(initad)
+  1327 					
+  1328 				step_sector:
+  1329 					lda		d7
+  1330 					beq		no_sectors_left
+  1331 					jsr		dskinv
+  1332 					dec		d7
+  1333 					inw		daux1
+  1334 					lda		dbuflo
+  1335 					eor		#$80
+  1336 					sta		dbuflo
+  1337 					bne		step_sector
+  1338 				no_sectors_left:
+  1339 					ldy		#0
+  1340 					ldx		#0
+  1341 				definit:
+  1342 					rts
+  1343 				.endp
+  1344 				.else
+  1345 				.nowarn .proc	_loadSeg
+  1346 				.ifdef SEGS_IN_ROM
+  1347 					stx		_lastMod
+  1348 					rts
+  1349 				.else
+  1350 					;get starting sector
+  1351 					mva		segaddrlo,x	daux1
+  1352 					mva		segaddrhi,x	daux2
+  1353 						
+  1354 					;get ending sector
+  1355 					mva		segaddrlo+1,x	a0
+  1356 					mva		segaddrhi+1,x	a0+1
+  1357
+  1358 					;load sectors starting at $4000
+  1359 				sectorloop:
+  1360 					mva		#'R' dcomnd
+  1361 					mva		#1 dunit
+  1362 					mwa		#$4000 dbuflo
+  1363 						
+  1364 					jsr		dskinv
+  1365 					tya
+  1366 					bmi		sectorloop
+  1367 					
+  1368 					lda		#$80
+  1369 					eor		dbuflo
+  1370 					sta		dbuflo
+  1371 					sne:inc	dbufhi
+  1372 					
+  1373 					inc		daux1
+  1374 					sne:inc	daux2
+  1375 					
+  1376 					lda		daux1
+  1377 					cmp		a0
+  1378 					bne		sectorloop
+  1379 					lda		daux2
+  1380 					cmp		a0+1
+  1381 					bne		sectorloop
+  1382 					rts
+  1383 				.endif
+  1384 				.endp
+  1385 				.endif
+  1386
+  1387 				;==========================================================================
+  1388 				; _runSeg()
+  1389 				;
+  1390 				; Module relocator and executor.
+  1391 				;
+  1392 				; The last segment loaded by _loadSeg() is relocated and executed.
+  1393 				;
+  1394
+  1395 				.ifdef SEGS_MIN_MEM
+  1396
+  1397 				;-----------------------------------------------
+  1398 				; Minimum memory implementation.
+  1399 				.nowarn .proc _runSeg
+  1400 					jmp		(runad)
+  1401 				.endp
+  1402
+  1403 				.else
+  1404
+  1405 				;-----------------------------------------------
+  1406 				.nowarn .proc _runSeg
+  1407 					
+  1408 					;begin relocation
+  1409 					mwa		#relocloop runad
+  1410
+  1411 					.ifdef SEGS_IN_ROM
+  1412 					ldx		_lastMod
+  1413 					mva		segaddrlo,x a0
+  1414 					mva		segaddrhi,x a0+1
+  1415 					.else
+  1416 					mwa		#$4000 a0
+  1417 					.endif
+  1418 					
+  1419 					.ifndef SEGS_LZPACK
+  1420 					
+  1421 					;==== uncompressed version
+  1422
+  1423 					ldy		#0
+  1424 				relocloop:
+  1425 					;load starting address
+  1426 					mva		(a0),y a1
+  1427 					inw		a0
+  1428 					mva		(a0),y a1+1
+  1429 					inw		a0
+  1430 					
+  1431 					;skip $ffff words
+  1432 					lda		a1
+  1433 					and		a1+1
+  1434 					cmp		#$ff
+  1435 					beq		relocloop
+  1436 					
+  1437 					;load ending address
+  1438 					mva		(a0),y a2
+  1439 					inw		a0
+  1440 					mva		(a0),y a2+1
+  1441 					inw		a0
+  1442 					inw		a2
+  1443 					
+  1444 					;copy data (slow, but oh well)
+  1445 				copyloop:
+  1446 					lda		(a0),y
+  1447 					sta		(a1),y
+  1448 					inw		a0
+  1449 					inw		a1
+  1450 					lda		a1
+  1451 					cmp		a2
+  1452 					bne		copyloop
+  1453 					lda		a1+1
+  1454 					cmp		a2+1
+  1455 					bne		copyloop
+  1456 					
+  1457 					;init a segment
+  1458 					mwa		#definit initad
+  1459 					jsr		doinit
+  1460 					jmp		(runad)
+  1461
+  1462 				doinit:
+  1463 					jmp		(initad)
+  1464 					
+  1465 				definit:
+  1466 					rts
+  1467
+  1468 					.else
+  1469 					
+  1470 					;==== compressed version
+  1471 					;
+  1472 					;loader:
+  1473 					;	a3		destination
+  1474 					;	d6/d7	segment end address
+  1475 					;
+  1476 					;decompressor:
+  1477 					;	a0		raw source stream
+  1478 					;	a1		run source pointer
+  1479 					;	a2		window pointer ($1000-1fff)
+  1480 					;	d0		literal/run flag bits
+  1481 					;	d1		remaining flag bits shifter
+  1482 					;	d2		run length counter
+  1483 					;	d3		temporary
+  1484 					;	d4		superflag bits
+  1485 					;	d5		superflag shifter
+  1486
+  1487 					lda		#0
+  1488 					sta		d0
+  1489 					sta		d1
+  1490 					sta		d2
+  1491 					sta		d5
+  1492 					sta		a2
+  1493 					lda		#$10
+  1494 					sta		a2+1
+  1495 				relocloop:
+  1496 					ldy		#0
+  1497 					;load starting address
+  1498 					jsr		getbyte
+  1499 					sta		a3
+  1500 					jsr		getbyte
+  1501 					sta		a3+1
+  1502 					
+  1503 					;skip $ffff words
+  1504 					and		a3
+  1505 					cmp		#$ff
+  1506 					beq		relocloop
+  1507 					
+  1508 					;load ending address
+  1509 					jsr		getbyte
+  1510 					sta		d6
+  1511 					jsr		getbyte
+  1512 					sta		d7
+  1513 					inw		d6
+  1514 					
+  1515 					;copy data (slow, but oh well)
+  1516 				copyloop:
+  1517 					jsr		getbyte
+  1518 					sta		(a3),y
+  1519 					inw		a3
+  1520 					lda		a3
+  1521 					cmp		d6
+  1522 					bne		copyloop
+  1523 					lda		a3+1
+  1524 					cmp		d7
+  1525 					bne		copyloop
+  1526 					
+  1527 					;init a segment
+  1528 					mwa		#definit initad
+  1529 					jsr		doinit
+  1530 					jmp		(runad)
+  1531
+  1532 				doinit:
+  1533 					jmp		(initad)
+  1534 					
+  1535 				getbyte:
+  1536 					;check if we have a run in progress
+  1537 					lda		d2
+  1538 					bne		getrunbyte
+  1539
+  1540 					;check if we need to reload flag bits
+  1541 					asl		d1
+  1542 					bne		havebits
+  1543 					
+  1544 					;check if we need to reload superflag bits
+  1545 					asl		d5
+  1546 					bne		havesuperbits
+  1547 					
+  1548 					;load next superflag byte
+  1549 					jsr		getrawbyte
+  1550 					sta		d4
+  1551 					lda		#$7f
+  1552 					sta		d5
+  1553 					
+  1554 				havesuperbits:
+  1555 					;pull next superflag and check if it's all literals (0)
+  1556 					asl		d4
+  1557 					bcc		all_literals
+  1558 					
+  1559 					;nope... read next byte as flags byte
+  1560 					jsr		getrawbyte
+  1561 					sta		d0
+  1562
+  1563 				all_literals:
+  1564 					lda		#$7f
+  1565 					sta		d1
+  1566 				havebits:
+  1567 					asl		d0
+  1568 					bcs		isrun
+  1569 					
+  1570 					;store byte into window
+  1571 					jsr		getrawbyte
+  1572 					jmp		putwinbyte
+  1573
+  1574 				isrun:
+  1575 					;load offset/run bytes
+  1576 					jsr		getrawbyte
+  1577 					sta		d3
+  1578 					jsr		getrawbyte
+  1579 					sta		d2
+  1580 					
+  1581 					;compute run source from current position and offset
+  1582 					lda		a2
+  1583 					clc
+  1584 					sbc		d3
+  1585 					sta		a1
+  1586 					lda		a2+1
+  1587 					sbc		d2
+  1588 					and		#$0f
+  1589 					ora		#$10
+  1590 					sta		a1+1
+  1591 					
+  1592 					;compute length and stash run length
+  1593 					lda		d2
+  1594 					lsr
+  1595 					lsr
+  1596 					lsr
+  1597 					lsr
+  1598 					add		#3
+  1599 					sta		d2
+  1600 				getrunbyte:
+  1601 					dec		d2
+  1602 					ldy		#0
+  1603 					lda		(a1),y
+  1604 					inc		a1
+  1605 					bne		putwinbyte
+  1606 					inc		a1+1
+  1607 					pha
+  1608 					lda		a1+1
+  1609 					and		#$0f
+  1610 					ora		#$10
+  1611 					sta		a1+1
+  1612 					pla
+  1613 					jmp		putwinbyte
+  1614 					
+  1615 				getrawbyte:
+  1616 					lda		(a0),y
+  1617 					inw		a0
+  1618 					rts
+  1619 					
+  1620 				putwinbyte:
+  1621 					sta		(a2),y
+  1622 					inc		a2
+  1623 					seq:rts
+  1624 					ldy		a2+1
+  1625 					iny
+  1626 					cpy		#$20
+  1627 					sne:ldy	#$10
+  1628 					sty		a2+1
+  1629 					ldy		#0
+  1630 				definit:
+  1631 					rts	
+  1632 					
+  1633 					.endif
+  1634 				.endp
+  1635 				.endif
+  1636
+  1637 				;==========================================================================
+  1638 				_hexdig	dta		c"0123456789ABCDEF"
+  1639
+  1640 				;==========================================================================
+  1641 				; segment table
+  1642 				;
+  1643 				.ifndef SYS800
+  1644 = BF00			segaddrlo	equ	$bf00
+  1645 = BF80			segaddrhi	equ	$bf80
+  1646 				.else
+  1647 				segaddrlo	equ	$1900
+  1648 				segaddrhi	equ	$1980
+  1649 				.endif
+  1650
+  1651 = 0900			_veronicaLaunch = $0900
+  1652
+  1653 				;==========================================================================
+  1654 				; platform-specific library
+  1655 				;
+  1656 				.ifdef SYS5200
+  1657 					icl		'lib5200.s'
+Source: lib5200.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				.proc _crt0init_5200
+    23 					lda		#$02
+    24 					sta		sskctl
+    25 					sta		skctl
+    26 					
+    27 					mva		#$04 consol
+    28 					mva		#$00 keydel
+    29 					
+    30 					php
+    31 					sei
+    32 					
+    33 					lda		pokmsk
+    34 					ora		#$c0
+    35 					sta		pokmsk
+    36 					sta		irqen
+    37
+    38 					mwa		#_kybd_handler vkybdf
+    39 					mwa		#_vbd_handler vvblkd
+    40 					
+    41 					plp
+    42 					rts
+    43 				.endp
+    44
+    45 				;==========================================================================
+    46 				.proc _kybd_handler
+    47 					;The bass-ackward design of the 5200 keyboard causes an IRQ to occur
+    48 					;every 32 scanlines while a key is held down. We require keys to be
+    49 					;released for at least one full frame before we recognize another
+    50 					;one.
+    51 					ldx		keydel
+    52 					sne:sta	ch
+    53 					lda		#2
+    54 					sta		keydel
+    55 					pla
+    56 					tay
+    57 					pla
+    58 					tax
+    59 					pla
+    60 					rti
+    61 				.endp
+    62
+    63 				;==========================================================================
+    64 				.proc _vbd_handler
+    65 					lda		keydel
+    66 					seq:dec	keydel
+    67 					
+    68 					plr
+    69 					rti
+    70 				.endp
+    71
+  1658 				.endif
+  1659 				.ifdef SYSSAP
+  1660 					icl		'libsap.s'
+  1661 				.endif
+  1662
+  1663 				;==========================================================================
+  1664 				.ifndef STANDALONE
+  1665 				.ifdef SYS5200
+  1666 					opt	o+
+  1667 				.else
+  1668 					opt	h+o+
+  1669 				.endif
+  1670 				.endif
+    27 						
+    28 						opt		o-
+    29 						icl		'options.s'
+Source: options.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010-2011 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22
+    23 				.ifndef SYS800
+    24 = A53A				_savepc = *
+    25 				.endif
+    26
+    27 				;note: library.s also has this address
+    28 				.ifdef SYS5200
+    29 						opt		o-f-
+    30 						org		$02f0
+    31 				.else
+    32 						org		$1a00
+    33 				.endif
+    34
+    35 				testidx			dta		0
+    36 				passed			dta		0
+    37 				failed			dta		0
+    38 				skipped			dta		0
+    39 				opt_wait		dta		0
+    40 				opt_waitfail	dta		0
+    41 				opt_noillinsn	dta		0
+    42
+    43 				.ifndef SYS800
+    44 						org		_savepc
+    45 				.endif
+    46 						
+    47 				.ifdef SYS5200
+    48 				.ifdef GENLIBRARY
+    49 						opt		o+f+
+    50 				.else
+    51 						opt		o+
+    52 				.endif
+    53 				.endif
+    30 						
+    31 						opt		o+
+    32 						org		$0080
+    33 FFFF> 0080-0096> 00	dc_con	dta		$00			;decompression control byte
+    34 0081 60			dc_in0	dta		$60			;instruction
+    35 0082 60			dc_in1	dta		$60
+    36 0083 60			dc_in2	dta		$60
+    37 0084 60					dta		$60
+    38 0085 00			dc_a1	dta		0			;input data
+    39 0086 00			dc_x1	dta		0
+    40 0087 00			dc_y1	dta		0
+    41 0088 00			dc_p1	dta		0
+    42 0089 00			dc_m1	dta		0
+    43 008A 00			dc_a2	dta		0			;output data
+    44 008B 00			dc_x2	dta		0
+    45 008C 00			dc_y2	dta		0
+    46 008D 00			dc_p2	dta		0
+    47 008E 00			dc_m2	dta		0
+    48
+    49 008F 78			rand0	dta		$78			;32-bit LFSR
+    50 0090 56			rand1	dta		$56
+    51 0091 34			rand2	dta		$34
+    52 0092 12			rand3	dta		$12
+    53 0093 00			randt	dta		0
+    54
+    55 0094 00			dc_conm	dta		0			;decompression: new control byte mask
+    56 0095 00			dc_conc	dta		0			;decompression: new control byte mask bit count
+    57 0096 00			dc_conv	dta		0			;decompression: tracked control byte
+    58
+    59 0097					org		$2000
+    60 2000			main:
+    61 2000					_INITTEST	c"CPU: Basic instructions"
+Macro: _INITTEST [Source: library.s]
+     1 2000-3195> 20 EC A2		jsr		_imTestInit
+     2 2003 43 50 55 3A 20 42 + 	dta		c"CPU: Basic instructions",0
+Source: cpu_insn.s
+    62 						
+    63 201B A9 EB 85 C0 A9 21 + 		mwa		#test_start a0
+    64
+    65 2023			loop_start:
+    66 2023 A0 00				ldy		#0
+    67 						
+    68 						;check if have to get a new mask byte
+    69 2025 C6 95				dec		dc_conc
+    70 2027 10 09				bpl		no_newmask
+    71 						
+    72 2029 B1 C0 C8 85 94			mva		(a0),y+ dc_conm
+    73 202E A9 07 85 95				mva		#7 dc_conc
+    74 						
+    75 2032			no_newmask:
+    76 						;check next mask bit
+    77 2032 06 94				asl		dc_conm
+    78 2034 90 05				bcc		no_new_control
+    79
+    80 						;load control byte
+    81 2036 B1 C0 C8 85 96			mva		(a0),y+ dc_conv
+    82 						
+    83 203B			no_new_control:
+    84 203B A5 96 85 80				mva		dc_conv dc_con
+    85
+    86 						;check if we should reload the opcode
+    87 203F 06 80				asl		dc_con
+    88 2041 90 0B				bcc		same_opcode
+    89 						
+    90 2043 B1 C0 C8 85 81			mva		(a0),y+ dc_in0
+    91 2048 A9 60				lda		#$60
+    92 204A 85 82				sta		dc_in1
+    93 204C 85 83				sta		dc_in2
+    94 						
+    95 204E			same_opcode:
+    96 						;update instruction bytes if needed
+    97 204E 06 80				asl		dc_con
+    98 2050 90 05 B1 C0 C8 85 + 		scc:mva	(a0),y+ dc_in1
+    99 2057 06 80				asl		dc_con
+   100 2059 90 05 B1 C0 C8 85 + 		scc:mva	(a0),y+ dc_in2
+   101 						
+   102 						;compute implicit A1
+   103 2060 20 9B 21				jsr		detrand2
+   104 2063 85 85				sta		dc_a1
+   105 						
+   106 						;decompress X1 and Y1; note that X1 = ~Y1
+   107 2065 B1 C0 C8				lda		(a0),y+
+   108 2068 85 87				sta		dc_y1
+   109 206A 49 FF				eor		#$ff
+   110 206C 85 86				sta		dc_x1
+   111 						
+   112 						;compute implicit P1 and M1
+   113 206E 20 9B 21				jsr		detrand2
+   114 2071 09 30				ora		#$30
+   115 2073 29 F7				and		#$f7
+   116 2075 85 88				sta		dc_p1
+   117 						
+   118 2077 20 9B 21				jsr		detrand2
+   119 207A 85 89				sta		dc_m1
+   120 								
+   121 						;decompress A2, X2, Y2, P2, and M2
+   122 207C 06 80				asl		dc_con
+   123 207E A5 85				lda		dc_a1	
+   124 2080 90 03 B1 C0 C8			scc:lda	(a0),y+
+   125 2085 85 8A				sta		dc_a2
+   126
+   127 2087 06 80				asl		dc_con
+   128 2089 A5 86				lda		dc_x1
+   129 208B 90 03 B1 C0 C8			scc:lda	(a0),y+
+   130 2090 85 8B				sta		dc_x2
+   131
+   132 2092 06 80				asl		dc_con
+   133 2094 A5 87				lda		dc_y1	
+   134 2096 90 03 B1 C0 C8			scc:lda	(a0),y+
+   135 209B 85 8C				sta		dc_y2
+   136
+   137 209D 06 80				asl		dc_con
+   138 209F A5 88				lda		dc_p1	
+   139 20A1 90 03 B1 C0 C8			scc:lda	(a0),y+
+   140 20A6 85 8D				sta		dc_p2
+   141
+   142 20A8 06 80				asl		dc_con
+   143 20AA A5 89				lda		dc_m1	
+   144 20AC 90 03 B1 C0 C8			scc:lda	(a0),y+
+   145 20B1 85 8E				sta		dc_m2
+   146 						
+   147 						;bump test pointer
+   148 20B3 98					tya
+   149 20B4 18 65 C0				add		a0
+   150 20B7 85 C0				sta		a0
+   151 20B9 90 02 E6 C1				scc:inc	a0+1
+   152
+   153 						;setup temp registers
+   154 20BD A9 CD 85 C2 A9 00 + 		mwa		#d5 a1
+   155 20C5 A9 CC 85 C4 A9 00 + 		mwa		#d4 a2
+   156 								
+   157 						;stash P
+   158 20CD A5 88				lda		dc_p1
+   159 20CF 48					pha
+   160 						
+   161 						;load d5
+   162 20D0 A5 89 85 CD				mva		dc_m1 d5
+   163
+   164 						;load A, X, Y
+   165 20D4 A5 85				lda		dc_a1
+   166 20D6 A6 86				ldx		dc_x1
+   167 20D8 A4 87				ldy		dc_y1
+   168 						
+   169 						;load P
+   170 20DA 28					plp
+   171 						
+   172 						;execute insn
+   173 20DB 20 81 00				jsr		dc_in0
+   174
+   175 						;store registers
+   176 20DE 85 C9				sta		d1
+   177 20E0 86 CA				stx		d2
+   178 20E2 84 CB				sty		d3
+   179 20E4 08					php
+   180 20E5 68					pla
+   181 20E6 09 30				ora		#$30
+   182 20E8 85 CC				sta		d4
+   183 						
+   184 						;reset flags
+   185 20EA 58					cli
+   186 20EB D8					cld
+   187 						
+   188 						;compare registers
+   189 20EC A5 8A				lda		dc_a2
+   190 20EE C5 C9				cmp		d1
+   191 20F0 D0 26				bne		fail
+   192 						
+   193 20F2 E4 8B				cpx		dc_x2
+   194 20F4 D0 22				bne		fail
+   195 						
+   196 20F6 C4 8C				cpy		dc_y2
+   197 20F8 D0 1E				bne		fail
+   198 						
+   199 20FA A5 8D				lda		dc_p2
+   200 20FC C5 CC				cmp		d4
+   201 20FE D0 18				bne		fail
+   202 						
+   203 2100 A5 8E				lda		dc_m2
+   204 2102 C5 CD				cmp		d5
+   205 2104 D0 12				bne		fail
+   206 						
+   207 						;go another round
+   208 2106 A5 C0				lda		a0		
+   209 2108 C9 96				cmp		#<test_end
+   210 210A D0 06				bne		loop_end
+   211 210C A5 C1				lda		a0+1
+   212 210E C9 31				cmp		#>test_end
+   213 2110 F0 03				beq		loop_exit
+   214 2112			loop_end:
+   215 2112 4C 23 20				jmp		loop_start
+   216 2115			loop_exit:
+   217 2115 4C 6D A3				jmp		_testPassed
+   218
+   219 2118			fail:
+   220 2118 D8					cld
+   221 2119 58					cli
+   222 211A 20 59 A1				jsr		_imprintf
+   223 211D 46 41 49 4C 2E 9B + 		dta		c"FAIL.",$9b,c"Test failed: A=%x X=%x Y=%x P=%x M=%x",$9b,0
+   224 						
+   225 214A A2 05				ldx		#5
+   226 214C			copyloop:
+   227 214C B5 84				lda		dc_a1-1,x
+   228 214E 95 C8				sta		d0,x
+   229 2150 CA					dex
+   230 2151 D0 F9				bne		copyloop
+   231 2153 20 59 A1				jsr		_imprintf
+   232 2156 49 6E 70 75 74 3A + 		dta		c"Input: A=%x X=%x Y=%x P=%x M=%x",$9b,0
+   233
+   234 2177 A5 81 85 C9				mva		dc_in0 d1
+   235 217B A5 82 85 CA				mva		dc_in1 d2
+   236 217F A5 83 85 CB				mva		dc_in2 d3
+   237 						
+   238 2183 A0 21				ldy		#>failmsg
+   239 2185 A9 8A				lda		#<failmsg
+   240 2187 20 A9 A3				jsr		_testFailed2
+   241 218A			failmsg:
+   242 218A 20 20 49 6E 73 6E + 		dta		c"  Insn: %x %x %x",0
+   243
+   244 				;============================================================================
+   245 				; This LFSR generator must match detrand2() in cputest.cpp.
+   246 				;
+   247 219B			.proc	detrand2
+   248 219B A5 8F				lda		rand0
+   249 219D 48					pha
+   250 						
+   251 						;shift LFSR
+   252 219E A5 90 85 8F				mva		rand1 rand0
+   253 21A2 A5 91 85 90				mva		rand2 rand1
+   254 21A6 A5 92 85 91				mva		rand3 rand2
+   255 						
+   256 						;bit 31
+   257 21AA 68					pla
+   258 21AB 85 92				sta		rand3
+   259 21AD 48					pha
+   260 						
+   261 						;bit 29 (shr 2)
+   262 21AE A2 00 86 93				mvx		#0 randt
+   263 21B2 4A					lsr
+   264 21B3 66 93				ror		randt	
+   265 21B5 4A					lsr
+   266 21B6 66 93				ror		randt
+   267 21B8 AA					tax
+   268 21B9 45 92				eor		rand3
+   269 21BB 85 92				sta		rand3
+   270 21BD A5 91				lda		rand2
+   271 21BF 45 93				eor		randt
+   272 21C1 85 91				sta		rand2
+   273 21C3 8A					txa
+   274 						
+   275 						;bit 25 (shr +4)
+   276 21C4 4A					lsr
+   277 21C5 66 93				ror		randt
+   278 21C7 4A					lsr
+   279 21C8 66 93				ror		randt
+   280 21CA 4A					lsr
+   281 21CB 66 93				ror		randt
+   282 21CD 4A					lsr
+   283 21CE 66 93				ror		randt
+   284 21D0 AA					tax
+   285 21D1 45 92				eor		rand3
+   286 21D3 85 92				sta		rand3
+   287 21D5 A5 91				lda		rand2
+   288 21D7 45 93				eor		randt
+   289 21D9 85 91				sta		rand2
+   290 21DB 8A					txa
+   291 						
+   292 						;bit 24 (shr +1)
+   293 21DC 4A					lsr
+   294 21DD 66 93				ror		randt
+   295 21DF 45 92				eor		rand3
+   296 21E1 85 92				sta		rand3
+   297 21E3 A5 91				lda		rand2
+   298 21E5 45 93				eor		randt
+   299 21E7 85 91				sta		rand2
+   300 						
+   301 21E9 68					pla
+   302 21EA 60					rts
+   303 				.endp
+   304
+   305 				;============================================================================
+   306 21EB			test_start:
+   307 						;This test data is produced by cputest.cpp. The format is as follows:
+   308 						;
+   309 						; * Mask byte
+   310 						;	Bits processed from MSB to LSB indicating whether a new control
+   311 						;	byte is included.
+   312 						; * Control byte
+   313 						;	D7=1	Opcode byte follows; reset op1 and op2 bytes to $60 (RTS)
+   314 						;	D6=1	New operand 1 byte follows
+   315 						;	D5=1	New operand 2 byte follows
+   316 						;	D4=1	New A result byte follows
+   317 						;	D3=1	New X result byte follows
+   318 						;	D2=1	New Y result byte follows
+   319 						;	D1=1	New P result byte follows
+   320 						;	D0=1	New M result byte follows
+   321 						; * [Opcode byte]
+   322 						; * [Operand 1 byte]
+   323 						; * [Operand 2 byte]
+   324 						; * Y input byte
+   325 						; * [A result byte]
+   326 						; * [X result byte]
+   327 						; * [Y result byte]
+   328 						; * [P result byte]
+   329 						; * [M result byte]
+   330 						;
+   331 						; A, P, and M input bytes are implicit based on a 32-bit LFSR with
+   332 						; defined seed (see detrand2). The Y input byte is always included,
+   333 						; and the X input byte is the complement of the Y input byte.
+   334
+   335
+   336 						; $01  ORA (zp,x)
+   337 21EB FC					dta	$FC
+   338 21EC D2 01 C3 00 7C 74			dta	$D2,$01,$C3,$00,$7C,$74 ;Input: A=$78 Y=$00 P=$76 M=$34  Output: A=$7C X=$FF Y=$00 P=$74 M=$34
+   339 21F2 52 E6 23 FA B1			dta	$52,$E6,$23,$FA,$B1 ;Input: A=$02 Y=$23 P=$33 M=$FA  Output: A=$FA X=$DC Y=$23 P=$B1 M=$FA
+   340 21F7 50 47 84 BF				dta	$50,$47,$84,$BF ;Input: A=$B5 Y=$84 P=$B0 M=$8B  Output: A=$BF X=$7B Y=$84 P=$B0 M=$8B
+   341 21FB 52 2F 6C 7B 71			dta	$52,$2F,$6C,$7B,$71 ;Input: A=$38 Y=$6C P=$73 M=$7B  Output: A=$7B X=$93 Y=$6C P=$71 M=$7B
+   342 2200 50 71 AE BA				dta	$50,$71,$AE,$BA ;Input: A=$3A Y=$AE P=$B4 M=$AA  Output: A=$BA X=$51 Y=$AE P=$B4 M=$AA
+   343 2204 52 53 90 F8 B4			dta	$52,$53,$90,$F8,$B4 ;Input: A=$78 Y=$90 P=$34 M=$D0  Output: A=$F8 X=$6F Y=$90 P=$B4 M=$D0
+   344 2209 B4 F1 FB B5				dta	$B4,$F1,$FB,$B5 ;Input: A=$93 Y=$F1 P=$37 M=$FB  Output: A=$FB X=$0E Y=$F1 P=$B5 M=$FB
+   345 220D 7E BB FE B4				dta	$7E,$BB,$FE,$B4 ;Input: A=$4C Y=$BB P=$B6 M=$FE  Output: A=$FE X=$44 Y=$BB P=$B4 M=$FE
+   346
+   347 						; $05  ORA zp
+   348 2211 FA					dta	$FA
+   349 2212 D2 05 CD EB 7F 30			dta	$D2,$05,$CD,$EB,$7F,$30 ;Input: A=$6F Y=$EB P=$B2 M=$34  Output: A=$7F X=$14 Y=$EB P=$30 M=$34
+   350 2218 10 A6 7B				dta	$10,$A6,$7B ;Input: A=$61 Y=$A6 P=$31 M=$3B  Output: A=$7B X=$59 Y=$A6 P=$31 M=$3B
+   351 221B 12 3C 7F 34				dta	$12,$3C,$7F,$34 ;Input: A=$3F Y=$3C P=$36 M=$51  Output: A=$7F X=$C3 Y=$3C P=$34 M=$51
+   352 221F 10 0C FF				dta	$10,$0C,$FF ;Input: A=$77 Y=$0C P=$B4 M=$AB  Output: A=$FF X=$F3 Y=$0C P=$B4 M=$AB
+   353 2222 12 99 BE B1				dta	$12,$99,$BE,$B1 ;Input: A=$B6 Y=$99 P=$33 M=$88  Output: A=$BE X=$66 Y=$99 P=$B1 M=$88
+   354 2226 5E B7 B0				dta	$5E,$B7,$B0 ;Input: A=$B6 Y=$5E P=$32 M=$27  Output: A=$B7 X=$A1 Y=$5E P=$B0 M=$27
+   355 2229 10 1C BD				dta	$10,$1C,$BD ;Input: A=$9D Y=$1C P=$B4 M=$2C  Output: A=$BD X=$E3 Y=$1C P=$B4 M=$2C
+   356 222C B7 72				dta	$B7,$72 ;Input: A=$20 Y=$B7 P=$31 M=$72  Output: A=$72 X=$48 Y=$B7 P=$31 M=$72
+   357
+   358 						; $06  ASL zp
+   359 222E C0					dta	$C0
+   360 222F C3 06 CD DE 75 5A			dta	$C3,$06,$CD,$DE,$75,$5A ;Input: A=$E7 Y=$DE P=$76 M=$AD  Output: A=$E7 X=$21 Y=$DE P=$75 M=$5A
+   361 2235 03 12 B1 B4				dta	$03,$12,$B1,$B4 ;Input: A=$FD Y=$12 P=$30 M=$DA  Output: A=$FD X=$ED Y=$12 P=$B1 M=$B4
+   362 2239 C8 F0 D4				dta	$C8,$F0,$D4 ;Input: A=$CB Y=$C8 P=$70 M=$6A  Output: A=$CB X=$37 Y=$C8 P=$F0 M=$D4
+   363 223C BB 31 72				dta	$BB,$31,$72 ;Input: A=$94 Y=$BB P=$33 M=$B9  Output: A=$94 X=$44 Y=$BB P=$31 M=$72
+   364 223F A6 B1 96				dta	$A6,$B1,$96 ;Input: A=$09 Y=$A6 P=$30 M=$CB  Output: A=$09 X=$59 Y=$A6 P=$B1 M=$96
+   365 2242 03 F0 B0				dta	$03,$F0,$B0 ;Input: A=$E2 Y=$03 P=$F3 M=$58  Output: A=$E2 X=$FC Y=$03 P=$F0 M=$B0
+   366 2245 7D 30 2E				dta	$7D,$30,$2E ;Input: A=$37 Y=$7D P=$32 M=$17  Output: A=$37 X=$82 Y=$7D P=$30 M=$2E
+   367 2248 38 35 60				dta	$38,$35,$60 ;Input: A=$3D Y=$38 P=$B6 M=$B0  Output: A=$3D X=$C7 Y=$38 P=$35 M=$60
+   368
+   369 						; $09  ORA #imm
+   370 224B C0					dta	$C0
+   371 224C D2 09 5D 1F DD B4			dta	$D2,$09,$5D,$1F,$DD,$B4 ;Input: A=$DC Y=$1F P=$36 M=$38  Output: A=$DD X=$E0 Y=$1F P=$B4 M=$38
+   372 2252 52 CB D4 DF F5			dta	$52,$CB,$D4,$DF,$F5 ;Input: A=$57 Y=$D4 P=$75 M=$97  Output: A=$DF X=$2B Y=$D4 P=$F5 M=$97
+   373 2257 96 FC 96 B5				dta	$96,$FC,$96,$B5 ;Input: A=$04 Y=$FC P=$35 M=$D1  Output: A=$96 X=$03 Y=$FC P=$B5 M=$D1
+   374 225B 45 F5 ED F1				dta	$45,$F5,$ED,$F1 ;Input: A=$A9 Y=$F5 P=$73 M=$A8  Output: A=$ED X=$0A Y=$F5 P=$F1 M=$A8
+   375 225F 13 3B 53 30				dta	$13,$3B,$53,$30 ;Input: A=$51 Y=$3B P=$32 M=$80  Output: A=$53 X=$C4 Y=$3B P=$30 M=$80
+   376 2263 89 0D AF F0				dta	$89,$0D,$AF,$F0 ;Input: A=$27 Y=$0D P=$70 M=$34  Output: A=$AF X=$F2 Y=$0D P=$F0 M=$34
+   377 2267 1C 0A BD F4				dta	$1C,$0A,$BD,$F4 ;Input: A=$B1 Y=$0A P=$F6 M=$F7  Output: A=$BD X=$F5 Y=$0A P=$F4 M=$F7
+   378 226B AE DB FF B0				dta	$AE,$DB,$FF,$B0 ;Input: A=$DF Y=$DB P=$32 M=$31  Output: A=$FF X=$24 Y=$DB P=$B0 M=$31
+   379
+   380 						; $0A  ASL
+   381 226F D8					dta	$D8
+   382 2270 92 0A 32 94 B5			dta	$92,$0A,$32,$94,$B5 ;Input: A=$CA Y=$32 P=$36 M=$FA  Output: A=$94 X=$CD Y=$32 P=$B5 M=$FA
+   383 2275 12 9A 02 74				dta	$12,$9A,$02,$74 ;Input: A=$01 Y=$9A P=$F6 M=$A7  Output: A=$02 X=$65 Y=$9A P=$74 M=$A7
+   384 2279 EE 00 37				dta	$EE,$00,$37 ;Input: A=$80 Y=$EE P=$35 M=$ED  Output: A=$00 X=$11 Y=$EE P=$37 M=$ED
+   385 227C 10 78 1A				dta	$10,$78,$1A ;Input: A=$8D Y=$78 P=$35 M=$02  Output: A=$1A X=$87 Y=$78 P=$35 M=$02
+   386 227F 12 FD 74 71				dta	$12,$FD,$74,$71 ;Input: A=$BA Y=$FD P=$73 M=$BE  Output: A=$74 X=$02 Y=$FD P=$71 M=$BE
+   387 2283 49 3C 34				dta	$49,$3C,$34 ;Input: A=$1E Y=$49 P=$35 M=$7E  Output: A=$3C X=$B6 Y=$49 P=$34 M=$7E
+   388 2286 F6 AC B4				dta	$F6,$AC,$B4 ;Input: A=$56 Y=$F6 P=$37 M=$9E  Output: A=$AC X=$09 Y=$F6 P=$B4 M=$9E
+   389 2289 7D 28 70				dta	$7D,$28,$70 ;Input: A=$14 Y=$7D P=$F0 M=$D6  Output: A=$28 X=$82 Y=$7D P=$70 M=$D6
+   390
+   391 						; $0D  ORA abs
+   392 228C F9					dta	$F9
+   393 228D F2 0D CD 00 DC FA + 		dta	$F2,$0D,$CD,$00,$DC,$FA,$B1 ;Input: A=$C2 Y=$DC P=$31 M=$BA  Output: A=$FA X=$23 Y=$DC P=$B1 M=$BA
+   394 2294 02 4F B4				dta	$02,$4F,$B4 ;Input: A=$ED Y=$4F P=$36 M=$21  Output: A=$ED X=$B0 Y=$4F P=$B4 M=$21
+   395 2297 12 F2 BD B0				dta	$12,$F2,$BD,$B0 ;Input: A=$B9 Y=$F2 P=$30 M=$95  Output: A=$BD X=$0D Y=$F2 P=$B0 M=$95
+   396 229B 02 40 F4				dta	$02,$40,$F4 ;Input: A=$FF Y=$40 P=$74 M=$16  Output: A=$FF X=$BF Y=$40 P=$F4 M=$16
+   397 229E 12 D0 F5 B0				dta	$12,$D0,$F5,$B0 ;Input: A=$71 Y=$D0 P=$32 M=$B4  Output: A=$F5 X=$2F Y=$D0 P=$B0 M=$B4
+   398 22A2 C4 FD F0				dta	$C4,$FD,$F0 ;Input: A=$75 Y=$C4 P=$70 M=$8C  Output: A=$FD X=$3B Y=$C4 P=$F0 M=$8C
+   399 22A5 B7 E5 F1				dta	$B7,$E5,$F1 ;Input: A=$E4 Y=$B7 P=$71 M=$45  Output: A=$E5 X=$48 Y=$B7 P=$F1 M=$45
+   400 22A8 02 3B B1				dta	$02,$3B,$B1 ;Input: A=$F4 Y=$3B P=$31 M=$84  Output: A=$F4 X=$C4 Y=$3B P=$B1 M=$84
+   401
+   402 						; $0E  ASL abs
+   403 22AB C0					dta	$C0
+   404 22AC E3 0E CD 00 22 74 + 		dta	$E3,$0E,$CD,$00,$22,$74,$76 ;Input: A=$6D Y=$22 P=$75 M=$3B  Output: A=$6D X=$DD Y=$22 P=$74 M=$76
+   405 22B3 03 22 30 72				dta	$03,$22,$30,$72 ;Input: A=$88 Y=$22 P=$31 M=$39  Output: A=$88 X=$DD Y=$22 P=$30 M=$72
+   406 22B7 9D F5 C2				dta	$9D,$F5,$C2 ;Input: A=$05 Y=$9D P=$77 M=$E1  Output: A=$05 X=$62 Y=$9D P=$F5 M=$C2
+   407 22BA 8B F4 CE				dta	$8B,$F4,$CE ;Input: A=$69 Y=$8B P=$F6 M=$67  Output: A=$69 X=$74 Y=$8B P=$F4 M=$CE
+   408 22BD DA F4 CE				dta	$DA,$F4,$CE ;Input: A=$ED Y=$DA P=$76 M=$67  Output: A=$ED X=$25 Y=$DA P=$F4 M=$CE
+   409 22C0 CA B1 D8				dta	$CA,$B1,$D8 ;Input: A=$51 Y=$CA P=$30 M=$EC  Output: A=$51 X=$35 Y=$CA P=$B1 M=$D8
+   410 22C3 02 F4 D0				dta	$02,$F4,$D0 ;Input: A=$D9 Y=$02 P=$74 M=$68  Output: A=$D9 X=$FD Y=$02 P=$F4 M=$D0
+   411 22C6 72 74 48				dta	$72,$74,$48 ;Input: A=$43 Y=$72 P=$75 M=$24  Output: A=$43 X=$8D Y=$72 P=$74 M=$48
+   412
+   413 						; $11  ORA (zp),y
+   414 22C9 FF					dta	$FF
+   415 22CA D2 11 C4 01 B9 B4			dta	$D2,$11,$C4,$01,$B9,$B4 ;Input: A=$39 Y=$01 P=$34 M=$B1  Output: A=$B9 X=$FE Y=$01 P=$B4 M=$B1
+   416 22D0 42 C2 00 F5				dta	$42,$C2,$00,$F5 ;Input: A=$FB Y=$00 P=$F7 M=$C1  Output: A=$FB X=$FF Y=$00 P=$F5 M=$C1
+   417 22D4 52 C4 01 6C 75			dta	$52,$C4,$01,$6C,$75 ;Input: A=$44 Y=$01 P=$F5 M=$2C  Output: A=$6C X=$FE Y=$01 P=$75 M=$2C
+   418 22D9 12 01 7F 30				dta	$12,$01,$7F,$30 ;Input: A=$6B Y=$01 P=$B2 M=$1E  Output: A=$7F X=$FE Y=$01 P=$30 M=$1E
+   419 22DD 50 C2 00 FF				dta	$50,$C2,$00,$FF ;Input: A=$9D Y=$00 P=$F4 M=$6F  Output: A=$FF X=$FF Y=$00 P=$F4 M=$6F
+   420 22E1 10 00 5F				dta	$10,$00,$5F ;Input: A=$17 Y=$00 P=$31 M=$5F  Output: A=$5F X=$FF Y=$00 P=$31 M=$5F
+   421 22E4 12 00 D7 B4				dta	$12,$00,$D7,$B4 ;Input: A=$C7 Y=$00 P=$34 M=$17  Output: A=$D7 X=$FF Y=$00 P=$B4 M=$17
+   422 22E8 52 C4 01 9B F4			dta	$52,$C4,$01,$9B,$F4 ;Input: A=$1B Y=$01 P=$74 M=$8B  Output: A=$9B X=$FE Y=$01 P=$F4 M=$8B
+   423
+   424 						; $15  ORA zp,x
+   425 22ED C3					dta	$C3
+   426 22EE D0 15 A4 D6 AC			dta	$D0,$15,$A4,$D6,$AC ;Input: A=$88 Y=$D6 P=$B5 M=$A4  Output: A=$AC X=$29 Y=$D6 P=$B5 M=$A4
+   427 22F3 52 E2 14 DB F5			dta	$52,$E2,$14,$DB,$F5 ;Input: A=$9A Y=$14 P=$77 M=$43  Output: A=$DB X=$EB Y=$14 P=$F5 M=$43
+   428 22F8 4C 7E 5B 35				dta	$4C,$7E,$5B,$35 ;Input: A=$52 Y=$7E P=$B5 M=$09  Output: A=$5B X=$81 Y=$7E P=$35 M=$09
+   429 22FC AA DC FF B1				dta	$AA,$DC,$FF,$B1 ;Input: A=$3E Y=$DC P=$31 M=$DB  Output: A=$FF X=$23 Y=$DC P=$B1 M=$DB
+   430 2300 34 66 3F 35				dta	$34,$66,$3F,$35 ;Input: A=$0F Y=$66 P=$B7 M=$39  Output: A=$3F X=$99 Y=$66 P=$35 M=$39
+   431 2304 BD EF 7F 74				dta	$BD,$EF,$7F,$74 ;Input: A=$0D Y=$EF P=$F6 M=$73  Output: A=$7F X=$10 Y=$EF P=$74 M=$73
+   432 2308 42 17 49 70				dta	$42,$17,$49,$70 ;Input: A=$59 Y=$49 P=$72 M=$01  Output: A=$59 X=$B6 Y=$49 P=$70 M=$01
+   433 230C 52 CD FF FF F0			dta	$52,$CD,$FF,$FF,$F0 ;Input: A=$F8 Y=$FF P=$72 M=$1F  Output: A=$FF X=$00 Y=$FF P=$F0 M=$1F
+   434
+   435 						; $16  ASL zp,x
+   436 2311 C6					dta	$C6
+   437 2312 C3 16 5D 8F F1 DA			dta	$C3,$16,$5D,$8F,$F1,$DA ;Input: A=$11 Y=$8F P=$70 M=$ED  Output: A=$11 X=$70 Y=$8F P=$F1 M=$DA
+   438 2318 43 9B CD F4 BA			dta	$43,$9B,$CD,$F4,$BA ;Input: A=$3E Y=$CD P=$75 M=$5D  Output: A=$3E X=$32 Y=$CD P=$F4 M=$BA
+   439 231D EC 1E B5 E6				dta	$EC,$1E,$B5,$E6 ;Input: A=$D0 Y=$1E P=$37 M=$F3  Output: A=$D0 X=$E1 Y=$1E P=$B5 M=$E6
+   440 2321 6A 9C F5 9C				dta	$6A,$9C,$F5,$9C ;Input: A=$AB Y=$9C P=$F4 M=$CE  Output: A=$AB X=$63 Y=$9C P=$F5 M=$9C
+   441 2325 40 72 B1 A6				dta	$40,$72,$B1,$A6 ;Input: A=$F7 Y=$72 P=$32 M=$D3  Output: A=$F7 X=$8D Y=$72 P=$B1 M=$A6
+   442 2329 41 B4 E6 6C				dta	$41,$B4,$E6,$6C ;Input: A=$0D Y=$E6 P=$34 M=$36  Output: A=$0D X=$19 Y=$E6 P=$34 M=$6C
+   443 232D 43 BE F0 74 4A			dta	$43,$BE,$F0,$74,$4A ;Input: A=$8B Y=$F0 P=$76 M=$25  Output: A=$8B X=$0F Y=$F0 P=$74 M=$4A
+   444 2332 1D 4F B5 E8				dta	$1D,$4F,$B5,$E8 ;Input: A=$C1 Y=$4F P=$36 M=$F4  Output: A=$C1 X=$B0 Y=$4F P=$B5 M=$E8
+   445
+   446 						; $18  CLC
+   447 2336 C8					dta	$C8
+   448 2337 82 18 77 36				dta	$82,$18,$77,$36 ;Input: A=$EA Y=$77 P=$37 M=$21  Output: A=$EA X=$88 Y=$77 P=$36 M=$21
+   449 233B 00 D7				dta	$00,$D7 ;Input: A=$37 Y=$D7 P=$B0 M=$BC  Output: A=$37 X=$28 Y=$D7 P=$B0 M=$BC
+   450 233D 39					dta	$39 ;Input: A=$5B Y=$39 P=$F2 M=$03  Output: A=$5B X=$C6 Y=$39 P=$F2 M=$03
+   451 233E 53					dta	$53 ;Input: A=$8A Y=$53 P=$F0 M=$0C  Output: A=$8A X=$AC Y=$53 P=$F0 M=$0C
+   452 233F 02 C9 72				dta	$02,$C9,$72 ;Input: A=$BF Y=$C9 P=$73 M=$CE  Output: A=$BF X=$36 Y=$C9 P=$72 M=$CE
+   453 2342 1E F0				dta	$1E,$F0 ;Input: A=$4D Y=$1E P=$F1 M=$7C  Output: A=$4D X=$E1 Y=$1E P=$F0 M=$7C
+   454 2344 74 70				dta	$74,$70 ;Input: A=$11 Y=$74 P=$71 M=$D9  Output: A=$11 X=$8B Y=$74 P=$70 M=$D9
+   455 2346 0C 32				dta	$0C,$32 ;Input: A=$44 Y=$0C P=$33 M=$E4  Output: A=$44 X=$F3 Y=$0C P=$32 M=$E4
+   456
+   457 						; $19  ORA abs,y
+   458 2348 DC					dta	$DC
+   459 2349 F2 19 78 00 55 77 + 		dta	$F2,$19,$78,$00,$55,$77,$74 ;Input: A=$75 Y=$55 P=$76 M=$73  Output: A=$77 X=$AA Y=$55 P=$74 M=$73
+   460 2350 52 AE 1F A3 B5			dta	$52,$AE,$1F,$A3,$B5 ;Input: A=$A1 Y=$1F P=$35 M=$A2  Output: A=$A3 X=$E0 Y=$1F P=$B5 M=$A2
+   461 2355 A9 24 EA B4				dta	$A9,$24,$EA,$B4 ;Input: A=$E8 Y=$24 P=$34 M=$6A  Output: A=$EA X=$DB Y=$24 P=$B4 M=$6A
+   462 2359 42 4F 7E B0				dta	$42,$4F,$7E,$B0 ;Input: A=$F9 Y=$7E P=$30 M=$D1  Output: A=$F9 X=$81 Y=$7E P=$B0 M=$D1
+   463 235D 50 7E 4F AF				dta	$50,$7E,$4F,$AF ;Input: A=$27 Y=$4F P=$F5 M=$AC  Output: A=$AF X=$B0 Y=$4F P=$F5 M=$AC
+   464 2361 52 AB 22 F7 F0			dta	$52,$AB,$22,$F7,$F0 ;Input: A=$F5 Y=$22 P=$70 M=$22  Output: A=$F7 X=$DD Y=$22 P=$F0 M=$22
+   465 2366 81 4C FB B0				dta	$81,$4C,$FB,$B0 ;Input: A=$FA Y=$4C P=$32 M=$09  Output: A=$FB X=$B3 Y=$4C P=$B0 M=$09
+   466 236A 7A 53 F6 B0				dta	$7A,$53,$F6,$B0 ;Input: A=$B6 Y=$53 P=$B2 M=$56  Output: A=$F6 X=$AC Y=$53 P=$B0 M=$56
+   467
+   468 						; $1D  ORA abs,x
+   469 236E C4					dta	$C4
+   470 236F F0 1D 7B 00 AD FF			dta	$F0,$1D,$7B,$00,$AD,$FF ;Input: A=$3F Y=$AD P=$B4 M=$E3  Output: A=$FF X=$52 Y=$AD P=$B4 M=$E3
+   471 2375 50 A1 D3 2C				dta	$50,$A1,$D3,$2C ;Input: A=$00 Y=$D3 P=$30 M=$2C  Output: A=$2C X=$2C Y=$D3 P=$30 M=$2C
+   472 2379 C3 F5 DB				dta	$C3,$F5,$DB ;Input: A=$D9 Y=$F5 P=$F0 M=$CA  Output: A=$DB X=$0A Y=$F5 P=$F0 M=$CA
+   473 237C A7 D9 F3				dta	$A7,$D9,$F3 ;Input: A=$B1 Y=$D9 P=$F5 M=$F2  Output: A=$F3 X=$26 Y=$D9 P=$F5 M=$F2
+   474 237F 78 AA 5C				dta	$78,$AA,$5C ;Input: A=$1C Y=$AA P=$70 M=$50  Output: A=$5C X=$55 Y=$AA P=$70 M=$50
+   475 2382 52 8E C0 8D B1			dta	$52,$8E,$C0,$8D,$B1 ;Input: A=$84 Y=$C0 P=$33 M=$8D  Output: A=$8D X=$3F Y=$C0 P=$B1 M=$8D
+   476 2387 79 AB 5F 74				dta	$79,$AB,$5F,$74 ;Input: A=$5D Y=$AB P=$F4 M=$5B  Output: A=$5F X=$54 Y=$AB P=$74 M=$5B
+   477 238B 4F 81 FB F1				dta	$4F,$81,$FB,$F1 ;Input: A=$23 Y=$81 P=$73 M=$DB  Output: A=$FB X=$7E Y=$81 P=$F1 M=$DB
+   478
+   479 						; $1E  ASL abs,x
+   480 238F D8					dta	$D8
+   481 2390 E3 1E 92 00 C4 F0 + 		dta	$E3,$1E,$92,$00,$C4,$F0,$90 ;Input: A=$46 Y=$C4 P=$71 M=$48  Output: A=$46 X=$3B Y=$C4 P=$F0 M=$90
+   482 2397 43 AD DF F1 90			dta	$43,$AD,$DF,$F1,$90 ;Input: A=$FB Y=$DF P=$70 M=$C8  Output: A=$FB X=$20 Y=$DF P=$F1 M=$90
+   483 239C 4E 80 B5 EA				dta	$4E,$80,$B5,$EA ;Input: A=$81 Y=$80 P=$37 M=$F5  Output: A=$81 X=$7F Y=$80 P=$B5 M=$EA
+   484 23A0 41 AF E1 A0				dta	$41,$AF,$E1,$A0 ;Input: A=$BE Y=$E1 P=$B0 M=$50  Output: A=$BE X=$1E Y=$E1 P=$B0 M=$A0
+   485 23A4 43 8C BE B0 FE			dta	$43,$8C,$BE,$B0,$FE ;Input: A=$CE Y=$BE P=$32 M=$7F  Output: A=$CE X=$41 Y=$BE P=$B0 M=$FE
+   486 23A9 53 85 F1 F8				dta	$53,$85,$F1,$F8 ;Input: A=$61 Y=$85 P=$F3 M=$FC  Output: A=$61 X=$7A Y=$85 P=$F1 M=$F8
+   487 23AD 55 87 F1 DA				dta	$55,$87,$F1,$DA ;Input: A=$67 Y=$87 P=$72 M=$ED  Output: A=$67 X=$78 Y=$87 P=$F1 M=$DA
+   488 23B1 81 B3 B0 D2				dta	$81,$B3,$B0,$D2 ;Input: A=$53 Y=$B3 P=$33 M=$69  Output: A=$53 X=$4C Y=$B3 P=$B0 M=$D2
+   489
+   490 						; $21  AND (zp,x)
+   491 23B5 C0					dta	$C0
+   492 23B6 D2 21 E2 1F 20 74			dta	$D2,$21,$E2,$1F,$20,$74 ;Input: A=$FE Y=$1F P=$F4 M=$21  Output: A=$20 X=$E0 Y=$1F P=$74 M=$21
+   493 23BC 52 33 70 52 31			dta	$52,$33,$70,$52,$31 ;Input: A=$F6 Y=$70 P=$B3 M=$53  Output: A=$52 X=$8F Y=$70 P=$31 M=$53
+   494 23C1 9D DA 88 F1				dta	$9D,$DA,$88,$F1 ;Input: A=$9D Y=$DA P=$F3 M=$A8  Output: A=$88 X=$25 Y=$DA P=$F1 M=$A8
+   495 23C5 17 54 08 71				dta	$17,$54,$08,$71 ;Input: A=$48 Y=$54 P=$73 M=$3D  Output: A=$08 X=$AB Y=$54 P=$71 M=$3D
+   496 23C9 74 B1 00 73				dta	$74,$B1,$00,$73 ;Input: A=$31 Y=$B1 P=$71 M=$88  Output: A=$00 X=$4E Y=$B1 P=$73 M=$88
+   497 23CD 01 3E 54 71				dta	$01,$3E,$54,$71 ;Input: A=$D4 Y=$3E P=$73 M=$5C  Output: A=$54 X=$C1 Y=$3E P=$71 M=$5C
+   498 23D1 D8 15 00 73				dta	$D8,$15,$00,$73 ;Input: A=$51 Y=$15 P=$F1 M=$84  Output: A=$00 X=$EA Y=$15 P=$73 M=$84
+   499 23D5 09 46 CC B0				dta	$09,$46,$CC,$B0 ;Input: A=$EC Y=$46 P=$32 M=$DD  Output: A=$CC X=$B9 Y=$46 P=$B0 M=$DD
+   500
+   501 						; $24  BIT zp
+   502 23D9 C0					dta	$C0
+   503 23DA C2 24 CD 04 B1			dta	$C2,$24,$CD,$04,$B1 ;Input: A=$CE Y=$04 P=$31 M=$98  Output: A=$CE X=$FB Y=$04 P=$B1 M=$98
+   504 23DF 02 73 71				dta	$02,$73,$71 ;Input: A=$CC Y=$73 P=$31 M=$67  Output: A=$CC X=$8C Y=$73 P=$71 M=$67
+   505 23E2 D9 B1				dta	$D9,$B1 ;Input: A=$15 Y=$D9 P=$73 M=$B1  Output: A=$15 X=$26 Y=$D9 P=$B1 M=$B1
+   506 23E4 2F B2				dta	$2F,$B2 ;Input: A=$41 Y=$2F P=$72 M=$BE  Output: A=$41 X=$D0 Y=$2F P=$B2 M=$BE
+   507 23E6 68 74				dta	$68,$74 ;Input: A=$58 Y=$68 P=$B4 M=$75  Output: A=$58 X=$97 Y=$68 P=$74 M=$75
+   508 23E8 F7 F5				dta	$F7,$F5 ;Input: A=$42 Y=$F7 P=$B7 M=$FA  Output: A=$42 X=$08 Y=$F7 P=$F5 M=$FA
+   509 23EA 4A 31				dta	$4A,$31 ;Input: A=$65 Y=$4A P=$71 M=$11  Output: A=$65 X=$B5 Y=$4A P=$31 M=$11
+   510 23EC 57 71				dta	$57,$71 ;Input: A=$D8 Y=$57 P=$B3 M=$76  Output: A=$D8 X=$A8 Y=$57 P=$71 M=$76
+   511
+   512 						; $25  AND zp
+   513 23EE C0					dta	$C0
+   514 23EF D2 25 CD 76 00 36			dta	$D2,$25,$CD,$76,$00,$36 ;Input: A=$C5 Y=$76 P=$B6 M=$22  Output: A=$00 X=$89 Y=$76 P=$36 M=$22
+   515 23F5 12 16 94 F0				dta	$12,$16,$94,$F0 ;Input: A=$B4 Y=$16 P=$F2 M=$D4  Output: A=$94 X=$E9 Y=$16 P=$F0 M=$D4
+   516 23F9 11 00 36				dta	$11,$00,$36 ;Input: A=$92 Y=$11 P=$B6 M=$08  Output: A=$00 X=$EE Y=$11 P=$36 M=$08
+   517 23FC AE 00 73				dta	$AE,$00,$73 ;Input: A=$0F Y=$AE P=$71 M=$80  Output: A=$00 X=$51 Y=$AE P=$73 M=$80
+   518 23FF 88 40 70				dta	$88,$40,$70 ;Input: A=$E8 Y=$88 P=$F2 M=$50  Output: A=$40 X=$77 Y=$88 P=$70 M=$50
+   519 2402 FE 12 74				dta	$FE,$12,$74 ;Input: A=$D3 Y=$FE P=$F4 M=$1A  Output: A=$12 X=$01 Y=$FE P=$74 M=$1A
+   520 2405 DB 09 35				dta	$DB,$09,$35 ;Input: A=$6F Y=$DB P=$B5 M=$09  Output: A=$09 X=$24 Y=$DB P=$35 M=$09
+   521 2408 43 9A B1				dta	$43,$9A,$B1 ;Input: A=$BE Y=$43 P=$33 M=$DB  Output: A=$9A X=$BC Y=$43 P=$B1 M=$DB
+   522
+   523 						; $26  ROL zp
+   524 240B C0					dta	$C0
+   525 240C C1 26 CD 3C 0E			dta	$C1,$26,$CD,$3C,$0E ;Input: A=$0F Y=$3C P=$30 M=$07  Output: A=$0F X=$C3 Y=$3C P=$30 M=$0E
+   526 2411 03 45 B5 B0				dta	$03,$45,$B5,$B0 ;Input: A=$0D Y=$45 P=$34 M=$D8  Output: A=$0D X=$BA Y=$45 P=$B5 M=$B0
+   527 2415 D8 B5 C6				dta	$D8,$B5,$C6 ;Input: A=$68 Y=$D8 P=$B6 M=$E3  Output: A=$68 X=$27 Y=$D8 P=$B5 M=$C6
+   528 2418 CE 74 5D				dta	$CE,$74,$5D ;Input: A=$9C Y=$CE P=$F7 M=$2E  Output: A=$9C X=$31 Y=$CE P=$74 M=$5D
+   529 241B F5 31 70				dta	$F5,$31,$70 ;Input: A=$91 Y=$F5 P=$32 M=$B8  Output: A=$91 X=$0A Y=$F5 P=$31 M=$70
+   530 241E 60 71 60				dta	$60,$71,$60 ;Input: A=$03 Y=$60 P=$F2 M=$B0  Output: A=$03 X=$9F Y=$60 P=$71 M=$60
+   531 2421 3D B4 B5				dta	$3D,$B4,$B5 ;Input: A=$5F Y=$3D P=$37 M=$5A  Output: A=$5F X=$C2 Y=$3D P=$B4 M=$B5
+   532 2424 27 B0 D9				dta	$27,$B0,$D9 ;Input: A=$9D Y=$27 P=$33 M=$6C  Output: A=$9D X=$D8 Y=$27 P=$B0 M=$D9
+   533
+   534 						; $29  AND #imm
+   535 2427 F8					dta	$F8
+   536 2428 D2 29 76 59 42 71			dta	$D2,$29,$76,$59,$42,$71 ;Input: A=$43 Y=$59 P=$73 M=$61  Output: A=$42 X=$A6 Y=$59 P=$71 M=$61
+   537 242E 50 D0 2D 10				dta	$50,$D0,$2D,$10 ;Input: A=$3C Y=$2D P=$30 M=$54  Output: A=$10 X=$D2 Y=$2D P=$30 M=$54
+   538 2432 52 C9 C2 C0 F1			dta	$52,$C9,$C2,$C0,$F1 ;Input: A=$F0 Y=$C2 P=$73 M=$E6  Output: A=$C0 X=$3D Y=$C2 P=$F1 M=$E6
+   539 2437 40 68 CD				dta	$40,$68,$CD ;Input: A=$60 Y=$CD P=$74 M=$AE  Output: A=$60 X=$32 Y=$CD P=$74 M=$AE
+   540 243A 52 49 D4 09 71			dta	$52,$49,$D4,$09,$71 ;Input: A=$9D Y=$D4 P=$F1 M=$30  Output: A=$09 X=$2B Y=$D4 P=$71 M=$30
+   541 243F 79 6A 08 35				dta	$79,$6A,$08,$35 ;Input: A=$88 Y=$6A P=$B7 M=$7B  Output: A=$08 X=$95 Y=$6A P=$35 M=$7B
+   542 2443 08 25 08 71				dta	$08,$25,$08,$71 ;Input: A=$0C Y=$25 P=$F3 M=$49  Output: A=$08 X=$DA Y=$25 P=$71 M=$49
+   543 2447 40 61 40 35				dta	$40,$61,$40,$35 ;Input: A=$4C Y=$61 P=$B5 M=$25  Output: A=$40 X=$9E Y=$61 P=$35 M=$25
+   544
+   545 						; $2A  ROL
+   546 244B CF					dta	$CF
+   547 244C 92 2A 14 E4 B1			dta	$92,$2A,$14,$E4,$B1 ;Input: A=$F2 Y=$14 P=$B0 M=$05  Output: A=$E4 X=$EB Y=$14 P=$B1 M=$05
+   548 2451 12 3B 00 37				dta	$12,$3B,$00,$37 ;Input: A=$80 Y=$3B P=$34 M=$D5  Output: A=$00 X=$C4 Y=$3B P=$37 M=$D5
+   549 2455 A5 09 30				dta	$A5,$09,$30 ;Input: A=$04 Y=$A5 P=$B3 M=$B1  Output: A=$09 X=$5A Y=$A5 P=$30 M=$B1
+   550 2458 28 F5 F5				dta	$28,$F5,$F5 ;Input: A=$FA Y=$28 P=$F7 M=$4C  Output: A=$F5 X=$D7 Y=$28 P=$F5 M=$4C
+   551 245B 10 8C 04				dta	$10,$8C,$04 ;Input: A=$02 Y=$8C P=$34 M=$6A  Output: A=$04 X=$73 Y=$8C P=$34 M=$6A
+   552 245E 12 A9 A4 B1				dta	$12,$A9,$A4,$B1 ;Input: A=$D2 Y=$A9 P=$32 M=$F9  Output: A=$A4 X=$56 Y=$A9 P=$B1 M=$F9
+   553 2462 10 87 3A				dta	$10,$87,$3A ;Input: A=$1D Y=$87 P=$30 M=$4A  Output: A=$3A X=$78 Y=$87 P=$30 M=$4A
+   554 2465 12 8C 96 B1				dta	$12,$8C,$96,$B1 ;Input: A=$CB Y=$8C P=$B2 M=$0A  Output: A=$96 X=$73 Y=$8C P=$B1 M=$0A
+   555
+   556 						; $2C  BIT abs
+   557 2469 F0					dta	$F0
+   558 246A E2 2C CD 00 F1 35			dta	$E2,$2C,$CD,$00,$F1,$35 ;Input: A=$23 Y=$F1 P=$77 M=$17  Output: A=$23 X=$0E Y=$F1 P=$35 M=$17
+   559 2470 02 1D F3				dta	$02,$1D,$F3 ;Input: A=$02 Y=$1D P=$71 M=$E5  Output: A=$02 X=$E2 Y=$1D P=$F3 M=$E5
+   560 2473 00 95				dta	$00,$95 ;Input: A=$9E Y=$95 P=$74 M=$78  Output: A=$9E X=$6A Y=$95 P=$74 M=$78
+   561 2475 02 9B 70				dta	$02,$9B,$70 ;Input: A=$1A Y=$9B P=$72 M=$50  Output: A=$1A X=$64 Y=$9B P=$70 M=$50
+   562 2478 C0 B0				dta	$C0,$B0 ;Input: A=$BB Y=$C0 P=$30 M=$B3  Output: A=$BB X=$3F Y=$C0 P=$B0 M=$B3
+   563 247A E9 74				dta	$E9,$74 ;Input: A=$1F Y=$E9 P=$F6 M=$7E  Output: A=$1F X=$16 Y=$E9 P=$74 M=$7E
+   564 247C 9A 74				dta	$9A,$74 ;Input: A=$1E Y=$9A P=$B4 M=$4D  Output: A=$1E X=$65 Y=$9A P=$74 M=$4D
+   565 247E 86 71				dta	$86,$71 ;Input: A=$A4 Y=$86 P=$F1 M=$6A  Output: A=$A4 X=$79 Y=$86 P=$71 M=$6A
+   566
+   567 						; $2D  AND abs
+   568 2480 FB					dta	$FB
+   569 2481 F2 2D CD 00 B5 03 + 		dta	$F2,$2D,$CD,$00,$B5,$03,$70 ;Input: A=$87 Y=$B5 P=$F0 M=$33  Output: A=$03 X=$4A Y=$B5 P=$70 M=$33
+   570 2488 10 BF A2				dta	$10,$BF,$A2 ;Input: A=$A3 Y=$BF P=$F5 M=$BA  Output: A=$A2 X=$40 Y=$BF P=$F5 M=$BA
+   571 248B 12 E7 34 34				dta	$12,$E7,$34,$34 ;Input: A=$35 Y=$E7 P=$36 M=$FE  Output: A=$34 X=$18 Y=$E7 P=$34 M=$FE
+   572 248F 10 23 29				dta	$10,$23,$29 ;Input: A=$69 Y=$23 P=$34 M=$BF  Output: A=$29 X=$DC Y=$23 P=$34 M=$BF
+   573 2492 12 55 45 70				dta	$12,$55,$45,$70 ;Input: A=$F5 Y=$55 P=$72 M=$4D  Output: A=$45 X=$AA Y=$55 P=$70 M=$4D
+   574 2496 38 A1 B4				dta	$38,$A1,$B4 ;Input: A=$ED Y=$38 P=$B6 M=$A3  Output: A=$A1 X=$C7 Y=$38 P=$B4 M=$A3
+   575 2499 10 D1 30				dta	$10,$D1,$30 ;Input: A=$71 Y=$D1 P=$30 M=$BA  Output: A=$30 X=$2E Y=$D1 P=$30 M=$BA
+   576 249C 12 6C 24 34				dta	$12,$6C,$24,$34 ;Input: A=$EE Y=$6C P=$B4 M=$34  Output: A=$24 X=$93 Y=$6C P=$34 M=$34
+   577
+   578 						; $2E  ROL abs
+   579 24A0 F0					dta	$F0
+   580 24A1 E3 2E CD 00 66 34 + 		dta	$E3,$2E,$CD,$00,$66,$34,$79 ;Input: A=$73 Y=$66 P=$37 M=$3C  Output: A=$73 X=$99 Y=$66 P=$34 M=$79
+   581 24A8 03 4E 35 70				dta	$03,$4E,$35,$70 ;Input: A=$D3 Y=$4E P=$34 M=$B8  Output: A=$D3 X=$B1 Y=$4E P=$35 M=$70
+   582 24AC 01 30 6F				dta	$01,$30,$6F ;Input: A=$19 Y=$30 P=$35 M=$B7  Output: A=$19 X=$CF Y=$30 P=$35 M=$6F
+   583 24AF 03 FE F0 F9				dta	$03,$FE,$F0,$F9 ;Input: A=$83 Y=$FE P=$71 M=$7C  Output: A=$83 X=$01 Y=$FE P=$F0 M=$F9
+   584 24B3 71 F4 C8				dta	$71,$F4,$C8 ;Input: A=$53 Y=$71 P=$F6 M=$64  Output: A=$53 X=$8E Y=$71 P=$F4 M=$C8
+   585 24B6 E2 71 5A				dta	$E2,$71,$5A ;Input: A=$48 Y=$E2 P=$72 M=$AD  Output: A=$48 X=$1D Y=$E2 P=$71 M=$5A
+   586 24B9 E2 B5 D3				dta	$E2,$B5,$D3 ;Input: A=$CC Y=$E2 P=$37 M=$E9  Output: A=$CC X=$1D Y=$E2 P=$B5 M=$D3
+   587 24BC 9B 34 19				dta	$9B,$34,$19 ;Input: A=$2D Y=$9B P=$B7 M=$0C  Output: A=$2D X=$64 Y=$9B P=$34 M=$19
+   588
+   589 						; $31  AND (zp),y
+   590 24BF FF					dta	$FF
+   591 24C0 D2 31 C4 01 07 74			dta	$D2,$31,$C4,$01,$07,$74 ;Input: A=$7F Y=$01 P=$F4 M=$87  Output: A=$07 X=$FE Y=$01 P=$74 M=$87
+   592 24C6 52 C2 00 05 71			dta	$52,$C2,$00,$05,$71 ;Input: A=$CD Y=$00 P=$F1 M=$25  Output: A=$05 X=$FF Y=$00 P=$71 M=$25
+   593 24CB 02 00 30				dta	$02,$00,$30 ;Input: A=$4B Y=$00 P=$B2 M=$5B  Output: A=$4B X=$FF Y=$00 P=$30 M=$5B
+   594 24CE 50 C4 01 10				dta	$50,$C4,$01,$10 ;Input: A=$56 Y=$01 P=$34 M=$99  Output: A=$10 X=$FE Y=$01 P=$34 M=$99
+   595 24D2 02 01 30				dta	$02,$01,$30 ;Input: A=$38 Y=$01 P=$B2 M=$3B  Output: A=$38 X=$FE Y=$01 P=$30 M=$3B
+   596 24D5 52 C2 00 24 70			dta	$52,$C2,$00,$24,$70 ;Input: A=$2C Y=$00 P=$F2 M=$E5  Output: A=$24 X=$FF Y=$00 P=$70 M=$E5
+   597 24DA 12 00 CC F1				dta	$12,$00,$CC,$F1 ;Input: A=$DD Y=$00 P=$F3 M=$CC  Output: A=$CC X=$FF Y=$00 P=$F1 M=$CC
+   598 24DE 52 C4 01 40 70			dta	$52,$C4,$01,$40,$70 ;Input: A=$50 Y=$01 P=$F2 M=$47  Output: A=$40 X=$FE Y=$01 P=$70 M=$47
+   599
+   600 						; $35  AND zp,x
+   601 24E3 E7					dta	$E7
+   602 24E4 D2 35 AD DF 1C 71			dta	$D2,$35,$AD,$DF,$1C,$71 ;Input: A=$1D Y=$DF P=$F1 M=$9E  Output: A=$1C X=$20 Y=$DF P=$71 M=$9E
+   603 24EA 50 F7 29 11				dta	$50,$F7,$29,$11 ;Input: A=$59 Y=$29 P=$34 M=$15  Output: A=$11 X=$D6 Y=$29 P=$34 M=$15
+   604 24EE 52 0C 3E 08 34			dta	$52,$0C,$3E,$08,$34 ;Input: A=$2C Y=$3E P=$B6 M=$19  Output: A=$08 X=$C1 Y=$3E P=$34 M=$19
+   605 24F3 AE E0 98 F1				dta	$AE,$E0,$98,$F1 ;Input: A=$F8 Y=$E0 P=$73 M=$9A  Output: A=$98 X=$1F Y=$E0 P=$F1 M=$9A
+   606 24F7 E0 12 02 34				dta	$E0,$12,$02,$34 ;Input: A=$0F Y=$12 P=$36 M=$B2  Output: A=$02 X=$ED Y=$12 P=$34 M=$B2
+   607 24FB 50 8D BF 09				dta	$50,$8D,$BF,$09 ;Input: A=$5D Y=$BF P=$70 M=$09  Output: A=$09 X=$40 Y=$BF P=$70 M=$09
+   608 24FF 52 74 A6 01 31			dta	$52,$74,$A6,$01,$31 ;Input: A=$13 Y=$A6 P=$33 M=$05  Output: A=$01 X=$59 Y=$A6 P=$31 M=$05
+   609 2504 50 57 89 21				dta	$50,$57,$89,$21 ;Input: A=$A1 Y=$89 P=$75 M=$6B  Output: A=$21 X=$76 Y=$89 P=$75 M=$6B
+   610
+   611 						; $36  ROL zp,x
+   612 2508 C0					dta	$C0
+   613 2509 C3 36 BF F1 F5 CA			dta	$C3,$36,$BF,$F1,$F5,$CA ;Input: A=$82 Y=$F1 P=$74 M=$E5  Output: A=$82 X=$0E Y=$F1 P=$F5 M=$CA
+   614 250F 43 DC 0E F0 C5			dta	$43,$DC,$0E,$F0,$C5 ;Input: A=$FC Y=$0E P=$F1 M=$62  Output: A=$FC X=$F1 Y=$0E P=$F0 M=$C5
+   615 2514 3A 6C 34 13				dta	$3A,$6C,$34,$13 ;Input: A=$D6 Y=$6C P=$B7 M=$09  Output: A=$D6 X=$93 Y=$6C P=$34 M=$13
+   616 2518 6F A1 F1 8F				dta	$6F,$A1,$F1,$8F ;Input: A=$0F Y=$A1 P=$73 M=$C7  Output: A=$0F X=$5E Y=$A1 P=$F1 M=$8F
+   617 251C EE 20 34 28				dta	$EE,$20,$34,$28 ;Input: A=$E9 Y=$20 P=$36 M=$14  Output: A=$E9 X=$DF Y=$20 P=$34 M=$28
+   618 2520 99 CB B4 AF				dta	$99,$CB,$B4,$AF ;Input: A=$C2 Y=$CB P=$B5 M=$57  Output: A=$C2 X=$34 Y=$CB P=$B4 M=$AF
+   619 2524 D1 03 35 2A				dta	$D1,$03,$35,$2A ;Input: A=$1D Y=$03 P=$B6 M=$95  Output: A=$1D X=$FC Y=$03 P=$35 M=$2A
+   620 2528 0F 41 75 70				dta	$0F,$41,$75,$70 ;Input: A=$4D Y=$41 P=$76 M=$B8  Output: A=$4D X=$BE Y=$41 P=$75 M=$70
+   621
+   622 						; $38  SEC
+   623 252C DE					dta	$DE
+   624 252D 80 38 84				dta	$80,$38,$84 ;Input: A=$5D Y=$84 P=$F3 M=$F0  Output: A=$5D X=$7B Y=$84 P=$F3 M=$F0
+   625 2530 00 14				dta	$00,$14 ;Input: A=$1B Y=$14 P=$71 M=$CF  Output: A=$1B X=$EB Y=$14 P=$71 M=$CF
+   626 2532 65					dta	$65 ;Input: A=$54 Y=$65 P=$B3 M=$26  Output: A=$54 X=$9A Y=$65 P=$B3 M=$26
+   627 2533 02 28 33				dta	$02,$28,$33 ;Input: A=$06 Y=$28 P=$32 M=$C2  Output: A=$06 X=$D7 Y=$28 P=$33 M=$C2
+   628 2536 00 C9				dta	$00,$C9 ;Input: A=$BB Y=$C9 P=$F3 M=$10  Output: A=$BB X=$36 Y=$C9 P=$F3 M=$10
+   629 2538 02 E7 B5				dta	$02,$E7,$B5 ;Input: A=$AA Y=$E7 P=$B4 M=$8F  Output: A=$AA X=$18 Y=$E7 P=$B5 M=$8F
+   630 253B 00 8E				dta	$00,$8E ;Input: A=$68 Y=$8E P=$B3 M=$4E  Output: A=$68 X=$71 Y=$8E P=$B3 M=$4E
+   631 253D 36					dta	$36 ;Input: A=$DF Y=$36 P=$71 M=$A6  Output: A=$DF X=$C9 Y=$36 P=$71 M=$A6
+   632
+   633 						; $39  AND abs,y
+   634 253E CC					dta	$CC
+   635 253F F0 39 71 00 5C 0E			dta	$F0,$39,$71,$00,$5C,$0E ;Input: A=$5E Y=$5C P=$34 M=$0E  Output: A=$0E X=$A3 Y=$5C P=$34 M=$0E
+   636 2545 52 A5 28 88 B0			dta	$52,$A5,$28,$88,$B0 ;Input: A=$C8 Y=$28 P=$30 M=$BF  Output: A=$88 X=$D7 Y=$28 P=$B0 M=$BF
+   637 254A 4F 7E 00 72				dta	$4F,$7E,$00,$72 ;Input: A=$BD Y=$7E P=$F0 M=$42  Output: A=$00 X=$81 Y=$7E P=$72 M=$42
+   638 254E 5B 72 48 31				dta	$5B,$72,$48,$31 ;Input: A=$5D Y=$72 P=$B1 M=$C8  Output: A=$48 X=$8D Y=$72 P=$31 M=$C8
+   639 2552 50 5C 71 10				dta	$50,$5C,$71,$10 ;Input: A=$DD Y=$71 P=$35 M=$12  Output: A=$10 X=$8E Y=$71 P=$35 M=$12
+   640 2556 52 AD 20 62 34			dta	$52,$AD,$20,$62,$34 ;Input: A=$76 Y=$20 P=$B6 M=$E2  Output: A=$62 X=$DF Y=$20 P=$34 M=$E2
+   641 255B 92 3B 20 74				dta	$92,$3B,$20,$74 ;Input: A=$A2 Y=$3B P=$F6 M=$68  Output: A=$20 X=$C4 Y=$3B P=$74 M=$68
+   642 255F C7 06 90 B5				dta	$C7,$06,$90,$B5 ;Input: A=$94 Y=$06 P=$35 M=$B3  Output: A=$90 X=$F9 Y=$06 P=$B5 M=$B3
+   643
+   644 						; $3D  AND abs,x
+   645 2563 DD					dta	$DD
+   646 2564 F2 3D CC 00 FE 00 + 		dta	$F2,$3D,$CC,$00,$FE,$00,$76 ;Input: A=$0B Y=$FE P=$F4 M=$64  Output: A=$00 X=$01 Y=$FE P=$76 M=$64
+   647 256B 52 C6 F8 20 71			dta	$52,$C6,$F8,$20,$71 ;Input: A=$66 Y=$F8 P=$F1 M=$B1  Output: A=$20 X=$07 Y=$F8 P=$71 M=$B1
+   648 2570 9B CD 00 32				dta	$9B,$CD,$00,$32 ;Input: A=$A8 Y=$CD P=$B0 M=$15  Output: A=$00 X=$32 Y=$CD P=$32 M=$15
+   649 2574 50 8C BE 2A				dta	$50,$8C,$BE,$2A ;Input: A=$6E Y=$BE P=$31 M=$AB  Output: A=$2A X=$41 Y=$BE P=$31 M=$AB
+   650 2578 12 BE 24 70				dta	$12,$BE,$24,$70 ;Input: A=$F4 Y=$BE P=$72 M=$2F  Output: A=$24 X=$41 Y=$BE P=$70 M=$2F
+   651 257C 52 90 C2 20 35			dta	$52,$90,$C2,$20,$35 ;Input: A=$BA Y=$C2 P=$B7 M=$65  Output: A=$20 X=$3D Y=$C2 P=$35 M=$65
+   652 2581 8F C1 10 35				dta	$8F,$C1,$10,$35 ;Input: A=$38 Y=$C1 P=$B5 M=$93  Output: A=$10 X=$3E Y=$C1 P=$35 M=$93
+   653 2585 50 5A 8C 0D				dta	$50,$5A,$8C,$0D ;Input: A=$ED Y=$8C P=$70 M=$0D  Output: A=$0D X=$73 Y=$8C P=$70 M=$0D
+   654
+   655 						; $3E  ROL abs,x
+   656 2589 C5					dta	$C5
+   657 258A E3 3E 7E 00 B0 34 + 		dta	$E3,$3E,$7E,$00,$B0,$34,$3A ;Input: A=$9A Y=$B0 P=$B4 M=$1D  Output: A=$9A X=$4F Y=$B0 P=$34 M=$3A
+   658 2591 43 BE F0 75 01			dta	$43,$BE,$F0,$75,$01 ;Input: A=$D2 Y=$F0 P=$77 M=$80  Output: A=$D2 X=$0F Y=$F0 P=$75 M=$01
+   659 2596 75 A7 F4 FE				dta	$75,$A7,$F4,$FE ;Input: A=$76 Y=$A7 P=$76 M=$7F  Output: A=$76 X=$58 Y=$A7 P=$F4 M=$FE
+   660 259A 54 86 75 50				dta	$54,$86,$75,$50 ;Input: A=$17 Y=$86 P=$F6 M=$A8  Output: A=$17 X=$79 Y=$86 P=$75 M=$50
+   661 259E 63 95 74 36				dta	$63,$95,$74,$36 ;Input: A=$D3 Y=$95 P=$76 M=$1B  Output: A=$D3 X=$6A Y=$95 P=$74 M=$36
+   662 25A2 41 A9 DB B1				dta	$41,$A9,$DB,$B1 ;Input: A=$AB Y=$DB P=$B1 M=$D8  Output: A=$AB X=$24 Y=$DB P=$B1 M=$B1
+   663 25A6 61 93 CC				dta	$61,$93,$CC ;Input: A=$27 Y=$93 P=$B4 M=$66  Output: A=$27 X=$6C Y=$93 P=$B4 M=$CC
+   664 25A9 43 B4 E6 F4 B4			dta	$43,$B4,$E6,$F4,$B4 ;Input: A=$FE Y=$E6 P=$F6 M=$5A  Output: A=$FE X=$19 Y=$E6 P=$F4 M=$B4
+   665
+   666 						; $41  EOR (zp,x)
+   667 25AE CF					dta	$CF
+   668 25AF D2 41 B8 F5 6F 75			dta	$D2,$41,$B8,$F5,$6F,$75 ;Input: A=$FA Y=$F5 P=$77 M=$95  Output: A=$6F X=$0A Y=$F5 P=$75 M=$95
+   669 25B5 52 81 BE 84 B4			dta	$52,$81,$BE,$84,$B4 ;Input: A=$D1 Y=$BE P=$34 M=$55  Output: A=$84 X=$41 Y=$BE P=$B4 M=$55
+   670 25BA 62 9F 92 F5				dta	$62,$9F,$92,$F5 ;Input: A=$15 Y=$9F P=$77 M=$87  Output: A=$92 X=$60 Y=$9F P=$F5 M=$87
+   671 25BE 4D 8A E4 B0				dta	$4D,$8A,$E4,$B0 ;Input: A=$7F Y=$8A P=$32 M=$9B  Output: A=$E4 X=$75 Y=$8A P=$B0 M=$9B
+   672 25C2 50 DE 1B EB				dta	$50,$DE,$1B,$EB ;Input: A=$67 Y=$1B P=$B5 M=$8C  Output: A=$EB X=$E4 Y=$1B P=$B5 M=$8C
+   673 25C6 52 7B B8 A9 B1			dta	$52,$7B,$B8,$A9,$B1 ;Input: A=$2C Y=$B8 P=$31 M=$85  Output: A=$A9 X=$47 Y=$B8 P=$B1 M=$85
+   674 25CB 50 2B 68 0F				dta	$50,$2B,$68,$0F ;Input: A=$44 Y=$68 P=$31 M=$4B  Output: A=$0F X=$97 Y=$68 P=$31 M=$4B
+   675 25CF 52 35 72 44 30			dta	$52,$35,$72,$44,$30 ;Input: A=$3F Y=$72 P=$32 M=$7B  Output: A=$44 X=$8D Y=$72 P=$30 M=$7B
+   676
+   677 						; $45  EOR zp
+   678 25D4 D0					dta	$D0
+   679 25D5 D0 45 CD 14 D6			dta	$D0,$45,$CD,$14,$D6 ;Input: A=$1A Y=$14 P=$F4 M=$CC  Output: A=$D6 X=$EB Y=$14 P=$F4 M=$CC
+   680 25DA 10 CD F9				dta	$10,$CD,$F9 ;Input: A=$B8 Y=$CD P=$F4 M=$41  Output: A=$F9 X=$32 Y=$CD P=$F4 M=$41
+   681 25DD 0D 48				dta	$0D,$48 ;Input: A=$6D Y=$0D P=$75 M=$25  Output: A=$48 X=$F2 Y=$0D P=$75 M=$25
+   682 25DF 12 44 97 F1				dta	$12,$44,$97,$F1 ;Input: A=$7E Y=$44 P=$71 M=$E9  Output: A=$97 X=$BB Y=$44 P=$F1 M=$E9
+   683 25E3 B4 D0 F4				dta	$B4,$D0,$F4 ;Input: A=$A8 Y=$B4 P=$F6 M=$78  Output: A=$D0 X=$4B Y=$B4 P=$F4 M=$78
+   684 25E6 66 F8 B5				dta	$66,$F8,$B5 ;Input: A=$21 Y=$66 P=$35 M=$D9  Output: A=$F8 X=$99 Y=$66 P=$B5 M=$D9
+   685 25E9 33 4F 75				dta	$33,$4F,$75 ;Input: A=$E1 Y=$33 P=$F7 M=$AE  Output: A=$4F X=$CC Y=$33 P=$75 M=$AE
+   686 25EC CB 6F 71				dta	$CB,$6F,$71 ;Input: A=$EB Y=$CB P=$F1 M=$84  Output: A=$6F X=$34 Y=$CB P=$71 M=$84
+   687
+   688 						; $46  LSR zp
+   689 25EF C7					dta	$C7
+   690 25F0 C3 46 CD 10 75 64			dta	$C3,$46,$CD,$10,$75,$64 ;Input: A=$3C Y=$10 P=$F5 M=$C9  Output: A=$3C X=$EF Y=$10 P=$75 M=$64
+   691 25F6 03 4C 34 14				dta	$03,$4C,$34,$14 ;Input: A=$2E Y=$4C P=$35 M=$28  Output: A=$2E X=$B3 Y=$4C P=$34 M=$14
+   692 25FA 03 30 6B				dta	$03,$30,$6B ;Input: A=$9D Y=$03 P=$B3 M=$D6  Output: A=$9D X=$FC Y=$03 P=$30 M=$6B
+   693 25FD 73 70 6F				dta	$73,$70,$6F ;Input: A=$2C Y=$73 P=$73 M=$DE  Output: A=$2C X=$8C Y=$73 P=$70 M=$6F
+   694 2600 05 74 0B				dta	$05,$74,$0B ;Input: A=$09 Y=$05 P=$75 M=$16  Output: A=$09 X=$FA Y=$05 P=$74 M=$0B
+   695 2603 01 31 41				dta	$01,$31,$41 ;Input: A=$9D Y=$31 P=$35 M=$83  Output: A=$9D X=$CE Y=$31 P=$35 M=$41
+   696 2606 03 AA 34 73				dta	$03,$AA,$34,$73 ;Input: A=$1D Y=$AA P=$37 M=$E6  Output: A=$1D X=$55 Y=$AA P=$34 M=$73
+   697 260A 01 CF 7D				dta	$01,$CF,$7D ;Input: A=$AE Y=$CF P=$30 M=$FA  Output: A=$AE X=$30 Y=$CF P=$30 M=$7D
+   698
+   699 						; $49  EOR #imm
+   700 260D EC					dta	$EC
+   701 260E D2 49 CA B0 73 34			dta	$D2,$49,$CA,$B0,$73,$34 ;Input: A=$B9 Y=$B0 P=$B6 M=$96  Output: A=$73 X=$4F Y=$B0 P=$34 M=$96
+   702 2614 50 FF 27 EF				dta	$50,$FF,$27,$EF ;Input: A=$10 Y=$27 P=$B0 M=$6C  Output: A=$EF X=$D8 Y=$27 P=$B0 M=$6C
+   703 2618 52 9D D8 4D 74			dta	$52,$9D,$D8,$4D,$74 ;Input: A=$D0 Y=$D8 P=$F4 M=$E3  Output: A=$4D X=$27 Y=$D8 P=$74 M=$E3
+   704 261D 4D 14 DB B4				dta	$4D,$14,$DB,$B4 ;Input: A=$96 Y=$14 P=$36 M=$69  Output: A=$DB X=$EB Y=$14 P=$B4 M=$69
+   705 2621 50 79 F4 54				dta	$50,$79,$F4,$54 ;Input: A=$2D Y=$F4 P=$74 M=$2F  Output: A=$54 X=$0B Y=$F4 P=$74 M=$2F
+   706 2625 52 59 27 85 B4			dta	$52,$59,$27,$85,$B4 ;Input: A=$DC Y=$27 P=$36 M=$4A  Output: A=$85 X=$D8 Y=$27 P=$B4 M=$4A
+   707 262A 7C 42 90 B5				dta	$7C,$42,$90,$B5 ;Input: A=$EC Y=$42 P=$35 M=$25  Output: A=$90 X=$BD Y=$42 P=$B5 M=$25
+   708 262E C1 9C F0 F1				dta	$C1,$9C,$F0,$F1 ;Input: A=$31 Y=$9C P=$73 M=$B8  Output: A=$F0 X=$63 Y=$9C P=$F1 M=$B8
+   709
+   710 						; $4A  LSR
+   711 2632 C0					dta	$C0
+   712 2633 92 4A F8 65 74			dta	$92,$4A,$F8,$65,$74 ;Input: A=$CA Y=$F8 P=$F7 M=$F4  Output: A=$65 X=$07 Y=$F8 P=$74 M=$F4
+   713 2638 12 8C 54 71				dta	$12,$8C,$54,$71 ;Input: A=$A9 Y=$8C P=$70 M=$E4  Output: A=$54 X=$73 Y=$8C P=$71 M=$E4
+   714 263C 20 3E 71				dta	$20,$3E,$71 ;Input: A=$7D Y=$20 P=$F0 M=$2B  Output: A=$3E X=$DF Y=$20 P=$71 M=$2B
+   715 263F 64 48 71				dta	$64,$48,$71 ;Input: A=$91 Y=$64 P=$73 M=$F4  Output: A=$48 X=$9B Y=$64 P=$71 M=$F4
+   716 2642 A6 03 75				dta	$A6,$03,$75 ;Input: A=$07 Y=$A6 P=$F4 M=$6A  Output: A=$03 X=$59 Y=$A6 P=$75 M=$6A
+   717 2645 95 0C 35				dta	$95,$0C,$35 ;Input: A=$19 Y=$95 P=$36 M=$3D  Output: A=$0C X=$6A Y=$95 P=$35 M=$3D
+   718 2648 B0 33 31				dta	$B0,$33,$31 ;Input: A=$67 Y=$B0 P=$B3 M=$C3  Output: A=$33 X=$4F Y=$B0 P=$31 M=$C3
+   719 264B 8D 50 34				dta	$8D,$50,$34 ;Input: A=$A0 Y=$8D P=$35 M=$DC  Output: A=$50 X=$72 Y=$8D P=$34 M=$DC
+   720
+   721 						; $4D  EOR abs
+   722 264E C0					dta	$C0
+   723 264F F2 4D CD 00 2D D5 + 		dta	$F2,$4D,$CD,$00,$2D,$D5,$B5 ;Input: A=$31 Y=$2D P=$35 M=$E4  Output: A=$D5 X=$D2 Y=$2D P=$B5 M=$E4
+   724 2656 12 E7 47 31				dta	$12,$E7,$47,$31 ;Input: A=$0F Y=$E7 P=$33 M=$48  Output: A=$47 X=$18 Y=$E7 P=$31 M=$48
+   725 265A B1 8E F4				dta	$B1,$8E,$F4 ;Input: A=$3D Y=$B1 P=$F6 M=$B3  Output: A=$8E X=$4E Y=$B1 P=$F4 M=$B3
+   726 265D DE 0A 34				dta	$DE,$0A,$34 ;Input: A=$95 Y=$DE P=$36 M=$9F  Output: A=$0A X=$21 Y=$DE P=$34 M=$9F
+   727 2660 80 0F 75				dta	$80,$0F,$75 ;Input: A=$A2 Y=$80 P=$F7 M=$AD  Output: A=$0F X=$7F Y=$80 P=$75 M=$AD
+   728 2663 08 85 B1				dta	$08,$85,$B1 ;Input: A=$F7 Y=$08 P=$33 M=$72  Output: A=$85 X=$F7 Y=$08 P=$B1 M=$72
+   729 2666 E9 C6 F0				dta	$E9,$C6,$F0 ;Input: A=$77 Y=$E9 P=$72 M=$B1  Output: A=$C6 X=$16 Y=$E9 P=$F0 M=$B1
+   730 2669 41 3C 35				dta	$41,$3C,$35 ;Input: A=$9D Y=$41 P=$37 M=$A1  Output: A=$3C X=$BE Y=$41 P=$35 M=$A1
+   731
+   732 						; $4E  LSR abs
+   733 266C C0					dta	$C0
+   734 266D E3 4E CD 00 D5 70 + 		dta	$E3,$4E,$CD,$00,$D5,$70,$40 ;Input: A=$90 Y=$D5 P=$73 M=$80  Output: A=$90 X=$2A Y=$D5 P=$70 M=$40
+   735 2674 03 E4 34 38				dta	$03,$E4,$34,$38 ;Input: A=$EA Y=$E4 P=$35 M=$70  Output: A=$EA X=$1B Y=$E4 P=$34 M=$38
+   736 2678 9F 34 17				dta	$9F,$34,$17 ;Input: A=$5F Y=$9F P=$B4 M=$2E  Output: A=$5F X=$60 Y=$9F P=$34 M=$17
+   737 267B 42 70 7A				dta	$42,$70,$7A ;Input: A=$6F Y=$42 P=$F1 M=$F4  Output: A=$6F X=$BD Y=$42 P=$70 M=$7A
+   738 267E 26 31 65				dta	$26,$31,$65 ;Input: A=$87 Y=$26 P=$B3 M=$CB  Output: A=$87 X=$D9 Y=$26 P=$31 M=$65
+   739 2681 4C 74 73				dta	$4C,$74,$73 ;Input: A=$19 Y=$4C P=$F7 M=$E6  Output: A=$19 X=$B3 Y=$4C P=$74 M=$73
+   740 2684 21 74 15				dta	$21,$74,$15 ;Input: A=$ED Y=$21 P=$75 M=$2A  Output: A=$ED X=$DE Y=$21 P=$74 M=$15
+   741 2687 93 31 0F				dta	$93,$31,$0F ;Input: A=$F3 Y=$93 P=$B2 M=$1F  Output: A=$F3 X=$6C Y=$93 P=$31 M=$0F
+   742
+   743 						; $51  EOR (zp),y
+   744 268A F6					dta	$F6
+   745 268B D2 51 C4 01 F7 B1			dta	$D2,$51,$C4,$01,$F7,$B1 ;Input: A=$CA Y=$01 P=$31 M=$3D  Output: A=$F7 X=$FE Y=$01 P=$B1 M=$3D
+   746 2691 10 01 FF				dta	$10,$01,$FF ;Input: A=$24 Y=$01 P=$F4 M=$DB  Output: A=$FF X=$FE Y=$01 P=$F4 M=$DB
+   747 2694 52 C2 00 19 75			dta	$52,$C2,$00,$19,$75 ;Input: A=$EA Y=$00 P=$F5 M=$F3  Output: A=$19 X=$FF Y=$00 P=$75 M=$F3
+   748 2699 12 00 27 74				dta	$12,$00,$27,$74 ;Input: A=$13 Y=$00 P=$F4 M=$34  Output: A=$27 X=$FF Y=$00 P=$74 M=$34
+   749 269D 00 22 35				dta	$00,$22,$35 ;Input: A=$67 Y=$00 P=$B7 M=$45  Output: A=$22 X=$FF Y=$00 P=$35 M=$45
+   750 26A0 52 C4 01 E6 B5			dta	$52,$C4,$01,$E6,$B5 ;Input: A=$AB Y=$01 P=$35 M=$4D  Output: A=$E6 X=$FE Y=$01 P=$B5 M=$4D
+   751 26A5 12 01 B3 F4				dta	$12,$01,$B3,$F4 ;Input: A=$6F Y=$01 P=$74 M=$DC  Output: A=$B3 X=$FE Y=$01 P=$F4 M=$DC
+   752 26A9 01 6B 75				dta	$01,$6B,$75 ;Input: A=$FD Y=$01 P=$F5 M=$96  Output: A=$6B X=$FE Y=$01 P=$75 M=$96
+   753
+   754 						; $55  EOR zp,x
+   755 26AC F0					dta	$F0
+   756 26AD D2 55 9C CE BB F4			dta	$D2,$55,$9C,$CE,$BB,$F4 ;Input: A=$A7 Y=$CE P=$76 M=$1C  Output: A=$BB X=$31 Y=$CE P=$F4 M=$1C
+   757 26B3 50 8C BE B6				dta	$50,$8C,$BE,$B6 ;Input: A=$A2 Y=$BE P=$B1 M=$14  Output: A=$B6 X=$41 Y=$BE P=$B1 M=$14
+   758 26B7 52 F5 27 AF B5			dta	$52,$F5,$27,$AF,$B5 ;Input: A=$57 Y=$27 P=$37 M=$F8  Output: A=$AF X=$D8 Y=$27 P=$B5 M=$F8
+   759 26BC 50 C4 F6 03				dta	$50,$C4,$F6,$03 ;Input: A=$23 Y=$F6 P=$31 M=$20  Output: A=$03 X=$09 Y=$F6 P=$31 M=$20
+   760 26C0 7B AD 0F				dta	$7B,$AD,$0F ;Input: A=$CE Y=$AD P=$75 M=$C1  Output: A=$0F X=$52 Y=$AD P=$75 M=$C1
+   761 26C3 8C BE BD				dta	$8C,$BE,$BD ;Input: A=$0C Y=$BE P=$F1 M=$B1  Output: A=$BD X=$41 Y=$BE P=$F1 M=$B1
+   762 26C6 74 A6 DA				dta	$74,$A6,$DA ;Input: A=$DB Y=$A6 P=$B1 M=$01  Output: A=$DA X=$59 Y=$A6 P=$B1 M=$01
+   763 26C9 97 C9 42				dta	$97,$C9,$42 ;Input: A=$84 Y=$C9 P=$71 M=$C6  Output: A=$42 X=$36 Y=$C9 P=$71 M=$C6
+   764
+   765 						; $56  LSR zp,x
+   766 26CC C6					dta	$C6
+   767 26CD C1 56 37 69 2D			dta	$C1,$56,$37,$69,$2D ;Input: A=$19 Y=$69 P=$30 M=$5A  Output: A=$19 X=$96 Y=$69 P=$30 M=$2D
+   768 26D2 43 02 34 34 30			dta	$43,$02,$34,$34,$30 ;Input: A=$E3 Y=$34 P=$B7 M=$60  Output: A=$E3 X=$CB Y=$34 P=$34 M=$30
+   769 26D7 FA 2C 31 69				dta	$FA,$2C,$31,$69 ;Input: A=$C7 Y=$2C P=$B3 M=$D3  Output: A=$C7 X=$D3 Y=$2C P=$31 M=$69
+   770 26DB CF 01 74 4A				dta	$CF,$01,$74,$4A ;Input: A=$2B Y=$01 P=$76 M=$94  Output: A=$2B X=$FE Y=$01 P=$74 M=$4A
+   771 26DF E5 17 74 06				dta	$E5,$17,$74,$06 ;Input: A=$DF Y=$17 P=$F5 M=$0C  Output: A=$DF X=$E8 Y=$17 P=$74 M=$06
+   772 26E3 41 94 C6 6F				dta	$41,$94,$C6,$6F ;Input: A=$B0 Y=$C6 P=$34 M=$DE  Output: A=$B0 X=$39 Y=$C6 P=$34 M=$6F
+   773 26E7 43 6B 9D 35 3E			dta	$43,$6B,$9D,$35,$3E ;Input: A=$AF Y=$9D P=$37 M=$7D  Output: A=$AF X=$62 Y=$9D P=$35 M=$3E
+   774 26EC 74 A6 34 30				dta	$74,$A6,$34,$30 ;Input: A=$C9 Y=$A6 P=$B5 M=$60  Output: A=$C9 X=$59 Y=$A6 P=$34 M=$30
+   775
+   776 						; $58  CLI
+   777 26F0 D9					dta	$D9
+   778 26F1 82 58 0B F3				dta	$82,$58,$0B,$F3 ;Input: A=$95 Y=$0B P=$F7 M=$F3  Output: A=$95 X=$F4 Y=$0B P=$F3 M=$F3
+   779 26F5 00 81				dta	$00,$81 ;Input: A=$47 Y=$81 P=$F1 M=$1E  Output: A=$47 X=$7E Y=$81 P=$F1 M=$1E
+   780 26F7 61					dta	$61 ;Input: A=$9F Y=$61 P=$71 M=$1F  Output: A=$9F X=$9E Y=$61 P=$71 M=$1F
+   781 26F8 02 68 31				dta	$02,$68,$31 ;Input: A=$9B Y=$68 P=$35 M=$C6  Output: A=$9B X=$97 Y=$68 P=$31 M=$C6
+   782 26FB 00 62				dta	$00,$62 ;Input: A=$82 Y=$62 P=$B0 M=$0E  Output: A=$82 X=$9D Y=$62 P=$B0 M=$0E
+   783 26FD 54					dta	$54 ;Input: A=$79 Y=$54 P=$31 M=$3B  Output: A=$79 X=$AB Y=$54 P=$31 M=$3B
+   784 26FE E7					dta	$E7 ;Input: A=$5B Y=$E7 P=$30 M=$5B  Output: A=$5B X=$18 Y=$E7 P=$30 M=$5B
+   785 26FF 02 17 B0				dta	$02,$17,$B0 ;Input: A=$2F Y=$17 P=$B4 M=$32  Output: A=$2F X=$E8 Y=$17 P=$B0 M=$32
+   786
+   787 						; $59  EOR abs,y
+   788 2702 C6					dta	$C6
+   789 2703 F2 59 55 00 78 EE + 		dta	$F2,$59,$55,$00,$78,$EE,$B4 ;Input: A=$6E Y=$78 P=$34 M=$80  Output: A=$EE X=$87 Y=$78 P=$B4 M=$80
+   790 270A 52 BB 12 D5 F4			dta	$52,$BB,$12,$D5,$F4 ;Input: A=$DA Y=$12 P=$74 M=$0F  Output: A=$D5 X=$ED Y=$12 P=$F4 M=$0F
+   791 270F B0 1D 57 34				dta	$B0,$1D,$57,$34 ;Input: A=$FF Y=$1D P=$36 M=$A8  Output: A=$57 X=$E2 Y=$1D P=$34 M=$A8
+   792 2713 A4 29 11 34				dta	$A4,$29,$11,$34 ;Input: A=$CE Y=$29 P=$B6 M=$DF  Output: A=$11 X=$D6 Y=$29 P=$34 M=$DF
+   793 2717 5B 72 17 31				dta	$5B,$72,$17,$31 ;Input: A=$A5 Y=$72 P=$33 M=$B2  Output: A=$17 X=$8D Y=$72 P=$31 M=$B2
+   794 271B 50 59 74 51				dta	$50,$59,$74,$51 ;Input: A=$74 Y=$74 P=$75 M=$25  Output: A=$51 X=$8B Y=$74 P=$75 M=$25
+   795 271F 52 53 7A 52 34			dta	$52,$53,$7A,$52,$34 ;Input: A=$A5 Y=$7A P=$36 M=$F7  Output: A=$52 X=$85 Y=$7A P=$34 M=$F7
+   796 2724 96 37 53 71				dta	$96,$37,$53,$71 ;Input: A=$B2 Y=$37 P=$73 M=$E1  Output: A=$53 X=$C8 Y=$37 P=$71 M=$E1
+   797
+   798 						; $5D  EOR abs,x
+   799 2728 C0					dta	$C0
+   800 2729 F2 5D 83 00 B5 86 + 		dta	$F2,$5D,$83,$00,$B5,$86,$F5 ;Input: A=$E4 Y=$B5 P=$77 M=$62  Output: A=$86 X=$4A Y=$B5 P=$F5 M=$62
+   801 2730 52 63 95 18 35			dta	$52,$63,$95,$18,$35 ;Input: A=$83 Y=$95 P=$B5 M=$9B  Output: A=$18 X=$6A Y=$95 P=$35 M=$9B
+   802 2735 C3 F5 86 F4				dta	$C3,$F5,$86,$F4 ;Input: A=$B1 Y=$F5 P=$F6 M=$37  Output: A=$86 X=$0A Y=$F5 P=$F4 M=$37
+   803 2739 4E 80 D5 B0				dta	$4E,$80,$D5,$B0 ;Input: A=$58 Y=$80 P=$B2 M=$8D  Output: A=$D5 X=$7F Y=$80 P=$B0 M=$8D
+   804 273D BB ED 13 71				dta	$BB,$ED,$13,$71 ;Input: A=$EA Y=$ED P=$73 M=$F9  Output: A=$13 X=$12 Y=$ED P=$71 M=$F9
+   805 2741 C2 F4 41 70				dta	$C2,$F4,$41,$70 ;Input: A=$51 Y=$F4 P=$F0 M=$10  Output: A=$41 X=$0B Y=$F4 P=$70 M=$10
+   806 2745 59 8B C7 F4				dta	$59,$8B,$C7,$F4 ;Input: A=$63 Y=$8B P=$74 M=$A4  Output: A=$C7 X=$74 Y=$8B P=$F4 M=$A4
+   807 2749 B3 E5 06 30				dta	$B3,$E5,$06,$30 ;Input: A=$9E Y=$E5 P=$B2 M=$98  Output: A=$06 X=$1A Y=$E5 P=$30 M=$98
+   808
+   809 						; $5E  LSR abs,x
+   810 274D E0					dta	$E0
+   811 274E E3 5E 56 00 88 35 + 		dta	$E3,$5E,$56,$00,$88,$35,$78 ;Input: A=$4A Y=$88 P=$36 M=$F1  Output: A=$4A X=$77 Y=$88 P=$35 M=$78
+   812 2755 41 C4 F6 2E				dta	$41,$C4,$F6,$2E ;Input: A=$81 Y=$F6 P=$75 M=$5D  Output: A=$81 X=$09 Y=$F6 P=$75 M=$2E
+   813 2759 43 8B BD 35 7C			dta	$43,$8B,$BD,$35,$7C ;Input: A=$89 Y=$BD P=$B4 M=$F9  Output: A=$89 X=$42 Y=$BD P=$35 M=$7C
+   814 275E B9 EB 30 7D				dta	$B9,$EB,$30,$7D ;Input: A=$3D Y=$EB P=$B0 M=$FA  Output: A=$3D X=$14 Y=$EB P=$30 M=$7D
+   815 2762 86 B8 31 1F				dta	$86,$B8,$31,$1F ;Input: A=$0B Y=$B8 P=$32 M=$3F  Output: A=$0B X=$47 Y=$B8 P=$31 M=$1F
+   816 2766 AF E1 34 3E				dta	$AF,$E1,$34,$3E ;Input: A=$3C Y=$E1 P=$35 M=$7C  Output: A=$3C X=$1E Y=$E1 P=$34 M=$3E
+   817 276A 5D 8F 34 12				dta	$5D,$8F,$34,$12 ;Input: A=$B8 Y=$8F P=$B5 M=$24  Output: A=$B8 X=$70 Y=$8F P=$34 M=$12
+   818 276E 8A BC 31 2E				dta	$8A,$BC,$31,$2E ;Input: A=$F2 Y=$BC P=$33 M=$5D  Output: A=$F2 X=$43 Y=$BC P=$31 M=$2E
+   819
+   820 						; $61  ADC (zp,x)
+   821 2772 C0					dta	$C0
+   822 2773 D2 61 B7 F4 3C 75			dta	$D2,$61,$B7,$F4,$3C,$75 ;Input: A=$81 Y=$F4 P=$B6 M=$BB  Output: A=$3C X=$0B Y=$F4 P=$75 M=$BB
+   823 2779 52 25 62 F7 B4			dta	$52,$25,$62,$F7,$B4 ;Input: A=$0D Y=$62 P=$76 M=$EA  Output: A=$F7 X=$9D Y=$62 P=$B4 M=$EA
+   824 277E 4D 8A B6 B1				dta	$4D,$8A,$B6,$B1 ;Input: A=$F8 Y=$8A P=$72 M=$BE  Output: A=$B6 X=$75 Y=$8A P=$B1 M=$BE
+   825 2782 EA 27 23 31				dta	$EA,$27,$23,$31 ;Input: A=$C2 Y=$27 P=$70 M=$61  Output: A=$23 X=$D8 Y=$27 P=$31 M=$61
+   826 2786 BA F7 E7 B0				dta	$BA,$F7,$E7,$B0 ;Input: A=$9E Y=$F7 P=$30 M=$49  Output: A=$E7 X=$08 Y=$F7 P=$B0 M=$49
+   827 278A 4A 87 9A B1				dta	$4A,$87,$9A,$B1 ;Input: A=$BC Y=$87 P=$72 M=$DE  Output: A=$9A X=$78 Y=$87 P=$B1 M=$DE
+   828 278E FE 3B F3 B4				dta	$FE,$3B,$F3,$B4 ;Input: A=$D2 Y=$3B P=$34 M=$21  Output: A=$F3 X=$C4 Y=$3B P=$B4 M=$21
+   829 2792 5E 9B 10 75				dta	$5E,$9B,$10,$75 ;Input: A=$87 Y=$9B P=$F4 M=$89  Output: A=$10 X=$64 Y=$9B P=$75 M=$89
+   830
+   831 						; $65  ADC zp
+   832 2796 C0					dta	$C0
+   833 2797 D2 65 CD 40 87 B5			dta	$D2,$65,$CD,$40,$87,$B5 ;Input: A=$FB Y=$40 P=$35 M=$8B  Output: A=$87 X=$BF Y=$40 P=$B5 M=$8B
+   834 279D 12 C6 67 31				dta	$12,$C6,$67,$31 ;Input: A=$72 Y=$C6 P=$B1 M=$F4  Output: A=$67 X=$39 Y=$C6 P=$31 M=$F4
+   835 27A1 B1 BF B0				dta	$B1,$BF,$B0 ;Input: A=$06 Y=$B1 P=$F1 M=$B8  Output: A=$BF X=$4E Y=$B1 P=$B0 M=$B8
+   836 27A4 30 DD F0				dta	$30,$DD,$F0 ;Input: A=$5F Y=$30 P=$B1 M=$7D  Output: A=$DD X=$CF Y=$30 P=$F0 M=$7D
+   837 27A7 10 90 B5				dta	$10,$90,$B5 ;Input: A=$97 Y=$10 P=$77 M=$F8  Output: A=$90 X=$EF Y=$10 P=$B5 M=$F8
+   838 27AA 75 37 31				dta	$75,$37,$31 ;Input: A=$D1 Y=$75 P=$33 M=$65  Output: A=$37 X=$8A Y=$75 P=$31 M=$65
+   839 27AD 03 6C 34				dta	$03,$6C,$34 ;Input: A=$62 Y=$03 P=$75 M=$09  Output: A=$6C X=$FC Y=$03 P=$34 M=$09
+   840 27B0 9E DB B4				dta	$9E,$DB,$B4 ;Input: A=$B1 Y=$9E P=$B5 M=$29  Output: A=$DB X=$61 Y=$9E P=$B4 M=$29
+   841
+   842 						; $66  ROR zp
+   843 27B3 C6					dta	$C6
+   844 27B4 C3 66 CD EF 31 02			dta	$C3,$66,$CD,$EF,$31,$02 ;Input: A=$ED Y=$EF P=$B0 M=$05  Output: A=$ED X=$10 Y=$EF P=$31 M=$02
+   845 27BA 03 50 35 6A				dta	$03,$50,$35,$6A ;Input: A=$0D Y=$50 P=$34 M=$D5  Output: A=$0D X=$AF Y=$50 P=$35 M=$6A
+   846 27BE C8 75 57				dta	$C8,$75,$57 ;Input: A=$6A Y=$C8 P=$76 M=$AF  Output: A=$6A X=$37 Y=$C8 P=$75 M=$57
+   847 27C1 43 F4 A4				dta	$43,$F4,$A4 ;Input: A=$1E Y=$43 P=$F5 M=$48  Output: A=$1E X=$BC Y=$43 P=$F4 M=$A4
+   848 27C4 28 F4 A3				dta	$28,$F4,$A3 ;Input: A=$43 Y=$28 P=$F7 M=$46  Output: A=$43 X=$D7 Y=$28 P=$F4 M=$A3
+   849 27C7 01 F6 70				dta	$01,$F6,$70 ;Input: A=$11 Y=$F6 P=$30 M=$E0  Output: A=$11 X=$09 Y=$F6 P=$30 M=$70
+   850 27CA 03 9E B4 A0				dta	$03,$9E,$B4,$A0 ;Input: A=$70 Y=$9E P=$35 M=$40  Output: A=$70 X=$61 Y=$9E P=$B4 M=$A0
+   851 27CE A1 F0 C8				dta	$A1,$F0,$C8 ;Input: A=$FA Y=$A1 P=$73 M=$90  Output: A=$FA X=$5E Y=$A1 P=$F0 M=$C8
+   852
+   853 						; $69  ADC #imm
+   854 27D1 D8					dta	$D8
+   855 27D2 D2 69 31 48 FE B4			dta	$D2,$69,$31,$48,$FE,$B4 ;Input: A=$CD Y=$48 P=$F4 M=$26  Output: A=$FE X=$B7 Y=$48 P=$B4 M=$26
+   856 27D8 52 CD 6C 26 35			dta	$52,$CD,$6C,$26,$35 ;Input: A=$59 Y=$6C P=$B4 M=$81  Output: A=$26 X=$93 Y=$6C P=$35 M=$81
+   857 27DD 9E A4 57 75				dta	$9E,$A4,$57,$75 ;Input: A=$B9 Y=$A4 P=$36 M=$F4  Output: A=$57 X=$5B Y=$A4 P=$75 M=$F4
+   858 27E1 50 81 DE F5				dta	$50,$81,$DE,$F5 ;Input: A=$74 Y=$DE P=$B0 M=$03  Output: A=$F5 X=$21 Y=$DE P=$B0 M=$03
+   859 27E5 52 8C A3 7F 71			dta	$52,$8C,$A3,$7F,$71 ;Input: A=$F3 Y=$A3 P=$B0 M=$41  Output: A=$7F X=$5C Y=$A3 P=$71 M=$41
+   860 27EA 10 98 FA B4				dta	$10,$98,$FA,$B4 ;Input: A=$E9 Y=$98 P=$35 M=$47  Output: A=$FA X=$67 Y=$98 P=$B4 M=$47
+   861 27EE 9A FF 01 35				dta	$9A,$FF,$01,$35 ;Input: A=$66 Y=$FF P=$37 M=$60  Output: A=$01 X=$00 Y=$FF P=$35 M=$60
+   862 27F2 CD 43 50 75				dta	$CD,$43,$50,$75 ;Input: A=$83 Y=$43 P=$F4 M=$58  Output: A=$50 X=$BC Y=$43 P=$75 M=$58
+   863
+   864 						; $6A  ROR
+   865 27F6 C0					dta	$C0
+   866 27F7 92 6A CF 59 31			dta	$92,$6A,$CF,$59,$31 ;Input: A=$B3 Y=$CF P=$B0 M=$11  Output: A=$59 X=$30 Y=$CF P=$31 M=$11
+   867 27FC 12 C7 12 75				dta	$12,$C7,$12,$75 ;Input: A=$25 Y=$C7 P=$74 M=$A7  Output: A=$12 X=$38 Y=$C7 P=$75 M=$A7
+   868 2800 59 45 75				dta	$59,$45,$75 ;Input: A=$8B Y=$59 P=$74 M=$64  Output: A=$45 X=$A6 Y=$59 P=$75 M=$64
+   869 2803 BD 3B 31				dta	$BD,$3B,$31 ;Input: A=$77 Y=$BD P=$32 M=$0C  Output: A=$3B X=$42 Y=$BD P=$31 M=$0C
+   870 2806 27 C7 F4				dta	$27,$C7,$F4 ;Input: A=$8E Y=$27 P=$77 M=$16  Output: A=$C7 X=$D8 Y=$27 P=$F4 M=$16
+   871 2809 28 55 75				dta	$28,$55,$75 ;Input: A=$AB Y=$28 P=$F4 M=$A3  Output: A=$55 X=$D7 Y=$28 P=$75 M=$A3
+   872 280C 5D 14 31				dta	$5D,$14,$31 ;Input: A=$29 Y=$5D P=$B2 M=$CB  Output: A=$14 X=$A2 Y=$5D P=$31 M=$CB
+   873 280F 5F 9F B4				dta	$5F,$9F,$B4 ;Input: A=$3E Y=$5F P=$B7 M=$D1  Output: A=$9F X=$A0 Y=$5F P=$B4 M=$D1
+   874
+   875 						; $6D  ADC abs
+   876 2812 E0					dta	$E0
+   877 2813 F2 6D CD 00 49 1D + 		dta	$F2,$6D,$CD,$00,$49,$1D,$31 ;Input: A=$FF Y=$49 P=$B3 M=$1D  Output: A=$1D X=$B6 Y=$49 P=$31 M=$1D
+   878 281A 10 4E B7				dta	$10,$4E,$B7 ;Input: A=$25 Y=$4E P=$B0 M=$92  Output: A=$B7 X=$B1 Y=$4E P=$B0 M=$92
+   879 281D 12 3C F1 B4				dta	$12,$3C,$F1,$B4 ;Input: A=$84 Y=$3C P=$F4 M=$6D  Output: A=$F1 X=$C3 Y=$3C P=$B4 M=$6D
+   880 2821 DE 74 75				dta	$DE,$74,$75 ;Input: A=$AD Y=$DE P=$76 M=$C7  Output: A=$74 X=$21 Y=$DE P=$75 M=$C7
+   881 2824 98 00 33				dta	$98,$00,$33 ;Input: A=$D9 Y=$98 P=$71 M=$26  Output: A=$00 X=$67 Y=$98 P=$33 M=$26
+   882 2827 B2 8F F0				dta	$B2,$8F,$F0 ;Input: A=$62 Y=$B2 P=$F3 M=$2C  Output: A=$8F X=$4D Y=$B2 P=$F0 M=$2C
+   883 282A 2B 1F 31				dta	$2B,$1F,$31 ;Input: A=$E3 Y=$2B P=$F1 M=$3B  Output: A=$1F X=$D4 Y=$2B P=$31 M=$3B
+   884 282D 14 57 75				dta	$14,$57,$75 ;Input: A=$AD Y=$14 P=$37 M=$A9  Output: A=$57 X=$EB Y=$14 P=$75 M=$A9
+   885
+   886 						; $6E  ROR abs
+   887 2830 D0					dta	$D0
+   888 2831 E3 6E CD 00 BB B4 + 		dta	$E3,$6E,$CD,$00,$BB,$B4,$D7 ;Input: A=$9B Y=$BB P=$37 M=$AE  Output: A=$9B X=$44 Y=$BB P=$B4 M=$D7
+   889 2838 01 2F 31				dta	$01,$2F,$31 ;Input: A=$1A Y=$2F P=$74 M=$62  Output: A=$1A X=$D0 Y=$2F P=$74 M=$31
+   890 283B E2 5D				dta	$E2,$5D ;Input: A=$5A Y=$E2 P=$74 M=$BA  Output: A=$5A X=$1D Y=$E2 P=$74 M=$5D
+   891 283D 03 7E F4 BA				dta	$03,$7E,$F4,$BA ;Input: A=$27 Y=$7E P=$75 M=$74  Output: A=$27 X=$81 Y=$7E P=$F4 M=$BA
+   892 2841 1D 71 28				dta	$1D,$71,$28 ;Input: A=$85 Y=$1D P=$70 M=$51  Output: A=$85 X=$E2 Y=$1D P=$71 M=$28
+   893 2844 84 F5 F1				dta	$84,$F5,$F1 ;Input: A=$36 Y=$84 P=$77 M=$E3  Output: A=$36 X=$7B Y=$84 P=$F5 M=$F1
+   894 2847 1F F1 EE				dta	$1F,$F1,$EE ;Input: A=$70 Y=$1F P=$71 M=$DD  Output: A=$70 X=$E0 Y=$1F P=$F1 M=$EE
+   895 284A BE F0 FE				dta	$BE,$F0,$FE ;Input: A=$F9 Y=$BE P=$73 M=$FC  Output: A=$F9 X=$41 Y=$BE P=$F0 M=$FE
+   896
+   897 						; $71  ADC (zp),y
+   898 284D D8					dta	$D8
+   899 284E D2 71 C4 01 03 35			dta	$D2,$71,$C4,$01,$03,$35 ;Input: A=$BE Y=$01 P=$F7 M=$44  Output: A=$03 X=$FE Y=$01 P=$35 M=$44
+   900 2854 52 C2 00 37 31			dta	$52,$C2,$00,$37,$31 ;Input: A=$C5 Y=$00 P=$B0 M=$72  Output: A=$37 X=$FF Y=$00 P=$31 M=$72
+   901 2859 C4 01 A5 B4				dta	$C4,$01,$A5,$B4 ;Input: A=$8A Y=$01 P=$B6 M=$1B  Output: A=$A5 X=$FE Y=$01 P=$B4 M=$1B
+   902 285D 12 01 FE B4				dta	$12,$01,$FE,$B4 ;Input: A=$D3 Y=$01 P=$77 M=$2A  Output: A=$FE X=$FE Y=$01 P=$B4 M=$2A
+   903 2861 52 C2 00 6D 34			dta	$52,$C2,$00,$6D,$34 ;Input: A=$37 Y=$00 P=$F7 M=$35  Output: A=$6D X=$FF Y=$00 P=$34 M=$35
+   904 2866 C4 01 74 30				dta	$C4,$01,$74,$30 ;Input: A=$52 Y=$01 P=$B0 M=$22  Output: A=$74 X=$FE Y=$01 P=$30 M=$22
+   905 286A C2 00 22 35				dta	$C2,$00,$22,$35 ;Input: A=$54 Y=$00 P=$B7 M=$CD  Output: A=$22 X=$FF Y=$00 P=$35 M=$CD
+   906 286E C4 01 49 31				dta	$C4,$01,$49,$31 ;Input: A=$D2 Y=$01 P=$32 M=$77  Output: A=$49 X=$FE Y=$01 P=$31 M=$77
+   907
+   908 						; $75  ADC zp,x
+   909 2872 C0					dta	$C0
+   910 2873 D2 75 AA DC 5C 71			dta	$D2,$75,$AA,$DC,$5C,$71 ;Input: A=$90 Y=$DC P=$F0 M=$CC  Output: A=$5C X=$23 Y=$DC P=$71 M=$CC
+   911 2879 52 BE F0 5C 34			dta	$52,$BE,$F0,$5C,$34 ;Input: A=$0B Y=$F0 P=$37 M=$50  Output: A=$5C X=$0F Y=$F0 P=$34 M=$50
+   912 287E DC 0E EE B0				dta	$DC,$0E,$EE,$B0 ;Input: A=$07 Y=$0E P=$F3 M=$E6  Output: A=$EE X=$F1 Y=$0E P=$B0 M=$E6
+   913 2882 3B 6D D2 B4				dta	$3B,$6D,$D2,$B4 ;Input: A=$97 Y=$6D P=$34 M=$3B  Output: A=$D2 X=$92 Y=$6D P=$B4 M=$3B
+   914 2886 FF 31 B1 F0				dta	$FF,$31,$B1,$F0 ;Input: A=$6F Y=$31 P=$F1 M=$41  Output: A=$B1 X=$CE Y=$31 P=$F0 M=$41
+   915 288A 42 74 9B B0				dta	$42,$74,$9B,$B0 ;Input: A=$97 Y=$74 P=$33 M=$03  Output: A=$9B X=$8B Y=$74 P=$B0 M=$03
+   916 288E 5B 8D C4 B1				dta	$5B,$8D,$C4,$B1 ;Input: A=$E2 Y=$8D P=$B3 M=$E1  Output: A=$C4 X=$72 Y=$8D P=$B1 M=$E1
+   917 2892 72 A4 5F 71				dta	$72,$A4,$5F,$71 ;Input: A=$CF Y=$A4 P=$B2 M=$90  Output: A=$5F X=$5B Y=$A4 P=$71 M=$90
+   918
+   919 						; $76  ROR zp,x
+   920 2896 C6					dta	$C6
+   921 2897 C3 76 A3 D5 71 60			dta	$C3,$76,$A3,$D5,$71,$60 ;Input: A=$B9 Y=$D5 P=$72 M=$C1  Output: A=$B9 X=$2A Y=$D5 P=$71 M=$60
+   922 289D 43 38 6A 31 54			dta	$43,$38,$6A,$31,$54 ;Input: A=$61 Y=$6A P=$30 M=$A9  Output: A=$61 X=$95 Y=$6A P=$31 M=$54
+   923 28A2 CA FC 70 40				dta	$CA,$FC,$70,$40 ;Input: A=$F5 Y=$FC P=$F0 M=$80  Output: A=$F5 X=$03 Y=$FC P=$70 M=$40
+   924 28A6 44 76 30 68				dta	$44,$76,$30,$68 ;Input: A=$FE Y=$76 P=$B2 M=$D0  Output: A=$FE X=$89 Y=$76 P=$30 M=$68
+   925 28AA 19 4B F5 BB				dta	$19,$4B,$F5,$BB ;Input: A=$27 Y=$4B P=$F7 M=$77  Output: A=$27 X=$B4 Y=$4B P=$F5 M=$BB
+   926 28AE 41 39 6B 0C				dta	$41,$39,$6B,$0C ;Input: A=$F4 Y=$6B P=$34 M=$18  Output: A=$F4 X=$94 Y=$6B P=$34 M=$0C
+   927 28B2 43 7F B1 B1 BB			dta	$43,$7F,$B1,$B1,$BB ;Input: A=$53 Y=$B1 P=$33 M=$77  Output: A=$53 X=$4E Y=$B1 P=$B1 M=$BB
+   928 28B7 A9 DB 75 6C				dta	$A9,$DB,$75,$6C ;Input: A=$34 Y=$DB P=$74 M=$D9  Output: A=$34 X=$24 Y=$DB P=$75 M=$6C
+   929
+   930 						; $78  SEI
+   931 28BB E7					dta	$E7
+   932 28BC 82 78 5A B5				dta	$82,$78,$5A,$B5 ;Input: A=$D3 Y=$5A P=$B1 M=$C8  Output: A=$D3 X=$A5 Y=$5A P=$B5 M=$C8
+   933 28C0 02 72 F7				dta	$02,$72,$F7 ;Input: A=$C7 Y=$72 P=$F3 M=$06  Output: A=$C7 X=$8D Y=$72 P=$F7 M=$06
+   934 28C3 00 82				dta	$00,$82 ;Input: A=$AA Y=$82 P=$B6 M=$65  Output: A=$AA X=$7D Y=$82 P=$B6 M=$65
+   935 28C5 71					dta	$71 ;Input: A=$7B Y=$71 P=$B7 M=$8C  Output: A=$7B X=$8E Y=$71 P=$B7 M=$8C
+   936 28C6 8C					dta	$8C ;Input: A=$A7 Y=$8C P=$B6 M=$8D  Output: A=$A7 X=$73 Y=$8C P=$B6 M=$8D
+   937 28C7 02 5E B5				dta	$02,$5E,$B5 ;Input: A=$BE Y=$5E P=$B1 M=$F6  Output: A=$BE X=$A1 Y=$5E P=$B5 M=$F6
+   938 28CA 00 4E				dta	$00,$4E ;Input: A=$A9 Y=$4E P=$74 M=$20  Output: A=$A9 X=$B1 Y=$4E P=$74 M=$20
+   939 28CC 02 FA 34				dta	$02,$FA,$34 ;Input: A=$7F Y=$FA P=$30 M=$94  Output: A=$7F X=$05 Y=$FA P=$34 M=$94
+   940
+   941 						; $79  ADC abs,y
+   942 28CF C0					dta	$C0
+   943 28D0 F0 79 9D 00 30 51			dta	$F0,$79,$9D,$00,$30,$51 ;Input: A=$EA Y=$30 P=$31 M=$66  Output: A=$51 X=$CF Y=$30 P=$31 M=$66
+   944 28D6 52 59 74 37 35			dta	$52,$59,$74,$37,$35 ;Input: A=$4E Y=$74 P=$34 M=$E9  Output: A=$37 X=$8B Y=$74 P=$35 M=$E9
+   945 28DB 58 75 69 34				dta	$58,$75,$69,$34 ;Input: A=$5A Y=$75 P=$F4 M=$0F  Output: A=$69 X=$8A Y=$75 P=$34 M=$0F
+   946 28DF 71 5C CB B4				dta	$71,$5C,$CB,$B4 ;Input: A=$8D Y=$5C P=$35 M=$3D  Output: A=$CB X=$A3 Y=$5C P=$B4 M=$3D
+   947 28E3 75 58 41 31				dta	$75,$58,$41,$31 ;Input: A=$62 Y=$58 P=$B3 M=$DE  Output: A=$41 X=$A7 Y=$58 P=$31 M=$DE
+   948 28E7 73 5A EF B1				dta	$73,$5A,$EF,$B1 ;Input: A=$FE Y=$5A P=$F1 M=$F0  Output: A=$EF X=$A5 Y=$5A P=$B1 M=$F0
+   949 28EB 72 5B 37 35				dta	$72,$5B,$37,$35 ;Input: A=$6F Y=$5B P=$75 M=$C7  Output: A=$37 X=$A4 Y=$5B P=$35 M=$C7
+   950 28EF AD 20 9C F0				dta	$AD,$20,$9C,$F0 ;Input: A=$6C Y=$20 P=$73 M=$2F  Output: A=$9C X=$DF Y=$20 P=$F0 M=$2F
+   951
+   952 						; $7D  ADC abs,x
+   953 28F3 C2					dta	$C2
+   954 28F4 F2 7D AA 00 DC EE + 		dta	$F2,$7D,$AA,$00,$DC,$EE,$B4 ;Input: A=$9C Y=$DC P=$F4 M=$52  Output: A=$EE X=$23 Y=$DC P=$B4 M=$52
+   955 28FB 52 6B 9D FD B0			dta	$52,$6B,$9D,$FD,$B0 ;Input: A=$6C Y=$9D P=$30 M=$91  Output: A=$FD X=$62 Y=$9D P=$B0 M=$91
+   956 2900 B7 E9 61 34				dta	$B7,$E9,$61,$34 ;Input: A=$2F Y=$E9 P=$36 M=$32  Output: A=$61 X=$16 Y=$E9 P=$34 M=$32
+   957 2904 C2 F4 D3 B0				dta	$C2,$F4,$D3,$B0 ;Input: A=$94 Y=$F4 P=$F0 M=$3F  Output: A=$D3 X=$0B Y=$F4 P=$B0 M=$3F
+   958 2908 A3 D5 EA B0				dta	$A3,$D5,$EA,$B0 ;Input: A=$46 Y=$D5 P=$72 M=$A4  Output: A=$EA X=$2A Y=$D5 P=$B0 M=$A4
+   959 290C 7A AC C3 B0				dta	$7A,$AC,$C3,$B0 ;Input: A=$24 Y=$AC P=$32 M=$9F  Output: A=$C3 X=$53 Y=$AC P=$B0 M=$9F
+   960 2910 50 59 8B 0D				dta	$50,$59,$8B,$0D ;Input: A=$56 Y=$8B P=$31 M=$B6  Output: A=$0D X=$74 Y=$8B P=$31 M=$B6
+   961 2914 77 A9 D8				dta	$77,$A9,$D8 ;Input: A=$CF Y=$A9 P=$B4 M=$09  Output: A=$D8 X=$56 Y=$A9 P=$B4 M=$09
+   962
+   963 						; $7E  ROR abs,x
+   964 2917 C0					dta	$C0
+   965 2918 E3 7E 71 00 A3 34 + 		dta	$E3,$7E,$71,$00,$A3,$34,$7C ;Input: A=$FA Y=$A3 P=$36 M=$F8  Output: A=$FA X=$5C Y=$A3 P=$34 M=$7C
+   966 291F 43 A9 DB 31 1F			dta	$43,$A9,$DB,$31,$1F ;Input: A=$97 Y=$DB P=$B2 M=$3F  Output: A=$97 X=$24 Y=$DB P=$31 M=$1F
+   967 2924 81 B3 F5 FB				dta	$81,$B3,$F5,$FB ;Input: A=$76 Y=$B3 P=$75 M=$F7  Output: A=$76 X=$4C Y=$B3 P=$F5 M=$FB
+   968 2928 83 B5 75 5C				dta	$83,$B5,$75,$5C ;Input: A=$84 Y=$B5 P=$F4 M=$B9  Output: A=$84 X=$4A Y=$B5 P=$75 M=$5C
+   969 292C B6 E8 75 04				dta	$B6,$E8,$75,$04 ;Input: A=$D0 Y=$E8 P=$F6 M=$09  Output: A=$D0 X=$17 Y=$E8 P=$75 M=$04
+   970 2930 AF E1 71 5A				dta	$AF,$E1,$71,$5A ;Input: A=$74 Y=$E1 P=$72 M=$B5  Output: A=$74 X=$1E Y=$E1 P=$71 M=$5A
+   971 2934 A3 D5 35 42				dta	$A3,$D5,$35,$42 ;Input: A=$33 Y=$D5 P=$B4 M=$85  Output: A=$33 X=$2A Y=$D5 P=$35 M=$42
+   972 2938 80 B2 F4 E8				dta	$80,$B2,$F4,$E8 ;Input: A=$F1 Y=$B2 P=$F7 M=$D0  Output: A=$F1 X=$4D Y=$B2 P=$F4 M=$E8
+   973
+   974 						; $81  STA (zp,x)
+   975 293C C0					dta	$C0
+   976 293D C1 81 CD 0A C1			dta	$C1,$81,$CD,$0A,$C1 ;Input: A=$C1 Y=$0A P=$75 M=$3C  Output: A=$C1 X=$F5 Y=$0A P=$75 M=$C1
+   977 2942 41 1D 5A 20				dta	$41,$1D,$5A,$20 ;Input: A=$20 Y=$5A P=$75 M=$C3  Output: A=$20 X=$A5 Y=$5A P=$75 M=$20
+   978 2946 AC E9 F3				dta	$AC,$E9,$F3 ;Input: A=$F3 Y=$E9 P=$76 M=$29  Output: A=$F3 X=$16 Y=$E9 P=$76 M=$F3
+   979 2949 20 5D 1B				dta	$20,$5D,$1B ;Input: A=$1B Y=$5D P=$31 M=$C8  Output: A=$1B X=$A2 Y=$5D P=$31 M=$1B
+   980 294C 78 B5 B9				dta	$78,$B5,$B9 ;Input: A=$B9 Y=$B5 P=$33 M=$AF  Output: A=$B9 X=$4A Y=$B5 P=$33 M=$B9
+   981 294F 88 C5 2E				dta	$88,$C5,$2E ;Input: A=$2E Y=$C5 P=$76 M=$2B  Output: A=$2E X=$3A Y=$C5 P=$76 M=$2E
+   982 2952 2F 6C E3				dta	$2F,$6C,$E3 ;Input: A=$E3 Y=$6C P=$F1 M=$4E  Output: A=$E3 X=$93 Y=$6C P=$F1 M=$E3
+   983 2955 5B 98 AB				dta	$5B,$98,$AB ;Input: A=$AB Y=$98 P=$37 M=$D7  Output: A=$AB X=$67 Y=$98 P=$37 M=$AB
+   984
+   985 						; $84  STY zp
+   986 2958 C0					dta	$C0
+   987 2959 C1 84 CD 57 57			dta	$C1,$84,$CD,$57,$57 ;Input: A=$66 Y=$57 P=$30 M=$2A  Output: A=$66 X=$A8 Y=$57 P=$30 M=$57
+   988 295E 01 87 87				dta	$01,$87,$87 ;Input: A=$34 Y=$87 P=$76 M=$7C  Output: A=$34 X=$78 Y=$87 P=$76 M=$87
+   989 2961 DF DF				dta	$DF,$DF ;Input: A=$98 Y=$DF P=$B5 M=$68  Output: A=$98 X=$20 Y=$DF P=$B5 M=$DF
+   990 2963 68 68				dta	$68,$68 ;Input: A=$32 Y=$68 P=$73 M=$E1  Output: A=$32 X=$97 Y=$68 P=$73 M=$68
+   991 2965 A2 A2				dta	$A2,$A2 ;Input: A=$5F Y=$A2 P=$F4 M=$68  Output: A=$5F X=$5D Y=$A2 P=$F4 M=$A2
+   992 2967 E6 E6				dta	$E6,$E6 ;Input: A=$D9 Y=$E6 P=$B1 M=$93  Output: A=$D9 X=$19 Y=$E6 P=$B1 M=$E6
+   993 2969 C6 C6				dta	$C6,$C6 ;Input: A=$E5 Y=$C6 P=$33 M=$34  Output: A=$E5 X=$39 Y=$C6 P=$33 M=$C6
+   994 296B 77 77				dta	$77,$77 ;Input: A=$AA Y=$77 P=$34 M=$B1  Output: A=$AA X=$88 Y=$77 P=$34 M=$77
+   995
+   996 						; $85  STA zp
+   997 296D C0					dta	$C0
+   998 296E C1 85 CD 8D 45			dta	$C1,$85,$CD,$8D,$45 ;Input: A=$45 Y=$8D P=$73 M=$CB  Output: A=$45 X=$72 Y=$8D P=$73 M=$45
+   999 2973 01 8F 40				dta	$01,$8F,$40 ;Input: A=$40 Y=$8F P=$77 M=$36  Output: A=$40 X=$70 Y=$8F P=$77 M=$40
+  1000 2976 2A 7B				dta	$2A,$7B ;Input: A=$7B Y=$2A P=$33 M=$69  Output: A=$7B X=$D5 Y=$2A P=$33 M=$7B
+  1001 2978 14 E1				dta	$14,$E1 ;Input: A=$E1 Y=$14 P=$36 M=$09  Output: A=$E1 X=$EB Y=$14 P=$36 M=$E1
+  1002 297A D4 74				dta	$D4,$74 ;Input: A=$74 Y=$D4 P=$77 M=$7B  Output: A=$74 X=$2B Y=$D4 P=$77 M=$74
+  1003 297C 11 33				dta	$11,$33 ;Input: A=$33 Y=$11 P=$B2 M=$BB  Output: A=$33 X=$EE Y=$11 P=$B2 M=$33
+  1004 297E 18 0E				dta	$18,$0E ;Input: A=$0E Y=$18 P=$73 M=$D9  Output: A=$0E X=$E7 Y=$18 P=$73 M=$0E
+  1005 2980 AE 32				dta	$AE,$32 ;Input: A=$32 Y=$AE P=$77 M=$C4  Output: A=$32 X=$51 Y=$AE P=$77 M=$32
+  1006
+  1007 						; $86  STX zp
+  1008 2982 C0					dta	$C0
+  1009 2983 C1 86 CD 73 8C			dta	$C1,$86,$CD,$73,$8C ;Input: A=$C1 Y=$73 P=$74 M=$CF  Output: A=$C1 X=$8C Y=$73 P=$74 M=$8C
+  1010 2988 01 60 9F				dta	$01,$60,$9F ;Input: A=$31 Y=$60 P=$B3 M=$14  Output: A=$31 X=$9F Y=$60 P=$B3 M=$9F
+  1011 298B 20 DF				dta	$20,$DF ;Input: A=$18 Y=$20 P=$B7 M=$C6  Output: A=$18 X=$DF Y=$20 P=$B7 M=$DF
+  1012 298D 5D A2				dta	$5D,$A2 ;Input: A=$41 Y=$5D P=$34 M=$99  Output: A=$41 X=$A2 Y=$5D P=$34 M=$A2
+  1013 298F 2F D0				dta	$2F,$D0 ;Input: A=$33 Y=$2F P=$70 M=$19  Output: A=$33 X=$D0 Y=$2F P=$70 M=$D0
+  1014 2991 53 AC				dta	$53,$AC ;Input: A=$D6 Y=$53 P=$37 M=$71  Output: A=$D6 X=$AC Y=$53 P=$37 M=$AC
+  1015 2993 D7 28				dta	$D7,$28 ;Input: A=$6B Y=$D7 P=$F3 M=$42  Output: A=$6B X=$28 Y=$D7 P=$F3 M=$28
+  1016 2995 59 A6				dta	$59,$A6 ;Input: A=$D6 Y=$59 P=$32 M=$FD  Output: A=$D6 X=$A6 Y=$59 P=$32 M=$A6
+  1017
+  1018 						; $88  DEY
+  1019 2997 E0					dta	$E0
+  1020 2998 86 88 0D 0C 75			dta	$86,$88,$0D,$0C,$75 ;Input: A=$27 Y=$0D P=$F5 M=$7A  Output: A=$27 X=$F2 Y=$0C P=$75 M=$7A
+  1021 299D 04 26 25				dta	$04,$26,$25 ;Input: A=$D2 Y=$26 P=$70 M=$5C  Output: A=$D2 X=$D9 Y=$25 P=$70 M=$5C
+  1022 29A0 06 55 54 34				dta	$06,$55,$54,$34 ;Input: A=$09 Y=$55 P=$B4 M=$B1  Output: A=$09 X=$AA Y=$54 P=$34 M=$B1
+  1023 29A4 80 7F 71				dta	$80,$7F,$71 ;Input: A=$3C Y=$80 P=$F3 M=$68  Output: A=$3C X=$7F Y=$7F P=$71 M=$68
+  1024 29A7 D9 D8 B1				dta	$D9,$D8,$B1 ;Input: A=$16 Y=$D9 P=$31 M=$95  Output: A=$16 X=$26 Y=$D8 P=$B1 M=$95
+  1025 29AA F8 F7 B5				dta	$F8,$F7,$B5 ;Input: A=$87 Y=$F8 P=$35 M=$21  Output: A=$87 X=$07 Y=$F7 P=$B5 M=$21
+  1026 29AD B8 B7 F1				dta	$B8,$B7,$F1 ;Input: A=$61 Y=$B8 P=$F3 M=$82  Output: A=$61 X=$47 Y=$B7 P=$F1 M=$82
+  1027 29B0 D5 D4 B0				dta	$D5,$D4,$B0 ;Input: A=$2F Y=$D5 P=$B2 M=$4B  Output: A=$2F X=$2A Y=$D4 P=$B0 M=$4B
+  1028
+  1029 						; $8A  TXA
+  1030 29B3 D4					dta	$D4
+  1031 29B4 90 8A A0 5F				dta	$90,$8A,$A0,$5F ;Input: A=$83 Y=$A0 P=$70 M=$F3  Output: A=$5F X=$5F Y=$A0 P=$70 M=$F3
+  1032 29B8 10 4E B1				dta	$10,$4E,$B1 ;Input: A=$92 Y=$4E P=$F0 M=$99  Output: A=$B1 X=$B1 Y=$4E P=$F0 M=$99
+  1033 29BB 9F 60				dta	$9F,$60 ;Input: A=$21 Y=$9F P=$75 M=$F0  Output: A=$60 X=$60 Y=$9F P=$75 M=$F0
+  1034 29BD 12 FC 03 35				dta	$12,$FC,$03,$35 ;Input: A=$3A Y=$FC P=$B7 M=$61  Output: A=$03 X=$03 Y=$FC P=$35 M=$61
+  1035 29C1 36 C9 B4				dta	$36,$C9,$B4 ;Input: A=$D2 Y=$36 P=$B6 M=$B7  Output: A=$C9 X=$C9 Y=$36 P=$B4 M=$B7
+  1036 29C4 10 8E 71				dta	$10,$8E,$71 ;Input: A=$14 Y=$8E P=$70 M=$D6  Output: A=$71 X=$71 Y=$8E P=$70 M=$D6
+  1037 29C7 B0 4F				dta	$B0,$4F ;Input: A=$E1 Y=$B0 P=$31 M=$19  Output: A=$4F X=$4F Y=$B0 P=$31 M=$19
+  1038 29C9 BF 40				dta	$BF,$40 ;Input: A=$E7 Y=$BF P=$35 M=$2B  Output: A=$40 X=$40 Y=$BF P=$35 M=$2B
+  1039
+  1040 						; $8C  STY abs
+  1041 29CB C0					dta	$C0
+  1042 29CC E1 8C CD 00 B1 B1			dta	$E1,$8C,$CD,$00,$B1,$B1 ;Input: A=$8D Y=$B1 P=$32 M=$08  Output: A=$8D X=$4E Y=$B1 P=$32 M=$B1
+  1043 29D2 01 85 85				dta	$01,$85,$85 ;Input: A=$4F Y=$85 P=$71 M=$26  Output: A=$4F X=$7A Y=$85 P=$71 M=$85
+  1044 29D5 12 12				dta	$12,$12 ;Input: A=$68 Y=$12 P=$B3 M=$04  Output: A=$68 X=$ED Y=$12 P=$B3 M=$12
+  1045 29D7 8B 8B				dta	$8B,$8B ;Input: A=$5F Y=$8B P=$F1 M=$A6  Output: A=$5F X=$74 Y=$8B P=$F1 M=$8B
+  1046 29D9 EC EC				dta	$EC,$EC ;Input: A=$07 Y=$EC P=$77 M=$85  Output: A=$07 X=$13 Y=$EC P=$77 M=$EC
+  1047 29DB E2 E2				dta	$E2,$E2 ;Input: A=$5E Y=$E2 P=$F4 M=$3F  Output: A=$5E X=$1D Y=$E2 P=$F4 M=$E2
+  1048 29DD F3 F3				dta	$F3,$F3 ;Input: A=$E3 Y=$F3 P=$F0 M=$B5  Output: A=$E3 X=$0C Y=$F3 P=$F0 M=$F3
+  1049 29DF F4 F4				dta	$F4,$F4 ;Input: A=$BA Y=$F4 P=$31 M=$18  Output: A=$BA X=$0B Y=$F4 P=$31 M=$F4
+  1050
+  1051 						; $8D  STA abs
+  1052 29E1 C0					dta	$C0
+  1053 29E2 E1 8D CD 00 06 87			dta	$E1,$8D,$CD,$00,$06,$87 ;Input: A=$87 Y=$06 P=$71 M=$67  Output: A=$87 X=$F9 Y=$06 P=$71 M=$87
+  1054 29E8 01 B9 CC				dta	$01,$B9,$CC ;Input: A=$CC Y=$B9 P=$73 M=$C2  Output: A=$CC X=$46 Y=$B9 P=$73 M=$CC
+  1055 29EB 04 D7				dta	$04,$D7 ;Input: A=$D7 Y=$04 P=$77 M=$76  Output: A=$D7 X=$FB Y=$04 P=$77 M=$D7
+  1056 29ED 2D C2				dta	$2D,$C2 ;Input: A=$C2 Y=$2D P=$32 M=$DF  Output: A=$C2 X=$D2 Y=$2D P=$32 M=$C2
+  1057 29EF E0 66				dta	$E0,$66 ;Input: A=$66 Y=$E0 P=$34 M=$14  Output: A=$66 X=$1F Y=$E0 P=$34 M=$66
+  1058 29F1 01 3E				dta	$01,$3E ;Input: A=$3E Y=$01 P=$36 M=$63  Output: A=$3E X=$FE Y=$01 P=$36 M=$3E
+  1059 29F3 F8 15				dta	$F8,$15 ;Input: A=$15 Y=$F8 P=$35 M=$B1  Output: A=$15 X=$07 Y=$F8 P=$35 M=$15
+  1060 29F5 90 44				dta	$90,$44 ;Input: A=$44 Y=$90 P=$76 M=$E2  Output: A=$44 X=$6F Y=$90 P=$76 M=$44
+  1061
+  1062 						; $8E  STX abs
+  1063 29F7 C0					dta	$C0
+  1064 29F8 E1 8E CD 00 A2 5D			dta	$E1,$8E,$CD,$00,$A2,$5D ;Input: A=$06 Y=$A2 P=$70 M=$90  Output: A=$06 X=$5D Y=$A2 P=$70 M=$5D
+  1065 29FE 01 16 E9				dta	$01,$16,$E9 ;Input: A=$4C Y=$16 P=$37 M=$0D  Output: A=$4C X=$E9 Y=$16 P=$37 M=$E9
+  1066 2A01 08 F7				dta	$08,$F7 ;Input: A=$1F Y=$08 P=$74 M=$40  Output: A=$1F X=$F7 Y=$08 P=$74 M=$F7
+  1067 2A03 1C E3				dta	$1C,$E3 ;Input: A=$8C Y=$1C P=$B0 M=$DE  Output: A=$8C X=$E3 Y=$1C P=$B0 M=$E3
+  1068 2A05 37 C8				dta	$37,$C8 ;Input: A=$79 Y=$37 P=$34 M=$DB  Output: A=$79 X=$C8 Y=$37 P=$34 M=$C8
+  1069 2A07 37 C8				dta	$37,$C8 ;Input: A=$BD Y=$37 P=$76 M=$15  Output: A=$BD X=$C8 Y=$37 P=$76 M=$C8
+  1070 2A09 72 8D				dta	$72,$8D ;Input: A=$21 Y=$72 P=$B5 M=$62  Output: A=$21 X=$8D Y=$72 P=$B5 M=$8D
+  1071 2A0B F2 0D				dta	$F2,$0D ;Input: A=$96 Y=$F2 P=$F7 M=$57  Output: A=$96 X=$0D Y=$F2 P=$F7 M=$0D
+  1072
+  1073 						; $91  STA (zp),y
+  1074 2A0D D8					dta	$D8
+  1075 2A0E C1 91 C2 00 8F			dta	$C1,$91,$C2,$00,$8F ;Input: A=$8F Y=$00 P=$B2 M=$D2  Output: A=$8F X=$FF Y=$00 P=$B2 M=$8F
+  1076 2A13 41 C4 01 A1				dta	$41,$C4,$01,$A1 ;Input: A=$A1 Y=$01 P=$33 M=$CD  Output: A=$A1 X=$FE Y=$01 P=$33 M=$A1
+  1077 2A17 C2 00 62				dta	$C2,$00,$62 ;Input: A=$62 Y=$00 P=$B0 M=$C5  Output: A=$62 X=$FF Y=$00 P=$B0 M=$62
+  1078 2A1A 01 00 30				dta	$01,$00,$30 ;Input: A=$30 Y=$00 P=$73 M=$7D  Output: A=$30 X=$FF Y=$00 P=$73 M=$30
+  1079 2A1D 41 C4 01 56				dta	$41,$C4,$01,$56 ;Input: A=$56 Y=$01 P=$F6 M=$2A  Output: A=$56 X=$FE Y=$01 P=$F6 M=$56
+  1080 2A21 C2 00 17				dta	$C2,$00,$17 ;Input: A=$17 Y=$00 P=$B6 M=$A1  Output: A=$17 X=$FF Y=$00 P=$B6 M=$17
+  1081 2A24 C4 01 92				dta	$C4,$01,$92 ;Input: A=$92 Y=$01 P=$F6 M=$36  Output: A=$92 X=$FE Y=$01 P=$F6 M=$92
+  1082 2A27 C2 00 66				dta	$C2,$00,$66 ;Input: A=$66 Y=$00 P=$71 M=$E9  Output: A=$66 X=$FF Y=$00 P=$71 M=$66
+  1083
+  1084 						; $94  STY zp,x
+  1085 2A2A C0					dta	$C0
+  1086 2A2B C1 94 D6 08 08			dta	$C1,$94,$D6,$08,$08 ;Input: A=$EF Y=$08 P=$70 M=$4E  Output: A=$EF X=$F7 Y=$08 P=$70 M=$08
+  1087 2A30 41 0D 3F 3F				dta	$41,$0D,$3F,$3F ;Input: A=$73 Y=$3F P=$F6 M=$43  Output: A=$73 X=$C0 Y=$3F P=$F6 M=$3F
+  1088 2A34 AE E0 E0				dta	$AE,$E0,$E0 ;Input: A=$B6 Y=$E0 P=$72 M=$BF  Output: A=$B6 X=$1F Y=$E0 P=$72 M=$E0
+  1089 2A37 EA 1C 1C				dta	$EA,$1C,$1C ;Input: A=$66 Y=$1C P=$34 M=$27  Output: A=$66 X=$E3 Y=$1C P=$34 M=$1C
+  1090 2A3A AD DF DF				dta	$AD,$DF,$DF ;Input: A=$47 Y=$DF P=$76 M=$17  Output: A=$47 X=$20 Y=$DF P=$76 M=$DF
+  1091 2A3D 2D 5F 5F				dta	$2D,$5F,$5F ;Input: A=$7C Y=$5F P=$B3 M=$CC  Output: A=$7C X=$A0 Y=$5F P=$B3 M=$5F
+  1092 2A40 AB DD DD				dta	$AB,$DD,$DD ;Input: A=$1A Y=$DD P=$B0 M=$08  Output: A=$1A X=$22 Y=$DD P=$B0 M=$DD
+  1093 2A43 87 B9 B9				dta	$87,$B9,$B9 ;Input: A=$21 Y=$B9 P=$F4 M=$B1  Output: A=$21 X=$46 Y=$B9 P=$F4 M=$B9
+  1094
+  1095 						; $95  STA zp,x
+  1096 2A46 C0					dta	$C0
+  1097 2A47 C1 95 E9 1B 8C			dta	$C1,$95,$E9,$1B,$8C ;Input: A=$8C Y=$1B P=$71 M=$33  Output: A=$8C X=$E4 Y=$1B P=$71 M=$8C
+  1098 2A4C 41 74 A6 B6				dta	$41,$74,$A6,$B6 ;Input: A=$B6 Y=$A6 P=$72 M=$3A  Output: A=$B6 X=$59 Y=$A6 P=$72 M=$B6
+  1099 2A50 EB 1D 0B				dta	$EB,$1D,$0B ;Input: A=$0B Y=$1D P=$74 M=$6D  Output: A=$0B X=$E2 Y=$1D P=$74 M=$0B
+  1100 2A53 B3 E5 CE				dta	$B3,$E5,$CE ;Input: A=$CE Y=$E5 P=$71 M=$52  Output: A=$CE X=$1A Y=$E5 P=$71 M=$CE
+  1101 2A56 8A BC 53				dta	$8A,$BC,$53 ;Input: A=$53 Y=$BC P=$71 M=$28  Output: A=$53 X=$43 Y=$BC P=$71 M=$53
+  1102 2A59 F9 2B 6D				dta	$F9,$2B,$6D ;Input: A=$6D Y=$2B P=$F0 M=$BE  Output: A=$6D X=$D4 Y=$2B P=$F0 M=$6D
+  1103 2A5C 45 77 0C				dta	$45,$77,$0C ;Input: A=$0C Y=$77 P=$B7 M=$E2  Output: A=$0C X=$88 Y=$77 P=$B7 M=$0C
+  1104 2A5F E6 18 BA				dta	$E6,$18,$BA ;Input: A=$BA Y=$18 P=$B5 M=$7D  Output: A=$BA X=$E7 Y=$18 P=$B5 M=$BA
+  1105
+  1106 						; $96  STX zp,y
+  1107 2A62 C0					dta	$C0
+  1108 2A63 C1 96 C3 0A F5			dta	$C1,$96,$C3,$0A,$F5 ;Input: A=$C4 Y=$0A P=$71 M=$DF  Output: A=$C4 X=$F5 Y=$0A P=$71 M=$F5
+  1109 2A68 41 63 6A 95				dta	$41,$63,$6A,$95 ;Input: A=$FB Y=$6A P=$71 M=$4C  Output: A=$FB X=$95 Y=$6A P=$71 M=$95
+  1110 2A6C 8B 42 BD				dta	$8B,$42,$BD ;Input: A=$30 Y=$42 P=$F1 M=$D0  Output: A=$30 X=$BD Y=$42 P=$F1 M=$BD
+  1111 2A6F 5C 71 8E				dta	$5C,$71,$8E ;Input: A=$FE Y=$71 P=$F2 M=$13  Output: A=$FE X=$8E Y=$71 P=$F2 M=$8E
+  1112 2A72 BE 0F F0				dta	$BE,$0F,$F0 ;Input: A=$62 Y=$0F P=$77 M=$6C  Output: A=$62 X=$F0 Y=$0F P=$77 M=$F0
+  1113 2A75 0A C3 3C				dta	$0A,$C3,$3C ;Input: A=$DB Y=$C3 P=$71 M=$21  Output: A=$DB X=$3C Y=$C3 P=$71 M=$3C
+  1114 2A78 F2 DB 24				dta	$F2,$DB,$24 ;Input: A=$6C Y=$DB P=$B1 M=$E0  Output: A=$6C X=$24 Y=$DB P=$B1 M=$24
+  1115 2A7B 9D 30 CF				dta	$9D,$30,$CF ;Input: A=$41 Y=$30 P=$B0 M=$D4  Output: A=$41 X=$CF Y=$30 P=$B0 M=$CF
+  1116
+  1117 						; $98  TYA
+  1118 2A7E F7					dta	$F7
+  1119 2A7F 92 98 1A 1A 30			dta	$92,$98,$1A,$1A,$30 ;Input: A=$1C Y=$1A P=$B0 M=$73  Output: A=$1A X=$E5 Y=$1A P=$30 M=$73
+  1120 2A84 12 F8 F8 F1				dta	$12,$F8,$F8,$F1 ;Input: A=$AB Y=$F8 P=$73 M=$5D  Output: A=$F8 X=$07 Y=$F8 P=$F1 M=$5D
+  1121 2A88 10 22 22				dta	$10,$22,$22 ;Input: A=$54 Y=$22 P=$70 M=$EA  Output: A=$22 X=$DD Y=$22 P=$70 M=$EA
+  1122 2A8B 12 3C 3C 30				dta	$12,$3C,$3C,$30 ;Input: A=$B3 Y=$3C P=$B0 M=$B3  Output: A=$3C X=$C3 Y=$3C P=$30 M=$B3
+  1123 2A8F 3D 3D 74				dta	$3D,$3D,$74 ;Input: A=$B8 Y=$3D P=$F4 M=$DD  Output: A=$3D X=$C2 Y=$3D P=$74 M=$DD
+  1124 2A92 10 B3 B3				dta	$10,$B3,$B3 ;Input: A=$0C Y=$B3 P=$B5 M=$4F  Output: A=$B3 X=$4C Y=$B3 P=$B5 M=$4F
+  1125 2A95 12 FD FD B1				dta	$12,$FD,$FD,$B1 ;Input: A=$C0 Y=$FD P=$31 M=$DB  Output: A=$FD X=$02 Y=$FD P=$B1 M=$DB
+  1126 2A99 10 9E 9E				dta	$10,$9E,$9E ;Input: A=$DD Y=$9E P=$B4 M=$1B  Output: A=$9E X=$61 Y=$9E P=$B4 M=$1B
+  1127
+  1128 						; $99  STA abs,y
+  1129 2A9C C1					dta	$C1
+  1130 2A9D E1 99 7D 00 50 61			dta	$E1,$99,$7D,$00,$50,$61 ;Input: A=$61 Y=$50 P=$70 M=$00  Output: A=$61 X=$AF Y=$50 P=$70 M=$61
+  1131 2AA3 41 4F 7E 1B				dta	$41,$4F,$7E,$1B ;Input: A=$1B Y=$7E P=$B0 M=$45  Output: A=$1B X=$81 Y=$7E P=$B0 M=$1B
+  1132 2AA7 79 54 9A				dta	$79,$54,$9A ;Input: A=$9A Y=$54 P=$75 M=$63  Output: A=$9A X=$AB Y=$54 P=$75 M=$9A
+  1133 2AAA C9 04 89				dta	$C9,$04,$89 ;Input: A=$89 Y=$04 P=$71 M=$D5  Output: A=$89 X=$FB Y=$04 P=$71 M=$89
+  1134 2AAD 60 6D 0C				dta	$60,$6D,$0C ;Input: A=$0C Y=$6D P=$36 M=$FA  Output: A=$0C X=$92 Y=$6D P=$36 M=$0C
+  1135 2AB0 84 49 CA				dta	$84,$49,$CA ;Input: A=$CA Y=$49 P=$B3 M=$91  Output: A=$CA X=$B6 Y=$49 P=$B3 M=$CA
+  1136 2AB3 B9 14 FA				dta	$B9,$14,$FA ;Input: A=$FA Y=$14 P=$F0 M=$A4  Output: A=$FA X=$EB Y=$14 P=$F0 M=$FA
+  1137 2AB6 40 8E 3F				dta	$40,$8E,$3F ;Input: A=$2A Y=$3F P=$76 M=$2A  Output: A=$2A X=$C0 Y=$3F P=$76 M=$2A
+  1138
+  1139 						; $9D  STA abs,x
+  1140 2AB9 C0					dta	$C0
+  1141 2ABA E1 9D C0 00 F2 F2			dta	$E1,$9D,$C0,$00,$F2,$F2 ;Input: A=$F2 Y=$F2 P=$34 M=$2A  Output: A=$F2 X=$0D Y=$F2 P=$34 M=$F2
+  1142 2AC0 41 B6 E8 8C				dta	$41,$B6,$E8,$8C ;Input: A=$8C Y=$E8 P=$74 M=$45  Output: A=$8C X=$17 Y=$E8 P=$74 M=$8C
+  1143 2AC4 7B AD 08				dta	$7B,$AD,$08 ;Input: A=$08 Y=$AD P=$B4 M=$B6  Output: A=$08 X=$52 Y=$AD P=$B4 M=$08
+  1144 2AC7 93 C5 65				dta	$93,$C5,$65 ;Input: A=$65 Y=$C5 P=$72 M=$86  Output: A=$65 X=$3A Y=$C5 P=$72 M=$65
+  1145 2ACA 50 82 86				dta	$50,$82,$86 ;Input: A=$86 Y=$82 P=$F1 M=$FB  Output: A=$86 X=$7D Y=$82 P=$F1 M=$86
+  1146 2ACD 60 92 30				dta	$60,$92,$30 ;Input: A=$30 Y=$92 P=$32 M=$3D  Output: A=$30 X=$6D Y=$92 P=$32 M=$30
+  1147 2AD0 62 94 67				dta	$62,$94,$67 ;Input: A=$67 Y=$94 P=$B0 M=$CC  Output: A=$67 X=$6B Y=$94 P=$B0 M=$67
+  1148 2AD3 7E B0 A0				dta	$7E,$B0,$A0 ;Input: A=$A0 Y=$B0 P=$F7 M=$37  Output: A=$A0 X=$4F Y=$B0 P=$F7 M=$A0
+  1149
+  1150 						; $A0  LDY #imm
+  1151 2AD6 DA					dta	$DA
+  1152 2AD7 C4 A0 AF 83 AF			dta	$C4,$A0,$AF,$83,$AF ;Input: A=$3D Y=$83 P=$B1 M=$98  Output: A=$3D X=$7C Y=$AF P=$B1 M=$98
+  1153 2ADC 46 95 63 95 F4			dta	$46,$95,$63,$95,$F4 ;Input: A=$F4 Y=$63 P=$74 M=$F8  Output: A=$F4 X=$9C Y=$95 P=$F4 M=$F8
+  1154 2AE1 E3 41 E3 F1				dta	$E3,$41,$E3,$F1 ;Input: A=$85 Y=$41 P=$73 M=$44  Output: A=$85 X=$BE Y=$E3 P=$F1 M=$44
+  1155 2AE5 44 DD BD DD				dta	$44,$DD,$BD,$DD ;Input: A=$9A Y=$BD P=$B5 M=$DE  Output: A=$9A X=$42 Y=$DD P=$B5 M=$DE
+  1156 2AE9 46 58 A1 58 71			dta	$46,$58,$A1,$58,$71 ;Input: A=$88 Y=$A1 P=$F1 M=$E9  Output: A=$88 X=$5E Y=$58 P=$71 M=$E9
+  1157 2AEE 4F DA 4F 35				dta	$4F,$DA,$4F,$35 ;Input: A=$DB Y=$DA P=$37 M=$D1  Output: A=$DB X=$25 Y=$4F P=$35 M=$D1
+  1158 2AF2 44 38 31 38				dta	$44,$38,$31,$38 ;Input: A=$CB Y=$31 P=$35 M=$AA  Output: A=$CB X=$CE Y=$38 P=$35 M=$AA
+  1159 2AF6 FD CE FD				dta	$FD,$CE,$FD ;Input: A=$9D Y=$CE P=$B5 M=$72  Output: A=$9D X=$31 Y=$FD P=$B5 M=$72
+  1160
+  1161 						; $A1  LDA (zp,x)
+  1162 2AF9 CC					dta	$CC
+  1163 2AFA D2 A1 8D CA 1F 35			dta	$D2,$A1,$8D,$CA,$1F,$35 ;Input: A=$8D Y=$CA P=$B7 M=$1F  Output: A=$1F X=$35 Y=$CA P=$35 M=$1F
+  1164 2B00 52 1F 5C 27 75			dta	$52,$1F,$5C,$27,$75 ;Input: A=$01 Y=$5C P=$77 M=$27  Output: A=$27 X=$A3 Y=$5C P=$75 M=$27
+  1165 2B05 28 65 73 71				dta	$28,$65,$73,$71 ;Input: A=$5E Y=$65 P=$F3 M=$73  Output: A=$73 X=$9A Y=$65 P=$71 M=$73
+  1166 2B09 2C 69 1B 30				dta	$2C,$69,$1B,$30 ;Input: A=$6A Y=$69 P=$32 M=$1B  Output: A=$1B X=$96 Y=$69 P=$30 M=$1B
+  1167 2B0D 50 F3 30 98				dta	$50,$F3,$30,$98 ;Input: A=$92 Y=$30 P=$F5 M=$98  Output: A=$98 X=$CF Y=$30 P=$F5 M=$98
+  1168 2B11 52 72 AF 90 F1			dta	$52,$72,$AF,$90,$F1 ;Input: A=$F1 Y=$AF P=$F3 M=$90  Output: A=$90 X=$50 Y=$AF P=$F1 M=$90
+  1169 2B16 A5 E2 A7 B5				dta	$A5,$E2,$A7,$B5 ;Input: A=$DB Y=$E2 P=$35 M=$A7  Output: A=$A7 X=$1D Y=$E2 P=$B5 M=$A7
+  1170 2B1A 79 B6 02 71				dta	$79,$B6,$02,$71 ;Input: A=$AD Y=$B6 P=$F1 M=$02  Output: A=$02 X=$49 Y=$B6 P=$71 M=$02
+  1171
+  1172 						; $A2  LDX #imm
+  1173 2B1E C3					dta	$C3
+  1174 2B1F CA A2 BE 4B BE B1			dta	$CA,$A2,$BE,$4B,$BE,$B1 ;Input: A=$23 Y=$4B P=$33 M=$6B  Output: A=$23 X=$BE Y=$4B P=$B1 M=$6B
+  1175 2B25 48 56 00 56				dta	$48,$56,$00,$56 ;Input: A=$08 Y=$00 P=$31 M=$91  Output: A=$08 X=$56 Y=$00 P=$31 M=$91
+  1176 2B29 87 2F 87				dta	$87,$2F,$87 ;Input: A=$40 Y=$2F P=$B4 M=$0F  Output: A=$40 X=$87 Y=$2F P=$B4 M=$0F
+  1177 2B2C 6A 84 6A				dta	$6A,$84,$6A ;Input: A=$36 Y=$84 P=$71 M=$4E  Output: A=$36 X=$6A Y=$84 P=$71 M=$4E
+  1178 2B2F 36 54 36				dta	$36,$54,$36 ;Input: A=$38 Y=$54 P=$75 M=$42  Output: A=$38 X=$36 Y=$54 P=$75 M=$42
+  1179 2B32 6C 5F 6C				dta	$6C,$5F,$6C ;Input: A=$CC Y=$5F P=$30 M=$7B  Output: A=$CC X=$6C Y=$5F P=$30 M=$7B
+  1180 2B35 4A 3C DA 3C 35			dta	$4A,$3C,$DA,$3C,$35 ;Input: A=$FB Y=$DA P=$B5 M=$C4  Output: A=$FB X=$3C Y=$DA P=$35 M=$C4
+  1181 2B3A 48 0A C5 0A				dta	$48,$0A,$C5,$0A ;Input: A=$BE Y=$C5 P=$71 M=$1D  Output: A=$BE X=$0A Y=$C5 P=$71 M=$1D
+  1182
+  1183 						; $A4  LDY zp
+  1184 2B3E F7					dta	$F7
+  1185 2B3F C6 A4 CD CB 7C 34			dta	$C6,$A4,$CD,$CB,$7C,$34 ;Input: A=$F3 Y=$CB P=$B4 M=$7C  Output: A=$F3 X=$34 Y=$7C P=$34 M=$7C
+  1186 2B45 06 3D 86 B5				dta	$06,$3D,$86,$B5 ;Input: A=$F0 Y=$3D P=$35 M=$86  Output: A=$F0 X=$C2 Y=$86 P=$B5 M=$86
+  1187 2B49 04 F3 84				dta	$04,$F3,$84 ;Input: A=$42 Y=$F3 P=$F0 M=$84  Output: A=$42 X=$0C Y=$84 P=$F0 M=$84
+  1188 2B4C 06 0E D6 F1				dta	$06,$0E,$D6,$F1 ;Input: A=$A8 Y=$0E P=$73 M=$D6  Output: A=$A8 X=$F1 Y=$D6 P=$F1 M=$D6
+  1189 2B50 F2 1A 71				dta	$F2,$1A,$71 ;Input: A=$56 Y=$F2 P=$73 M=$1A  Output: A=$56 X=$0D Y=$1A P=$71 M=$1A
+  1190 2B53 04 F4 AC				dta	$04,$F4,$AC ;Input: A=$95 Y=$F4 P=$F0 M=$AC  Output: A=$95 X=$0B Y=$AC P=$F0 M=$AC
+  1191 2B56 06 8F 2C 31				dta	$06,$8F,$2C,$31 ;Input: A=$22 Y=$8F P=$B3 M=$2C  Output: A=$22 X=$70 Y=$2C P=$31 M=$2C
+  1192 2B5A 04 18 60				dta	$04,$18,$60 ;Input: A=$C8 Y=$18 P=$30 M=$60  Output: A=$C8 X=$E7 Y=$60 P=$30 M=$60
+  1193
+  1194 						; $A5  LDA zp
+  1195 2B5D D6					dta	$D6
+  1196 2B5E D0 A5 CD 4F 68			dta	$D0,$A5,$CD,$4F,$68 ;Input: A=$97 Y=$4F P=$30 M=$68  Output: A=$68 X=$B0 Y=$4F P=$30 M=$68
+  1197 2B63 10 3F 46				dta	$10,$3F,$46 ;Input: A=$CB Y=$3F P=$31 M=$46  Output: A=$46 X=$C0 Y=$3F P=$31 M=$46
+  1198 2B66 47 3D				dta	$47,$3D ;Input: A=$09 Y=$47 P=$75 M=$3D  Output: A=$3D X=$B8 Y=$47 P=$75 M=$3D
+  1199 2B68 12 42 AD F5				dta	$12,$42,$AD,$F5 ;Input: A=$20 Y=$42 P=$75 M=$AD  Output: A=$AD X=$BD Y=$42 P=$F5 M=$AD
+  1200 2B6C 2E FB F4				dta	$2E,$FB,$F4 ;Input: A=$F2 Y=$2E P=$F6 M=$FB  Output: A=$FB X=$D1 Y=$2E P=$F4 M=$FB
+  1201 2B6F 10 BE 13				dta	$10,$BE,$13 ;Input: A=$29 Y=$BE P=$70 M=$13  Output: A=$13 X=$41 Y=$BE P=$70 M=$13
+  1202 2B72 12 B6 CD B1				dta	$12,$B6,$CD,$B1 ;Input: A=$71 Y=$B6 P=$33 M=$CD  Output: A=$CD X=$49 Y=$B6 P=$B1 M=$CD
+  1203 2B76 0C D1 B4				dta	$0C,$D1,$B4 ;Input: A=$71 Y=$0C P=$36 M=$D1  Output: A=$D1 X=$F3 Y=$0C P=$B4 M=$D1
+  1204
+  1205 						; $A6  LDX zp
+  1206 2B79 CF					dta	$CF
+  1207 2B7A C8 A6 CD 1C A1			dta	$C8,$A6,$CD,$1C,$A1 ;Input: A=$9A Y=$1C P=$F0 M=$A1  Output: A=$9A X=$A1 Y=$1C P=$F0 M=$A1
+  1208 2B7F 0A 74 42 35				dta	$0A,$74,$42,$35 ;Input: A=$3B Y=$74 P=$B7 M=$42  Output: A=$3B X=$42 Y=$74 P=$35 M=$42
+  1209 2B83 FE 8B B5				dta	$FE,$8B,$B5 ;Input: A=$D0 Y=$FE P=$37 M=$8B  Output: A=$D0 X=$8B Y=$FE P=$B5 M=$8B
+  1210 2B86 9D E8 F4				dta	$9D,$E8,$F4 ;Input: A=$B3 Y=$9D P=$74 M=$E8  Output: A=$B3 X=$E8 Y=$9D P=$F4 M=$E8
+  1211 2B89 08 6E 30				dta	$08,$6E,$30 ;Input: A=$C0 Y=$6E P=$74 M=$30  Output: A=$C0 X=$30 Y=$6E P=$74 M=$30
+  1212 2B8C 0A 48 DC B0				dta	$0A,$48,$DC,$B0 ;Input: A=$50 Y=$48 P=$B2 M=$DC  Output: A=$50 X=$DC Y=$48 P=$B0 M=$DC
+  1213 2B90 08 44 4B				dta	$08,$44,$4B ;Input: A=$DC Y=$44 P=$31 M=$4B  Output: A=$DC X=$4B Y=$44 P=$31 M=$4B
+  1214 2B93 0A 3E 4D 35				dta	$0A,$3E,$4D,$35 ;Input: A=$21 Y=$3E P=$37 M=$4D  Output: A=$21 X=$4D Y=$3E P=$35 M=$4D
+  1215
+  1216 						; $A8  TAY
+  1217 2B97 E3					dta	$E3
+  1218 2B98 86 A8 B8 DE F1			dta	$86,$A8,$B8,$DE,$F1 ;Input: A=$DE Y=$B8 P=$73 M=$DE  Output: A=$DE X=$47 Y=$DE P=$F1 M=$DE
+  1219 2B9D 04 87 1B				dta	$04,$87,$1B ;Input: A=$1B Y=$87 P=$71 M=$34  Output: A=$1B X=$78 Y=$1B P=$71 M=$34
+  1220 2BA0 06 30 71 31				dta	$06,$30,$71,$31 ;Input: A=$71 Y=$30 P=$B3 M=$FC  Output: A=$71 X=$CF Y=$71 P=$31 M=$FC
+  1221 2BA4 DD 5F 34				dta	$DD,$5F,$34 ;Input: A=$5F Y=$DD P=$36 M=$9E  Output: A=$5F X=$22 Y=$5F P=$34 M=$9E
+  1222 2BA7 56 C3 F5				dta	$56,$C3,$F5 ;Input: A=$C3 Y=$56 P=$75 M=$FF  Output: A=$C3 X=$A9 Y=$C3 P=$F5 M=$FF
+  1223 2BAA 61 F0 B5				dta	$61,$F0,$B5 ;Input: A=$F0 Y=$61 P=$B7 M=$A1  Output: A=$F0 X=$9E Y=$F0 P=$B5 M=$A1
+  1224 2BAD 04 6E E2				dta	$04,$6E,$E2 ;Input: A=$E2 Y=$6E P=$B4 M=$15  Output: A=$E2 X=$91 Y=$E2 P=$B4 M=$15
+  1225 2BB0 06 8C 46 70				dta	$06,$8C,$46,$70 ;Input: A=$46 Y=$8C P=$F0 M=$92  Output: A=$46 X=$73 Y=$46 P=$70 M=$92
+  1226
+  1227 						; $A9  LDA #imm
+  1228 2BB4 E6					dta	$E6
+  1229 2BB5 D2 A9 C4 E7 C4 F4			dta	$D2,$A9,$C4,$E7,$C4,$F4 ;Input: A=$04 Y=$E7 P=$76 M=$22  Output: A=$C4 X=$18 Y=$E7 P=$F4 M=$22
+  1230 2BBB 50 BC 67 BC				dta	$50,$BC,$67,$BC ;Input: A=$AD Y=$67 P=$B1 M=$26  Output: A=$BC X=$98 Y=$67 P=$B1 M=$26
+  1231 2BBF 52 F2 2F F2 F1			dta	$52,$F2,$2F,$F2,$F1 ;Input: A=$84 Y=$2F P=$73 M=$CA  Output: A=$F2 X=$D0 Y=$2F P=$F1 M=$CA
+  1232 2BC4 C9 FF C9 B4				dta	$C9,$FF,$C9,$B4 ;Input: A=$37 Y=$FF P=$34 M=$46  Output: A=$C9 X=$00 Y=$FF P=$B4 M=$46
+  1233 2BC8 0F CC 0F 70				dta	$0F,$CC,$0F,$70 ;Input: A=$88 Y=$CC P=$F2 M=$33  Output: A=$0F X=$33 Y=$CC P=$70 M=$33
+  1234 2BCC 50 90 13 90				dta	$50,$90,$13,$90 ;Input: A=$66 Y=$13 P=$F5 M=$8E  Output: A=$90 X=$EC Y=$13 P=$F5 M=$8E
+  1235 2BD0 52 24 A9 24 30			dta	$52,$24,$A9,$24,$30 ;Input: A=$EB Y=$A9 P=$B0 M=$52  Output: A=$24 X=$56 Y=$A9 P=$30 M=$52
+  1236 2BD5 1E 11 1E 31				dta	$1E,$11,$1E,$31 ;Input: A=$14 Y=$11 P=$33 M=$E7  Output: A=$1E X=$EE Y=$11 P=$31 M=$E7
+  1237
+  1238 						; $AA  TAX
+  1239 2BD9 C3					dta	$C3
+  1240 2BDA 8A AA AD 3F 31			dta	$8A,$AA,$AD,$3F,$31 ;Input: A=$3F Y=$AD P=$B3 M=$85  Output: A=$3F X=$3F Y=$AD P=$31 M=$85
+  1241 2BDF 0A 41 9E F0				dta	$0A,$41,$9E,$F0 ;Input: A=$9E Y=$41 P=$72 M=$C8  Output: A=$9E X=$9E Y=$41 P=$F0 M=$C8
+  1242 2BE3 92 63 74				dta	$92,$63,$74 ;Input: A=$63 Y=$92 P=$76 M=$C1  Output: A=$63 X=$63 Y=$92 P=$74 M=$C1
+  1243 2BE6 3F 72 74				dta	$3F,$72,$74 ;Input: A=$72 Y=$3F P=$76 M=$90  Output: A=$72 X=$72 Y=$3F P=$74 M=$90
+  1244 2BE9 F5 5F 31				dta	$F5,$5F,$31 ;Input: A=$5F Y=$F5 P=$B3 M=$14  Output: A=$5F X=$5F Y=$F5 P=$31 M=$14
+  1245 2BEC AE B5 B1				dta	$AE,$B5,$B1 ;Input: A=$B5 Y=$AE P=$B3 M=$D2  Output: A=$B5 X=$B5 Y=$AE P=$B1 M=$D2
+  1246 2BEF 08 A9 EF				dta	$08,$A9,$EF ;Input: A=$EF Y=$A9 P=$F1 M=$F0  Output: A=$EF X=$EF Y=$A9 P=$F1 M=$F0
+  1247 2BF2 0A 2B 46 30				dta	$0A,$2B,$46,$30 ;Input: A=$46 Y=$2B P=$B0 M=$EF  Output: A=$46 X=$46 Y=$2B P=$30 M=$EF
+  1248
+  1249 						; $AC  LDY abs
+  1250 2BF6 D4					dta	$D4
+  1251 2BF7 E6 AC CD 00 51 3D + 		dta	$E6,$AC,$CD,$00,$51,$3D,$74 ;Input: A=$DA Y=$51 P=$F6 M=$3D  Output: A=$DA X=$AE Y=$3D P=$74 M=$3D
+  1252 2BFE 06 80 07 70				dta	$06,$80,$07,$70 ;Input: A=$8A Y=$80 P=$72 M=$07  Output: A=$8A X=$7F Y=$07 P=$70 M=$07
+  1253 2C02 2E 9F F5				dta	$2E,$9F,$F5 ;Input: A=$8E Y=$2E P=$F7 M=$9F  Output: A=$8E X=$D1 Y=$9F P=$F5 M=$9F
+  1254 2C05 04 1A 4A				dta	$04,$1A,$4A ;Input: A=$A2 Y=$1A P=$74 M=$4A  Output: A=$A2 X=$E5 Y=$4A P=$74 M=$4A
+  1255 2C08 35 76				dta	$35,$76 ;Input: A=$F7 Y=$35 P=$71 M=$76  Output: A=$F7 X=$CA Y=$76 P=$71 M=$76
+  1256 2C0A 06 BE E4 B4				dta	$06,$BE,$E4,$B4 ;Input: A=$AB Y=$BE P=$36 M=$E4  Output: A=$AB X=$41 Y=$E4 P=$B4 M=$E4
+  1257 2C0E 65 55 34				dta	$65,$55,$34 ;Input: A=$50 Y=$65 P=$36 M=$55  Output: A=$50 X=$9A Y=$55 P=$34 M=$55
+  1258 2C11 77 91 B1				dta	$77,$91,$B1 ;Input: A=$3F Y=$77 P=$31 M=$91  Output: A=$3F X=$88 Y=$91 P=$B1 M=$91
+  1259
+  1260 						; $AD  LDA abs
+  1261 2C14 F0					dta	$F0
+  1262 2C15 F2 AD CD 00 57 33 + 		dta	$F2,$AD,$CD,$00,$57,$33,$34 ;Input: A=$03 Y=$57 P=$36 M=$33  Output: A=$33 X=$A8 Y=$57 P=$34 M=$33
+  1263 2C1C 12 D3 79 75				dta	$12,$D3,$79,$75 ;Input: A=$7C Y=$D3 P=$F7 M=$79  Output: A=$79 X=$2C Y=$D3 P=$75 M=$79
+  1264 2C20 10 17 9E				dta	$10,$17,$9E ;Input: A=$37 Y=$17 P=$B0 M=$9E  Output: A=$9E X=$E8 Y=$17 P=$B0 M=$9E
+  1265 2C23 12 4E 73 70				dta	$12,$4E,$73,$70 ;Input: A=$14 Y=$4E P=$72 M=$73  Output: A=$73 X=$B1 Y=$4E P=$70 M=$73
+  1266 2C27 32 A7 F5				dta	$32,$A7,$F5 ;Input: A=$C2 Y=$32 P=$75 M=$A7  Output: A=$A7 X=$CD Y=$32 P=$F5 M=$A7
+  1267 2C2A 0F 4D 34				dta	$0F,$4D,$34 ;Input: A=$62 Y=$0F P=$36 M=$4D  Output: A=$4D X=$F0 Y=$0F P=$34 M=$4D
+  1268 2C2D 10 F7 B5				dta	$10,$F7,$B5 ;Input: A=$41 Y=$10 P=$B7 M=$F7  Output: A=$F7 X=$EF Y=$10 P=$B5 M=$F7
+  1269 2C30 D2 61 30				dta	$D2,$61,$30 ;Input: A=$99 Y=$D2 P=$32 M=$61  Output: A=$61 X=$2D Y=$D2 P=$30 M=$61
+  1270
+  1271 						; $AE  LDX abs
+  1272 2C33 FA					dta	$FA
+  1273 2C34 E8 AE CD 00 84 10			dta	$E8,$AE,$CD,$00,$84,$10 ;Input: A=$DE Y=$84 P=$70 M=$10  Output: A=$DE X=$10 Y=$84 P=$70 M=$10
+  1274 2C3A 0A 26 25 31				dta	$0A,$26,$25,$31 ;Input: A=$3C Y=$26 P=$33 M=$25  Output: A=$3C X=$25 Y=$26 P=$31 M=$25
+  1275 2C3E 08 A2 97				dta	$08,$A2,$97 ;Input: A=$9C Y=$A2 P=$F1 M=$97  Output: A=$9C X=$97 Y=$A2 P=$F1 M=$97
+  1276 2C41 0A D8 4B 74				dta	$0A,$D8,$4B,$74 ;Input: A=$64 Y=$D8 P=$76 M=$4B  Output: A=$64 X=$4B Y=$D8 P=$74 M=$4B
+  1277 2C45 08 D1 26				dta	$08,$D1,$26 ;Input: A=$E9 Y=$D1 P=$70 M=$26  Output: A=$E9 X=$26 Y=$D1 P=$70 M=$26
+  1278 2C48 AF 1B				dta	$AF,$1B ;Input: A=$6E Y=$AF P=$31 M=$1B  Output: A=$6E X=$1B Y=$AF P=$31 M=$1B
+  1279 2C4A 0A 21 9B B0				dta	$0A,$21,$9B,$B0 ;Input: A=$CB Y=$21 P=$32 M=$9B  Output: A=$CB X=$9B Y=$21 P=$B0 M=$9B
+  1280 2C4E 59 A4 F5				dta	$59,$A4,$F5 ;Input: A=$67 Y=$59 P=$F7 M=$A4  Output: A=$67 X=$A4 Y=$59 P=$F5 M=$A4
+  1281
+  1282 						; $B1  LDA (zp),y
+  1283 2C51 FF					dta	$FF
+  1284 2C52 D0 B1 C2 00 38			dta	$D0,$B1,$C2,$00,$38 ;Input: A=$2C Y=$00 P=$75 M=$38  Output: A=$38 X=$FF Y=$00 P=$75 M=$38
+  1285 2C57 10 00 CF				dta	$10,$00,$CF ;Input: A=$66 Y=$00 P=$F1 M=$CF  Output: A=$CF X=$FF Y=$00 P=$F1 M=$CF
+  1286 2C5A 50 C4 01 9B				dta	$50,$C4,$01,$9B ;Input: A=$E2 Y=$01 P=$B0 M=$9B  Output: A=$9B X=$FE Y=$01 P=$B0 M=$9B
+  1287 2C5E 52 C2 00 33 70			dta	$52,$C2,$00,$33,$70 ;Input: A=$32 Y=$00 P=$F0 M=$33  Output: A=$33 X=$FF Y=$00 P=$70 M=$33
+  1288 2C63 12 00 BA F4				dta	$12,$00,$BA,$F4 ;Input: A=$92 Y=$00 P=$76 M=$BA  Output: A=$BA X=$FF Y=$00 P=$F4 M=$BA
+  1289 2C67 52 C4 01 40 31			dta	$52,$C4,$01,$40,$31 ;Input: A=$D3 Y=$01 P=$B1 M=$40  Output: A=$40 X=$FE Y=$01 P=$31 M=$40
+  1290 2C6C 12 01 36 71				dta	$12,$01,$36,$71 ;Input: A=$BD Y=$01 P=$F3 M=$36  Output: A=$36 X=$FE Y=$01 P=$71 M=$36
+  1291 2C70 52 C2 00 C5 F1			dta	$52,$C2,$00,$C5,$F1 ;Input: A=$9F Y=$00 P=$F3 M=$C5  Output: A=$C5 X=$FF Y=$00 P=$F1 M=$C5
+  1292
+  1293 						; $B4  LDY zp,x
+  1294 2C75 D8					dta	$D8
+  1295 2C76 C6 B4 76 A8 31 31			dta	$C6,$B4,$76,$A8,$31,$31 ;Input: A=$B9 Y=$A8 P=$B1 M=$31  Output: A=$B9 X=$57 Y=$31 P=$31 M=$31
+  1296 2C7C 46 8E C0 6C 30			dta	$46,$8E,$C0,$6C,$30 ;Input: A=$20 Y=$C0 P=$32 M=$6C  Output: A=$20 X=$3F Y=$6C P=$30 M=$6C
+  1297 2C81 02 34 7E 74				dta	$02,$34,$7E,$74 ;Input: A=$FD Y=$34 P=$F4 M=$7E  Output: A=$FD X=$CB Y=$7E P=$74 M=$7E
+  1298 2C85 44 EE 20 73				dta	$44,$EE,$20,$73 ;Input: A=$38 Y=$20 P=$70 M=$73  Output: A=$38 X=$DF Y=$73 P=$70 M=$73
+  1299 2C89 46 95 C7 A5 F4			dta	$46,$95,$C7,$A5,$F4 ;Input: A=$F0 Y=$C7 P=$F6 M=$A5  Output: A=$F0 X=$38 Y=$A5 P=$F4 M=$A5
+  1300 2C8E 1D 4F 43 30				dta	$1D,$4F,$43,$30 ;Input: A=$4E Y=$4F P=$32 M=$43  Output: A=$4E X=$B0 Y=$43 P=$30 M=$43
+  1301 2C92 52 84 56 30				dta	$52,$84,$56,$30 ;Input: A=$AB Y=$84 P=$B0 M=$56  Output: A=$AB X=$7B Y=$56 P=$30 M=$56
+  1302 2C96 6E A0 D7 B0				dta	$6E,$A0,$D7,$B0 ;Input: A=$68 Y=$A0 P=$B2 M=$D7  Output: A=$68 X=$5F Y=$D7 P=$B0 M=$D7
+  1303
+  1304 						; $B5  LDA zp,x
+  1305 2C9A EA					dta	$EA
+  1306 2C9B D2 B5 37 69 93 F5			dta	$D2,$B5,$37,$69,$93,$F5 ;Input: A=$32 Y=$69 P=$F7 M=$93  Output: A=$93 X=$96 Y=$69 P=$F5 M=$93
+  1307 2CA1 52 F0 22 68 74			dta	$52,$F0,$22,$68,$74 ;Input: A=$CC Y=$22 P=$F4 M=$68  Output: A=$68 X=$DD Y=$22 P=$74 M=$68
+  1308 2CA6 50 F2 24 B1				dta	$50,$F2,$24,$B1 ;Input: A=$1C Y=$24 P=$F5 M=$B1  Output: A=$B1 X=$DB Y=$24 P=$F5 M=$B1
+  1309 2CAA E6 18 2C				dta	$E6,$18,$2C ;Input: A=$3B Y=$18 P=$75 M=$2C  Output: A=$2C X=$E7 Y=$18 P=$75 M=$2C
+  1310 2CAD 52 F6 28 95 B1			dta	$52,$F6,$28,$95,$B1 ;Input: A=$C4 Y=$28 P=$33 M=$95  Output: A=$95 X=$D7 Y=$28 P=$B1 M=$95
+  1311 2CB2 77 A9 1F 75				dta	$77,$A9,$1F,$75 ;Input: A=$BF Y=$A9 P=$F5 M=$1F  Output: A=$1F X=$56 Y=$A9 P=$75 M=$1F
+  1312 2CB6 50 CF 01 7E				dta	$50,$CF,$01,$7E ;Input: A=$F1 Y=$01 P=$75 M=$7E  Output: A=$7E X=$FE Y=$01 P=$75 M=$7E
+  1313 2CBA A7 D9 E7				dta	$A7,$D9,$E7 ;Input: A=$7E Y=$D9 P=$B1 M=$E7  Output: A=$E7 X=$26 Y=$D9 P=$B1 M=$E7
+  1314
+  1315 						; $B6  LDX zp,y
+  1316 2CBD E6					dta	$E6
+  1317 2CBE CA B6 E9 E4 30 34			dta	$CA,$B6,$E9,$E4,$30,$34 ;Input: A=$E4 Y=$E4 P=$36 M=$30  Output: A=$E4 X=$30 Y=$E4 P=$34 M=$30
+  1318 2CC4 4A 15 B8 8F B1			dta	$4A,$15,$B8,$8F,$B1 ;Input: A=$84 Y=$B8 P=$B3 M=$8F  Output: A=$84 X=$8F Y=$B8 P=$B1 M=$8F
+  1319 2CC9 48 42 8B 48				dta	$48,$42,$8B,$48 ;Input: A=$24 Y=$8B P=$74 M=$48  Output: A=$24 X=$48 Y=$8B P=$74 M=$48
+  1320 2CCD F4 D9 FA				dta	$F4,$D9,$FA ;Input: A=$77 Y=$D9 P=$F5 M=$FA  Output: A=$77 X=$FA Y=$D9 P=$F5 M=$FA
+  1321 2CD0 8D 40 42				dta	$8D,$40,$42 ;Input: A=$A9 Y=$40 P=$75 M=$42  Output: A=$A9 X=$42 Y=$40 P=$75 M=$42
+  1322 2CD3 4A C7 06 65 74			dta	$4A,$C7,$06,$65,$74 ;Input: A=$70 Y=$06 P=$F6 M=$65  Output: A=$70 X=$65 Y=$06 P=$74 M=$65
+  1323 2CD8 48 96 37 DD				dta	$48,$96,$37,$DD ;Input: A=$73 Y=$37 P=$F1 M=$DD  Output: A=$73 X=$DD Y=$37 P=$F1 M=$DD
+  1324 2CDC 9B 32 5F				dta	$9B,$32,$5F ;Input: A=$97 Y=$32 P=$70 M=$5F  Output: A=$97 X=$5F Y=$32 P=$70 M=$5F
+  1325
+  1326 						; $B8  CLV
+  1327 2CDF D1					dta	$D1
+  1328 2CE0 82 B8 20 31				dta	$82,$B8,$20,$31 ;Input: A=$5A Y=$20 P=$71 M=$4D  Output: A=$5A X=$DF Y=$20 P=$31 M=$4D
+  1329 2CE4 02 AF 33				dta	$02,$AF,$33 ;Input: A=$15 Y=$AF P=$73 M=$96  Output: A=$15 X=$50 Y=$AF P=$33 M=$96
+  1330 2CE7 FD 32				dta	$FD,$32 ;Input: A=$61 Y=$FD P=$72 M=$AC  Output: A=$61 X=$02 Y=$FD P=$32 M=$AC
+  1331 2CE9 00 A2				dta	$00,$A2 ;Input: A=$B6 Y=$A2 P=$B4 M=$99  Output: A=$B6 X=$5D Y=$A2 P=$B4 M=$99
+  1332 2CEB 31					dta	$31 ;Input: A=$B0 Y=$31 P=$B0 M=$B0  Output: A=$B0 X=$CE Y=$31 P=$B0 M=$B0
+  1333 2CEC B3					dta	$B3 ;Input: A=$1C Y=$B3 P=$B7 M=$03  Output: A=$1C X=$4C Y=$B3 P=$B7 M=$03
+  1334 2CED DA					dta	$DA ;Input: A=$D7 Y=$DA P=$B1 M=$71  Output: A=$D7 X=$25 Y=$DA P=$B1 M=$71
+  1335 2CEE 02 09 B6				dta	$02,$09,$B6 ;Input: A=$31 Y=$09 P=$F6 M=$DA  Output: A=$31 X=$F6 Y=$09 P=$B6 M=$DA
+  1336
+  1337 						; $B9  LDA abs,y
+  1338 2CF1 EA					dta	$EA
+  1339 2CF2 F0 B9 6C 00 61 95			dta	$F0,$B9,$6C,$00,$61,$95 ;Input: A=$8A Y=$61 P=$B1 M=$95  Output: A=$95 X=$9E Y=$61 P=$B1 M=$95
+  1340 2CF8 50 58 75 96				dta	$50,$58,$75,$96 ;Input: A=$52 Y=$75 P=$F5 M=$96  Output: A=$96 X=$8A Y=$75 P=$F5 M=$96
+  1341 2CFC 52 7D 50 1C 71			dta	$52,$7D,$50,$1C,$71 ;Input: A=$DF Y=$50 P=$F1 M=$1C  Output: A=$1C X=$AF Y=$50 P=$71 M=$1C
+  1342 2D01 60 6D B1 B4				dta	$60,$6D,$B1,$B4 ;Input: A=$B2 Y=$6D P=$34 M=$B1  Output: A=$B1 X=$92 Y=$6D P=$B4 M=$B1
+  1343 2D05 50 6A 63 FD				dta	$50,$6A,$63,$FD ;Input: A=$37 Y=$63 P=$F5 M=$FD  Output: A=$FD X=$9C Y=$63 P=$F5 M=$FD
+  1344 2D09 90 3D AC				dta	$90,$3D,$AC ;Input: A=$EC Y=$3D P=$B4 M=$AC  Output: A=$AC X=$C2 Y=$3D P=$B4 M=$AC
+  1345 2D0C 52 6C 61 4E 75			dta	$52,$6C,$61,$4E,$75 ;Input: A=$A8 Y=$61 P=$F5 M=$4E  Output: A=$4E X=$9E Y=$61 P=$75 M=$4E
+  1346 2D11 54 79 D8 F5				dta	$54,$79,$D8,$F5 ;Input: A=$74 Y=$79 P=$77 M=$D8  Output: A=$D8 X=$86 Y=$79 P=$F5 M=$D8
+  1347
+  1348 						; $BC  LDY abs,x
+  1349 2D15 EE					dta	$EE
+  1350 2D16 E6 BC 7A 00 AC A5 + 		dta	$E6,$BC,$7A,$00,$AC,$A5,$F0 ;Input: A=$64 Y=$AC P=$F2 M=$A5  Output: A=$64 X=$53 Y=$A5 P=$F0 M=$A5
+  1351 2D1D 44 84 B6 64				dta	$44,$84,$B6,$64 ;Input: A=$B4 Y=$B6 P=$70 M=$64  Output: A=$B4 X=$49 Y=$64 P=$70 M=$64
+  1352 2D21 46 65 97 09 30			dta	$46,$65,$97,$09,$30 ;Input: A=$37 Y=$97 P=$32 M=$09  Output: A=$37 X=$68 Y=$09 P=$30 M=$09
+  1353 2D26 C7 F9 6A 74				dta	$C7,$F9,$6A,$74 ;Input: A=$0E Y=$F9 P=$F6 M=$6A  Output: A=$0E X=$06 Y=$6A P=$74 M=$6A
+  1354 2D2A 06 F9 21 71				dta	$06,$F9,$21,$71 ;Input: A=$AF Y=$F9 P=$F1 M=$21  Output: A=$AF X=$06 Y=$21 P=$71 M=$21
+  1355 2D2E 44 BE F0 6B				dta	$44,$BE,$F0,$6B ;Input: A=$53 Y=$F0 P=$31 M=$6B  Output: A=$53 X=$0F Y=$6B P=$31 M=$6B
+  1356 2D32 46 4E 80 AF F0			dta	$46,$4E,$80,$AF,$F0 ;Input: A=$03 Y=$80 P=$70 M=$AF  Output: A=$03 X=$7F Y=$AF P=$F0 M=$AF
+  1357 2D37 AE E0 5B 71				dta	$AE,$E0,$5B,$71 ;Input: A=$BA Y=$E0 P=$73 M=$5B  Output: A=$BA X=$1F Y=$5B P=$71 M=$5B
+  1358
+  1359 						; $BD  LDA abs,x
+  1360 2D3B E0					dta	$E0
+  1361 2D3C F2 BD 95 00 C7 48 + 		dta	$F2,$BD,$95,$00,$C7,$48,$75 ;Input: A=$9B Y=$C7 P=$F5 M=$48  Output: A=$48 X=$38 Y=$C7 P=$75 M=$48
+  1362 2D43 50 AD DF 58				dta	$50,$AD,$DF,$58 ;Input: A=$D6 Y=$DF P=$30 M=$58  Output: A=$58 X=$20 Y=$DF P=$30 M=$58
+  1363 2D47 52 78 AA EC F1			dta	$52,$78,$AA,$EC,$F1 ;Input: A=$2F Y=$AA P=$71 M=$EC  Output: A=$EC X=$55 Y=$AA P=$F1 M=$EC
+  1364 2D4C 91 C3 38 70				dta	$91,$C3,$38,$70 ;Input: A=$6D Y=$C3 P=$F2 M=$38  Output: A=$38 X=$3C Y=$C3 P=$70 M=$38
+  1365 2D50 A7 D9 48 31				dta	$A7,$D9,$48,$31 ;Input: A=$FB Y=$D9 P=$B3 M=$48  Output: A=$48 X=$26 Y=$D9 P=$31 M=$48
+  1366 2D54 A8 DA 26 35				dta	$A8,$DA,$26,$35 ;Input: A=$EC Y=$DA P=$B5 M=$26  Output: A=$26 X=$25 Y=$DA P=$35 M=$26
+  1367 2D58 79 AB ED F1				dta	$79,$AB,$ED,$F1 ;Input: A=$33 Y=$AB P=$F3 M=$ED  Output: A=$ED X=$54 Y=$AB P=$F1 M=$ED
+  1368 2D5C AA DC C1 B5				dta	$AA,$DC,$C1,$B5 ;Input: A=$45 Y=$DC P=$35 M=$C1  Output: A=$C1 X=$23 Y=$DC P=$B5 M=$C1
+  1369
+  1370 						; $BE  LDX abs,y
+  1371 2D60 F0					dta	$F0
+  1372 2D61 EA BE 98 00 35 EA + 		dta	$EA,$BE,$98,$00,$35,$EA,$F1 ;Input: A=$0A Y=$35 P=$F3 M=$EA  Output: A=$0A X=$EA Y=$35 P=$F1 M=$EA
+  1373 2D68 4A B0 1D 07 70			dta	$4A,$B0,$1D,$07,$70 ;Input: A=$4F Y=$1D P=$72 M=$07  Output: A=$4F X=$07 Y=$1D P=$70 M=$07
+  1374 2D6D 48 B1 1C BD				dta	$48,$B1,$1C,$BD ;Input: A=$B0 Y=$1C P=$F1 M=$BD  Output: A=$B0 X=$BD Y=$1C P=$F1 M=$BD
+  1375 2D71 4A C6 07 01 71			dta	$4A,$C6,$07,$01,$71 ;Input: A=$A6 Y=$07 P=$F1 M=$01  Output: A=$A6 X=$01 Y=$07 P=$71 M=$01
+  1376 2D76 A6 27 83 F0				dta	$A6,$27,$83,$F0 ;Input: A=$C5 Y=$27 P=$F2 M=$83  Output: A=$C5 X=$83 Y=$27 P=$F0 M=$83
+  1377 2D7A 85 48 24 30				dta	$85,$48,$24,$30 ;Input: A=$DF Y=$48 P=$B2 M=$24  Output: A=$DF X=$24 Y=$48 P=$30 M=$24
+  1378 2D7E B5 18 5B 34				dta	$B5,$18,$5B,$34 ;Input: A=$A2 Y=$18 P=$B6 M=$5B  Output: A=$A2 X=$5B Y=$18 P=$34 M=$5B
+  1379 2D82 85 48 AA F5				dta	$85,$48,$AA,$F5 ;Input: A=$61 Y=$48 P=$75 M=$AA  Output: A=$61 X=$AA Y=$48 P=$F5 M=$AA
+  1380
+  1381 						; $C0  CPY #imm
+  1382 2D86 C3					dta	$C3
+  1383 2D87 C2 C0 6E BD 35			dta	$C2,$C0,$6E,$BD,$35 ;Input: A=$4A Y=$BD P=$36 M=$1F  Output: A=$4A X=$42 Y=$BD P=$35 M=$1F
+  1384 2D8C 42 F1 DE F4				dta	$42,$F1,$DE,$F4 ;Input: A=$BF Y=$DE P=$75 M=$B9  Output: A=$BF X=$21 Y=$DE P=$F4 M=$B9
+  1385 2D90 A1 C2 35				dta	$A1,$C2,$35 ;Input: A=$5A Y=$C2 P=$B5 M=$A1  Output: A=$5A X=$3D Y=$C2 P=$35 M=$A1
+  1386 2D93 0E C3 B1				dta	$0E,$C3,$B1 ;Input: A=$C8 Y=$C3 P=$B3 M=$17  Output: A=$C8 X=$3C Y=$C3 P=$B1 M=$17
+  1387 2D96 B5 49 B0				dta	$B5,$49,$B0 ;Input: A=$3A Y=$49 P=$32 M=$12  Output: A=$3A X=$B6 Y=$49 P=$B0 M=$12
+  1388 2D99 80 C7 31				dta	$80,$C7,$31 ;Input: A=$0E Y=$C7 P=$30 M=$D2  Output: A=$0E X=$38 Y=$C7 P=$31 M=$D2
+  1389 2D9C 40 3E BC				dta	$40,$3E,$BC ;Input: A=$B2 Y=$BC P=$75 M=$72  Output: A=$B2 X=$43 Y=$BC P=$75 M=$72
+  1390 2D9F 42 0B C2 B1				dta	$42,$0B,$C2,$B1 ;Input: A=$C8 Y=$C2 P=$33 M=$E7  Output: A=$C8 X=$3D Y=$C2 P=$B1 M=$E7
+  1391
+  1392 						; $C1  CMP (zp,x)
+  1393 2DA3 C0					dta	$C0
+  1394 2DA4 C2 C1 A5 E2 71			dta	$C2,$C1,$A5,$E2,$71 ;Input: A=$DF Y=$E2 P=$72 M=$85  Output: A=$DF X=$1D Y=$E2 P=$71 M=$85
+  1395 2DA9 42 91 CE B5				dta	$42,$91,$CE,$B5 ;Input: A=$DE Y=$CE P=$B6 M=$19  Output: A=$DE X=$31 Y=$CE P=$B5 M=$19
+  1396 2DAD 74 B1 75				dta	$74,$B1,$75 ;Input: A=$E3 Y=$B1 P=$77 M=$B2  Output: A=$E3 X=$4E Y=$B1 P=$75 M=$B2
+  1397 2DB0 76 B3 31				dta	$76,$B3,$31 ;Input: A=$95 Y=$B3 P=$33 M=$4D  Output: A=$95 X=$4C Y=$B3 P=$31 M=$4D
+  1398 2DB3 27 64 B0				dta	$27,$64,$B0 ;Input: A=$A3 Y=$64 P=$31 M=$F3  Output: A=$A3 X=$9B Y=$64 P=$B0 M=$F3
+  1399 2DB6 66 A3 B4				dta	$66,$A3,$B4 ;Input: A=$55 Y=$A3 P=$36 M=$C9  Output: A=$55 X=$5C Y=$A3 P=$B4 M=$C9
+  1400 2DB9 90 CD F4				dta	$90,$CD,$F4 ;Input: A=$73 Y=$CD P=$75 M=$C7  Output: A=$73 X=$32 Y=$CD P=$F4 M=$C7
+  1401 2DBC EB 28 31				dta	$EB,$28,$31 ;Input: A=$13 Y=$28 P=$B0 M=$07  Output: A=$13 X=$D7 Y=$28 P=$31 M=$07
+  1402
+  1403 						; $C4  CPY zp
+  1404 2DBF CD					dta	$CD
+  1405 2DC0 C2 C4 CD EB B5			dta	$C2,$C4,$CD,$EB,$B5 ;Input: A=$5E Y=$EB P=$B7 M=$4D  Output: A=$5E X=$14 Y=$EB P=$B5 M=$4D
+  1406 2DC5 02 5A B0				dta	$02,$5A,$B0 ;Input: A=$42 Y=$5A P=$32 M=$77  Output: A=$42 X=$A5 Y=$5A P=$B0 M=$77
+  1407 2DC8 BF F4				dta	$BF,$F4 ;Input: A=$53 Y=$BF P=$77 M=$C6  Output: A=$53 X=$40 Y=$BF P=$F4 M=$C6
+  1408 2DCA 55 35				dta	$55,$35 ;Input: A=$41 Y=$55 P=$34 M=$49  Output: A=$41 X=$AA Y=$55 P=$35 M=$49
+  1409 2DCC 00 5C				dta	$00,$5C ;Input: A=$33 Y=$5C P=$B0 M=$DB  Output: A=$33 X=$A3 Y=$5C P=$B0 M=$DB
+  1410 2DCE 02 EA 35				dta	$02,$EA,$35 ;Input: A=$30 Y=$EA P=$37 M=$B3  Output: A=$30 X=$15 Y=$EA P=$35 M=$B3
+  1411 2DD1 3E F4				dta	$3E,$F4 ;Input: A=$4F Y=$3E P=$F6 M=$66  Output: A=$4F X=$C1 Y=$3E P=$F4 M=$66
+  1412 2DD3 00 95				dta	$00,$95 ;Input: A=$FE Y=$95 P=$31 M=$3F  Output: A=$FE X=$6A Y=$95 P=$31 M=$3F
+  1413
+  1414 						; $C5  CMP zp
+  1415 2DD5 C5					dta	$C5
+  1416 2DD6 C0 C5 CD DC				dta	$C0,$C5,$CD,$DC ;Input: A=$FA Y=$DC P=$F5 M=$5D  Output: A=$FA X=$23 Y=$DC P=$F5 M=$5D
+  1417 2DDA 02 AF 71				dta	$02,$AF,$71 ;Input: A=$AC Y=$AF P=$70 M=$6C  Output: A=$AC X=$50 Y=$AF P=$71 M=$6C
+  1418 2DDD 80 B5				dta	$80,$B5 ;Input: A=$A3 Y=$80 P=$B4 M=$0F  Output: A=$A3 X=$7F Y=$80 P=$B5 M=$0F
+  1419 2DDF E5 71				dta	$E5,$71 ;Input: A=$7C Y=$E5 P=$F0 M=$50  Output: A=$7C X=$1A Y=$E5 P=$71 M=$50
+  1420 2DE1 57 F0				dta	$57,$F0 ;Input: A=$04 Y=$57 P=$72 M=$2E  Output: A=$04 X=$A8 Y=$57 P=$F0 M=$2E
+  1421 2DE3 00 E9				dta	$00,$E9 ;Input: A=$5D Y=$E9 P=$31 M=$37  Output: A=$5D X=$16 Y=$E9 P=$31 M=$37
+  1422 2DE5 C4					dta	$C4 ;Input: A=$AB Y=$C4 P=$35 M=$79  Output: A=$AB X=$3B Y=$C4 P=$35 M=$79
+  1423 2DE6 02 67 F4				dta	$02,$67,$F4 ;Input: A=$00 Y=$67 P=$74 M=$64  Output: A=$00 X=$98 Y=$67 P=$F4 M=$64
+  1424
+  1425 						; $C6  DEC zp
+  1426 2DE9 CC					dta	$CC
+  1427 2DEA C3 C6 CD FA 30 05			dta	$C3,$C6,$CD,$FA,$30,$05 ;Input: A=$66 Y=$FA P=$B0 M=$06  Output: A=$66 X=$05 Y=$FA P=$30 M=$05
+  1428 2DF0 03 3B 34 14				dta	$03,$3B,$34,$14 ;Input: A=$A8 Y=$3B P=$B6 M=$15  Output: A=$A8 X=$C4 Y=$3B P=$34 M=$14
+  1429 2DF4 CA B5 8F				dta	$CA,$B5,$8F ;Input: A=$F7 Y=$CA P=$35 M=$90  Output: A=$F7 X=$35 Y=$CA P=$B5 M=$8F
+  1430 2DF7 E1 74 4B				dta	$E1,$74,$4B ;Input: A=$E2 Y=$E1 P=$76 M=$4C  Output: A=$E2 X=$1E Y=$E1 P=$74 M=$4B
+  1431 2DFA 01 B9 E9				dta	$01,$B9,$E9 ;Input: A=$7B Y=$B9 P=$B4 M=$EA  Output: A=$7B X=$46 Y=$B9 P=$B4 M=$E9
+  1432 2DFD 03 2D 34 77				dta	$03,$2D,$34,$77 ;Input: A=$84 Y=$2D P=$B4 M=$78  Output: A=$84 X=$D2 Y=$2D P=$34 M=$77
+  1433 2E01 56 B4 BB				dta	$56,$B4,$BB ;Input: A=$CA Y=$56 P=$B6 M=$BC  Output: A=$CA X=$A9 Y=$56 P=$B4 M=$BB
+  1434 2E04 3C 74 25				dta	$3C,$74,$25 ;Input: A=$5B Y=$3C P=$76 M=$26  Output: A=$5B X=$C3 Y=$3C P=$74 M=$25
+  1435
+  1436 						; $C8  INY
+  1437 2E07 C7					dta	$C7
+  1438 2E08 86 C8 CB CC B0			dta	$86,$C8,$CB,$CC,$B0 ;Input: A=$8A Y=$CB P=$30 M=$1C  Output: A=$8A X=$34 Y=$CC P=$B0 M=$1C
+  1439 2E0D 06 AA AB B1				dta	$06,$AA,$AB,$B1 ;Input: A=$93 Y=$AA P=$B3 M=$42  Output: A=$93 X=$55 Y=$AB P=$B1 M=$42
+  1440 2E11 B1 B2 B4				dta	$B1,$B2,$B4 ;Input: A=$B1 Y=$B1 P=$36 M=$B2  Output: A=$B1 X=$4E Y=$B2 P=$B4 M=$B2
+  1441 2E14 05 06 70				dta	$05,$06,$70 ;Input: A=$B5 Y=$05 P=$F2 M=$09  Output: A=$B5 X=$FA Y=$06 P=$70 M=$09
+  1442 2E17 29 2A 35				dta	$29,$2A,$35 ;Input: A=$63 Y=$29 P=$37 M=$B0  Output: A=$63 X=$D6 Y=$2A P=$35 M=$B0
+  1443 2E1A 04 82 83				dta	$04,$82,$83 ;Input: A=$81 Y=$82 P=$B0 M=$A6  Output: A=$81 X=$7D Y=$83 P=$B0 M=$A6
+  1444 2E1D 06 28 29 70				dta	$06,$28,$29,$70 ;Input: A=$D9 Y=$28 P=$72 M=$D5  Output: A=$D9 X=$D7 Y=$29 P=$70 M=$D5
+  1445 2E21 04 EF F0				dta	$04,$EF,$F0 ;Input: A=$1A Y=$EF P=$B1 M=$F9  Output: A=$1A X=$10 Y=$F0 P=$B1 M=$F9
+  1446
+  1447 						; $C9  CMP #imm
+  1448 2E24 C0					dta	$C0
+  1449 2E25 C2 C9 42 12 F0			dta	$C2,$C9,$42,$12,$F0 ;Input: A=$3E Y=$12 P=$72 M=$F4  Output: A=$3E X=$ED Y=$12 P=$F0 M=$F4
+  1450 2E2A 42 3F E9 F5				dta	$42,$3F,$E9,$F5 ;Input: A=$C1 Y=$E9 P=$75 M=$75  Output: A=$C1 X=$16 Y=$E9 P=$F5 M=$75
+  1451 2E2E 31 8B F4				dta	$31,$8B,$F4 ;Input: A=$0D Y=$8B P=$F5 M=$09  Output: A=$0D X=$74 Y=$8B P=$F4 M=$09
+  1452 2E31 B1 4F 30				dta	$B1,$4F,$30 ;Input: A=$07 Y=$4F P=$B0 M=$9E  Output: A=$07 X=$B0 Y=$4F P=$30 M=$9E
+  1453 2E34 77 8A 35				dta	$77,$8A,$35 ;Input: A=$D9 Y=$8A P=$36 M=$67  Output: A=$D9 X=$75 Y=$8A P=$35 M=$67
+  1454 2E37 90 F7 F0				dta	$90,$F7,$F0 ;Input: A=$2C Y=$F7 P=$71 M=$95  Output: A=$2C X=$08 Y=$F7 P=$F0 M=$95
+  1455 2E3A 04 AE F1				dta	$04,$AE,$F1 ;Input: A=$97 Y=$AE P=$71 M=$58  Output: A=$97 X=$51 Y=$AE P=$F1 M=$58
+  1456 2E3D ED 9F 74				dta	$ED,$9F,$74 ;Input: A=$01 Y=$9F P=$F7 M=$BC  Output: A=$01 X=$60 Y=$9F P=$74 M=$BC
+  1457
+  1458 						; $CA  DEX
+  1459 2E40 C0					dta	$C0
+  1460 2E41 8A CA D6 28 31			dta	$8A,$CA,$D6,$28,$31 ;Input: A=$09 Y=$D6 P=$33 M=$68  Output: A=$09 X=$28 Y=$D6 P=$31 M=$68
+  1461 2E46 0A 26 D8 F1				dta	$0A,$26,$D8,$F1 ;Input: A=$E6 Y=$26 P=$71 M=$4F  Output: A=$E6 X=$D8 Y=$26 P=$F1 M=$4F
+  1462 2E4A EC 12 71				dta	$EC,$12,$71 ;Input: A=$A7 Y=$EC P=$F3 M=$1A  Output: A=$A7 X=$12 Y=$EC P=$71 M=$1A
+  1463 2E4D FC 02 35				dta	$FC,$02,$35 ;Input: A=$4F Y=$FC P=$B7 M=$33  Output: A=$4F X=$02 Y=$FC P=$35 M=$33
+  1464 2E50 01 FD F5				dta	$01,$FD,$F5 ;Input: A=$7E Y=$01 P=$F7 M=$DB  Output: A=$7E X=$FD Y=$01 P=$F5 M=$DB
+  1465 2E53 D7 27 70				dta	$D7,$27,$70 ;Input: A=$BB Y=$D7 P=$F2 M=$CC  Output: A=$BB X=$27 Y=$D7 P=$70 M=$CC
+  1466 2E56 9F 5F 30				dta	$9F,$5F,$30 ;Input: A=$B5 Y=$9F P=$B2 M=$58  Output: A=$B5 X=$5F Y=$9F P=$30 M=$58
+  1467 2E59 A7 57 75				dta	$A7,$57,$75 ;Input: A=$03 Y=$A7 P=$77 M=$6F  Output: A=$03 X=$57 Y=$A7 P=$75 M=$6F
+  1468
+  1469 						; $CC  CPY abs
+  1470 2E5C CA					dta	$CA
+  1471 2E5D E2 CC CD 00 5A 70			dta	$E2,$CC,$CD,$00,$5A,$70 ;Input: A=$85 Y=$5A P=$71 M=$F5  Output: A=$85 X=$A5 Y=$5A P=$70 M=$F5
+  1472 2E63 02 CD B1				dta	$02,$CD,$B1 ;Input: A=$2B Y=$CD P=$31 M=$3A  Output: A=$2B X=$32 Y=$CD P=$B1 M=$3A
+  1473 2E66 A9 F5				dta	$A9,$F5 ;Input: A=$F0 Y=$A9 P=$77 M=$1D  Output: A=$F0 X=$56 Y=$A9 P=$F5 M=$1D
+  1474 2E68 87 75				dta	$87,$75 ;Input: A=$14 Y=$87 P=$74 M=$71  Output: A=$14 X=$78 Y=$87 P=$75 M=$71
+  1475 2E6A 00 F4				dta	$00,$F4 ;Input: A=$62 Y=$F4 P=$F1 M=$2C  Output: A=$62 X=$0B Y=$F4 P=$F1 M=$2C
+  1476 2E6C AF					dta	$AF ;Input: A=$A0 Y=$AF P=$F5 M=$05  Output: A=$A0 X=$50 Y=$AF P=$F5 M=$05
+  1477 2E6D 02 EE 35				dta	$02,$EE,$35 ;Input: A=$E7 Y=$EE P=$B5 M=$8A  Output: A=$E7 X=$11 Y=$EE P=$35 M=$8A
+  1478 2E70 A6 71				dta	$A6,$71 ;Input: A=$96 Y=$A6 P=$72 M=$33  Output: A=$96 X=$59 Y=$A6 P=$71 M=$33
+  1479
+  1480 						; $CD  CMP abs
+  1481 2E72 C0					dta	$C0
+  1482 2E73 E2 CD CD 00 25 35			dta	$E2,$CD,$CD,$00,$25,$35 ;Input: A=$5F Y=$25 P=$B4 M=$39  Output: A=$5F X=$DA Y=$25 P=$35 M=$39
+  1483 2E79 02 8B F0				dta	$02,$8B,$F0 ;Input: A=$3D Y=$8B P=$F1 M=$46  Output: A=$3D X=$74 Y=$8B P=$F0 M=$46
+  1484 2E7C D8 75				dta	$D8,$75 ;Input: A=$F9 Y=$D8 P=$F4 M=$E7  Output: A=$F9 X=$27 Y=$D8 P=$75 M=$E7
+  1485 2E7E B0 F4				dta	$B0,$F4 ;Input: A=$00 Y=$B0 P=$F5 M=$59  Output: A=$00 X=$4F Y=$B0 P=$F4 M=$59
+  1486 2E80 08 F5				dta	$08,$F5 ;Input: A=$DC Y=$08 P=$76 M=$56  Output: A=$DC X=$F7 Y=$08 P=$F5 M=$56
+  1487 2E82 4E 75				dta	$4E,$75 ;Input: A=$86 Y=$4E P=$F5 M=$28  Output: A=$86 X=$B1 Y=$4E P=$75 M=$28
+  1488 2E84 D1 F1				dta	$D1,$F1 ;Input: A=$D6 Y=$D1 P=$72 M=$0C  Output: A=$D6 X=$2E Y=$D1 P=$F1 M=$0C
+  1489 2E86 77 F4				dta	$77,$F4 ;Input: A=$56 Y=$77 P=$F5 M=$71  Output: A=$56 X=$88 Y=$77 P=$F4 M=$71
+  1490
+  1491 						; $CE  DEC abs
+  1492 2E88 F0					dta	$F0
+  1493 2E89 E1 CE CD 00 FB 8D			dta	$E1,$CE,$CD,$00,$FB,$8D ;Input: A=$7B Y=$FB P=$F4 M=$8E  Output: A=$7B X=$04 Y=$FB P=$F4 M=$8D
+  1494 2E8F 03 4D 74 58				dta	$03,$4D,$74,$58 ;Input: A=$B6 Y=$4D P=$F4 M=$59  Output: A=$B6 X=$B2 Y=$4D P=$74 M=$58
+  1495 2E93 01 CD 6A				dta	$01,$CD,$6A ;Input: A=$9A Y=$CD P=$30 M=$6B  Output: A=$9A X=$32 Y=$CD P=$30 M=$6A
+  1496 2E96 03 72 B5 85				dta	$03,$72,$B5,$85 ;Input: A=$92 Y=$72 P=$37 M=$86  Output: A=$92 X=$8D Y=$72 P=$B5 M=$85
+  1497 2E9A 21 B5 8B				dta	$21,$B5,$8B ;Input: A=$9C Y=$21 P=$37 M=$8C  Output: A=$9C X=$DE Y=$21 P=$B5 M=$8B
+  1498 2E9D BF 70 11				dta	$BF,$70,$11 ;Input: A=$EC Y=$BF P=$F2 M=$12  Output: A=$EC X=$40 Y=$BF P=$70 M=$11
+  1499 2EA0 BE 71 15				dta	$BE,$71,$15 ;Input: A=$C4 Y=$BE P=$F1 M=$16  Output: A=$C4 X=$41 Y=$BE P=$71 M=$15
+  1500 2EA3 39 71 24				dta	$39,$71,$24 ;Input: A=$8E Y=$39 P=$F1 M=$25  Output: A=$8E X=$C6 Y=$39 P=$71 M=$24
+  1501
+  1502 						; $D1  CMP (zp),y
+  1503 2EA6 C3					dta	$C3
+  1504 2EA7 C2 D1 C4 01 71			dta	$C2,$D1,$C4,$01,$71 ;Input: A=$B7 Y=$01 P=$70 M=$6D  Output: A=$B7 X=$FE Y=$01 P=$71 M=$6D
+  1505 2EAC 42 C2 00 71				dta	$42,$C2,$00,$71 ;Input: A=$5E Y=$00 P=$F1 M=$5D  Output: A=$5E X=$FF Y=$00 P=$71 M=$5D
+  1506 2EB0 C4 01 F4				dta	$C4,$01,$F4 ;Input: A=$33 Y=$01 P=$76 M=$5F  Output: A=$33 X=$FE Y=$01 P=$F4 M=$5F
+  1507 2EB3 C2 00 B0				dta	$C2,$00,$B0 ;Input: A=$21 Y=$00 P=$B3 M=$62  Output: A=$21 X=$FF Y=$00 P=$B0 M=$62
+  1508 2EB6 C4 01 71				dta	$C4,$01,$71 ;Input: A=$CF Y=$01 P=$73 M=$5A  Output: A=$CF X=$FE Y=$01 P=$71 M=$5A
+  1509 2EB9 C2 00 B4				dta	$C2,$00,$B4 ;Input: A=$19 Y=$00 P=$34 M=$32  Output: A=$19 X=$FF Y=$00 P=$B4 M=$32
+  1510 2EBC 02 00 75				dta	$02,$00,$75 ;Input: A=$5B Y=$00 P=$77 M=$3D  Output: A=$5B X=$FF Y=$00 P=$75 M=$3D
+  1511 2EBF 42 C4 01 74				dta	$42,$C4,$01,$74 ;Input: A=$24 Y=$01 P=$F6 M=$B1  Output: A=$24 X=$FE Y=$01 P=$74 M=$B1
+  1512
+  1513 						; $D5  CMP zp,x
+  1514 2EC3 C0					dta	$C0
+  1515 2EC4 C2 D5 EB 1D F1			dta	$C2,$D5,$EB,$1D,$F1 ;Input: A=$EA Y=$1D P=$71 M=$0D  Output: A=$EA X=$E2 Y=$1D P=$F1 M=$0D
+  1516 2EC9 42 A0 D2 75				dta	$42,$A0,$D2,$75 ;Input: A=$62 Y=$D2 P=$F4 M=$1C  Output: A=$62 X=$2D Y=$D2 P=$75 M=$1C
+  1517 2ECD 6C 9E 31				dta	$6C,$9E,$31 ;Input: A=$C2 Y=$9E P=$33 M=$97  Output: A=$C2 X=$61 Y=$9E P=$31 M=$97
+  1518 2ED0 C4 F6 70				dta	$C4,$F6,$70 ;Input: A=$17 Y=$F6 P=$F2 M=$99  Output: A=$17 X=$09 Y=$F6 P=$70 M=$99
+  1519 2ED3 07 39 34				dta	$07,$39,$34 ;Input: A=$03 Y=$39 P=$B6 M=$D0  Output: A=$03 X=$C6 Y=$39 P=$34 M=$D0
+  1520 2ED6 5C 8E 35				dta	$5C,$8E,$35 ;Input: A=$76 Y=$8E P=$B7 M=$4E  Output: A=$76 X=$71 Y=$8E P=$35 M=$4E
+  1521 2ED9 92 C4 F0				dta	$92,$C4,$F0 ;Input: A=$52 Y=$C4 P=$70 M=$A9  Output: A=$52 X=$3B Y=$C4 P=$F0 M=$A9
+  1522 2EDC 0E 40 74				dta	$0E,$40,$74 ;Input: A=$30 Y=$40 P=$77 M=$D1  Output: A=$30 X=$BF Y=$40 P=$74 M=$D1
+  1523
+  1524 						; $D6  DEC zp,x
+  1525 2EDF CC					dta	$CC
+  1526 2EE0 C3 D6 00 32 B4 E4			dta	$C3,$D6,$00,$32,$B4,$E4 ;Input: A=$20 Y=$32 P=$36 M=$E5  Output: A=$20 X=$CD Y=$32 P=$B4 M=$E4
+  1527 2EE6 43 7D AF 34 12			dta	$43,$7D,$AF,$34,$12 ;Input: A=$27 Y=$AF P=$B4 M=$13  Output: A=$27 X=$50 Y=$AF P=$34 M=$12
+  1528 2EEB 32 64 34 05				dta	$32,$64,$34,$05 ;Input: A=$CC Y=$64 P=$36 M=$06  Output: A=$CC X=$9B Y=$64 P=$34 M=$05
+  1529 2EEF C0 F2 F1 92				dta	$C0,$F2,$F1,$92 ;Input: A=$BF Y=$F2 P=$71 M=$93  Output: A=$BF X=$0D Y=$F2 P=$F1 M=$92
+  1530 2EF3 41 0F 41 D7				dta	$41,$0F,$41,$D7 ;Input: A=$45 Y=$41 P=$B5 M=$D8  Output: A=$45 X=$BE Y=$41 P=$B5 M=$D7
+  1531 2EF7 43 14 46 71 5E			dta	$43,$14,$46,$71,$5E ;Input: A=$6A Y=$46 P=$F3 M=$5F  Output: A=$6A X=$B9 Y=$46 P=$71 M=$5E
+  1532 2EFC D7 09 B1 F8				dta	$D7,$09,$B1,$F8 ;Input: A=$10 Y=$09 P=$33 M=$F9  Output: A=$10 X=$F6 Y=$09 P=$B1 M=$F8
+  1533 2F00 CD FF 74 5E				dta	$CD,$FF,$74,$5E ;Input: A=$29 Y=$FF P=$F6 M=$5F  Output: A=$29 X=$00 Y=$FF P=$74 M=$5E
+  1534
+  1535 						; $D8  CLD
+  1536 2F04 C0					dta	$C0
+  1537 2F05 80 D8 E6				dta	$80,$D8,$E6 ;Input: A=$73 Y=$E6 P=$F7 M=$D5  Output: A=$73 X=$19 Y=$E6 P=$F7 M=$D5
+  1538 2F08 00 C5				dta	$00,$C5 ;Input: A=$A3 Y=$C5 P=$34 M=$4A  Output: A=$A3 X=$3A Y=$C5 P=$34 M=$4A
+  1539 2F0A C5					dta	$C5 ;Input: A=$E8 Y=$C5 P=$30 M=$0F  Output: A=$E8 X=$3A Y=$C5 P=$30 M=$0F
+  1540 2F0B FC					dta	$FC ;Input: A=$29 Y=$FC P=$F0 M=$E2  Output: A=$29 X=$03 Y=$FC P=$F0 M=$E2
+  1541 2F0C 63					dta	$63 ;Input: A=$BA Y=$63 P=$F3 M=$2A  Output: A=$BA X=$9C Y=$63 P=$F3 M=$2A
+  1542 2F0D 84					dta	$84 ;Input: A=$C4 Y=$84 P=$F5 M=$8D  Output: A=$C4 X=$7B Y=$84 P=$F5 M=$8D
+  1543 2F0E AB					dta	$AB ;Input: A=$B8 Y=$AB P=$71 M=$86  Output: A=$B8 X=$54 Y=$AB P=$71 M=$86
+  1544 2F0F A3					dta	$A3 ;Input: A=$3D Y=$A3 P=$F3 M=$F2  Output: A=$3D X=$5C Y=$A3 P=$F3 M=$F2
+  1545
+  1546 						; $D9  CMP abs,y
+  1547 2F10 E0					dta	$E0
+  1548 2F11 E2 D9 8E 00 3F 71			dta	$E2,$D9,$8E,$00,$3F,$71 ;Input: A=$6A Y=$3F P=$70 M=$5D  Output: A=$6A X=$C0 Y=$3F P=$71 M=$5D
+  1549 2F17 02 3F 70				dta	$02,$3F,$70 ;Input: A=$30 Y=$3F P=$71 M=$E9  Output: A=$30 X=$C0 Y=$3F P=$70 M=$E9
+  1550 2F1A 42 78 55 B1				dta	$42,$78,$55,$B1 ;Input: A=$EB Y=$55 P=$32 M=$4E  Output: A=$EB X=$AA Y=$55 P=$B1 M=$4E
+  1551 2F1E 7C 51 75				dta	$7C,$51,$75 ;Input: A=$6B Y=$51 P=$F7 M=$10  Output: A=$6B X=$AE Y=$51 P=$75 M=$10
+  1552 2F21 89 44 31				dta	$89,$44,$31 ;Input: A=$E6 Y=$44 P=$32 M=$9E  Output: A=$E6 X=$BB Y=$44 P=$31 M=$9E
+  1553 2F24 B7 16 B0				dta	$B7,$16,$B0 ;Input: A=$C0 Y=$16 P=$31 M=$D2  Output: A=$C0 X=$E9 Y=$16 P=$B0 M=$D2
+  1554 2F27 6F 5E B4				dta	$6F,$5E,$B4 ;Input: A=$3A Y=$5E P=$34 M=$51  Output: A=$3A X=$A1 Y=$5E P=$B4 M=$51
+  1555 2F2A C5 08 75				dta	$C5,$08,$75 ;Input: A=$F8 Y=$08 P=$74 M=$B7  Output: A=$F8 X=$F7 Y=$08 P=$75 M=$B7
+  1556
+  1557 						; $DD  CMP abs,x
+  1558 2F2D CC					dta	$CC
+  1559 2F2E E2 DD 4F 00 81 75			dta	$E2,$DD,$4F,$00,$81,$75 ;Input: A=$54 Y=$81 P=$74 M=$2C  Output: A=$54 X=$7E Y=$81 P=$75 M=$2C
+  1560 2F34 42 5A 8C B0				dta	$42,$5A,$8C,$B0 ;Input: A=$61 Y=$8C P=$30 M=$9E  Output: A=$61 X=$73 Y=$8C P=$B0 M=$9E
+  1561 2F38 B7 E9 30				dta	$B7,$E9,$30 ;Input: A=$21 Y=$E9 P=$B0 M=$E6  Output: A=$21 X=$16 Y=$E9 P=$30 M=$E6
+  1562 2F3B BB ED B0				dta	$BB,$ED,$B0 ;Input: A=$3C Y=$ED P=$31 M=$7D  Output: A=$3C X=$12 Y=$ED P=$B0 M=$7D
+  1563 2F3E 40 96 C8				dta	$40,$96,$C8 ;Input: A=$55 Y=$C8 P=$35 M=$51  Output: A=$55 X=$37 Y=$C8 P=$35 M=$51
+  1564 2F41 42 57 89 75				dta	$42,$57,$89,$75 ;Input: A=$DD Y=$89 P=$F7 M=$8A  Output: A=$DD X=$76 Y=$89 P=$75 M=$8A
+  1565 2F45 67 99 71				dta	$67,$99,$71 ;Input: A=$CA Y=$99 P=$F2 M=$56  Output: A=$CA X=$66 Y=$99 P=$71 M=$56
+  1566 2F48 98 CA B4				dta	$98,$CA,$B4 ;Input: A=$97 Y=$CA P=$36 M=$A6  Output: A=$97 X=$35 Y=$CA P=$B4 M=$A6
+  1567
+  1568 						; $DE  DEC abs,x
+  1569 2F4B E3					dta	$E3
+  1570 2F4C E1 DE 7F 00 B1 52			dta	$E1,$DE,$7F,$00,$B1,$52 ;Input: A=$F0 Y=$B1 P=$35 M=$53  Output: A=$F0 X=$4E Y=$B1 P=$35 M=$52
+  1571 2F52 41 A6 D8 05				dta	$41,$A6,$D8,$05 ;Input: A=$AC Y=$D8 P=$70 M=$06  Output: A=$AC X=$27 Y=$D8 P=$70 M=$05
+  1572 2F56 43 65 97 F4 D0			dta	$43,$65,$97,$F4,$D0 ;Input: A=$AE Y=$97 P=$74 M=$D1  Output: A=$AE X=$68 Y=$97 P=$F4 M=$D0
+  1573 2F5B 5B 8D F4 D9				dta	$5B,$8D,$F4,$D9 ;Input: A=$63 Y=$8D P=$F6 M=$DA  Output: A=$63 X=$72 Y=$8D P=$F4 M=$D9
+  1574 2F5F 63 95 B4 B6				dta	$63,$95,$B4,$B6 ;Input: A=$6D Y=$95 P=$36 M=$B7  Output: A=$6D X=$6A Y=$95 P=$B4 M=$B6
+  1575 2F63 78 AA 71 42				dta	$78,$AA,$71,$42 ;Input: A=$C0 Y=$AA P=$73 M=$43  Output: A=$C0 X=$55 Y=$AA P=$71 M=$42
+  1576 2F67 41 5D 8F 23				dta	$41,$5D,$8F,$23 ;Input: A=$19 Y=$8F P=$30 M=$24  Output: A=$19 X=$70 Y=$8F P=$30 M=$23
+  1577 2F6B 43 96 C8 F5 C5			dta	$43,$96,$C8,$F5,$C5 ;Input: A=$44 Y=$C8 P=$77 M=$C6  Output: A=$44 X=$37 Y=$C8 P=$F5 M=$C5
+  1578
+  1579 						; $E0  CPX #imm
+  1580 2F70 C3					dta	$C3
+  1581 2F71 C2 E0 A3 14 35			dta	$C2,$E0,$A3,$14,$35 ;Input: A=$B5 Y=$14 P=$36 M=$49  Output: A=$B5 X=$EB Y=$14 P=$35 M=$49
+  1582 2F76 42 E8 91 B4				dta	$42,$E8,$91,$B4 ;Input: A=$0B Y=$91 P=$B7 M=$CD  Output: A=$0B X=$6E Y=$91 P=$B4 M=$CD
+  1583 2F7A 50 B3 B0				dta	$50,$B3,$B0 ;Input: A=$A0 Y=$B3 P=$33 M=$69  Output: A=$A0 X=$4C Y=$B3 P=$B0 M=$69
+  1584 2F7D 60 2F 31				dta	$60,$2F,$31 ;Input: A=$3C Y=$2F P=$B1 M=$17  Output: A=$3C X=$D0 Y=$2F P=$31 M=$17
+  1585 2F80 2B 90 75				dta	$2B,$90,$75 ;Input: A=$FA Y=$90 P=$F5 M=$2C  Output: A=$FA X=$6F Y=$90 P=$75 M=$2C
+  1586 2F83 E3 85 F0				dta	$E3,$85,$F0 ;Input: A=$8E Y=$85 P=$70 M=$0A  Output: A=$8E X=$7A Y=$85 P=$F0 M=$0A
+  1587 2F86 02 B7 34				dta	$02,$B7,$34 ;Input: A=$83 Y=$B7 P=$B6 M=$DB  Output: A=$83 X=$48 Y=$B7 P=$34 M=$DB
+  1588 2F89 42 20 1D B5				dta	$42,$20,$1D,$B5 ;Input: A=$C2 Y=$1D P=$B4 M=$88  Output: A=$C2 X=$E2 Y=$1D P=$B5 M=$88
+  1589
+  1590 						; $E1  SBC (zp,x)
+  1591 2F8D C0					dta	$C0
+  1592 2F8E D2 E1 F2 2F 24 31			dta	$D2,$E1,$F2,$2F,$24,$31 ;Input: A=$E3 Y=$2F P=$30 M=$BE  Output: A=$24 X=$D0 Y=$2F P=$31 M=$BE
+  1593 2F94 52 25 62 FD B0			dta	$52,$25,$62,$FD,$B0 ;Input: A=$23 Y=$62 P=$31 M=$26  Output: A=$FD X=$9D Y=$62 P=$B0 M=$26
+  1594 2F99 96 D3 21 75				dta	$96,$D3,$21,$75 ;Input: A=$98 Y=$D3 P=$B5 M=$77  Output: A=$21 X=$2C Y=$D3 P=$75 M=$77
+  1595 2F9D D3 10 34 31				dta	$D3,$10,$34,$31 ;Input: A=$7F Y=$10 P=$B3 M=$4B  Output: A=$34 X=$EF Y=$10 P=$31 M=$4B
+  1596 2FA1 20 5D C3 B0				dta	$20,$5D,$C3,$B0 ;Input: A=$A9 Y=$5D P=$33 M=$E6  Output: A=$C3 X=$A2 Y=$5D P=$B0 M=$E6
+  1597 2FA5 AB E8 10 31				dta	$AB,$E8,$10,$31 ;Input: A=$EE Y=$E8 P=$72 M=$DD  Output: A=$10 X=$17 Y=$E8 P=$31 M=$DD
+  1598 2FA9 87 C4 4E 30				dta	$87,$C4,$4E,$30 ;Input: A=$39 Y=$C4 P=$73 M=$EB  Output: A=$4E X=$3B Y=$C4 P=$30 M=$EB
+  1599 2FAD 6B A8 5C 34				dta	$6B,$A8,$5C,$34 ;Input: A=$3E Y=$A8 P=$75 M=$E2  Output: A=$5C X=$57 Y=$A8 P=$34 M=$E2
+  1600
+  1601 						; $E4  CPX zp
+  1602 2FB1 C6					dta	$C6
+  1603 2FB2 C2 E4 CD C8 F4			dta	$C2,$E4,$CD,$C8,$F4 ;Input: A=$D7 Y=$C8 P=$F7 M=$93  Output: A=$D7 X=$37 Y=$C8 P=$F4 M=$93
+  1604 2FB7 02 3A F1				dta	$02,$3A,$F1 ;Input: A=$EA Y=$3A P=$F2 M=$40  Output: A=$EA X=$C5 Y=$3A P=$F1 M=$40
+  1605 2FBA CA B4				dta	$CA,$B4 ;Input: A=$48 Y=$CA P=$36 M=$58  Output: A=$48 X=$35 Y=$CA P=$B4 M=$58
+  1606 2FBC 2C 35				dta	$2C,$35 ;Input: A=$E1 Y=$2C P=$B7 M=$C9  Output: A=$E1 X=$D3 Y=$2C P=$35 M=$C9
+  1607 2FBE E2 F0				dta	$E2,$F0 ;Input: A=$49 Y=$E2 P=$71 M=$4D  Output: A=$49 X=$1D Y=$E2 P=$F0 M=$4D
+  1608 2FC0 00 60				dta	$00,$60 ;Input: A=$0F Y=$60 P=$F4 M=$A0  Output: A=$0F X=$9F Y=$60 P=$F4 M=$A0
+  1609 2FC2 02 2C B5				dta	$02,$2C,$B5 ;Input: A=$BD Y=$2C P=$B4 M=$3D  Output: A=$BD X=$D3 Y=$2C P=$B5 M=$3D
+  1610 2FC5 05 F1				dta	$05,$F1 ;Input: A=$45 Y=$05 P=$71 M=$40  Output: A=$45 X=$FA Y=$05 P=$F1 M=$40
+  1611
+  1612 						; $E5  SBC zp
+  1613 2FC7 EB					dta	$EB
+  1614 2FC8 D2 E5 CD 62 12 31			dta	$D2,$E5,$CD,$62,$12,$31 ;Input: A=$EC Y=$62 P=$B3 M=$DA  Output: A=$12 X=$9D Y=$62 P=$31 M=$DA
+  1615 2FCE 12 C5 65 34				dta	$12,$C5,$65,$34 ;Input: A=$39 Y=$C5 P=$F7 M=$D4  Output: A=$65 X=$3A Y=$C5 P=$34 M=$D4
+  1616 2FD2 10 B0 26				dta	$10,$B0,$26 ;Input: A=$38 Y=$B0 P=$35 M=$12  Output: A=$26 X=$4F Y=$B0 P=$35 M=$12
+  1617 2FD5 40 9E				dta	$40,$9E ;Input: A=$73 Y=$40 P=$F0 M=$D4  Output: A=$9E X=$BF Y=$40 P=$F0 M=$D4
+  1618 2FD7 12 C3 FB B5				dta	$12,$C3,$FB,$B5 ;Input: A=$FC Y=$C3 P=$F6 M=$00  Output: A=$FB X=$3C Y=$C3 P=$B5 M=$00
+  1619 2FDB BA 00 37				dta	$BA,$00,$37 ;Input: A=$EB Y=$BA P=$B5 M=$EB  Output: A=$00 X=$45 Y=$BA P=$37 M=$EB
+  1620 2FDE 10 24 9D				dta	$10,$24,$9D ;Input: A=$BA Y=$24 P=$B5 M=$1D  Output: A=$9D X=$DB Y=$24 P=$B5 M=$1D
+  1621 2FE1 12 10 2C 31				dta	$12,$10,$2C,$31 ;Input: A=$CF Y=$10 P=$F1 M=$A3  Output: A=$2C X=$EF Y=$10 P=$31 M=$A3
+  1622
+  1623 						; $E6  INC zp
+  1624 2FE5 D8					dta	$D8
+  1625 2FE6 C1 E6 CD C4 D0			dta	$C1,$E6,$CD,$C4,$D0 ;Input: A=$78 Y=$C4 P=$B0 M=$CF  Output: A=$78 X=$3B Y=$C4 P=$B0 M=$D0
+  1626 2FEB 03 F1 B5 E4				dta	$03,$F1,$B5,$E4 ;Input: A=$98 Y=$F1 P=$B7 M=$E3  Output: A=$98 X=$0E Y=$F1 P=$B5 M=$E4
+  1627 2FEF D8 35 3C				dta	$D8,$35,$3C ;Input: A=$AE Y=$D8 P=$37 M=$3B  Output: A=$AE X=$27 Y=$D8 P=$35 M=$3C
+  1628 2FF2 01 4A 57				dta	$01,$4A,$57 ;Input: A=$BD Y=$4A P=$74 M=$56  Output: A=$BD X=$B5 Y=$4A P=$74 M=$57
+  1629 2FF5 03 E6 71 09				dta	$03,$E6,$71,$09 ;Input: A=$FB Y=$E6 P=$F1 M=$08  Output: A=$FB X=$19 Y=$E6 P=$71 M=$09
+  1630 2FF9 02 B1 CA				dta	$02,$B1,$CA ;Input: A=$98 Y=$02 P=$31 M=$C9  Output: A=$98 X=$FD Y=$02 P=$B1 M=$CA
+  1631 2FFC 20 F1 CC				dta	$20,$F1,$CC ;Input: A=$5A Y=$20 P=$73 M=$CB  Output: A=$5A X=$DF Y=$20 P=$F1 M=$CC
+  1632 2FFF E8 75 37				dta	$E8,$75,$37 ;Input: A=$A5 Y=$E8 P=$77 M=$36  Output: A=$A5 X=$17 Y=$E8 P=$75 M=$37
+  1633
+  1634 						; $E8  INX
+  1635 3002 C3					dta	$C3
+  1636 3003 8A E8 F2 0E 35			dta	$8A,$E8,$F2,$0E,$35 ;Input: A=$65 Y=$F2 P=$B5 M=$77  Output: A=$65 X=$0E Y=$F2 P=$35 M=$77
+  1637 3008 0A EA 16 31				dta	$0A,$EA,$16,$31 ;Input: A=$25 Y=$EA P=$B3 M=$63  Output: A=$25 X=$16 Y=$EA P=$31 M=$63
+  1638 300C D7 29 74				dta	$D7,$29,$74 ;Input: A=$F5 Y=$D7 P=$76 M=$16  Output: A=$F5 X=$29 Y=$D7 P=$74 M=$16
+  1639 300F 87 79 74				dta	$87,$79,$74 ;Input: A=$04 Y=$87 P=$F6 M=$A2  Output: A=$04 X=$79 Y=$87 P=$74 M=$A2
+  1640 3012 70 90 F1				dta	$70,$90,$F1 ;Input: A=$0B Y=$70 P=$71 M=$A7  Output: A=$0B X=$90 Y=$70 P=$F1 M=$A7
+  1641 3015 87 79 75				dta	$87,$79,$75 ;Input: A=$73 Y=$87 P=$F7 M=$42  Output: A=$73 X=$79 Y=$87 P=$75 M=$42
+  1642 3018 08 D7 29				dta	$08,$D7,$29 ;Input: A=$67 Y=$D7 P=$34 M=$F2  Output: A=$67 X=$29 Y=$D7 P=$34 M=$F2
+  1643 301B 0A E9 17 75				dta	$0A,$E9,$17,$75 ;Input: A=$C1 Y=$E9 P=$77 M=$A3  Output: A=$C1 X=$17 Y=$E9 P=$75 M=$A3
+  1644
+  1645 						; $E9  SBC #imm
+  1646 301F F0					dta	$F0
+  1647 3020 D2 E9 E1 31 29 30			dta	$D2,$E9,$E1,$31,$29,$30 ;Input: A=$0A Y=$31 P=$F1 M=$49  Output: A=$29 X=$CE Y=$31 P=$30 M=$49
+  1648 3026 52 73 1D C0 B4			dta	$52,$73,$1D,$C0,$B4 ;Input: A=$34 Y=$1D P=$F6 M=$05  Output: A=$C0 X=$E2 Y=$1D P=$B4 M=$05
+  1649 302B 50 8D 82 55				dta	$50,$8D,$82,$55 ;Input: A=$E2 Y=$82 P=$35 M=$A1  Output: A=$55 X=$7D Y=$82 P=$35 M=$A1
+  1650 302F 52 9C 73 2B 35			dta	$52,$9C,$73,$2B,$35 ;Input: A=$C8 Y=$73 P=$F6 M=$9C  Output: A=$2B X=$8C Y=$73 P=$35 M=$9C
+  1651 3034 CE C6 6B 34				dta	$CE,$C6,$6B,$34 ;Input: A=$3A Y=$C6 P=$B4 M=$A9  Output: A=$6B X=$39 Y=$C6 P=$34 M=$A9
+  1652 3038 57 D4 4C 75				dta	$57,$D4,$4C,$75 ;Input: A=$A4 Y=$D4 P=$34 M=$1A  Output: A=$4C X=$2B Y=$D4 P=$75 M=$1A
+  1653 303C AC 3D AB F4				dta	$AC,$3D,$AB,$F4 ;Input: A=$58 Y=$3D P=$F6 M=$C7  Output: A=$AB X=$C2 Y=$3D P=$F4 M=$C7
+  1654 3040 A1 B0 2B 31				dta	$A1,$B0,$2B,$31 ;Input: A=$CC Y=$B0 P=$73 M=$A7  Output: A=$2B X=$4F Y=$B0 P=$31 M=$A7
+  1655
+  1656 						; $EA  NOP
+  1657 3044 C0					dta	$C0
+  1658 3045 80 EA 06				dta	$80,$EA,$06 ;Input: A=$5C Y=$06 P=$F7 M=$5E  Output: A=$5C X=$F9 Y=$06 P=$F7 M=$5E
+  1659 3048 00 37				dta	$00,$37 ;Input: A=$45 Y=$37 P=$F0 M=$98  Output: A=$45 X=$C8 Y=$37 P=$F0 M=$98
+  1660 304A EF					dta	$EF ;Input: A=$96 Y=$EF P=$B5 M=$BC  Output: A=$96 X=$10 Y=$EF P=$B5 M=$BC
+  1661 304B CC					dta	$CC ;Input: A=$49 Y=$CC P=$F6 M=$2F  Output: A=$49 X=$33 Y=$CC P=$F6 M=$2F
+  1662 304C 8C					dta	$8C ;Input: A=$66 Y=$8C P=$B6 M=$F5  Output: A=$66 X=$73 Y=$8C P=$B6 M=$F5
+  1663 304D B6					dta	$B6 ;Input: A=$F0 Y=$B6 P=$72 M=$EC  Output: A=$F0 X=$49 Y=$B6 P=$72 M=$EC
+  1664 304E 86					dta	$86 ;Input: A=$EA Y=$86 P=$72 M=$0D  Output: A=$EA X=$79 Y=$86 P=$72 M=$0D
+  1665 304F 19					dta	$19 ;Input: A=$29 Y=$19 P=$B6 M=$29  Output: A=$29 X=$E6 Y=$19 P=$B6 M=$29
+  1666
+  1667 						; $EC  CPX abs
+  1668 3050 CC					dta	$CC
+  1669 3051 E2 EC CD 00 36 B5			dta	$E2,$EC,$CD,$00,$36,$B5 ;Input: A=$B8 Y=$36 P=$37 M=$24  Output: A=$B8 X=$C9 Y=$36 P=$B5 M=$24
+  1670 3057 02 25 B4				dta	$02,$25,$B4 ;Input: A=$B3 Y=$25 P=$B7 M=$F6  Output: A=$B3 X=$DA Y=$25 P=$B4 M=$F6
+  1671 305A 72 75				dta	$72,$75 ;Input: A=$47 Y=$72 P=$76 M=$11  Output: A=$47 X=$8D Y=$72 P=$75 M=$11
+  1672 305C 8E F0				dta	$8E,$F0 ;Input: A=$9B Y=$8E P=$73 M=$7A  Output: A=$9B X=$71 Y=$8E P=$F0 M=$7A
+  1673 305E 00 A7				dta	$00,$A7 ;Input: A=$8F Y=$A7 P=$74 M=$F2  Output: A=$8F X=$58 Y=$A7 P=$74 M=$F2
+  1674 3060 02 3C F4				dta	$02,$3C,$F4 ;Input: A=$87 Y=$3C P=$77 M=$EC  Output: A=$87 X=$C3 Y=$3C P=$F4 M=$EC
+  1675 3063 28 B5				dta	$28,$B5 ;Input: A=$1E Y=$28 P=$B7 M=$2B  Output: A=$1E X=$D7 Y=$28 P=$B5 M=$2B
+  1676 3065 43 31				dta	$43,$31 ;Input: A=$11 Y=$43 P=$B3 M=$8B  Output: A=$11 X=$BC Y=$43 P=$31 M=$8B
+  1677
+  1678 						; $ED  SBC abs
+  1679 3067 D8					dta	$D8
+  1680 3068 F2 ED CD 00 C6 8F + 		dta	$F2,$ED,$CD,$00,$C6,$8F,$B4 ;Input: A=$07 Y=$C6 P=$37 M=$78  Output: A=$8F X=$39 Y=$C6 P=$B4 M=$78
+  1681 306F 12 15 43 35				dta	$12,$15,$43,$35 ;Input: A=$78 Y=$15 P=$34 M=$34  Output: A=$43 X=$EA Y=$15 P=$35 M=$34
+  1682 3073 A1 E2 F4				dta	$A1,$E2,$F4 ;Input: A=$77 Y=$A1 P=$B7 M=$95  Output: A=$E2 X=$5E Y=$A1 P=$F4 M=$95
+  1683 3076 10 F7 1E				dta	$10,$F7,$1E ;Input: A=$CB Y=$F7 P=$31 M=$AD  Output: A=$1E X=$08 Y=$F7 P=$31 M=$AD
+  1684 3079 12 3E 3C 35				dta	$12,$3E,$3C,$35 ;Input: A=$C9 Y=$3E P=$75 M=$8D  Output: A=$3C X=$C1 Y=$3E P=$35 M=$8D
+  1685 307D B1 42 35				dta	$B1,$42,$35 ;Input: A=$73 Y=$B1 P=$37 M=$31  Output: A=$42 X=$4E Y=$B1 P=$35 M=$31
+  1686 3080 D9 52 34				dta	$D9,$52,$34 ;Input: A=$47 Y=$D9 P=$F4 M=$F4  Output: A=$52 X=$26 Y=$D9 P=$34 M=$F4
+  1687 3083 8A 9E F4				dta	$8A,$9E,$F4 ;Input: A=$6F Y=$8A P=$B7 M=$D1  Output: A=$9E X=$75 Y=$8A P=$F4 M=$D1
+  1688
+  1689 						; $EE  INC abs
+  1690 3086 E0					dta	$E0
+  1691 3087 E3 EE CD 00 FC 75 + 		dta	$E3,$EE,$CD,$00,$FC,$75,$1E ;Input: A=$69 Y=$FC P=$F7 M=$1D  Output: A=$69 X=$03 Y=$FC P=$75 M=$1E
+  1692 308E 01 73 C7				dta	$01,$73,$C7 ;Input: A=$D1 Y=$73 P=$B0 M=$C6  Output: A=$D1 X=$8C Y=$73 P=$B0 M=$C7
+  1693 3091 03 50 F5 B8				dta	$03,$50,$F5,$B8 ;Input: A=$BC Y=$50 P=$F7 M=$B7  Output: A=$BC X=$AF Y=$50 P=$F5 M=$B8
+  1694 3095 83 B0 AF				dta	$83,$B0,$AF ;Input: A=$7D Y=$83 P=$32 M=$AE  Output: A=$7D X=$7C Y=$83 P=$B0 M=$AF
+  1695 3098 B4 75 67				dta	$B4,$75,$67 ;Input: A=$D7 Y=$B4 P=$F7 M=$66  Output: A=$D7 X=$4B Y=$B4 P=$75 M=$67
+  1696 309B A3 70 03				dta	$A3,$70,$03 ;Input: A=$B4 Y=$A3 P=$72 M=$02  Output: A=$B4 X=$5C Y=$A3 P=$70 M=$03
+  1697 309E 8C B4 E0				dta	$8C,$B4,$E0 ;Input: A=$C6 Y=$8C P=$B6 M=$DF  Output: A=$C6 X=$73 Y=$8C P=$B4 M=$E0
+  1698 30A1 8B B1 B3				dta	$8B,$B1,$B3 ;Input: A=$16 Y=$8B P=$31 M=$B2  Output: A=$16 X=$74 Y=$8B P=$B1 M=$B3
+  1699
+  1700 						; $F1  SBC (zp),y
+  1701 30A4 CB					dta	$CB
+  1702 30A5 D2 F1 C4 01 F1 B4			dta	$D2,$F1,$C4,$01,$F1,$B4 ;Input: A=$1E Y=$01 P=$75 M=$2D  Output: A=$F1 X=$FE Y=$01 P=$B4 M=$2D
+  1703 30AB 12 01 6A 34				dta	$12,$01,$6A,$34 ;Input: A=$59 Y=$01 P=$B7 M=$EF  Output: A=$6A X=$FE Y=$01 P=$34 M=$EF
+  1704 30AF 01 80 B5				dta	$01,$80,$B5 ;Input: A=$B0 Y=$01 P=$74 M=$2F  Output: A=$80 X=$FE Y=$01 P=$B5 M=$2F
+  1705 30B2 01 0E 35				dta	$01,$0E,$35 ;Input: A=$76 Y=$01 P=$77 M=$68  Output: A=$0E X=$FE Y=$01 P=$35 M=$68
+  1706 30B5 52 C2 00 5C 71			dta	$52,$C2,$00,$5C,$71 ;Input: A=$90 Y=$00 P=$70 M=$33  Output: A=$5C X=$FF Y=$00 P=$71 M=$33
+  1707 30BA C4 01 EE B4				dta	$C4,$01,$EE,$B4 ;Input: A=$13 Y=$01 P=$77 M=$25  Output: A=$EE X=$FE Y=$01 P=$B4 M=$25
+  1708 30BE 12 01 B4 B4				dta	$12,$01,$B4,$B4 ;Input: A=$95 Y=$01 P=$B5 M=$E1  Output: A=$B4 X=$FE Y=$01 P=$B4 M=$E1
+  1709 30C2 52 C2 00 71 34			dta	$52,$C2,$00,$71,$34 ;Input: A=$12 Y=$00 P=$F5 M=$A1  Output: A=$71 X=$FF Y=$00 P=$34 M=$A1
+  1710
+  1711 						; $F5  SBC zp,x
+  1712 30C7 C3					dta	$C3
+  1713 30C8 D2 F5 78 AA E4 B0			dta	$D2,$F5,$78,$AA,$E4,$B0 ;Input: A=$37 Y=$AA P=$30 M=$52  Output: A=$E4 X=$55 Y=$AA P=$B0 M=$52
+  1714 30CE 52 3C 6E 9D B1			dta	$52,$3C,$6E,$9D,$B1 ;Input: A=$F8 Y=$6E P=$B2 M=$5A  Output: A=$9D X=$91 Y=$6E P=$B1 M=$5A
+  1715 30D3 91 C3 77 30				dta	$91,$C3,$77,$30 ;Input: A=$57 Y=$C3 P=$B0 M=$DF  Output: A=$77 X=$3C Y=$C3 P=$30 M=$DF
+  1716 30D7 08 3A E8 F0				dta	$08,$3A,$E8,$F0 ;Input: A=$7F Y=$3A P=$F3 M=$97  Output: A=$E8 X=$C5 Y=$3A P=$F0 M=$97
+  1717 30DB E0 12 D1 B0				dta	$E0,$12,$D1,$B0 ;Input: A=$28 Y=$12 P=$73 M=$57  Output: A=$D1 X=$ED Y=$12 P=$B0 M=$57
+  1718 30DF 40 72 D6 B0				dta	$40,$72,$D6,$B0 ;Input: A=$41 Y=$72 P=$70 M=$6A  Output: A=$D6 X=$8D Y=$72 P=$B0 M=$6A
+  1719 30E3 50 DD 0F D1				dta	$50,$DD,$0F,$D1 ;Input: A=$85 Y=$0F P=$B0 M=$B3  Output: A=$D1 X=$F0 Y=$0F P=$B0 M=$B3
+  1720 30E7 52 3C 6E 66 34			dta	$52,$3C,$6E,$66,$34 ;Input: A=$2F Y=$6E P=$B7 M=$C9  Output: A=$66 X=$91 Y=$6E P=$34 M=$C9
+  1721
+  1722 						; $F6  INC zp,x
+  1723 30EC E8					dta	$E8
+  1724 30ED C3 F6 BB ED 34 7C			dta	$C3,$F6,$BB,$ED,$34,$7C ;Input: A=$BE Y=$ED P=$36 M=$7B  Output: A=$BE X=$12 Y=$ED P=$34 M=$7C
+  1725 30F3 43 F3 25 B4 E2			dta	$43,$F3,$25,$B4,$E2 ;Input: A=$FD Y=$25 P=$B6 M=$E1  Output: A=$FD X=$DA Y=$25 P=$B4 M=$E2
+  1726 30F8 41 40 72 8B				dta	$41,$40,$72,$8B ;Input: A=$2A Y=$72 P=$B4 M=$8A  Output: A=$2A X=$8D Y=$72 P=$B4 M=$8B
+  1727 30FC 6C 9E 0F				dta	$6C,$9E,$0F ;Input: A=$A7 Y=$9E P=$70 M=$0E  Output: A=$A7 X=$61 Y=$9E P=$70 M=$0F
+  1728 30FF 43 D3 05 F5 EC			dta	$43,$D3,$05,$F5,$EC ;Input: A=$B9 Y=$05 P=$75 M=$EB  Output: A=$B9 X=$FA Y=$05 P=$F5 M=$EC
+  1729 3104 76 A8 B0 F2				dta	$76,$A8,$B0,$F2 ;Input: A=$DB Y=$A8 P=$32 M=$F1  Output: A=$DB X=$57 Y=$A8 P=$B0 M=$F2
+  1730 3108 D7 09 31 7B				dta	$D7,$09,$31,$7B ;Input: A=$C9 Y=$09 P=$33 M=$7A  Output: A=$C9 X=$F6 Y=$09 P=$31 M=$7B
+  1731 310C 99 CB B1 A4				dta	$99,$CB,$B1,$A4 ;Input: A=$39 Y=$CB P=$B3 M=$A3  Output: A=$39 X=$34 Y=$CB P=$B1 M=$A4
+  1732
+  1733 						; $F8  SED
+  1734 3110 C0					dta	$C0
+  1735 3111 82 F8 69 BD				dta	$82,$F8,$69,$BD ;Input: A=$B3 Y=$69 P=$B5 M=$BE  Output: A=$B3 X=$96 Y=$69 P=$BD M=$BE
+  1736 3115 02 7E BA				dta	$02,$7E,$BA ;Input: A=$E2 Y=$7E P=$B2 M=$BD  Output: A=$E2 X=$81 Y=$7E P=$BA M=$BD
+  1737 3118 74 3C				dta	$74,$3C ;Input: A=$5E Y=$74 P=$34 M=$7B  Output: A=$5E X=$8B Y=$74 P=$3C M=$7B
+  1738 311A 9A F8				dta	$9A,$F8 ;Input: A=$D5 Y=$9A P=$F0 M=$E3  Output: A=$D5 X=$65 Y=$9A P=$F8 M=$E3
+  1739 311C EC FA				dta	$EC,$FA ;Input: A=$DA Y=$EC P=$F2 M=$44  Output: A=$DA X=$13 Y=$EC P=$FA M=$44
+  1740 311E 0F FA				dta	$0F,$FA ;Input: A=$85 Y=$0F P=$F2 M=$68  Output: A=$85 X=$F0 Y=$0F P=$FA M=$68
+  1741 3120 59 7B				dta	$59,$7B ;Input: A=$0A Y=$59 P=$73 M=$A8  Output: A=$0A X=$A6 Y=$59 P=$7B M=$A8
+  1742 3122 D6 BA				dta	$D6,$BA ;Input: A=$CF Y=$D6 P=$B2 M=$80  Output: A=$CF X=$29 Y=$D6 P=$BA M=$80
+  1743
+  1744 						; $F9  SBC abs,y
+  1745 3124 CC					dta	$CC
+  1746 3125 F2 F9 AA 00 23 45 + 		dta	$F2,$F9,$AA,$00,$23,$45,$31 ;Input: A=$E3 Y=$23 P=$F2 M=$9D  Output: A=$45 X=$DC Y=$23 P=$31 M=$9D
+  1747 312C 52 A6 27 3F 34			dta	$52,$A6,$27,$3F,$34 ;Input: A=$29 Y=$27 P=$B5 M=$EA  Output: A=$3F X=$D8 Y=$27 P=$34 M=$EA
+  1748 3131 6D 60 A8 B4				dta	$6D,$60,$A8,$B4 ;Input: A=$0F Y=$60 P=$F5 M=$67  Output: A=$A8 X=$9F Y=$60 P=$B4 M=$67
+  1749 3135 62 6B B5 B0				dta	$62,$6B,$B5,$B0 ;Input: A=$30 Y=$6B P=$B2 M=$7A  Output: A=$B5 X=$94 Y=$6B P=$B0 M=$7A
+  1750 3139 12 6B A1 B1				dta	$12,$6B,$A1,$B1 ;Input: A=$DF Y=$6B P=$B0 M=$3D  Output: A=$A1 X=$94 Y=$6B P=$B1 M=$3D
+  1751 313D 52 59 74 15 31			dta	$52,$59,$74,$15,$31 ;Input: A=$67 Y=$74 P=$72 M=$51  Output: A=$15 X=$8B Y=$74 P=$31 M=$51
+  1752 3142 97 36 A1 B0				dta	$97,$36,$A1,$B0 ;Input: A=$A0 Y=$36 P=$73 M=$FF  Output: A=$A1 X=$C9 Y=$36 P=$B0 M=$FF
+  1753 3146 61 6C F4 B0				dta	$61,$6C,$F4,$B0 ;Input: A=$84 Y=$6C P=$F1 M=$90  Output: A=$F4 X=$93 Y=$6C P=$B0 M=$90
+  1754
+  1755 						; $FD  SBC abs,x
+  1756 314A F0					dta	$F0
+  1757 314B F2 FD AF 00 E1 46 + 		dta	$F2,$FD,$AF,$00,$E1,$46,$31 ;Input: A=$DA Y=$E1 P=$70 M=$93  Output: A=$46 X=$1E Y=$E1 P=$31 M=$93
+  1758 3152 52 59 8B 17 35			dta	$52,$59,$8B,$17,$35 ;Input: A=$EB Y=$8B P=$B6 M=$D3  Output: A=$17 X=$74 Y=$8B P=$35 M=$D3
+  1759 3157 12 8B 62 34				dta	$12,$8B,$62,$34 ;Input: A=$0E Y=$8B P=$B7 M=$AC  Output: A=$62 X=$74 Y=$8B P=$34 M=$AC
+  1760 315B 52 5B 8D D0 B4			dta	$52,$5B,$8D,$D0,$B4 ;Input: A=$41 Y=$8D P=$77 M=$71  Output: A=$D0 X=$72 Y=$8D P=$B4 M=$71
+  1761 3160 B6 E8 3A 31				dta	$B6,$E8,$3A,$31 ;Input: A=$42 Y=$E8 P=$B2 M=$07  Output: A=$3A X=$17 Y=$E8 P=$31 M=$07
+  1762 3164 B2 E4 F9 B4				dta	$B2,$E4,$F9,$B4 ;Input: A=$60 Y=$E4 P=$B7 M=$67  Output: A=$F9 X=$1B Y=$E4 P=$B4 M=$67
+  1763 3168 61 93 45 31				dta	$61,$93,$45,$31 ;Input: A=$46 Y=$93 P=$33 M=$01  Output: A=$45 X=$6C Y=$93 P=$31 M=$01
+  1764 316C 78 AA F7 B4				dta	$78,$AA,$F7,$B4 ;Input: A=$6B Y=$AA P=$34 M=$73  Output: A=$F7 X=$55 Y=$AA P=$B4 M=$73
+  1765
+  1766 						; $FE  INC abs,x
+  1767 3170 C6					dta	$C6
+  1768 3171 E3 FE 74 00 A6 F0 + 		dta	$E3,$FE,$74,$00,$A6,$F0,$E6 ;Input: A=$BB Y=$A6 P=$70 M=$E5  Output: A=$BB X=$59 Y=$A6 P=$F0 M=$E6
+  1769 3178 43 A7 D9 74 52			dta	$43,$A7,$D9,$74,$52 ;Input: A=$34 Y=$D9 P=$76 M=$51  Output: A=$34 X=$26 Y=$D9 P=$74 M=$52
+  1770 317D 57 89 B5 F1				dta	$57,$89,$B5,$F1 ;Input: A=$66 Y=$89 P=$35 M=$F0  Output: A=$66 X=$76 Y=$89 P=$B5 M=$F1
+  1771 3181 8C BE 70 07				dta	$8C,$BE,$70,$07 ;Input: A=$90 Y=$BE P=$F0 M=$06  Output: A=$90 X=$41 Y=$BE P=$70 M=$07
+  1772 3185 55 87 75 73				dta	$55,$87,$75,$73 ;Input: A=$AE Y=$87 P=$77 M=$72  Output: A=$AE X=$78 Y=$87 P=$75 M=$73
+  1773 3189 41 79 AB F0				dta	$41,$79,$AB,$F0 ;Input: A=$63 Y=$AB P=$B4 M=$EF  Output: A=$63 X=$54 Y=$AB P=$B4 M=$F0
+  1774 318D 43 75 A7 70 39			dta	$43,$75,$A7,$70,$39 ;Input: A=$E5 Y=$A7 P=$F2 M=$38  Output: A=$E5 X=$58 Y=$A7 P=$70 M=$39
+  1775 3192 BB ED 70 61				dta	$BB,$ED,$70,$61 ;Input: A=$C8 Y=$ED P=$F2 M=$60  Output: A=$C8 X=$12 Y=$ED P=$70 M=$61
+  1776 3196			test_end:
+  1777
+  1778 02E0-02E1> 00 20				run		main
+  1779 						end
