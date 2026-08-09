@@ -134,11 +134,15 @@ module antic2_fabric #(
 
     // Last byte on the bus: ANTIC's own reads fold in on the cycle their
     // data lands; the snooped CPU data phase arrives via bus_byte_stb.
+    // The CPU phase WINS a same-window coincidence: within a machine cycle
+    // ANTIC's fetch happens early and the CPU's phi2 data phase late, so
+    // the snooped byte is the later bus event.  (With the priorities the
+    // other way antic_virtdma read one phase stale: "04 != $05".)
     logic [7:0] last_bus;
     always_ff @(posedge clk or posedge rst) begin
         if (rst)               last_bus <= 8'h00;
-        else if (mem_valid)    last_bus <= mem_data;
         else if (bus_byte_stb) last_bus <= bus_byte;
+        else if (mem_valid)    last_bus <= mem_data;
     end
 
     antic2 #(
