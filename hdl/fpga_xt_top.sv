@@ -1893,7 +1893,7 @@ module fpga_xt_top (
     // feeds the shell's last-bus latch from ANTIC-page register writes only,
     // not every snooped data phase -- virtual-playfield/phantom-P/M fidelity
     // on the fabric side is phase 3 work.
-    localparam bit USE_ANTIC2_FABRIC = 1'b0;
+    localparam bit USE_ANTIC2_FABRIC = 1'b1;   // antic-sally-interop: phase-2 flip — antic2 owns pixels
 
     generate if (USE_ANTIC2_FABRIC) begin : g_antic2_fab
     antic2_fabric u_antic2_fab (
