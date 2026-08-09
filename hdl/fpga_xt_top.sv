@@ -1896,7 +1896,14 @@ module fpga_xt_top (
     localparam bit USE_ANTIC2_FABRIC = 1'b1;   // antic-sally-interop: phase-2 flip — antic2 owns pixels
 
     generate if (USE_ANTIC2_FABRIC) begin : g_antic2_fab
-    antic2_fabric u_antic2_fab (
+    antic2_fabric #(
+        // 16 clk_sys of time-base delay: the fid core's commit-slot register
+        // writes cross the mesochronous bridge and must land BEFORE the tick
+        // that processes their machine cycle (else "VSCROL took effect too
+        // late" and the whole cycle-anchor ACID family with it).  One machine
+        // cycle is ~75 clk_sys; 16 is margin without touching the next cycle.
+        .TICK_DELAY(16)
+    ) u_antic2_fab (
         .clk(clk_sys), .rst(rst_sys), .cold(sallyrst[0]),
         .tick(rw_tick), .px_tick(rw_px_tick),
         .cs_antic(~d4xx_n_antic), .cs_gtia(~d0xx_n_antic),
