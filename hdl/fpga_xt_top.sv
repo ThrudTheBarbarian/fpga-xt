@@ -1125,6 +1125,30 @@ module fpga_xt_top (
         .dbg_cyc_addr (fid_cyc_addr), .dbg_cyc_val (fid_cyc_val), .dbg_cyc_rw (fid_cyc_rw), .dbg_cyc_valid (fid_cyc_valid)
     );
 
+    // ---- antic2 bus snoop (clk_sally -> clk_sys) --------------------------
+    // antic2's last-thing-on-the-bus latch wants the last byte ANY master
+    // drove -- EVERY fid data phase, reads and writes, any address (the sim
+    // reference a8_core latches c_din/c_dout at SUB_DATA; emu system.c
+    // bus_note).  The phase-2 wiring carried only ANTIC-page register
+    // writes, which is why antic_virtdma read $00s and the phantom-DMA pair
+    // failed on HW.  Same payload+toggle mesochronous idiom as the hwreg
+    // write crossing; the clock groups are already async-false-pathed and
+    // the payload is stable across the toggle sync.
+    logic [7:0] snoop_byte_q;
+    logic       snoop_tog_q;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally) begin
+            snoop_byte_q <= 8'h00;
+            snoop_tog_q  <= 1'b0;
+        end else if (cpu_sel && (fid_sub == 8'd49) && fid_rdy) begin
+            snoop_byte_q <= fid_rw ? fid_din_mux : fid_dout;
+            snoop_tog_q  <= ~snoop_tog_q;
+        end
+    end
+    (* ASYNC_REG = "TRUE" *) reg [2:0] snoop_tog_s = 3'b000;
+    always_ff @(posedge clk_sys) snoop_tog_s <= {snoop_tog_s[1:0], snoop_tog_q};
+    wire       snoop_stb = snoop_tog_s[2] ^ snoop_tog_s[1];
+
     // ---- the 2:1 bus mux (the one LUT on the clk_sally binding path, mux doc §5) ----------
     // Read data (cpu_din) fans out to both cores; only the owner's rdy is live.
     assign cpu_addr     = cpu_sel ? fid_addr : turbo_addr;
@@ -1914,8 +1938,10 @@ module fpga_xt_top (
         .rdata(rw_rdata),
         .rdy_n(rw_rdy_n), .nmi_n(rw_nmi_n), .dma_steal(rw_steal),
         .mem_addr(rw_mem_addr), .mem_data(scrn_shadow_rdata),
-        .bus_byte(bus_data_in_antic),
-        .bus_byte_stb(~bus_rw_antic & (~d4xx_n_antic | ~d0xx_n_antic)),
+        // Full bus snoop (every fid data phase) — the register-write case is
+        // subsumed: a $D4xx/$D0xx write IS a data phase the snoop carries.
+        .bus_byte(snoop_byte_q),
+        .bus_byte_stb(snoop_stb),
         .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
         .pal_sense(8'h0F), .consol_keys(consol_keys),
         .tune(rw_tune),
