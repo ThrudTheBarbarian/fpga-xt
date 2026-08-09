@@ -37,16 +37,28 @@ With the current CPU implementation, SALLY runs at 100 MHz, or roughly 56× the 
 ## Conformance
 
 Cycle-level ANTIC/GTIA/POKEY behaviour is validated against **Avery Lee's
-Acid800 suite**: the `antic2` core passes **55 of the 58 scored tests with
-zero failures** (the remainder are three legitimately-skipped tests and
-keypress-waiting demo modules with no verdict). That covers WSYNC release
-edges (including a write landing *on* the release cycle), DLI/NMI
-recognition alignment, display-list timing, P/M DMA, and the POKEY timer,
-init-mode, and serial-output timing families.
+Acid800 suite**, measured in two environments:
+
+- **antic2-sim — 55 of 58 scored tests, zero failures**: the `antic2` core in
+  the simulation harness (the remainder are three legitimately-skipped tests
+  and keypress-waiting demo modules with no verdict). That covers WSYNC
+  release edges (including a write landing *on* the release cycle), DLI/NMI
+  recognition alignment, display-list timing, P/M DMA, and the POKEY timer,
+  init-mode, and serial-output timing families.
+- **antic2-hw — 40 of 58**: the same core on silicon, as the fabric's render
+  and CPU-timing authority (one beam for pixels and VCOUNT/NMI/RDY — the
+  unification's phase-2/3 configuration).  This is the fabric baseline the
+  remaining work measures against; the previous fabric pipeline's best was
+  32, on a configuration that ran two rasters at an arbitrary relative
+  phase.  The 15-test gap to antic2-sim is integration seams, by family:
+  seven absolute cycle anchors between antic2 and the CPU across the clock
+  crossing, eight POKEY-pacing seams, and two phantom-DMA tests waiting on
+  the bus-snoop widening.
 
 :::note
-Two ANTIC implementations currently coexist — the Acid800-validated `antic2`
-core (simulation) and the fabric pipeline in the bitstream. They are being
-unified with `antic2` as the survivor; see `docs/antic-unification-plan.md`
-in the repo for the phase plan.
+`antic2` is now the fabric's pixel and timing authority; the remaining
+unification phases retire the superseded fabric pipeline. See
+`docs/antic-unification-plan.md` in the repo for the phase plan, and
+`docs/a800/index.html` for the per-test conformance dashboard (the
+`antic2-hw` baseline is the 2026-08-09 run).
 :::
