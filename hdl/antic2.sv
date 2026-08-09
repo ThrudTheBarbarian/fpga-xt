@@ -544,6 +544,12 @@ module antic2 #(
     // Driven by the SCHEDULE, one byte per scheduled cycle, so that a mid-line
     // DMACTL or HSCROL write moves the window for what is still to come while
     // the bytes already fetched stay fetched.  See antic_pf_stream.sv.
+    logic [3:0] pf_mode_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) pf_mode_q <= 4'h0;
+        else     pf_mode_q <= dl_insn[3:0];
+    end
+
     antic_pf_stream u_pf (
         .clk(clk), .rst(rst),
         .line_start(sched_line_start), .first_row(row_first),
@@ -558,7 +564,14 @@ module antic2 #(
         // to the fetcher reads every character one glyph row too far down, which
         // antic_charcontrol measures directly -- its rows come out 2,3,4,5,6,7,0
         // instead of 0..7.
-        .mode(dl_insn[3:0]), .row({1'b0, row_line - 4'd1}),
+        //
+        // pf_mode_q: a 1-clk registered replica of the mode nibble.  dl_insn
+        // settles ~3 fabric clocks into the line and the first playfield
+        // fetch is hundreds of clocks later, so the extra clock is invisible
+        // at machine-cycle granularity — but the combinational cone from
+        // dl_insn_reg into buf_mem's write enables was the design's worst
+        // clk_sys path (11 levels, 68% route, -0.2 ns on HW builds).
+        .mode(pf_mode_q), .row({1'b0, row_line - 4'd1}),
         .chbase(chbase), .chactl(chactl[2:0]),
         .bytes_per_line(pf_bytes),
         .pf_fetch(sched_pf_fetch), .pf_fetch_glyph(sched_pf_fetch_glyph),
