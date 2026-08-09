@@ -1890,15 +1890,15 @@ module fpga_xt_top (
     // whichever holds authority.
     // PAIRED with antic_top's CHIPSET_PHI2_DELAY: the exported level is the
     // CPU's (undelayed) phi2; the observed chipset — POKEY inside antic_top
-    // and antic2 here — ticks 8 clk later so commit-slot register writes
+    // and antic2 here — ticks 4 clk later so commit-slot register writes
     // crossing the bridge land inside the cycle the program issued them in.
     // (Replaces antic2_fabric's TICK_DELAY, which skewed GTIA writes against
     // the pixel sub-cycle and cost gtia_pmresize.)
-    reg [7:0] rw_phi2_dl = 8'h00;
-    always_ff @(posedge clk_sys) rw_phi2_dl <= {rw_phi2_dl[6:0], antic_phi2_level};
+    reg [3:0] rw_phi2_dl = 4'h0;
+    always_ff @(posedge clk_sys) rw_phi2_dl <= {rw_phi2_dl[2:0], antic_phi2_level};
     reg  rw_phi2_q;
-    always_ff @(posedge clk_sys) rw_phi2_q <= rw_phi2_dl[7];
-    wire rw_tick = rw_phi2_dl[7] & ~rw_phi2_q;
+    always_ff @(posedge clk_sys) rw_phi2_q <= rw_phi2_dl[3];
+    wire rw_tick = rw_phi2_dl[3] & ~rw_phi2_q;
 
     // Four hi-res pixels to a machine cycle.  At 150 MHz against 1.79 MHz that
     // is ~84 clk_sys per cycle, so ~21 per pixel and ~42 per colour clock --

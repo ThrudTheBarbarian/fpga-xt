@@ -345,7 +345,7 @@ module antic_top #(
     // issued it in.  Without this the whole RANDOM-clocked ACID family read
     // phase-shifted LFSR/timer state ("$2B != $95", timers "too late") and
     // writes landed a cycle late ("serial output register loaded too late").
-    localparam int unsigned CHIPSET_PHI2_DELAY = 8;
+    localparam int unsigned CHIPSET_PHI2_DELAY = 4;
     logic [CHIPSET_PHI2_DELAY-1:0] phi2_dl = '0;
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) phi2_dl <= '0;
