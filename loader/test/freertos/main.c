@@ -189,6 +189,15 @@ static void shell_task(void *arg)
     { extern void klog_start(void); klog_start(); } /* logger: flush kernel diagnostics to /tmp/system.log (ramfs) */
     { extern void hdmi_watch_init(void); hdmi_watch_init(); } /* HPD/link watcher: logs drops, soft-replugs the sink */
     { extern void sd_init(void); sd_init(); }   /* mount SD here (task context — FatFs reentrancy needs the scheduler) */
+    /* Fold the across-boot entropy seed into the CSPRNG, then immediately
+     * overwrite it. It has to be here: after the SD is mounted (the file lives
+     * on it) and in task context (it does real file I/O). There is no matching
+     * save at shutdown, and cannot be — SYS_reboot masks interrupts and resets
+     * the PS, so no filesystem write survives it; rewriting at boot gives the
+     * same no-replay guarantee and covers a power cut too. */
+    { extern int xt_random_seed_boot(const char *);
+      if (xt_random_seed_boot("/OS/var/random-seed") != 0)
+          puts0("[random] no writable /OS/var — entropy will not carry across boots\n"); }
     /* networking is NOT started here: /boot/20-Networking runs /bin/netup
      * (SYS_net_up) — stack bring-up is an explicit boot-script decision.
      * Headless/qemu: run `netup` at the console. */
@@ -379,6 +388,9 @@ int main(void)
     { extern void uart1_rx_init(void); uart1_rx_init(); }   /* interrupt-driven console RX (blocking con_tty_readc) */
 #endif
     { extern void gtimer_init(void); gtimer_init(); }   /* A9 global timer -> gettimeofday wall clock */
+    { extern void pmu_init(void); pmu_init(); }         /* A9 PMU, readable from PL0 (see zynq.c) */
+    { extern void clk_report(void); clk_report(); }     /* real CPU clock vs the configured one */
+    { extern void cpu1_init(void); cpu1_init(); }        /* release the second A9 (AMP); needs the global timer */
     { extern void hdmi_init(void); hdmi_init(); }        /* SiI9022 HDMI bring-up (HW build only; no-op on qemu) */
     { extern void gfxplane_init(void); gfxplane_init(); } /* clear the compositor plane (else scan-out shows uninit DDR) */
 #ifdef XT_HW

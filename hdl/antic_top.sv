@@ -30,6 +30,15 @@ module antic_top #(
     // ANTIC is paced by the phi2 raster (antic_raster); it is a window
     // *source*, not a display.
     input  wire        rst_n,           // /G_RST, active-low (sync'd internally)
+    input  wire        sally_cold,      // SALLYRST cold-boot level -> power-on-clear NMIEN/DMACTL
+
+    // ---- Keypad->joystick override (clk_bus = clk_sys; from xt_gp0_regs) ----
+    // When [31]=1, [7:0] replaces the joy_bridge PORTA pin shadow feeding
+    // pia_regs (STICK0 bits[3:0], STICK1 bits[7:4], active-low) and [8] replaces
+    // the TRIG0 fire pin (active-low). Lets the Mac keypad drive STICK0 with no
+    // physical PCAL9722 joystick present. [31]=0 = joy_bridge drives as normal.
+    input  wire [31:0] joy_ovr,
+    input  wire [7:0]  consol_keys,   // CONSOL ($D01F) value the 6502 reads (active-low console keys; kernel holds OPTION to keep BASIC off)
 
     // CPU bus inputs
     input  wire [15:0] bus_addr,        // A[15:0]
@@ -97,10 +106,17 @@ module antic_top #(
     // lands). {/MPD, RD4, RD5}. /EXTIRQ wires into the IRQ tree directly.
     output wire [2:0]  bus_pbi_in_status_o,
 
+    // ANTIC's raw phi2 level (clk_bus domain) — the single timing master. The
+    // fidelity 6502 core syncs THIS into clk_sally and edge-detects it to pace
+    // its machine cycles, so the fid CPU's cycle grid is identical to ANTIC's
+    // (no second free-running divider to drift against). See fpga_xt_top.sv.
+    output wire        phi2_level_o,
+
     // ANTIC-driven status (active-low)
     output wire        nmi_n,
     output wire        halt_n,
     output wire        rdy_n,
+    output wire        wsync_write_immune,   // 1 = writes ignore WSYNC /RDY (cfg[15]=0)
 
     // Cycle-exact ANTIC DMA cycle-steal (active-HIGH: 1 = ANTIC takes this
     // machine cycle from the CPU).  Consumed by sally_clock at CLOCK_MULT=1
@@ -205,8 +221,10 @@ module antic_top #(
     // bram_shim into this port.  On the Zynq build the BRAM lives in
     // sally_mem (its second port at clk_bus), so SALLY writes are
     // visible to ANTIC without a separate shadow memory.
-    output wire [15:0] bram_addr,
+    output wire [15:0] bram_addr,      // dl_parser read port (sally_mem dma port)
     input  wire [7:0]  bram_rdata,
+    output wire [15:0] cmp_bram_addr,  // compositor read port (display_shadow)
+    input  wire [7:0]  cmp_bram_rdata,
 
     // PORTB ($D301) state — needed by sally_mem for ROM vs RAM control.
     output wire [7:0]  portb_q,
@@ -225,7 +243,19 @@ module antic_top #(
     output wire        wb_frame_done,   // pulse (vbi): flip the double buffer
     output wire        wb_pal_we,       // palette write strobe (clk_bus origin)
     output wire [7:0]  wb_pal_idx,      // palette index
-    output wire [23:0] wb_pal_rgb       // {R,G,B} palette entry
+    output wire [23:0] wb_pal_rgb,      // {R,G,B} palette entry
+    // ---- TEMP debug: live ANTIC/GTIA register state (clk_sys) for `mem` readback ----
+    output wire [31:0] dbg_gtia,        // {colpf0, colpf1, colpf2, colbk}
+    output wire [31:0] dbg_antic,       // {colpf3, prior, chbase, dmactl}
+
+    // ---- ANTIC timebase debug probe (DBG_TB_*, GP0 DEBUG block) --------
+    // A configurable 16-entry capture ring that records WHERE in the frame
+    // (scanline + horizontal machine-cycle) a selected ANTIC event fired,
+    // plus its data byte.  cfg is A9-set (clk_sys) and 2-FF synced in here;
+    // stat/cap are produced in clk_bus and 2-FF synced on the GP0 side.
+    input  wire [28:0] dbg_tb_cfg,      // {[28:26]=wsync_shape,[25]=circular,[24]=clear,[19:16]=read_idx,[11:4]=match_addr,[3]=visible_only,[2:0]=mode}
+    output wire [31:0] dbg_tb_stat,     // {[25]=armed,[24]=full,[20:16]=wr_idx,[15:0]=trig_count}
+    output wire [24:0] dbg_tb_cap       // ring[read_idx] = {scanline[8:0],phi2[7:0],data[7:0]}
 );
 
     // Synchronise /G_RST into the bus_clk domain.
@@ -308,14 +338,42 @@ module antic_top #(
     wire phi2_tick = phi2 & ~phi2_q;     // 1-cycle pulse on phi2 rising edge
     wire phi2_fall = phi2_q & ~phi2;     // 1-cycle pulse on phi2 falling edge
 
+    // Dedicated, lightly-loaded launch FF for the fid-core CDC.  The fid 6502
+    // (clk_sally) paces its machine cycles off ANTIC's phi2 so the two grids
+    // are identical (fpga_xt_top.sv syncs + edge-detects this level).  Driving
+    // the CDC from a private replica of `phi2` — not the main phi2 reg — keeps
+    // that reg's fanout/timing unburdened.  DONT_TOUCH pins the replica so the
+    // synth-side set_max_delay on phi2_cdc_src_reg -> phi2f_s0_reg has a cell.
+    (* DONT_TOUCH = "true" *) logic phi2_cdc_src = 1'b0;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) phi2_cdc_src <= 1'b0;
+        else         phi2_cdc_src <= phi2;
+    end
+    assign phi2_level_o = phi2_cdc_src;
+
     // ---- ANTIC native raster timer (video-arch §5.1) ---------------------
     // phi2-paced raster heartbeat — replaces the 800×600 hdmi_out vbeam as the
     // source of atari_row / line_start / vbi_start / vcount (the display chain
     // is bypassed for output; see §5.1).  Locked to phi2 so VCOUNT/WSYNC/VBI
     // cadence is correct vs the CPU.  All clk_bus — no CDC.
     wire [8:0] ar_scanline;
-    wire [7:0] ar_phi2_in_line;
+    // The display-list parse kicks LATE in vblank, not at vbi_start (248):
+    // the XL OS copies its DLIST shadows at ~248-250 and tests arm their DL
+    // around ~250-252, and a parse that has already run at 248 would show
+    // the OLD list for a full frame (real ANTIC fetches the DL live, so a
+    // vblank write always affects the very next frame — ACID800 antic_nmist
+    // and the whole DLI cluster arm exactly this way).  Line 260 is after
+    // every normal vblank write yet still ~10 scanlines (>100 us) before
+    // display, orders of magnitude beyond the parse's needs.
+    localparam [8:0] PARSE_KICK_LINE = 9'd260;
     wire       ar_line_start, ar_vbi_start;
+    wire parse_kick_pulse = ar_line_start && (ar_scanline == PARSE_KICK_LINE);
+    logic      scanline_is_vbi_q;      // registered (ar_scanline == PARSE_KICK_LINE); start_parse gate
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) scanline_is_vbi_q <= 1'b0;
+        else         scanline_is_vbi_q <= (ar_scanline == PARSE_KICK_LINE);
+    end
+    wire [7:0] ar_phi2_in_line;
     wire [7:0] ar_atari_row, ar_vcount;
     antic_raster u_antic_raster (
         .clk          (clk_bus),
@@ -403,6 +461,7 @@ module antic_top #(
     wire [7:0] antic_read_data;
     wire       wsync_pending;             // M13: drives wsync_gen
     wire       nmires_strobe;             // M12: drives nmi_gen
+    wire       dlistl_we_w, dlisth_we_w;  // DLIST write pulses -> dl_parser live DL PC
     wire       pal_write_strobe;          // M-video-int: 1-cycle commit pulse to palette_lut
     wire [7:0] pal_r_q, pal_g_q, pal_b_q;
     wire [7:0] pal_idx_q;
@@ -431,10 +490,27 @@ module antic_top #(
     wire [7:0]  nmist_q;
     wire [7:0]  nmi_cur_row;
     wire        nmi_cur_row_dli;
+    wire [7:0]  dbg_dli_rows;      // dl_parser line_dli_p snapshot (temp DLI diag)
+    wire [15:0] dbg_parse_start_w; // parser triage: last parse start addr
+    wire [8:0]  dbg_act_count_w;   //   published entry count
+    wire [4:0]  dbg_ph_cnt_w;      //   published phantom count
+    wire [4:0]  dbg_dli_listcnt;   // dl_parser DLI-row list count
+    wire        dbg_dli_has23;     // list contains raster row 23
     wire        nmi_n_w;
 
     wire        vbi_start_pulse_bus  = ar_vbi_start;
     wire        line_start_pulse_bus = ar_line_start;
+
+    // Compose at cycle 96, NOT at the very end of the line.  ACID800
+    // gtia_pmretrigger writes HPOSP0 at cycle 60, does `inc wsync` (halting to
+    // RELEASE_CYCLE 104) and then reads p0pl at ~105-108 — the collision result
+    // for the line it just drew.  Composing at 110 would land AFTER that read,
+    // so the row must be composed inside the window between the write and the
+    // WSYNC release.  96 leaves the compose (a few hundred clk_bus, ~4 phi2)
+    // finished by ~100, comfortably before the read.
+    // It is also the more faithful choice: a register write at 104+ is in
+    // horizontal blank and SHOULD affect the next line, not this one.
+    wire line_end_pulse_bus = phi2_tick && (ar_phi2_in_line == 8'd96);
 
     // fmax: register unlock_antic at the boundary so the quasi-static unlock bit
     // arrives inside antic_top as a clean local FF — it must NOT sit on a long
@@ -449,9 +525,16 @@ module antic_top #(
         unlock_blit_q   <= unlock_blit;
     end
 
+    // SALLYRST cold-boot, 2-FF synced into clk_bus (source is clk_sys = clk_bus, but
+    // keep the sync so it is domain-safe if clk_bus is ever a derived clock).
+    (* ASYNC_REG = "TRUE" *) reg [1:0] sally_cold_sync = 2'b00;
+    always_ff @(posedge clk_bus) sally_cold_sync <= {sally_cold_sync[0], sally_cold};
+    wire cold_boot_bus = sally_cold_sync[1];
+
     antic_regs u_antic_regs (
         .clk                  (clk_bus),
         .rst                  (rst_bus),
+        .cold_boot            (cold_boot_bus),
         .we                   (snoop_we_antic),
         .waddr                (snoop_addr[7:0]),
         .wdata                (snoop_data),
@@ -459,6 +542,8 @@ module antic_top #(
         .rdata                (antic_read_data),
         .wsync_pending        (wsync_pending),
         .nmires_strobe        (nmires_strobe),
+        .dlistl_we            (dlistl_we_w),
+        .dlisth_we            (dlisth_we_w),
         .pal_write_strobe     (pal_write_strobe),
         .pal_r_q              (pal_r_q),
         .pal_g_q              (pal_g_q),
@@ -509,6 +594,9 @@ module antic_top #(
     wire [7:0] colbk_q;
     wire [7:0] prior_q;
     wire [7:0] vdelay_q;
+    // TEMP diag: colours (colpf0/colpf1/colpf2/colbk) for `mem` readback. dbg_antic (DLI
+    // counter + NMIEN/NMIST/mode) is assigned lower down, after dl_meta_mode is declared.
+    assign dbg_gtia  = {colpf_q[0], colpf_q[1], colpf_q[2], colbk_q};
     wire [7:0] gractl_q;
     wire [7:0] consol_w_q;
     wire       hitclr_strobe;
@@ -520,6 +608,7 @@ module antic_top #(
     wire [15:0] cmp_ppf_q;
     wire [15:0] cmp_mpl_q;
     wire [15:0] cmp_ppl_q;
+    wire [15:0] bt_mpl_q, bt_ppl_q;   // beam-time P/M-to-P/M collisions
     wire [7:0]  m_pf_in [0:3];
     wire [7:0]  p_pf_in [0:3];
     wire [7:0]  m_pl_in [0:3];
@@ -530,19 +619,41 @@ module antic_top #(
     // generate-block references at parse time and would otherwise fail
     // to resolve w_joy_fire[i].
     wire [3:0]  w_joy_fire;
+    // Keypad->joystick override MUX (joy_ovr[31]): when enabled, TRIG0 fire is
+    // forced from joy_ovr[8] (active-low), TRIG1 forced released (1). When
+    // disabled, the raw joy_bridge/PCAL9722 shadow drives TRIG0/TRIG1.
+    // Combinational mux — both sources are clk_bus, no CDC.
+    //
+    // TRIG2/TRIG3 (bits 3:2) are HARD-TIED released (1) in BOTH paths: the 800XL
+    // has no joystick ports 3/4, and — critically — GTIA TRIG3 ($D013) is what the
+    // XL OS reads as the $A000 cartridge-present line for its cartridge interlock
+    // (VBI: LDA $D013 / CMP GINTLK $03FA / BNE $C0DF-lockup). Sourcing TRIG3 from
+    // the glitchy joy_bridge shadow (or letting the override flip it) drifts it off
+    // the value GINTLK latched at coldstart, tripping the OS's anti-cart-swap lockup
+    // (Despatch Rider ~20s hang / crash-on-input). A stable TRIG3 keeps the interlock
+    // satisfied for all disk-booted (cartridge-less) titles.
+    // No-override idle = 4'b1111 (all triggers RELEASED). w_joy_fire (joy_bridge/
+    // PCAL9722) is tied-off = $00 = "all fire pressed" every frame, so the game
+    // auto-fires garbage; re-source from w_joy_fire[1:0] when the companion MCU
+    // drives the expander. TRIG3/2 stay 1 (no j3/j4 ports; TRIG3 = the $A000
+    // cartridge-interlock line the XL OS checks — see the GINTLK $C0DF lockup).
+    wire [3:0]  pia_joy_fire = joy_ovr[31] ? {2'b11, 1'b1, joy_ovr[8]}
+                                           : 4'b1111;
     genvar i;
     generate
         for (i = 0; i < 4; i++) begin : g_collision
             assign m_pf_in[i] = {4'h0, cmp_mpf_q[4*i +: 4]};
             assign p_pf_in[i] = {4'h0, cmp_ppf_q[4*i +: 4]};
-            assign m_pl_in[i] = {4'h0, cmp_mpl_q[4*i +: 4]};
-            assign p_pl_in[i] = {4'h0, cmp_ppl_q[4*i +: 4]};
-            // M25-1: TRIG0..TRIG3 sourced from w_joy_fire[i] (active-low
-            // shadow of peri-RP TRIG register → active-high "pressed"
-            // semantics matching GTIA's trig_in (bit 0 = 1 when
-            // pressed). The gtia_regs read flips bit 0 to match Atari's
-            // "0 = button pressed" register convention.
-            assign trig_high[i] = {7'h00, w_joy_fire[i]};
+            // P/M-to-P/M collisions come from the BEAM-TIME engine, not the
+            // compose burst: they accumulate as the beam sweeps, so a read
+            // partway along the line sees only what has been drawn so far.
+            assign m_pl_in[i] = {4'h0, bt_mpl_q[4*i +: 4]};
+            assign p_pl_in[i] = {4'h0, bt_ppl_q[4*i +: 4]};
+            // M25-1: TRIG0..TRIG3 sourced from pia_joy_fire[i] (active-low
+            // shadow → active-high "pressed" semantics matching GTIA's trig_in
+            // (bit 0 = 1 when pressed). The gtia_regs read flips bit 0 to match
+            // Atari's "0 = button pressed" register convention.
+            assign trig_high[i] = {7'h00, pia_joy_fire[i]};
         end
     endgenerate
 
@@ -572,8 +683,13 @@ module antic_top #(
         .m_pl_in        (m_pl_in),
         .p_pl_in        (p_pl_in),
         .trig_in        (trig_high),
-        .pal_sense_in   (8'h02),         // NTSC sense default
-        .consol_r_in    (8'h07),         // no console keys pressed default
+        // $D014 PAL/NTSC sense. NTSC GTIA reads $0F, PAL reads $01 — this was
+        // $02, which is neither, so every standard-detect took the PAL branch
+        // despite our 262-line NTSC frame. Found via ACID800 antic_vcount, which
+        // hung forever in `cpx:rne vcount` waiting for VCOUNT==155 (the PAL
+        // rollover) on a frame whose leading VCOUNT tops out at 131.
+        .pal_sense_in   (8'h0F),         // NTSC
+        .consol_r_in    (consol_keys),   // console keys from GP0 CTRL_CONSOL (kernel holds OPTION $03 for games -> BASIC off)
         .hitclr_strobe  (hitclr_strobe)
     );
 
@@ -594,9 +710,11 @@ module antic_top #(
     wire       pokey_l_serout_strobe;
     wire [7:0] pokey_l_skctl;
     wire       pokey_l_irq_n;       // POKEY's own irq_n, before M-PBI /EXTIRQ wired-OR
-    // IRQ tree: POKEY irq_n wired-OR with PBI /EXTIRQ (both active-low, AND combines).
-    // Drives both the external irq_n pin and SALLY's .irq_n input.
-    wire       irq_n_combined = pokey_l_irq_n & bus_extirq_n_q;
+    wire       pia_irq_n;           // PIA IRQA2/IRQB2 (CA2/CB2 input-mode, enabled)
+    // IRQ tree: POKEY irq_n wired-OR with the PIA /IRQ and PBI /EXTIRQ (all
+    // active-low, AND combines). Drives both the external irq_n pin and
+    // SALLY's .irq_n input.
+    wire       irq_n_combined = pokey_l_irq_n & pia_irq_n & bus_extirq_n_q;
     assign irq_n = irq_n_combined;
     wire       pokey_r_irq_n_unused;        // intentionally ignored
 
@@ -621,6 +739,7 @@ module antic_top #(
     pokey #(.CLK_BUS_HZ(POKEY_CLK_BUS_HZ)) u_pokey_l (
         .clk                  (clk_bus),
         .rst                  (rst_bus),
+        .cold_boot            (cold_boot_bus),
         .phi2_tick            (phi2_tick),
         .we                   (snoop_we_pokey_l),
         .waddr                (snoop_addr[7:0]),
@@ -675,6 +794,7 @@ module antic_top #(
     pokey #(.CLK_BUS_HZ(POKEY_CLK_BUS_HZ)) u_pokey_r (
         .clk                  (clk_bus),
         .rst                  (rst_bus),
+        .cold_boot            (cold_boot_bus),
         .phi2_tick            (phi2_tick),
         .we                   (snoop_we_pokey_r),
         .waddr                (snoop_addr[7:0]),
@@ -787,19 +907,12 @@ module antic_top #(
         .last_sample_r     ()
     );
 
-    // ---- CPU RAM access (BRAM via bram_shim) ----------------------------
-    // System RAM lives in sally_mem's BRAM; ANTIC reads it through a
-    // bram_shim on sally_mem's second port (clk_bus), so SALLY writes are
-    // visible to ANTIC without a separate shadow memory:
-    //   - bus_snoop drives the write port (snoop_we_screen / snoop_addr /
-    //     snoop_data); the shim's wready is currently unobserved (1-deep
-    //     write FIFO; bus_snoop fires ≤ 1× per ~12 fabric cycles, well
-    //     below the shim's drain rate, so saturation is not expected).
-    //   - dl_parser reads via shim port A; compositor via port B.
-    //   - mem_read_mux per consumer routes between the shim (snoop mode,
-    //     dma_mode_q=0) and dma_master via the arbiter (DMA mode,
-    //     dma_mode_q=1). Multi-cycle shim latency propagates back to the
-    //     consumer via sh_ready / caller_ready.
+    // ---- CPU RAM access (dedicated BRAM ports) --------------------------
+    //   - dl_parser reads sally_mem's dma port (bram_addr/bram_rdata).
+    //   - the compositor reads the display_shadow copy (cmp_bram_*).
+    //   - mem_read_mux per consumer routes between the plain BRAM port
+    //     (snoop mode, dma_mode_q=0, sh_ready=1) and dma_master via the
+    //     arbiter (DMA mode, dma_mode_q=1).
     wire [15:0] dl_raddr,  cmp_raddr;
     wire [7:0]  dl_rdata,  cmp_rdata;
     wire        dl_req,    cmp_req;
@@ -811,24 +924,19 @@ module antic_top #(
     wire [7:0]  dl_sh_rdata, cmp_sh_rdata;
     wire        dl_sh_ready, cmp_sh_ready;
 
-    // SALLY writes propagate to sally_mem's BRAM directly via its normal
-    // bus interface; ANTIC reads the same BRAM through its second port
-    // (sally_mem.dma_addr/dma_rdata at clk_bus).  No separate shadow
-    // memory is needed.
-    bram_shim #(.ADDR_W(16)) u_bram_shim (
-        .clk           (clk_bus),
-        .rst           (rst_bus),
-        .bram_addr     (bram_addr),
-        .bram_rdata    (bram_rdata),
-        .req_a         (dl_sh_req),
-        .raddr_a       (dl_sh_raddr),
-        .rdata_a       (dl_sh_rdata),
-        .ready_a       (dl_sh_ready),
-        .req_b         (cmp_sh_req),
-        .raddr_b       (cmp_sh_raddr),
-        .rdata_b       (cmp_sh_rdata),
-        .ready_b       (cmp_sh_ready)
-    );
+    // Each consumer now owns a DEDICATED registered-read BRAM port —
+    // dl_parser keeps sally_mem's dma port (bram_addr/bram_rdata), the
+    // compositor reads the display_shadow copy (cmp_bram_addr/_rdata,
+    // write-mirrored from sally_mem's single write site at the top level).
+    // bram_shim (the old two-consumers-one-port arbiter, source of the
+    // cross-port staleness bug class) is GONE; the mem_read_muxes run in
+    // their plain-BRAM snoop mode (sh_ready tied 1, fixed 1-cycle reads).
+    assign bram_addr     = dl_sh_raddr;
+    assign dl_sh_rdata   = bram_rdata;
+    assign dl_sh_ready   = 1'b1;
+    assign cmp_bram_addr = cmp_sh_raddr;
+    assign cmp_sh_rdata  = cmp_bram_rdata;
+    assign cmp_sh_ready  = 1'b1;
 
     // ---- dma_mode latch (vsync-aligned, snapped at dl_start_pulse) -----
     // dl_start_pulse fires once per frame at vbi_start (driven by the
@@ -929,8 +1037,16 @@ module antic_top #(
     antic_seq u_antic_seq (
         .clk        (clk_bus),
         .rst        (rst_bus),
-        .vbi_start  (vbi_start_pulse_bus),
+        .vbi_start  (parse_kick_pulse),     // parse trigger: LATE-vblank kick (see PARSE_KICK_LINE)
+        // NOTE: composing at the END of the line was tried (build 71b) so
+        // that mid-line SIZEP/HPOSP/GRAFP writes would be visible to the
+        // burst.  It changed NOTHING on gtia_pmresize (identical $E0 vs
+        // $80) while moving when mid-line writes take effect — a real risk
+        // to raster effects for no measured gain — so it is reverted.  The
+        // render needs BEAM-TIME register sampling, not a different burst
+        // instant; see docs/a800/HANDOFF.md 0o.
         .line_start (line_start_pulse_bus),
+        .line_end   (line_end_pulse_bus),
         .active_row (ar_atari_row != 8'hFF),
         .parse_done (dl_done),
         .dl_start   (dl_start_pulse),
@@ -945,10 +1061,185 @@ module antic_top #(
     wire [3:0]  dl_meta_sub;
     wire        dl_meta_hscrol_en;
     wire        dl_meta_vscrol_en;
+    wire        dl_meta_active;    // entry-backed row (0 = post-list blank fill)
+    // TEMP diag: expose NMIEN/NMIST + a CUMULATIVE count of DLIs that fire with
+    // NMIEN[7] set -> dbg_antic (routed to diag8, GP0 0x41C).  Cumulative (not
+    // per-frame) so a before/after delta around one xexload isolates whether the
+    // DLI-enabled event EVER occurs on the ANTIC side for that test.
+    //   dbg_dli_cnt delta > 0  => DLI fires with NMIEN[7] on ANTIC; bug is DELIVERY to CPU
+    //   dbg_dli_cnt delta == 0 => NMIEN[7] never coincides with a DLI row; bug is earlier
+    reg  [7:0]  dbg_dli_cnt;      // DLI rows that fire WITH nmien[7] set (gated)
+    reg  [7:0]  dbg_dliu_cnt;     // DLI rows that fire regardless of nmien (ungated)
+    reg  [7:0]  dbg_nmien_or;     // sticky OR of nmien_q — was bit7 EVER set?
+    wire        dbg_dli_fire  = ar_line_start & nmi_cur_row_dli & nmien_q[7];
+    wire        dbg_dliu_fire = ar_line_start & nmi_cur_row_dli;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus) begin
+            dbg_dli_cnt  <= 8'h0;
+            dbg_dliu_cnt <= 8'h0;
+            dbg_nmien_or <= 8'h0;
+        end else begin
+            if (dbg_dli_fire)  dbg_dli_cnt  <= dbg_dli_cnt  + 8'h1;
+            if (dbg_dliu_fire) dbg_dliu_cnt <= dbg_dliu_cnt + 8'h1;
+            dbg_nmien_or <= dbg_nmien_or | nmien_q;
+        end
+    end
+    // nmien[7] is HELD through the dli1 phase (clr_pc = _testEnd), yet gated=0,
+    // so dl_parser never flags the test DL's DLI rows.  Capture the DL address
+    // dl_parser is actually using WHILE nmien[7] is set (the dli1 phase): if it
+    // is not $2C00 the wrong DL is parsed; if it is, the DL data read is stale.
+    reg [15:0] dbg_dlist_at_n7;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus)        dbg_dlist_at_n7 <= 16'h0;
+        else if (nmien_q[7]) dbg_dlist_at_n7 <= {dlisth_q, dlistl_q};
+    end
+    // dl_parser uses the RIGHT DL ($2C00) but no DLI fires. Split stale-data (B)
+    // from parse/lookup (C): capture the DL bytes dl_parser actually reads at
+    // $2C00 (should be $70) and $2C02 (should be $F0, blank-8+DLI), plus whether
+    // line_dli_p[23] is ever seen set at the raster row nmi_gen looks up.
+    reg  [7:0]  dbg_dl_b00, dbg_dl_b02;
+    reg  [15:0] dl_raddr_q;
+    reg         dl_ready_q;
+    reg         dbg_raster23;    // sticky: raster reached atari_row 23
+    reg         dbg_dlip23;      // sticky: line_dli_p[23] set when raster at row 23
+    always_ff @(posedge clk_bus) begin
+        dl_raddr_q <= dl_raddr;
+        dl_ready_q <= dl_ready;
+        if (dl_ready && dl_raddr == 16'h2C00) dbg_dl_b00 <= dl_rdata;
+        if (dl_ready && dl_raddr == 16'h2C02) dbg_dl_b02 <= dl_rdata;
+        if (rst_bus) begin dbg_raster23 <= 1'b0; dbg_dlip23 <= 1'b0; end
+        else if (ar_atari_row == 8'd23) begin
+            dbg_raster23 <= 1'b1;
+            if (nmi_cur_row_dli) dbg_dlip23 <= 1'b1;   // line_dli_p[23] set at row 23
+        end
+    end
+    // Snapshot dl_parser's line_dli_p rows {41,40,25,24,23,22,16,8} WHILE the
+    // dli1 DL is active (nmien[7]) — shows WHICH rows dl_parser flags for the
+    // pfstart DL (expected: bit 23 and 41 set) vs what nmi_gen looks up.
+    reg  [7:0] dbg_dlirows_n7;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus)              dbg_dlirows_n7 <= 8'h0;
+        else if (nmien_q[7] && dbg_dli_rows != 8'h0) dbg_dlirows_n7 <= dbg_dli_rows;
+    end
+    // line_dli_p[23] is set (snapshot) but 0 when the raster is at row 23
+    // (scanline 31) -> the parse sets it TOO LATE. Capture the scanline at the
+    // rising edge of line_dli_p[23] (dbg_dli_rows[3]) during dli1: if it is >31
+    // (or past row 23's scanline) the parse finishes after the raster needs it.
+    reg        dlirow23_q;
+    reg  [8:0] dbg_scan_at_set;   // ar_scanline when line_dli_p[23] went 0->1
+    always_ff @(posedge clk_bus) begin
+        dlirow23_q <= dbg_dli_rows[3];
+        if (rst_bus) dbg_scan_at_set <= 9'h0;
+        else if (nmien_q[7] && dbg_dli_rows[3] && !dlirow23_q)
+            dbg_scan_at_set <= ar_scanline;   // rising edge of line_dli_p[23]
+    end
+    // Resolve the contradiction: at the instant the raster is AT row 23, sample
+    // BOTH the constant-index read (dbg_dli_rows[3] = line_dli_p[23]) and the
+    // variable-index read (nmi_cur_row_dli = dli_at = line_dli_p[dli_row]).
+    //   const=1, var=0 => inference: the variable read disagrees (ram_style not
+    //                     enough) -> the fix is in the read structure
+    //   const=0, var=0 => line_dli_p[23] is genuinely CLEARED by scanline 31
+    // line_dli_p[23] rises at 248 but is 0 at scanline 31, and antic_seq only
+    // clears at vbi_start(248) -> capture the FALLING-edge scanline to find the
+    // hidden re-clear.
+    reg [8:0] dbg_scan_at_clr;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus) dbg_scan_at_clr <= 9'h0;
+        else if (nmien_q[7] && !dbg_dli_rows[3] && dlirow23_q)   // 1->0 edge
+            dbg_scan_at_clr <= ar_scanline;
+    end
+    // line_dli_p[23] is cleared at scanline 17, but start_parse should only fire
+    // at vbi_start(248). Capture where dl_start_pulse actually fires and where
+    // the parse completes: dl_start@17 => spurious trigger; parse crossing into
+    // the visible frame => the long DL parse re-clears mid-display.
+    reg [8:0] dbg_vbi_bad;       // scanline of any vbi_start NOT at 248
+    reg [8:0] dbg_dlstart_bad;   // scanline of any dl_start NOT at 248
+    reg [7:0] dbg_vbi_cnt;       // total vbi_start pulses during nmien[7]
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus) begin
+            dbg_vbi_bad<=9'h0; dbg_dlstart_bad<=9'h0; dbg_vbi_cnt<=8'h0;
+        end else if (nmien_q[7]) begin
+            if (vbi_start_pulse_bus) begin
+                dbg_vbi_cnt <= dbg_vbi_cnt + 8'd1;
+                if (ar_scanline != 9'd248) dbg_vbi_bad <= ar_scanline;
+            end
+            if (dl_start_pulse && ar_scanline != PARSE_KICK_LINE) dbg_dlstart_bad <= ar_scanline;
+        end
+    end
+    // DEFINITIVE generation-vs-delivery split. cycle-8 DLI fire = the exact
+    // condition nmi_gen uses for the DLI /NMI. If gated_c8 fires but the fid
+    // core never dispatches (fid-side nmist7~0), the bug is DELIVERY; if
+    // gated_c8 stays 0 with the list populated, generation is still broken.
+    wire c8 = phi2_tick && (ar_phi2_in_line == 8'd8);
+    reg [7:0] dbg_gated_c8;
+    reg [4:0] dbg_listcnt_n7;
+    reg       dbg_has23_n7;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus) begin dbg_gated_c8<=0; dbg_listcnt_n7<=0; dbg_has23_n7<=0; end
+        else begin
+            if (c8 && nmi_cur_row_dli && nmien_q[7]) dbg_gated_c8 <= dbg_gated_c8 + 8'd1;
+            if (nmien_q[7]) begin
+                if (dbg_dli_listcnt != 0) dbg_listcnt_n7 <= dbg_dli_listcnt;
+                if (dbg_dli_has23)        dbg_has23_n7   <= 1'b1;
+            end
+        end
+    end
+    // Sample dli_cnt + dli_at AT scanline 31 (raster row 23), cycle 8 — exactly
+    // where/when the DLI must fire. dli_cnt_at23==0 => list cleared by then;
+    // dli_cnt_at23>0 && dli_at23==0 => comparator/dli_row broken; both good =>
+    // generation works and the bug is delivery.
+    reg [4:0] dbg_cnt_at23;
+    reg       dbg_at23, dbg_hit23seen;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus) begin dbg_cnt_at23<=0; dbg_at23<=0; dbg_hit23seen<=0; end
+        else if (nmien_q[7] && c8 && ar_atari_row==8'd23) begin
+            dbg_hit23seen <= 1'b1;
+            dbg_cnt_at23  <= dbg_dli_listcnt;      // list size at scanline 31 cyc 8
+            if (nmi_cur_row_dli) dbg_at23 <= 1'b1; // dli_at at scanline 31 cyc 8
+        end
+    end
+    // {dlstart_bad scanline[31:23], dlstart_cnt[22:15], pdone scanline...[14:8],
+    //  ungated[7:0]}.  dlstart_bad != 0 => start_parse fires at a wrong scanline
+    // (spurious re-parse clears the DLI state mid-frame).
+    // {vbi_bad scanline[31:23], dlstart_bad[22:14], vbi_cnt[13:6]... , ungated[5:0]}.
+    wire [3:0] dbg_parser_state;
+    wire [1:0] dbg_parser_phase;
+    // Parser is in one of its WAIT states (2=OP, 5=LMS_LO, 8=LMS_HI,
+    // 11=JMP_LO, 14=JMP_HI): the cycle mem_ready completes a fetch.
+    wire dl_in_wait = (dbg_parser_state == 4'd2)  || (dbg_parser_state == 4'd5)
+                   || (dbg_parser_state == 4'd8)  || (dbg_parser_state == 4'd11)
+                   || (dbg_parser_state == 4'd14);
+    // diag8: {[31:28]=parser state, [27:26]=emit phase, [25:24]=0,
+    //         [23:16]=parse_count[7:0], [15:8]=dlstart_bad[7:0], [7:0]=ungated DLI count}
+    assign dbg_antic = {dbg_parser_state, dbg_parser_phase, 2'b00,
+                        dl_count[7:0], dbg_dlstart_bad[7:0], dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
-        .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
+        // start_parse is GATED to the true frame boundary: the only legitimate
+        // dl_start_pulse fires at vbi_start (scanline 248), and a spurious
+        // pulse anywhere else (measured mid-frame on hardware, build-dependent)
+        // would re-enter the parse FSM and wipe the live row metadata the
+        // display is reading.  Rejecting it here bounds that whole fault class.
+        // The compare is REGISTERED (scanline holds for a whole line, so a
+        // 1-clk-late flag is equally valid) to keep ar_scanline's fanout off
+        // the timing-critical pulse path.
+        .clk(clk_bus), .rst(rst_bus),
+        .cold_abort(cold_boot_bus),
+        .dbg_state(dbg_parser_state), .dbg_emit_phase(dbg_parser_phase),
+        .start_parse(dl_start_pulse && scanline_is_vbi_q),
+        // Walker lockstep: prime at the frame boundary, flip at each active
+        // scanline start, prefetch the next DL entry late in every line
+        // (phi2 cycle 111 — after the post-WSYNC register-write window).
+        .frame_start(vbi_start_pulse_bus),
+        .line_start(line_start_pulse_bus && (ar_atari_row != 8'hFF)),
+        .prep_tick(phi2_tick && (ar_phi2_in_line == 8'd111)),
+        // Altirra VSCROL latch points: cycle-6 snapshot feeds the DLI
+        // decision (mLatchedVScroll2); the row-stop copy freezes at 109
+        // (mLatchedVScroll, "used at cycles 112 and 1").
+        .vs_dli_tick(phi2_tick && (ar_phi2_in_line == 8'd6)),
+        .vs_stop_tick(phi2_tick && (ar_phi2_in_line == 8'd109)),
         .dlistl(dlistl_q), .dlisth(dlisth_q),
+        .dlistl_we(dlistl_we_w), .dlisth_we(dlisth_we_w),
         .vscrol(vscrol_q[3:0]),
         .mem_raddr(dl_raddr), .mem_rdata(dl_rdata),
         .mem_req(dl_req), .mem_ready(dl_ready),
@@ -957,8 +1248,15 @@ module antic_top #(
         .meta_lms_addr(dl_meta_lms), .meta_sub_row(dl_meta_sub),
         .meta_hscrol_en(dl_meta_hscrol_en),
         .meta_vscrol_en(dl_meta_vscrol_en),
+        .meta_dl_active(dl_meta_active),
         .dli_row(nmi_cur_row),
         .dli_at(nmi_cur_row_dli),
+        .dbg_parse_start(dbg_parse_start_w),
+        .dbg_act_count(dbg_act_count_w),
+        .dbg_ph_cnt(dbg_ph_cnt_w),
+        .dbg_dli_rows(dbg_dli_rows),
+        .dbg_dli_cnt(dbg_dli_listcnt),
+        .dbg_dli_has23(dbg_dli_has23),
         .parse_done(dl_done), .parse_count(dl_count)
     );
 
@@ -972,7 +1270,9 @@ module antic_top #(
     antic_dma_steal u_dma_steal (
         .cyc      (ar_phi2_in_line),
         .mode     (dl_meta_mode),
-        .is_first (dl_meta_sub == 4'd0),
+        // First scanline of a REAL DL line: post-list fill rows perform no
+        // DL fetches (real ANTIC's list has ended).
+        .is_first ((dl_meta_sub == 4'd0) && dl_meta_active),
         .active   (ar_atari_row != 8'hFF),
         .dmactl   (dmactl_q),
         .steal    (dma_steal_comb)
@@ -987,17 +1287,52 @@ module antic_top #(
         else         dma_steal_q <= dma_steal_comb;
     assign dma_steal = dma_steal_q;
 
+    // ---- Cycle-8 NMI strobe (M-antic-dli) ----------------------------
+    // Real ANTIC raises the DLI / VBI NMI at machine cycle 8 of the scan
+    // line, not cycle 0 (where line_start / vbi_start pulse).  Derive a
+    // cycle-8 strobe (parallel to the cycle-105 WSYNC strobe below) and
+    // feed nmi_gen's DLI/VBI triggers from it.  All clk_bus — no CDC, like
+    // vbi_start_pulse_bus / line_start_pulse_bus.  cur_row_dli is a
+    // combinational lookup that is stable across the whole line, so
+    // sampling it at cycle 8 (rather than cycle 0) is fine.
+    wire cycle_8_pulse = phi2_tick && (ar_phi2_in_line == 8'd8);
+
+    // NMIST status tick at cycle 6: the DLI/VBI status bit must be VISIBLE
+    // to a CPU read whose data cycle is 6 (ACID800 antic_nmist's "set too
+    // late" check) — MiSTer/real ANTIC set the flag from the cycle-6 slot.
+    // The old ==7 placement was bisected under the blank-fill over-stealing
+    // regime (reads arrived +3 late, compensating); with dl_active gating
+    // the steal model, the true placement is 6.
+    wire cycle_6_pulse = phi2_tick && (ar_phi2_in_line == 8'd7);   // NMIST status tick (see dossier)
+    // (cycle 7, matching Altirra's mX==7 NMIST slot: hardware-bisected —
+    //  8 fails 'set too late (>cycle 6)', 6 fails 'set too early (<cycle 6)')
+
+    // The VBI marker (ar_vbi_start) pulses at cycle 0 of the VBLANK line;
+    // latch it and release the VBI NMI at that same line's cycle-8 strobe
+    // so the VBI lands on the same machine cycle as a DLI.
+    logic vbi_c8_pending;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus)                  vbi_c8_pending <= 1'b0;
+        else if (vbi_start_pulse_bus) vbi_c8_pending <= 1'b1;
+        else if (cycle_8_pulse)       vbi_c8_pending <= 1'b0;
+    end
+    wire vbi_c8_pulse = cycle_8_pulse && vbi_c8_pending;
+    wire vbi_c6_pulse = cycle_6_pulse && vbi_c8_pending;   // status leads the /NMI
+
     // ---- NMI generator (M12) -----------------------------------------
-    // Instantiated in clk_bus. Vbeam-domain pulses (vbi_start, line_start)
-    // arrive via the 2-FF synchronisers above. cur_row from nmi_gen
-    // closes the DLI loop with dl_parser via combinational dli_at.
+    // Instantiated in clk_bus. cur_row from nmi_gen closes the DLI loop
+    // with dl_parser via combinational dli_at. DLI/VBI triggers come from
+    // the cycle-8 strobe above (cycle_8_pulse for DLI, vbi_c8_pulse for VBI).
     nmi_gen u_nmi_gen (
         .clk           (clk_bus),
         .rst           (rst_bus),
         .nmien         (nmien_q),
         .nmires_strobe (nmires_strobe),
-        .vbi_start     (vbi_start_pulse_bus),
-        .line_start    (line_start_pulse_bus),
+        .status_tick   (phi2_tick),
+        .vbi_status    (vbi_c6_pulse),
+        .vbi_start     (vbi_c8_pulse),
+        .line_status   (cycle_6_pulse),
+        .line_start    (cycle_8_pulse),
         .cur_row       (nmi_cur_row),
         .cur_row_dli   (nmi_cur_row_dli),
         .atari_row_in  (ar_atari_row),
@@ -1005,21 +1340,271 @@ module antic_top #(
         .nmi_n         (nmi_n_w)
     );
 
-    // ---- WSYNC handler: release at bus cycle 105 of the line ---------
-    // ANTIC's real /RDY release point is bus cycle 105 of the current scan
-    // line (start of horizontal blank).  The phi2-cycle-within-line count now
-    // comes from antic_raster (ar_phi2_in_line, 0..113) — which is what makes
-    // this correct: the old local counter was reset by the 140 kHz vbeam
-    // line_start (~12 phi2 cycles), so it never reached 105 and WSYNC never
-    // released.  phi2-paced line_start fixes it.
-    wire cycle_105_pulse = phi2_tick && (ar_phi2_in_line == 8'd105);
+    // ================================================================
+    // ANTIC timebase debug probe (DBG_TB_*) — GP0 DEBUG block.
+    //
+    // A 16-entry capture ring + configurable trigger.  On the selected
+    // event it records the 2D timebase — ar_scanline (0..261) and
+    // ar_phi2_in_line (machine-cycle 0..113) — plus a data byte.  This is
+    // the measurement tool for the ACID800 ANTIC-timing test family: it
+    // answers "on which scanline and which horizontal cycle did this
+    // register write / DLI / VBI / WSYNC happen?".
+    //
+    // All logic runs in clk_bus (the snoop + antic_raster domain).  The A9
+    // config word is slow control and 2-FF synced in with cdc_sync_bit;
+    // the status/capture words are stable (written at most once per event)
+    // and 2-FF synced on the clk_sys (GP0) side.  The probe is purely
+    // observational — it drives nothing in the ANTIC datapath.
+    //
+    // cfg: [2:0]=mode [11:4]=match_addr [19:16]=read_idx [24]=clear [25]=circular
+    // mode: 0=off 1=$D4xx wr@match 2=$D4xx rd@match 3=DLI-line 4=VBI
+    //       5=WSYNC($D40A wr) 6=any $D4xx wr 7=every ar_line_start
+    // circular: 0 = stop-on-full (hold the FIRST 16 triggers, then freeze);
+    //           1 = wrap (hold the LAST 16 triggers — the ring rolls so it
+    //           always shows the most-recent events; pairs with xexload --hold
+    //           to capture steady-state / failing-assert timing, not boot).
+    // ================================================================
+    wire [28:0] dbg_tb_cfg_s;
+    // Slow A9 config: every field (mode/match/read_idx/clear/circular) is quasi-
+    // static — set and left to settle before the probe is armed or read back.
+    // cdc-lint: independent-bits — quasi-static config, per-bit 2-FF skew is benign
+    cdc_sync_bit #(.WIDTH(29)) u_tb_cfg_sync (
+        .dst_clk (clk_bus),
+        .src_sig (dbg_tb_cfg),
+        .dst_sig (dbg_tb_cfg_s)
+    );
+
+    wire [2:0] tb_mode       = dbg_tb_cfg_s[2:0];
+    wire [7:0] tb_match_addr = dbg_tb_cfg_s[11:4];
+    wire [3:0] tb_read_idx   = dbg_tb_cfg_s[19:16];
+    wire       tb_clear      = dbg_tb_cfg_s[24];
+    wire       tb_circular   = dbg_tb_cfg_s[25];
+
+    // Edge-detect the (synced) clear so one cfg write with clear=1 arms and
+    // resets the ring for exactly one fresh capture pass.
+    logic tb_clear_q;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) tb_clear_q <= 1'b0;
+        else         tb_clear_q <= tb_clear;
+    end
+    wire tb_clear_pulse = tb_clear & ~tb_clear_q;
+
+    // cfg[12] narrows mode 3 to DLIs that actually ASSERT /NMI (nmien[7] set),
+    // which is the only way to tell "the DL never raised a DLI" apart from "it
+    // raised one while DLIs were masked".  Without it the 16-entry ring fills
+    // with masked boot/framework DLIs and the interesting frame is never
+    // visible (ACID800 nmist/dlitiming/pfstart-stop all hinge on this).
+    wire tb_dli_nmi_only = dbg_tb_cfg_s[12];
+    // cfg[13]: retarget mode 2 from the ANTIC ($D4xx) read strobe to the LEFT
+    // POKEY ($D2xx).  The ACID800 suite times WSYNC by reading POKEY RANDOM
+    // ($D20A) as a cycle-exact clock, so measuring WHICH machine cycle that read
+    // lands on is the only way to see a 1-cycle CPU timing error directly rather
+    // than inferring it from the returned byte.
+    wire tb_pokey_rd     = dbg_tb_cfg_s[13];
+
+    // Trigger select (single-cycle pulse; write/read modes are qualified by
+    // the snoop write/read strobe).
+    logic tb_trig;
+    always_comb begin
+        unique case (tb_mode)
+            3'd1:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == tb_match_addr);
+            3'd2:    tb_trig = (tb_pokey_rd ? snoop_re_pokey_l : snoop_re_antic)
+                             & (snoop_addr[7:0] == tb_match_addr);
+            // DLI at the REAL gate cycle (8), matching nmi_gen — captures nmien_q.
+            3'd3:    tb_trig = cycle_8_pulse & nmi_cur_row_dli
+                             & (~tb_dli_nmi_only | nmien_q[7]);
+            3'd4:    tb_trig = tb_match_addr[0] ? dl_done      // +cfg[4]: parser triage
+                                                 : vbi_c8_pulse;
+            3'd5:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == 8'h0A); // WSYNC $D40A
+            3'd6:    tb_trig = snoop_we_antic;
+            3'd7:    tb_trig = tb_dli_nmi_only ? (dl_ready & dl_in_wait)
+                                               : ar_line_start;   // cfg[12]: parser-fetch capture
+            default: tb_trig = 1'b0;                                       // mode 0 = off
+        endcase
+    end
+
+    // One capture per bus access.  snoop_re_antic / snoop_we_antic are LEVELS
+    // (held for the whole bus phase), so a level-sensitive trigger fired TWICE
+    // per access and the second sample caught the live bus_addr read mux after
+    // it had already moved on — recording a garbage $FF alongside every good
+    // value.  Edge-detect so each access captures exactly once, on the cycle the
+    // data is still valid.  The pure-event modes (3=DLI, 4=VBI, 7=line) are
+    // already 1-cycle pulses, so their rising edge is the same cycle: unaffected.
+    logic tb_trig_q;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) tb_trig_q <= 1'b0;
+        else         tb_trig_q <= tb_trig;
+    end
+    wire tb_trig_edge = tb_trig & ~tb_trig_q;
+
+    // cfg[3] = visible-only: ignore triggers during vertical blank (scanline >=
+    // 240).  The ACID800 framework's `cmp:rne vcount` sync loops hammer $D40B in
+    // vblank and otherwise monopolise the 16-entry ring, hiding the test's own
+    // measurement reads (the ones whose cycle position is actually under test).
+    // clk_sys closes with ~zero margin, so the scanline compare is REGISTERED out
+    // of the capture-enable path (scanline only changes once per 114 cycles, so a
+    // 1-cycle-stale visible flag is exact at every trigger except a line boundary).
+    wire tb_visible_only = dbg_tb_cfg_s[3];
+    logic tb_scan_vis_q;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) tb_scan_vis_q <= 1'b1;
+        else         tb_scan_vis_q <= (ar_scanline < 9'd240);
+    end
+    wire tb_scan_ok = ~tb_visible_only | tb_scan_vis_q;
+
+    // Capture payload byte: the write byte for write modes, the ANTIC
+    // register read mux (valid at snoop_addr during a $D4xx read, since
+    // antic_regs.raddr = bus_addr = snoop_addr) for the read mode, else the
+    // live NMIEN for the pure-event modes (3=DLI, 4=VBI, 7=line) — so a DLI-line
+    // capture records the gating NMIEN value at that scanline (is bit7 set?).
+    wire [7:0] tb_data8 =
+          (tb_mode == 3'd1 || tb_mode == 3'd5 || tb_mode == 3'd6) ? snoop_data
+        : (tb_mode == 3'd2)  ? (tb_pokey_rd ? pokey_l_read_data : antic_read_data)
+        :                                                           nmien_q;
+
+    // 16-entry ring in distributed RAM: {scanline[8:0], phi2_in_line[7:0], data[7:0]}.
+    logic [24:0] tb_ring [0:15];
+    logic [4:0]  tb_wr_idx;      // stop-on-full: 0..16, bit[4]=full (saturates).
+                                 // circular: bit[4]=0, [3:0]=next write slot (wraps 0..15).
+    logic [15:0] tb_trig_count;  // 16-bit saturating trigger count since clear
+    logic        tb_armed;
+    // stop-on-full: full once the index reaches 16 (bit4). circular: full once the
+    // ring has wrapped (>=16 triggers seen), i.e. all 16 slots are recent events.
+    wire         tb_full = tb_circular ? (tb_trig_count >= 16'd16) : tb_wr_idx[4];
+
+    // The capture is PIPELINED one clk_bus: payload + accept decision are
+    // registered before touching the 16x25 ring.  The payload latches on the
+    // SAME edge the trigger is evaluated (bus data still valid — see the
+    // double-sample note above), only the ring WRITE lands a cycle later.
+    // clk_sys closes with ~no margin and the scanline→ring-CE cone was the
+    // design's WNS path; scanline/cycle values are stable for ~90 clk_bus,
+    // so the recorded values are identical.
+    logic        tb_accept_q;
+    logic [24:0] tb_payload_q;
+    logic [15:0] tb_fetch_stage_q;   // {ready-cycle data, addr} staging for fetch mode
+    logic        tb_fetch_acc1;      // fetch-mode capture pipeline stage 1
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            tb_accept_q  <= 1'b0;
+            tb_payload_q <= 25'd0;
+            tb_fetch_acc1 <= 1'b0;
+            tb_fetch_stage_q <= 16'd0;
+        end else begin
+            // mode 7 + cfg[12]: parser-fetch capture —
+            //   {ready-cycle data[8:1], 1'b0, addr low[7:0], NEXT-cycle data[7:0]}
+            // The shim/mux chain has a one-cycle data ambiguity (the shim's
+            // registered rdata is one transaction stale during its ready
+            // cycle, and dl_parser consumes JMP/JVB high bytes ON ready but
+            // opcodes one cycle AFTER) — capturing both cycles' bytes per
+            // fetch shows which carries the truth and what the other holds.
+            // Two-stage: the trigger cycle snapshots {data, addr}; the next
+            // cycle assembles the payload with the live (next-cycle) data.
+            if (tb_mode == 3'd7 && tb_dli_nmi_only) begin
+                tb_fetch_acc1 <= tb_armed && tb_trig_edge && tb_scan_ok;
+                if (tb_trig_edge) tb_fetch_stage_q <= {dl_rdata, dl_raddr[7:0]};
+                tb_accept_q   <= tb_fetch_acc1;
+                if (tb_fetch_acc1)
+                    tb_payload_q <= {tb_fetch_stage_q[15:8], 1'b0,
+                                     tb_fetch_stage_q[7:0], dl_rdata};
+            end else if (tb_mode == 3'd4 && tb_match_addr[0]) begin
+                // Parser triage: one capture per parse_done —
+                // payload = {1'b0, parse start addr[15:0], ph_cnt[4:0],
+                //            act_count[2:0] (low bits)}.
+                tb_fetch_acc1 <= 1'b0;
+                tb_accept_q   <= tb_armed && tb_trig_edge;
+                tb_payload_q  <= {1'b0, dbg_parse_start_w, dbg_ph_cnt_w,
+                                  dbg_act_count_w[2:0]};
+            end else begin
+                tb_fetch_acc1 <= 1'b0;
+                tb_accept_q   <= tb_armed && (tb_mode != 3'd0) && tb_trig_edge && tb_scan_ok;
+                tb_payload_q  <= {ar_scanline, ar_phi2_in_line, tb_data8};
+            end
+        end
+    end
+
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            tb_wr_idx     <= 5'd0;
+            tb_trig_count <= 16'd0;
+            tb_armed      <= 1'b0;
+        end else if (tb_clear_pulse) begin
+            tb_wr_idx     <= 5'd0;
+            tb_trig_count <= 16'd0;
+            tb_armed      <= 1'b1;      // arm a fresh capture pass
+        end else if (tb_accept_q) begin
+            if (tb_circular) begin
+                // Circular: always write, wrap the 4-bit slot; never freeze. The
+                // ring holds the LAST 16 triggers; wr_idx (=next slot) is the OLDEST.
+                tb_ring[tb_wr_idx[3:0]] <= tb_payload_q;
+                tb_wr_idx               <= {1'b0, tb_wr_idx[3:0] + 4'd1};
+            end else if (!tb_full) begin
+                // Stop-on-full (default): fill once, then freeze on the FIRST 16.
+                tb_ring[tb_wr_idx[3:0]] <= tb_payload_q;
+                tb_wr_idx               <= tb_wr_idx + 5'd1;   // stops at 16 (bit4 set)
+            end
+            if (tb_trig_count != 16'hFFFF)
+                tb_trig_count <= tb_trig_count + 16'd1;
+        end
+    end
+
+    // Read-out: stable once cfg (hence read_idx) has settled, so a plain
+    // 2-FF sync on the GP0 side is safe.
+    assign dbg_tb_cap  = tb_ring[tb_read_idx];
+    assign dbg_tb_stat = {6'd0, tb_armed, tb_full, 3'd0, tb_wr_idx, tb_trig_count};
+
+    // ---- WSYNC handler ---------------------------------------------------
+    // The CPU resumes on bus cycle 105 of the scan line (start of horizontal
+    // blank).  The phi2-cycle-within-line count comes from antic_raster
+    // (ar_phi2_in_line, 0..113) — which is what makes this correct: a counter
+    // reset by the 140 kHz vbeam line_start (~12 phi2 cycles) never reaches
+    // 105, so WSYNC would never release.
+    //
+    // /RDY is a registered output of wsync_gen's WSYNC latch and trails it by
+    // one machine cycle in both directions, so the latch is cleared at 103.
+    // For plain-STA code that is cycle-identical to a combinational /RDY
+    // released at 103 (both edges shift together), which is what keeps the
+    // OS coldstart resume point where it boots; the register stage is what
+    // gives an INC WSYNC's second write its delay slot (ACID800 antic_wsync).
+    //
+    // Both the release point and the /RDY shape are runtime-tunable from
+    // the DBG_TB config register, because the fid core's coldstart is sensitive
+    // to WSYNC timing and each candidate would otherwise cost a full rebuild:
+    //   cfg[23:20] = signed offset applied to the 103 release cycle
+    //   cfg[28:26] = /RDY shape mask {latch,q1,q2} (0 = default = 011, q1|q2)
+    //   cfg[14]    = /RDY combinational fallback (0 = registered, default)
+    //   cfg[15]    = DISABLE CPU-side write-immunity (0 = immune, boots)
+    // Release cycle 104: with the registered-set latch + q1 shape this puts
+    // the post-WSYNC resume on the cycle real hardware resumes on — measured
+    // on HW as the single release value where antic_vcount's VCOUNT reads
+    // land on 111/112 (103 reads a cycle early, 105 a cycle late) while
+    // antic_wsync, whose poly clock resynchronises to the release, passes at
+    // any offset.
+    wire signed [3:0] wsync_rel_adj  = dbg_tb_cfg_s[23:20];
+    wire       [7:0]  wsync_rel_cyc  = 8'd104 + {{4{wsync_rel_adj[3]}}, wsync_rel_adj};
+    wire       [2:0]  wsync_shape    = dbg_tb_cfg_s[28:26];
+    wire              wsync_comb_sel = dbg_tb_cfg_s[14];
+    assign wsync_write_immune = ~dbg_tb_cfg_s[15];              // out to fpga_xt_top
+    wire wsync_release_pulse = phi2_tick && (ar_phi2_in_line == wsync_rel_cyc);
 
     wire        wsync_rdy_w;             // 1 = ready, 0 = stalled
+    // The one-cycle "delay slot" before /RDY falls lives in wsync_gen's output
+    // pipeline, so the write pulse goes straight in: a read-modify-write's
+    // second write re-sets an already-set latch and must not restart it.  See
+    // wsync_gen.sv for the logic-analyser trace this is modelled on.
+    //
+    // NOTE the ACID800 SOURCE COMMENTS are wrong on cycle numbers ("the code is
+    // checked against a real Atari, but the comments aren't") — do not
+    // re-derive timing from them.  antic_wsync's asserted RANDOM values are
+    // $95, $0D, $44 and $34, at 9-bit-poly steps 113, 342, 569 and 1253.
     wsync_gen u_wsync_gen (
         .clk                (clk_bus),
         .rst                (rst_bus),
+        .phi2_tick          (phi2_tick),
+        .phi2_fall          (phi2_fall),
+        .shape_sel          (wsync_shape),
+        .comb_sel           (wsync_comb_sel),
         .wsync_pending      (wsync_pending),
-        .line_start         (cycle_105_pulse),     // release on cycle-105, not next-line
+        .line_start         (wsync_release_pulse),
         .rdy_n              (wsync_rdy_w),
         .wsync_overdue_count(wsync_overdue_count_q)
     );
@@ -1035,35 +1620,248 @@ module antic_top #(
     wire        cmp_done;
     wire [31:0] cmp_count;
 
-    compositor u_compositor (
-        .clk(clk_bus), .rst(rst_bus), .start_compose(cmp_start_pulse),
-        .row_in(ar_atari_row),                 // compose this row
-        .meta_row(meta_row_q),
-        .meta_mode(dl_meta_mode), .meta_lms_addr(dl_meta_lms),
-        .meta_sub_row(dl_meta_sub),
-        .meta_hscrol_en(dl_meta_hscrol_en),
-        .meta_vscrol_en(dl_meta_vscrol_en),
-        .chbase(chbase_q), .chactl(chactl_q),
-        .pmbase(pmbase_q), .dmactl(dmactl_q), .gractl(gractl_q),
+    // ---- Mid-scanline SIZEP capture (ACID800 gtia_pmresize) -------------
+    // Per player, remember the SIZEP value as it stood at line start and the
+    // atari-x at which the FIRST mid-line write to that register landed.  The
+    // compositor composes a row in one burst, so without this a write partway
+    // along the scanline is simply invisible to the render.
+    // atari-x maps from the ANTIC cycle as x = 4*cycle - 96 (two colour clocks
+    // per machine cycle, two atari pixels per colour clock, and HPOS 48 = x 0).
+    // 12'h800 = -2048 when read as SIGNED, so an untouched line fails
+    // `atari_x < chg_x` for every atari_x the sweep can produce (the
+    // border/collision sweep probes NEGATIVE colour clocks, which is why
+    // a 0 sentinel will not do).  This lets the per-pixel select in
+    // compositor.sv drop its explicit sentinel comparison entirely.
+    localparam [11:0] SIZEP_CHG_NONE = 12'h800;
+    logic [1:0]  sizep_early_q [0:3];
+    logic [11:0] sizep_chg_x_q [0:3];
+    wire  [11:0] cc_x_now = ({4'd0, ar_phi2_in_line} << 2) >= 12'd96
+                            ? (({4'd0, ar_phi2_in_line} << 2) - 12'd96) : 12'd0;
+    wire         sizep_we = snoop_we_gtia && (snoop_addr[7:2] == 6'b000010);  // $D008-$D00B
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            for (int i = 0; i < 4; i++) begin
+                sizep_early_q[i] <= 2'd0;
+                sizep_chg_x_q[i] <= SIZEP_CHG_NONE;
+            end
+        end else if (line_start_pulse_bus) begin
+            for (int i = 0; i < 4; i++) begin
+                sizep_early_q[i] <= sizep_q[i][1:0];
+                sizep_chg_x_q[i] <= SIZEP_CHG_NONE;
+            end
+        end else if (sizep_we) begin
+            if (sizep_chg_x_q[snoop_addr[1:0]] == SIZEP_CHG_NONE)
+                sizep_chg_x_q[snoop_addr[1:0]] <= cc_x_now;
+        end
+    end
+    wire  [7:0] sizep_early_flat_w = {sizep_early_q[3], sizep_early_q[2],
+                                      sizep_early_q[1], sizep_early_q[0]};
+    wire [47:0] sizep_chg_x_flat_w = {sizep_chg_x_q[3], sizep_chg_x_q[2],
+                                      sizep_chg_x_q[1], sizep_chg_x_q[0]};
+
+    // Same treatment for HPOSP.  ACID800 gtia_pmretrigger writes HPOSP0
+    // partway along a WSYNC-anchored scanline (its own source annotates the
+    // target cycles: 60-63, 23-27, 86-89) and checks that the player
+    // re-triggers at the NEW position for the remainder of that line.  With
+    // only the SIZEP capture present the whole row composed at the final
+    // HPOS, so the move was invisible and the retrigger never happened.
+    logic [7:0]  hposp_early_q [0:3];
+    logic [11:0] hposp_chg_x_q [0:3];
+    wire         hposp_we = snoop_we_gtia && (snoop_addr[7:2] == 6'b000000); // $D000-$D003
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            for (int i = 0; i < 4; i++) begin
+                hposp_early_q[i] <= 8'd0;
+                hposp_chg_x_q[i] <= SIZEP_CHG_NONE;
+            end
+        end else if (line_start_pulse_bus) begin
+            for (int i = 0; i < 4; i++) begin
+                hposp_early_q[i] <= hposp_q[i];
+                hposp_chg_x_q[i] <= SIZEP_CHG_NONE;
+            end
+        end else if (hposp_we) begin
+            if (hposp_chg_x_q[snoop_addr[1:0]] == SIZEP_CHG_NONE)
+                hposp_chg_x_q[snoop_addr[1:0]] <= cc_x_now;
+        end
+    end
+    wire [31:0] hposp_early_flat_w = {hposp_early_q[3], hposp_early_q[2],
+                                      hposp_early_q[1], hposp_early_q[0]};
+    wire [47:0] hposp_chg_x_flat_w = {hposp_chg_x_q[3], hposp_chg_x_q[2],
+                                      hposp_chg_x_q[1], hposp_chg_x_q[0]};
+
+
+
+    // ---- compose-time register snapshot ---------------------------------
+    // The row is now composed at the END of the line (antic_seq.line_end) so
+    // that mid-line writes are visible to the row they belong to.  Moving the
+    // burst must NOT move when a write takes effect for the registers that do
+    // not carry an early/chg_x split, so every register the compositor samples
+    // is latched HERE at line START and the compositor reads the snapshot.
+    // Net effect of this stage: byte-identical rendering to composing at
+    // line_start, but the burst instant is now decoupled from the sampling
+    // instant — which is what lets the early/chg_x split mean anything.
+    logic [7:0] snap_chbase, snap_chactl, snap_pmbase, snap_dmactl, snap_gractl;
+    logic [7:0] snap_hposp [0:3];
+    logic [7:0] snap_hposm [0:3];
+    logic [7:0] snap_sizep [0:3];
+    logic [7:0] snap_sizem, snap_vdelay, snap_hscrol, snap_vscrol, snap_prior;
+    logic [7:0] snap_grafp [0:3];
+    logic [7:0] snap_grafm;
+    logic [7:0]  snap_hposp_early [0:3];
+    logic [11:0] snap_hposp_chgx  [0:3];
+    logic [1:0]  snap_sizep_early [0:3];
+    logic [11:0] snap_sizep_chgx  [0:3];
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            snap_chbase <= 8'd0; snap_chactl <= 8'd0; snap_pmbase <= 8'd0;
+            snap_dmactl <= 8'd0; snap_gractl <= 8'd0;
+            snap_sizem  <= 8'd0; snap_vdelay <= 8'd0; snap_hscrol <= 8'd0;
+            snap_vscrol <= 8'd0; snap_prior  <= 8'd0; snap_grafm  <= 8'd0;
+            for (int i = 0; i < 4; i++) begin
+                snap_hposp[i] <= 8'd0; snap_hposm[i] <= 8'd0;
+                snap_sizep[i] <= 8'd0; snap_grafp[i] <= 8'd0;
+                snap_hposp_early[i] <= 8'd0;
+                snap_sizep_early[i] <= 2'd0;
+                snap_hposp_chgx[i]  <= SIZEP_CHG_NONE;
+                snap_sizep_chgx[i]  <= SIZEP_CHG_NONE;
+            end
+        end else if (line_end_pulse_bus) begin
+            // HPOSP/SIZEP carry an early/chg_x split, so the compositor needs
+            // the value as it stands at the END of the line (post mid-line
+            // write) for the x >= chg_x part of the row.  Latched here, one
+            // cycle before cmp_start, so a write landing during the burst
+            // cannot tear the row.
+            for (int i = 0; i < 4; i++) begin
+                snap_hposp[i]       <= hposp_q[i];
+                snap_sizep[i]       <= sizep_q[i];
+                snap_hposp_early[i] <= hposp_early_q[i];
+                snap_hposp_chgx[i]  <= hposp_chg_x_q[i];
+                snap_sizep_early[i] <= sizep_early_q[i][1:0];
+                snap_sizep_chgx[i]  <= sizep_chg_x_q[i];
+            end
+        end else if (line_start_pulse_bus) begin
+            snap_chbase <= chbase_q; snap_chactl <= chactl_q;
+            snap_pmbase <= pmbase_q; snap_dmactl <= dmactl_q;
+            snap_gractl <= gractl_q;
+            snap_sizem  <= sizem_q;  snap_vdelay <= vdelay_q;
+            snap_hscrol <= hscrol_q; snap_vscrol <= vscrol_q;
+            snap_prior  <= prior_q;  snap_grafm  <= grafm_q;
+            for (int i = 0; i < 4; i++) begin
+                snap_hposm[i] <= hposm_q[i]; snap_grafp[i] <= grafp_q[i];
+            end
+        end
+    end
+
+    // ---- beam-time P/M collision engine ---------------------------------
+    // Walks the beam and accumulates, the way GTIA does, instead of deriving
+    // collisions from the compose burst.  Uses the LIVE registers (not the
+    // compose snapshot) because that is the whole point: a mid-line HPOSP
+    // write must affect the remainder of the line as the beam reaches it.
+    gtia_pm_collide u_pm_collide (
+        .clk(clk_bus), .rst(rst_bus),
+        .phi2_tick(phi2_tick), .cyc(ar_phi2_in_line),
+        .active_line(ar_atari_row != 8'hFF),
         .hposp0(hposp_q[0]), .hposp1(hposp_q[1]),
         .hposp2(hposp_q[2]), .hposp3(hposp_q[3]),
         .hposm0(hposm_q[0]), .hposm1(hposm_q[1]),
         .hposm2(hposm_q[2]), .hposm3(hposm_q[3]),
         .sizep0(sizep_q[0][1:0]), .sizep1(sizep_q[1][1:0]),
         .sizep2(sizep_q[2][1:0]), .sizep3(sizep_q[3][1:0]),
-        .sizem(sizem_q), .vdelay(vdelay_q),
-        .hscrol(hscrol_q[3:0]), .vscrol(vscrol_q[3:0]),
-        .prior(prior_q),
-        .mpf_q(cmp_mpf_q), .ppf_q(cmp_ppf_q),
-        .mpl_q(cmp_mpl_q), .ppl_q(cmp_ppl_q),
+        .sizem(sizem_q),
+        .grafp0(grafp_q[0]), .grafp1(grafp_q[1]),
+        .grafp2(grafp_q[2]), .grafp3(grafp_q[3]),
+        .grafm(grafm_q),
         .hitclr(hitclr_strobe),
-        .mem_raddr(cmp_raddr), .mem_rdata(cmp_rdata),
-        .mem_req(cmp_req), .mem_ready(cmp_ready),
-        .cmd_tag(cmp_cmd_tag), .cmd_addr(cmp_cmd_addr),
-        .cmd_data(cmp_cmd_data), .cmd_valid(cmp_cmd_valid),
-        .cmd_ready(cmp_cmd_ready),
-        .compose_done(cmp_done), .compose_count(cmp_count)
+        .mpl_q(bt_mpl_q), .ppl_q(bt_ppl_q),
+        // per-colour-clock presence for the streaming pixel stage — unused
+        // until gtia_stream lands (docs/video/gtia-streaming.md)
+        .pres_cc0(), .pres_cc1(), .pres_valid()
     );
+
+    // ================================================================
+    // Legacy raster — NOT BUILT
+    // ================================================================
+    // The ANTIC/GTIA rewrite (docs/ANTIC-rewrite.md) replaces this, and the
+    // board cannot carry both: at 99.62% slice occupancy the compositor's read
+    // out of display_shadow WAS the clk_sys critical path, and dropping a whole
+    // second 6502 plus the maths co-pro freed 2,494 LUTs but only 82 slices.
+    // This design is packing-limited, so the way to give clk_sys room is to
+    // stop building the raster the rewrite exists to replace.
+    //
+    // Only the compositor is gated.  dl_parser, gtia_pm_collide and both
+    // color_resolvers feed it and nothing else, so with it gone they are dead
+    // logic and synthesis removes them -- no need to tie off their forty-odd
+    // nets by hand and risk getting one wrong.
+    //
+    // POKEY, PIA, the sprite engine and the keyboard are NOT part of this and
+    // are untouched: antic_top is the whole chipset, not just ANTIC.
+    //
+    // This removes the A/B fallback -- sallyrst[3] stops selecting between two
+    // rasters and the rewrite becomes the only one.  Reverting is this one bit
+    // plus a build.
+    localparam bit LEGACY_RASTER = 1'b0;
+
+    generate
+    if (LEGACY_RASTER) begin : g_legacy_raster
+        compositor u_compositor (
+            .clk(clk_bus), .rst(rst_bus), .start_compose(cmp_start_pulse),
+            .row_in(ar_atari_row),                 // compose this row
+            .meta_row(meta_row_q),
+            .meta_mode(dl_meta_mode), .meta_lms_addr(dl_meta_lms),
+            .meta_sub_row(dl_meta_sub),
+            .meta_hscrol_en(dl_meta_hscrol_en),
+            .meta_vscrol_en(dl_meta_vscrol_en),
+            .chbase(snap_chbase), .chactl(snap_chactl),
+            .pmbase(snap_pmbase), .dmactl(snap_dmactl), .gractl(snap_gractl),
+            .hposp0(snap_hposp[0]), .hposp1(snap_hposp[1]),
+            .hposp2(snap_hposp[2]), .hposp3(snap_hposp[3]),
+            .hposm0(snap_hposm[0]), .hposm1(snap_hposm[1]),
+            .hposm2(snap_hposm[2]), .hposm3(snap_hposm[3]),
+            .hposp_early_flat({snap_hposp_early[3], snap_hposp_early[2],
+                               snap_hposp_early[1], snap_hposp_early[0]}),
+            .hposp_chg_x_flat({snap_hposp_chgx[3], snap_hposp_chgx[2],
+                               snap_hposp_chgx[1], snap_hposp_chgx[0]}),
+            .sizep_early_flat({snap_sizep_early[3], snap_sizep_early[2],
+                               snap_sizep_early[1], snap_sizep_early[0]}),
+            .sizep_chg_x_flat({snap_sizep_chgx[3], snap_sizep_chgx[2],
+                               snap_sizep_chgx[1], snap_sizep_chgx[0]}),
+            .sizep0(snap_sizep[0][1:0]), .sizep1(snap_sizep[1][1:0]),
+            .sizep2(snap_sizep[2][1:0]), .sizep3(snap_sizep[3][1:0]),
+            .sizem(snap_sizem), .vdelay(snap_vdelay),
+            .hscrol(snap_hscrol[3:0]), .vscrol(snap_vscrol[3:0]),
+            .prior(snap_prior),
+            // GRAFPx/GRAFM shape registers — CPU-written shapes render without DMA;
+            // the P/M DMA fetch overwrites them per scanline when DMA is enabled.
+            .grafp0(snap_grafp[0]), .grafp1(snap_grafp[1]),
+            .grafp2(snap_grafp[2]), .grafp3(snap_grafp[3]),
+            .grafm(snap_grafm),
+            .mpf_q(cmp_mpf_q), .ppf_q(cmp_ppf_q),
+            .mpl_q(cmp_mpl_q), .ppl_q(cmp_ppl_q),
+            .hitclr(hitclr_strobe),
+            .mem_raddr(cmp_raddr), .mem_rdata(cmp_rdata),
+            .mem_req(cmp_req), .mem_ready(cmp_ready),
+            .cmd_tag(cmp_cmd_tag), .cmd_addr(cmp_cmd_addr),
+            .cmd_data(cmp_cmd_data), .cmd_valid(cmp_cmd_valid),
+            .cmd_ready(cmp_cmd_ready),
+            .compose_done(cmp_done), .compose_count(cmp_count)
+        );
+    end else begin : g_no_legacy_raster
+        assign meta_row_q    = '0;
+        assign cmp_mpf_q     = '0;
+        assign cmp_ppf_q     = '0;
+        assign cmp_mpl_q     = '0;
+        assign cmp_ppl_q     = '0;
+        assign cmp_raddr     = '0;
+        assign cmp_req       = 1'b0;
+        assign cmp_cmd_tag   = '0;
+        assign cmp_cmd_addr  = '0;
+        assign cmp_cmd_data  = '0;
+        assign cmp_cmd_valid = 1'b0;
+        assign cmp_done      = 1'b0;
+        assign cmp_count     = '0;
+    end
+    endgenerate
+
 
     // ---- DRAW chiplet-ext register port (M17-2) ------------------------
     // Software stages opcode + 5 16-bit args at $D488-$D492, strobes
@@ -1128,6 +1926,16 @@ module antic_top #(
     wire [7:0] pia_read_data;   // $D3xx PIA read data (PORTA/PORTB/PACTL/PBCTL)
     // w_joy_fire forward-declared near the GTIA collision generate.
 
+    // Keypad->joystick override MUX (joy_ovr[31]): PORTA pin shadow feeding
+    // pia_regs is forced from joy_ovr[7:0] (active-low STICK0/1) when enabled.
+    // When NOT overridden the idle value must be $FF = all directions RELEASED
+    // (STICK0/1 = $0F centred). The joy_bridge/PCAL9722 poll shadow (w_joy_porta_in)
+    // is NOT used here: with no companion MCU the SPI reads a tied-off expander =
+    // $00, i.e. "all four directions pressed" every frame, which the game reads as
+    // garbage input (bike uncontrollable / needs fire to start). Re-source from
+    // w_joy_porta_in once the companion MCU actually drives the expander.
+    wire [7:0] pia_joy_porta_in = joy_ovr[31] ? joy_ovr[7:0] : 8'hFF;
+
     pia_regs u_pia_regs (
         .clk           (clk_bus),
         .rst           (rst_bus),
@@ -1136,13 +1944,22 @@ module antic_top #(
         .wdata         (snoop_data),
         .raddr         (read_addr_w),
         .rdata         (pia_read_data),   // boot blocker #3: feed PIA reads to the bus mux
-        .joy_porta_in  (w_joy_porta_in),
-        .joy_portb_in  (w_joy_portb_in),
+        .joy_porta_in  (pia_joy_porta_in),  // keypad-override muxed (joy_ovr[31] ? joy_ovr[7:0] : joy_bridge shadow)
+        // XL/XE PORTB is MEMORY MANAGEMENT (OS-ROM/BASIC/self-test/bank), NOT a
+        // joystick port (only the 400/800 had joysticks 3/4 on PORTB; the XL has 2
+        // ports, both on PORTA). Its input-configured bits float high. Routing the
+        // companion's joystick reads here made the OS read OS-ROM-enable (bit0) as a
+        // joystick 0 and its PORTB read-modify-write turned the OS ROM OFF mid-
+        // coldstart (STA $D301 at $C310, banking in the self-test) -> next fetch = RAM
+        // -> BRK/IRQ derail. Tie to all-1s: input bits read high, so the RMW keeps the
+        // driven memory-management bits intact. Found via /bin/6502 (breakpoint+trace).
+        .joy_portb_in  (8'hFF),
         .joy_porta_out (w_joy_porta_out),
         .joy_porta_oe  (w_joy_porta_oe),
         .joy_portb_out (w_joy_portb_out),
         .joy_portb_oe  (w_joy_portb_oe),
-        .portb_out_q   (portb_q)
+        .portb_out_q   (portb_q),
+        .pia_irq_n     (pia_irq_n)
     );
 
     // ---- M25-2c-rev — joy_bridge (PCAL9722 path) -----------------------

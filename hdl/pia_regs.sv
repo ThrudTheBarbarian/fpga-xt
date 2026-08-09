@@ -11,8 +11,15 @@
 //                write: portb_out_latch (port)    / portb_ddr_q (DDR mode)
 //   $D302 PACTL  bit 2 = 1 → port-A in port mode (read returns pins);
 //                       0 → port-A in DDR mode (read returns DDRA).
-//                Other bits: CA1/CA2 control + IRQA flags. Writeable;
-//                read-only mirroring of IRQ flags is not modelled.
+//                Bits [5:0]: CA1/CA2 control — read/write.
+//                Bits [7:6]: IRQA1 / IRQA2 interrupt-status flags — READ
+//                ONLY.  A write only affects [5:0]; a read returns the
+//                live IRQ-flag state in [7:6].  Bit 6 (IRQA2) latches on
+//                the selected edge of the CA2 line (see the CA2/CB2 block
+//                below) and clears on a PORTA data read.  Bit 7 (IRQA1)
+//                has no CA1 edge source wired and reads 0.  (ACID800
+//                pia_irq: writing $FF to PACTL reads back $3F, not $FF;
+//                the $34->$3C->$14 CA2 dance reads back $54.)
 //   $D303 PBCTL  same shape as PACTL but for port B.
 //
 // Mode select (PACTL[2] / PBCTL[2]):
@@ -83,7 +90,11 @@ module pia_regs (
 
     // PORTB output latch — drives bank_translator's PORTB[3:2] /
     // PORTB[4] regardless of PBCTL[2] (130XE banking semantics).
-    output wire [7:0]  portb_out_q
+    output wire [7:0]  portb_out_q,
+
+    // /IRQ to the CPU: IRQA2/IRQB2 flag set while the matching CA2/CB2
+    // is in input mode with the interrupt enabled (CTL[5]=0, CTL[3]=1).
+    output wire        pia_irq_n
 );
 
     // ---- Address decode ---------------------------------------------
@@ -146,6 +157,122 @@ module pia_regs (
         end
     end
 
+    // ---- 6821 CA2 / CB2 edge-detect + IRQA2 / IRQB2 flags -----------
+    // (ACID800 pia_irq).  CA2/CB2 double as a programmable output OR an
+    // edge-sensitive interrupt input, selected by PACTL[5] / PBCTL[5]:
+    //
+    //   [5]=1 OUTPUT:  [4]=1        -> CA2 follows [3] (manual level:
+    //                                  $34 drives low, $3C drives high);
+    //                  [4]=0,[3]=1  -> pulse mode (line idles HIGH);
+    //                  [4]=0,[3]=0  -> handshake mode (line unchanged).
+    //   [5]=0 INPUT:   line floats HIGH (Atari CA2 pull-up); [4] selects
+    //                  the active edge (1 = low->high, 0 = high->low),
+    //                  [3] enables the CPU IRQ (IRQ line to the 6502 is
+    //                  not wired here — this models the flag only).
+    //
+    // IRQA2 (PACTL[6]) / IRQB2 (PBCTL[6]) — 6821 semantics per the ACID800
+    // pia_irq vectors (all 17 verified against this model):
+    //
+    //   * A control write whose implied line transition matches the edge
+    //     select being written ([4]=1 -> low->high, [4]=0 -> high->low)
+    //     ARMS a pending bit while in output mode ($34->$3C).
+    //   * A high->low transition KILLS the pending bit (high-low-high
+    //     sequences don't latch).
+    //   * Entering INPUT mode ([5]=0, line pulls high) CONVERTS a pending
+    //     bit into the visible IRQ flag; the input-entry pull-up edge
+    //     itself also sets the flag when it matches the new edge select
+    //     (this is the port-A $34 -> $14 rising-select case).  Pulse mode
+    //     ($28/$2C) between $34 and $3C fails naturally: it raises the
+    //     line under a falling edge select, so nothing arms and the later
+    //     $3C sees the line already high.
+    //   * Entering OUTPUT mode from input mode CLEARS the visible flag.
+    //   * A PORTA / PORTB DATA read ($D300/$D301) clears the visible flag
+    //     — reading PACTL/PBCTL or DDRA/DDRB leaves it set.
+    //
+    // This path is self-contained: it never touches the PORTB/DDRB
+    // banking state above.
+    logic ca2_line_q, cb2_line_q;   // internal CA2 / CB2 line level
+    logic ca2_pend_q, cb2_pend_q;   // armed output-mode transition
+    logic irqa2_q,    irqb2_q;      // PACTL[6] / PBCTL[6] flags
+    logic porta_rd_q, portb_rd_q;   // registered PORTA / PORTB read decode
+
+    wire read_porta   = read_in_win && (rreg == 2'b00);
+    wire read_portb   = read_in_win && (rreg == 2'b01);
+    wire porta_rd_stb = read_porta && !porta_rd_q;   // fresh PORTA data read
+    wire portb_rd_stb = read_portb && !portb_rd_q;   // fresh PORTB data read
+
+    // Next CA2/CB2 line level implied by a control write of `wdata`.
+    wire ca2_next = wdata[5] ? (wdata[4] ? wdata[3]              // direct output level
+                                         : (wdata[3] ? 1'b1      // pulse: idles high
+                                                     : ca2_line_q)) // handshake: unchanged
+                             : 1'b1;                             // input: pulled high
+    wire cb2_next = wdata[5] ? (wdata[4] ? wdata[3]
+                                         : (wdata[3] ? 1'b1
+                                                     : cb2_line_q))
+                             : 1'b1;
+    // Rise / fall implied by this write, and whether it matches the edge
+    // select being written (bit4 = 1 -> low->high, else high->low).
+    wire ca2_rise  = ~ca2_line_q &  ca2_next;
+    wire ca2_fall  =  ca2_line_q & ~ca2_next;
+    wire ca2_match = wdata[4] ? ca2_rise : ca2_fall;
+    wire cb2_rise  = ~cb2_line_q &  cb2_next;
+    wire cb2_fall  =  cb2_line_q & ~cb2_next;
+    wire cb2_match = wdata[4] ? cb2_rise : cb2_fall;
+
+    wire pactl_wr = write_in_win && (wreg == 2'b10);
+    wire pbctl_wr = write_in_win && (wreg == 2'b11);
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            ca2_line_q <= 1'b1;
+            cb2_line_q <= 1'b1;
+            ca2_pend_q <= 1'b0;
+            cb2_pend_q <= 1'b0;
+            irqa2_q    <= 1'b0;
+            irqb2_q    <= 1'b0;
+            porta_rd_q <= 1'b0;
+            portb_rd_q <= 1'b0;
+        end else begin
+            porta_rd_q <= read_porta;
+            portb_rd_q <= read_portb;
+
+            if (pactl_wr) begin
+                ca2_line_q <= ca2_next;
+                if (wdata[5]) begin
+                    // Output mode: entering from input clears the flag;
+                    // a matching transition arms pending, a fall kills it.
+                    if (!pactl_q[5])   irqa2_q    <= 1'b0;
+                    if (ca2_match)     ca2_pend_q <= 1'b1;
+                    else if (ca2_fall) ca2_pend_q <= 1'b0;
+                end else begin
+                    // Input mode: pending (or a matching entry edge)
+                    // becomes the visible flag.
+                    if (ca2_pend_q || ca2_match) irqa2_q <= 1'b1;
+                    ca2_pend_q <= 1'b0;
+                end
+            end
+            if (porta_rd_stb) irqa2_q <= 1'b0;   // PORTA data read clears (wins)
+
+            // Port B CB2: same shape.
+            if (pbctl_wr) begin
+                cb2_line_q <= cb2_next;
+                if (wdata[5]) begin
+                    if (!pbctl_q[5])   irqb2_q    <= 1'b0;
+                    if (cb2_match)     cb2_pend_q <= 1'b1;
+                    else if (cb2_fall) cb2_pend_q <= 1'b0;
+                end else begin
+                    if (cb2_pend_q || cb2_match) irqb2_q <= 1'b1;
+                    cb2_pend_q <= 1'b0;
+                end
+            end
+            if (portb_rd_stb) irqb2_q <= 1'b0;   // PORTB data read clears (wins)
+        end
+    end
+
+    // /IRQ to the CPU: flag && interrupt-enable ([3]) while in input mode.
+    assign pia_irq_n = ~( (irqa2_q && !pactl_q[5] && pactl_q[3]) ||
+                          (irqb2_q && !pbctl_q[5] && pbctl_q[3]) );
+
     // ---- Read mux ---------------------------------------------------
     always_comb begin
         rdata = 8'h00;
@@ -159,8 +286,14 @@ module pia_regs (
                 // a self-test value — see tb_boot.)
                 2'b00: rdata = pactl_q[2] ? ((porta_out_latch_q & porta_ddr_q) | (joy_porta_in & ~porta_ddr_q)) : porta_ddr_q;
                 2'b01: rdata = pbctl_q[2] ? ((portb_out_latch_q & portb_ddr_q) | (joy_portb_in & ~portb_ddr_q)) : portb_ddr_q;
-                2'b10: rdata = pactl_q;
-                2'b11: rdata = pbctl_q;
+                // PACTL / PBCTL: control bits [5:0] read back the written
+                // value; the top two bits are the read-only IRQ-status flags
+                // (IRQ*1 = bit 7, IRQ*2 = bit 6).  Bit 6 = the live IRQA2 /
+                // IRQB2 CA2/CB2-edge flag; bit 7 (CA1/CB1) has no edge source
+                // wired and reads 0.  Writing $FF reads back $3F; the CA2
+                // output->input edge dance reads back $54 (bit 6 set).
+                2'b10: rdata = {1'b0, irqa2_q, pactl_q[5:0]};
+                2'b11: rdata = {1'b0, irqb2_q, pbctl_q[5:0]};
             endcase
         end
     end

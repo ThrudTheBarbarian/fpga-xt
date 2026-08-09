@@ -96,7 +96,13 @@ static int desk_sel(void) { for (int i = 1; i <= n_icons; i++) if (desk[i].ob_st
  * AES_PLANE_XL through this window" — and gemd does the placing, because only gemd knows
  * the window's SCREEN rect (a client may not ask, §5). */
 #define XL_SCALE 2                      // 320x192 XL writeback -> a 640x384 work area
-static int g_xlwin;                     // window handle that owns the XL plane (0 = none)
+static int g_xlwin;
+// XL overscan capture (Settings menu): 0 = the standard 40x24 playfield
+// (default), 1 = the full displayable region (320x240, scanlines 8..247).
+// Rides bit 3 of the plane-bind scale word down to XLCTL; the window is
+// resized to match so the plane rect never scans past the surface.
+static int g_xl_ovs = 0;                     // window handle that owns the XL plane (0 = none)
+static int g_active;                    // focused window (WM_TOPPED); wind_top() ignores plane windows
 static void xl_sync(void);              // bind the XL plane to g_xlwin (M6 WIND_PLANE); see below
 
 static int read_default(const char *dir, char *out, int n) {
@@ -277,7 +283,8 @@ static int g_ex = 380, g_ey = 130;
 // above (the Route-A alpha hole). m68k windows stay placeholders (no core hosted yet).
 // (XL_SCALE / g_xlwin are declared up by the drag-overlay hooks.)
 static void xl_sync(void) {
-    if (g_xlwin) wind_plane_bind(g_xlwin, AES_PLANE_XL, XL_SCALE);
+    if (g_xlwin) wind_plane_bind(g_xlwin, AES_PLANE_XL,
+                                 XL_SCALE | (g_xl_ovs ? 8 : 0));
 }
 static void xl_unbind(int win) {
     if (win == g_xlwin) { wind_plane_bind(win, 0, 0); g_xlwin = 0; }
@@ -315,7 +322,7 @@ static void open_emulator(int type, const char *media, const char *boot) {
     // at XL_SCALE=2 the plane covers 640x384 — a larger work area would scan
     // DDR garbage beyond the buffer into the window.
     int pw = (type == ICT_EMU_8BIT) ? 320*XL_SCALE : 640;
-    int ph = (type == ICT_EMU_8BIT) ? 192*XL_SCALE : 400;
+    int ph = (type == ICT_EMU_8BIT) ? (g_xl_ovs ? 240 : 192)*XL_SCALE : 400;
     int bx, by, bw, bh;
     wind_calc(WC_BORDER, W_NAME|W_CLOSER|W_MOVER, g_ex, g_ey, pw, ph, &bx, &by, &bw, &bh);
     e->win = wind_create(W_NAME|W_CLOSER|W_MOVER, bx, by, bw, bh);
@@ -330,6 +337,7 @@ static void open_emulator(int type, const char *media, const char *boot) {
         g_xlwin = e->win;
         xl_sync();
     }
+    wind_raise(e->win);   // focus the new window so keys route to it at once (else a click is needed)
     // (wind_open redraws + presents the new window's rect)
 }
 // A minimal text-viewer window naming the file.  There is no process-spawn
@@ -390,12 +398,20 @@ static void desk_launch_full(const char *name, const char *full, int media_type)
             else if (!strcmp(meth, "disk")) snprintf(boot, sizeof boot, "%s %s", emu == ICT_EMU_8BIT ? "D1:" : "A:", name);
             else                            snprintf(boot, sizeof boot, "RUN %s", name);   // exec
             // v1 (docs/OS/app-launch.md): an 8-bit DISK cold-boots the fabric 6502
-            // with the ATR mounted as D1:.  cart/exec still open the framed plane
-            // only (boot-disk synth + cart window are v1.5+).
+            // with the ATR mounted as D1:; an 8-bit EXEC cold-boots and runs the
+            // standalone .xex through the same loader /System/bin/xexload uses.
+            // cart still opens the framed plane only (cart window is v1.5+).
             if (emu == ICT_EMU_8BIT && !strcmp(meth, "disk") && full) {
                 long rc = sys_xl_boot(full, 1);
                 if (rc != 0) {
                     char m[80]; snprintf(m, sizeof m, "[1][Can't boot %s (%ld)][OK]", name, rc);
+                    form_alert(1, m);
+                    return;
+                }
+            } else if (emu == ICT_EMU_8BIT && strcmp(meth, "cart") && full) {
+                long rc = sys_xexload(full, 0);
+                if (rc != 0) {
+                    char m[80]; snprintf(m, sizeof m, "[1][Can't run %s (%ld)][OK]", name, rc);
                     form_alert(1, m);
                     return;
                 }
@@ -410,11 +426,11 @@ static void desk_launch_full(const char *name, const char *full, int media_type)
     char ext[8] = ""; const char *dot = strrchr(name, '.');
     if (dot) { int i = 0; for (const char *p = dot+1; *p && i < 7; p++) ext[i++] = (char)tolower((unsigned char)*p); ext[i] = 0; }
     char boot[96];
-    int is_disk = 0;
+    int is_disk = 0, is_exec = 0;
     if (emu == ICT_EMU_8BIT) {
         if (!strcmp(ext,"atr")||!strcmp(ext,"atx")||!strcmp(ext,"xfd")) { snprintf(boot,sizeof boot,"D1: %s",name); is_disk = 1; }
         else if (!strcmp(ext,"rom")||!strcmp(ext,"car")||!strcmp(ext,"bin")) snprintf(boot,sizeof boot,"CART %s",name);
-        else snprintf(boot,sizeof boot,"RUN %s",name);        // xex/exe -> dummy env
+        else { snprintf(boot,sizeof boot,"RUN %s",name); is_exec = 1; }   // xex/exe
     } else {
         if (!strcmp(ext,"st")||!strcmp(ext,"msa")||!strcmp(ext,"dim")) snprintf(boot,sizeof boot,"A: %s",name);
         else snprintf(boot,sizeof boot,"RUN %s",name);        // prg/tos/app
@@ -422,6 +438,10 @@ static void desk_launch_full(const char *name, const char *full, int media_type)
     if (emu == ICT_EMU_8BIT && is_disk && full) {
         long rc = sys_xl_boot(full, 1);
         if (rc != 0) { char m[80]; snprintf(m, sizeof m, "[1][Can't boot %s (%ld)][OK]", name, rc);
+                       form_alert(1, m); return; }
+    } else if (emu == ICT_EMU_8BIT && is_exec && full) {
+        long rc = sys_xexload(full, 0);
+        if (rc != 0) { char m[80]; snprintf(m, sizeof m, "[1][Can't run %s (%ld)][OK]", name, rc);
                        form_alert(1, m); return; }
     }
     open_emulator(emu, name, boot);
@@ -2257,10 +2277,10 @@ static const char *mb_show[]     = { "As icons", "As text", MENU_SEP, "Filter", 
                                      MENU_SEP, "unsorted", "By name", "By type", "By size",
                                      "By date" };
 static const char *mb_window[]   = { "Close", "Close all", MENU_SEP, "Cycle", "Duplicate", "Pin" };
-static const char *mb_settings[] = { "Main config", "Applications", "Icon Mgr", MENU_SEP, "Record script" };
+static const char *mb_settings[] = { "Main config", "Applications", "Icon Mgr", MENU_SEP, "Record script", "XL overscan" };
 static const menu_def mb_menus[] = {
     { "Desktop",  mb_desktop,  5 }, { "Object", mb_object, 12 }, { "Show", mb_show, 20 },
-    { "Window",   mb_window,   6 }, { "Settings", mb_settings, 5 },
+    { "Window",   mb_window,   6 }, { "Settings", mb_settings, 6 },
 };
 static void menu_show(void) { g_menubar = menu_build(mb_menus, 5, PW); menu_bar(g_menubar, 1); }
 
@@ -2285,6 +2305,24 @@ static void menu_sync(void) {
     menu_ienable(g_menubar, MB_OBJECT, 2, hassel);           // Open   (needs a selection)
     menu_ienable(g_menubar, MB_OBJECT, 7, haswin);           // Delete… (needs a window)
     menu_ienable(g_menubar, MB_OBJECT, 9, haswin);           // Select all
+    menu_icheck(g_menubar, MB_SETTINGS, 5, g_xl_ovs);        // XL overscan
+}
+
+// Settings > XL overscan: flip the capture mode, resize the bound window's
+// work area to the new source height (the "wind_open again resizes in place"
+// idiom), and re-bind so the new scale word reaches XLCTL.  The plane rect
+// follows the composite via gemd's plane-sync hook.
+static void xl_overscan_toggle(void) {
+    g_xl_ovs = !g_xl_ovs;
+    if (g_xlwin) {
+        int px, py, pw0, ph0, bx, by, bw, bh;
+        wind_get(g_xlwin, WF_CURRXYWH, &px, &py, &pw0, &ph0);
+        int nw = 320*XL_SCALE, nh = (g_xl_ovs ? 240 : 192)*XL_SCALE;
+        wind_calc(WC_BORDER, W_NAME|W_CLOSER|W_MOVER, 0, 0, nw, nh,
+                  &bx, &by, &bw, &bh);
+        wind_open(g_xlwin, px, py, bw, bh);
+        xl_sync();
+    }
 }
 
 // ---- Window menu actions --------------------------------------------------
@@ -2389,6 +2427,7 @@ static void menu_dispatch(int to, int io) {
         case 1: menu_stub("Applications"); break;                                        // TODO STUB
         case 2: menu_stub("Icon Mgr"); break;                                            // TODO STUB
         case 4: menu_stub("Record script"); break;                                       // TODO STUB
+        case 5: xl_overscan_toggle(); break;
         } break;
     }
 }
@@ -2533,7 +2572,23 @@ void _app_entry(int argc, char **argv) {
                            &mx, &my, &mb, &ks, &key, &nc);
         if (r & MU_QUIT) break;                      // gemd is gone: EOF on the channel
         net_pump();                                  // drain any arrived reply lines
-        if ((r & MU_KEYBD) && key == 0x1b) break;                              // Esc quits
+        if (r & MU_KEYBD) {
+            /* A key. When the 6502 emulator is open it OWNS the keyboard, unless a browser
+             * window is the focused one (browsers are the only desktop windows that use keys).
+             * gemd focuses only on a click and its W_BOTTOM desktop is focused-not-topped, so a
+             * freshly opened emulator never wins an exact focus test — hence "not a browser"
+             * rather than "== g_xlwin". Keys meter into POKEY (sys_kbd_6502: pace + inject the
+             * KBCODE, incl. Return/BREAK). Esc quits only when no emulator is capturing. */
+            if (g_xlwin && !br_of_window(g_active)) {
+                int c = key & 0xFF;
+                /* The input layer reports Ctrl+letter as the plain letter + K_CTRL; fold it back
+                 * to a control code so Ctrl-C reaches kbd_6502 as 0x03 (= the Atari BREAK key). */
+                if ((ks & K_CTRL) && c >= 'a' && c <= 'z') c -= 0x60;
+                sys_kbd_6502(c);
+            } else if (key == 0x1b) break;
+        }
+        if ((r & MU_MESAG) && msg[0] == WM_TOPPED)   g_active = msg[3];       // a window gained focus
+        if ((r & MU_MESAG) && msg[0] == WM_UNTOPPED && g_active == msg[3]) g_active = 0;  // lost it
         if ((r & MU_MESAG) && msg[0] == WM_CLOSED) {
             /* The closer, on one of OUR windows. gemd asked; it did not decide (§3). */
             browser *b = br_of_window(msg[3]);       // close cancels any in-flight request

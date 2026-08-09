@@ -22,6 +22,7 @@
 #include "romfs.h"
 #include "vfs.h"
 #include "frtos_os.h"
+#include "pl310.h"     /* pl310_inval — SYS_plane_grab's DMA-read maintenance */
 
 #define MAXPROC 64
 #define NFD     32      /* per process; 0/1/2 are stdio (a shell juggling pipeline +
@@ -102,7 +103,8 @@ static void k_chan_close(fd_t *f);        /* impl below with the service ops */
 /* kernel-mailbox fs ops (impls with the fs task, below): displacing an open
  * file fd (dup2 restore) must flush + close through the SOLE FatFs driver */
 enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL, KFS_CLOSEFD,
-       KFS_WRITEOPEN, KFS_WRITEBLOCK, KFS_WRITECLOSE, KFS_LOGWRITE };
+       KFS_WRITEOPEN, KFS_WRITEBLOCK, KFS_WRITECLOSE, KFS_LOGWRITE,
+       KFS_STAT };
 static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **out_buf);
 
 typedef struct {
@@ -314,6 +316,8 @@ void frtos_free(void *p, void *u) { (void)p; (void)u; }  /* bump kernel heap: im
  * PC/return-addr in a crash dump maps to <object>+<hex offset> — feed that to
  * `arm-none-eabi-addr2line -e build/<object>` (or objdump) to name the function. */
 static proc_t *cur_proc(void);   /* fwd (defined below) */
+#define XTLD_FAULT_SCAN_MAX 16   /* == XTLD_MAX_OBJS; never unbounded in fault context */
+
 void fault_symbolize(unsigned addr, void (*emit)(const char *, unsigned))
 {
     proc_t *p = cur_proc();
@@ -324,6 +328,39 @@ void fault_symbolize(unsigned addr, void (*emit)(const char *, unsigned))
     if (g_libc_obj) {
         uintptr_t b = xtld_base(g_libc_obj); size_t s = xtld_span(g_libc_obj);
         if (addr >= b && addr < b + s) { emit(" [libc+", (unsigned)(addr - b)); return; }
+    }
+    /* Any OTHER loaded object — libGEM.so, libm.so, a dlopened module. Without
+     * this the two cases above are the only ones named and everything else
+     * prints "[??+<absolute addr>]", which is unusable: the absolute address
+     * cannot be turned into a function without the load base, and the base is
+     * not reported anywhere. A fault in libGEM.so is exactly as likely as one
+     * in the program, so name it the same way. */
+    /* BOUNDED and POINTER-CHECKED, because this runs in FAULT CONTEXT. Walking
+     * the registry here once turned a single data abort in 'hdmimon' into a
+     * fault storm and then a scheduler assert: the abort called fault_report,
+     * which called this, which faulted inside xtld_base on an object pointer
+     * that was not safe to dereference. A symbolizer that can itself fault
+     * destroys the very report it exists to produce, so validate first and give
+     * up quietly rather than chase a bad pointer. */
+    for (int i = 0; i < XTLD_FAULT_SCAN_MAX; i++) {
+        xtld_obj *o = xtld_object_at(i);
+        if (!o) break;
+        if ((uintptr_t)o < 0x00100000u || (uintptr_t)o >= 0x10000000u) break;
+        uintptr_t b = xtld_base(o); size_t s = xtld_span(o);
+        if (!b || !s) continue;
+        if (addr < b || addr >= b + s) continue;
+        const char *nm = xtld_soname(o);
+        if (nm) {
+            static char nb[40];
+            unsigned k = 0;
+            nb[k++] = ' '; nb[k++] = '[';
+            while (*nm && k < sizeof nb - 3) nb[k++] = *nm++;
+            nb[k++] = '+'; nb[k] = 0;
+            emit(nb, (unsigned)(addr - b));
+        } else {
+            emit(" [obj+", (unsigned)(addr - b));
+        }
+        return;
     }
     emit(" [??+", addr);
 }
@@ -1805,6 +1842,32 @@ static struct {
     TaskHandle_t waiter;
 } g_kfs;
 static SemaphoreHandle_t g_kfs_mtx;    /* serialize kernel callers of the single mailbox */
+/* Completion signal for that mailbox.
+ *
+ * This was a TASK NOTIFICATION, and that is a lost-wakeup waiting to happen: a
+ * task has exactly ONE notification value, shared by every user of it, and
+ * ulTaskNotifyTake(pdTRUE,...) CLEARS it on return. So if any other notification
+ * lands on the caller while it is parked here -- or two arrive before the take --
+ * one wakeup is swallowed and the next take blocks for ever. The caller here is
+ * the lwIP thread, and the symptom was tftpd writing a block to disk and then
+ * never ACKing it ("Timeout waiting for block 23 ACK", 11776 bytes on the card):
+ * the data was written, the wakeup was not delivered.
+ *
+ * A dedicated binary semaphore cannot be consumed by anyone else. Safe as a
+ * single global because g_kfs_mtx already allows only one call in flight. */
+static SemaphoreHandle_t g_kfs_done;
+
+/* Four counters at the four points the kfs handshake can break, so a stall says
+ * WHICH stage hung instead of merely that one did. Read via /OS/proc/kfs after a
+ * transfer stalls -- the lwIP thread being blocked does not stop another task
+ * reading them:
+ *   queued == picked+1   -> the fs task never dequeued the job
+ *   picked == served+1   -> vfs_write() is blocked inside the fs task
+ *   served == returned+1 -> the completion signal was lost (the old bug)
+ * Cheap enough to leave in: four increments per block. */
+volatile unsigned g_kfs_queued, g_kfs_picked, g_kfs_served, g_kfs_returned;
+static uint32_t g_kfs_stat_size, g_kfs_stat_mtime;   /* KFS_STAT results */
+volatile long     g_kfs_lastres;
 
 /* Tear down every open fd of a dead proc: flush its dirty cache page, close the backing
  * file (free the FIL), free the cache page. MUST run in the fs task (the sole FatFs
@@ -1965,6 +2028,13 @@ void klog_start(void) { xTaskCreate(logger_task, "logd", 512, 0, 1, 0); }
 static long kfs_serve(void)
 {
     switch (g_kfs.op) {
+    case KFS_STAT: {                                    /* size + mtime, no read */
+        struct xt_stat st;
+        if (vfs_stat(g_kfs.path, &st) != 0) return -1;
+        g_kfs_stat_size  = st.size;
+        g_kfs_stat_mtime = st.mtime;
+        return 0;
+    }
     case KFS_READFILE: {                                /* open + alloc + read a whole file */
         extern void puts0(const char *); extern void putu(unsigned);
         vfs_file f;
@@ -2035,8 +2105,11 @@ static void fs_task(void *arg)
             continue;
         }
         if (slot == FS_KERNEL_JOB) {                   /* kernel mailbox request */
+            g_kfs_picked++;
             g_kfs.result = kfs_serve();
-            xTaskNotifyGive(g_kfs.waiter);
+            g_kfs_lastres = g_kfs.result;
+            g_kfs_served++;
+            xSemaphoreGive(g_kfs_done);
         } else {
             g_fs_ctl[slot]->result = fs_serve(slot);
             xTaskNotifyGive(g_fs_waiter[slot]);        /* wake the parked client */
@@ -2054,7 +2127,7 @@ static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **o
      * is mapped HERE but resolves to the wrong physical THERE — copy it into
      * this kernel-global buffer (serialized by g_kfs_mtx) like fs_meta does. */
     static char kpath[128];
-    if (!g_fs_q || !g_kfs_mtx) return -1;
+    if (!g_fs_q || !g_kfs_mtx || !g_kfs_done) return -1;
     xSemaphoreTake(g_kfs_mtx, portMAX_DELAY);
     if (path) {
         int i = 0;
@@ -2065,8 +2138,10 @@ static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **o
     g_kfs.op = op; g_kfs.path = path; g_kfs.buf = buf; g_kfs.len = len; g_kfs.result = -1;
     g_kfs.waiter = xTaskGetCurrentTaskHandle();
     int job = FS_KERNEL_JOB;
+    g_kfs_queued++;
     xQueueSend(g_fs_q, &job, portMAX_DELAY);
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    xSemaphoreTake(g_kfs_done, portMAX_DELAY);
+    g_kfs_returned++;
     long r = g_kfs.result;
     if (out_buf) *out_buf = g_kfs.buf;
     xSemaphoreGive(g_kfs_mtx);
@@ -2346,6 +2421,10 @@ void frtos_fs_start(void)
     if (!g_fs_q) { if (g_console) g_console("[fs] queue create failed\n", 25); return; }
     g_kfs_mtx = xSemaphoreCreateMutex();
     if (!g_kfs_mtx) { if (g_console) g_console("[fs] kfs mutex failed\n", 22); vQueueDelete(g_fs_q); g_fs_q = 0; return; }
+    g_kfs_done = xSemaphoreCreateBinary();
+    if (!g_kfs_done) { if (g_console) g_console("[fs] kfs done-sem failed\n", 25);
+                       vSemaphoreDelete(g_kfs_mtx); g_kfs_mtx = 0;
+                       vQueueDelete(g_fs_q); g_fs_q = 0; return; }
     if (xTaskCreate(fs_task, "fs", 8192, NULL, 4, NULL) != pdPASS) {
         if (g_console) g_console("[fs] task create failed\n", 24);
         vQueueDelete(g_fs_q); g_fs_q = 0;
@@ -2851,6 +2930,48 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         extern int xl_boot(const char *, int);
         return xl_boot((const char *)a0, (int)a1);
     }
+    case SYS_xexload: {                                     /* (path, flags) — task ctx (SD reads) */
+        extern int xex_boot(const char *, int, int);
+        int flags = (int)a1;
+        return xex_boot((const char *)a0, flags & 1, (flags >> 1) & 1);  /* turbo, hold */
+    }
+    case SYS_xl_reset: {                                    /* (basic) — task ctx (SD reads) */
+        extern int xl_reset(int);
+        return xl_reset((int)a0);
+    }
+    case SYS_plane_grab: {                                  /* (plane_id, buf) -> (w<<16)|h */
+        const uint32_t XL_W = 320, XL_H = 192;              /* XL_SRC_W x XL_SRC_H (RTL) */
+        if ((int)a0 != XT_PLANE_XL) return -22;             /* 6502/XL plane only (m68k later) */
+        uint32_t *dst = (uint32_t *)a1;
+        if (!dst) return -14;
+        /* DIAG4 (XT_BLK_DIAG+0x0C) = the XL plane's live compositor read address = the
+         * base of the triple-buffer slot currently on screen; snap to the 1 MB slot grid
+         * so the grab is the exact displayed frame (tear-free), fall back to slot 0. The
+         * planes are PL0-NONE (M7 gate) — this PL1 copy is how userland reaches them. */
+        uint32_t base = (*(volatile uint32_t *)0x43C0040Cu) & 0xFFF00000u;
+        if (base != 0x31000000u && base != 0x31100000u && base != 0x31200000u)
+            base = 0x31000000u;
+        /* The slot is PL-DMA-written (HP2) and this mapping is cacheable, so
+         * DISCARD any cached lines first — L1, then L2 (PL310 is live), then L1
+         * again (a speculative refill between the two passes can repopulate L1
+         * from a line L2 had not yet dropped; same dance as mc_dcache_inval).
+         * Without this, every grab after the first served the PREVIOUS grab's
+         * cachelines — frames that looked frozen/offset while the DDR content
+         * and the on-screen picture were fine (2026-08-08's phantom regression). */
+        {
+            uint32_t len = XL_W * XL_H * 4u;
+            for (uint32_t p = base; p < base + len; p += 32u)
+                __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(p) : "memory");  /* DCIMVAC */
+            __asm__ volatile("dsb" ::: "memory");
+            pl310_inval(base, len);
+            for (uint32_t p = base; p < base + len; p += 32u)
+                __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(p) : "memory");
+            __asm__ volatile("dsb" ::: "memory");
+        }
+        const volatile uint32_t *src = (const volatile uint32_t *)base;
+        for (uint32_t i = 0; i < XL_W * XL_H; i++) dst[i] = src[i];
+        return (long)((XL_W << 16) | XL_H);
+    }
     case SYS_plane_window: {                                /* (plane<<16|scale<<8|en, x<<16|y, w<<16|h) */
         extern long plane_window_set(int, int, int, int, int, int, int);
         if (frtos_current_pid() != g_fb_owner_pid) return -1;   /* M7 gate: plane placement
@@ -2961,6 +3082,34 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         vTaskDelay(ticks ? ticks : 1);      /* >=1 tick so other tasks (net RX pump) run */
         return 0;
     }
+    case SYS_getrandom: {                                   /* (buf, len, flags) -> bytes / -errno */
+        extern void xt_random_bytes(void *, uint32_t);
+        extern int  xt_random_is_hw(void), xt_random_hw_present(void), xt_random_gather(void);
+        void *buf = (void *)a0;
+        uint32_t len = (uint32_t)a1;
+        if (!buf) return -22;                               /* -EINVAL */
+        /* Where a TRNG exists, an uninitialised pool is a WAIT, not a result:
+         * block (bounded) for a gather, and say -EAGAIN to a caller who asked
+         * not to wait — the Linux contract, and the one dropbear's dbrandom.c
+         * is written against (GRND_NONBLOCK probe, then a blocking retry). The
+         * bound matters: a TRNG that never goes fresh is a hardware fault, and
+         * waiting on it forever would wedge every caller of uuidgen, so the
+         * last word is -EIO. Clock-seeded bytes are never returned in place of
+         * hardware ones — that substitution is the bug this replaces.
+         *
+         * On qemu there is no TRNG to wait for, so neither branch applies and
+         * the pool serves what it has. */
+        if (xt_random_hw_present() && !xt_random_is_hw()) {
+            if ((uint32_t)a2 & GRND_NONBLOCK) return -11;   /* -EAGAIN */
+            for (int tries = 0; tries < 8 && !xt_random_is_hw(); tries++) {
+                if (xt_random_gather() == 0) break;
+                vTaskDelay(pdMS_TO_TICKS(10));              /* task ctx: a real yield */
+            }
+            if (!xt_random_is_hw()) return -5;              /* -EIO */
+        }
+        xt_random_bytes(buf, len);
+        return (long)len;
+    }
     default:         return -38;                             /* -ENOSYS */
     }
 }
@@ -3002,6 +3151,8 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_poll:         return 1;               /* BLOCKS until an fd is ready */
     case SYS_open:    return 1;                    /* may walk a FatFs directory path */
     case SYS_xl_boot: return 1;                    /* reads the OS ROMs + the ATR off the SD */
+    case SYS_xexload: return 1;                    /* reads the OS ROMs + the .xex off the SD */
+    case SYS_xl_reset: return 1;                   /* reads the OS ROMs off the SD */
     case SYS_read: {                               /* stdin + pipes + channels block */
         if (fd_is_con(fd)) return 1;               /* console alias: con_tty_readc path */
         proc_t *q = cur_proc();
@@ -3021,6 +3172,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_recvfrom:
         return 1;                                  /* netconn calls block in lwIP */
     case SYS_nanosleep: return 1;                  /* vTaskDelay must run in task ctx */
+    case SYS_getrandom: return 1;                  /* may vTaskDelay between gather retries */
     case SYS_net_up:  return 1;                    /* xTaskCreate (kernel heap) -> task ctx */
     case SYS_statfs:  return 1;                    /* fs task queries FatFs f_getfree */
     case SYS_getdents: return 1;                   /* fs task packs the dir batch page */
@@ -3064,6 +3216,7 @@ static const char *strace_name(uint32_t n)
     case SYS_dup2: return "dup2";       case SYS_kill: return "kill";
     case SYS_nanosleep: return "nanosleep"; case SYS_gettimeofday: return "gettimeofday";
     case SYS_klog: return "klog";       case SYS_devmem: return "devmem";
+    case SYS_getrandom: return "getrandom";
     case SYS_boot_done: return "boot_done";
     case SYS_getcwd: return "getcwd";
     case SYS_socket: return "socket";   case SYS_accept: return "accept";
@@ -3694,26 +3847,67 @@ static int has_prefix(const char *s, const char *p) { while (*p) if (*s++ != *p+
  * serves every subsequent spawn. A binary updated on the card is picked up at
  * the next boot. */
 #define SDPROG_MAX 24
-static struct { char path[64]; const uint8_t *data; uint32_t len; } g_sdprog[SDPROG_MAX];
+static struct { char path[64]; const uint8_t *data; uint32_t len;
+                uint32_t mtime; } g_sdprog[SDPROG_MAX];
+
+/* Is the cached image still the file that is on the card?
+ *
+ * Keying the cache on PATH ALONE meant a rebuilt binary pushed to the SAME path
+ * kept running the OLD image until the next reboot -- silently, which is far
+ * worse than failing: every debugging conclusion drawn from that run is about
+ * code that is no longer on disk. It cost a whole session's worth of confusion
+ * and a workaround of inventing a fresh filename for every push.
+ *
+ * SIZE AND MTIME TOGETHER, because neither alone is enough here: FAT timestamps
+ * have TWO-SECOND resolution, so a quick rebuild-and-push can land inside the
+ * same tick, while a recompile very often produces a byte-identical size. The
+ * pair is what makes the check reliable in practice.
+ *
+ * KFS_STAT rather than KFS_READFILE: this runs on every spawn, so it must not
+ * re-read the file to discover it has not changed. */
+static int sdprog_current(int i, const char *path)
+{
+    if (kfs_call(KFS_STAT, path, 0, 0, 0) != 0) return 1;   /* can't tell -> keep the cache */
+    return g_sdprog[i].len == g_kfs_stat_size &&
+           g_sdprog[i].mtime == g_kfs_stat_mtime;
+}
 static int g_nsdprog;
 
 static int sd_prog_lookup(const char *path, const uint8_t **data, uint32_t *len)
 {
+    int slot = -1;
     for (int i = 0; i < g_nsdprog; i++) {
         const char *a = g_sdprog[i].path, *b = path;
         while (*a && *a == *b) { a++; b++; }
-        if (*a == 0 && *b == 0) { *data = g_sdprog[i].data; *len = g_sdprog[i].len; return 1; }
+        if (*a == 0 && *b == 0) {
+            if (sdprog_current(i, path)) {
+                *data = g_sdprog[i].data; *len = g_sdprog[i].len; return 1;
+            }
+            /* changed on disk: re-read into this slot. The old image leaks —
+             * the kernel heap is a bump allocator with no free — but only when a
+             * binary is actually REPLACED, which is a development action, not
+             * something a running system does. A bounded leak is a far better
+             * trade than silently executing a stale binary. */
+            klog("[sd] reloading changed "); klog(path); klog("\n");
+            slot = i;
+            break;
+        }
     }
     void *buf = 0;
     long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
     if (sz <= 0 || !buf) return 0;                     /* not on the SD (or no SD) */
-    if (g_nsdprog < SDPROG_MAX) {
+    /* KFS_READFILE already stat'd nothing, so take the identity from the read we
+     * just did; a stat here would race a writer mid-push. */
+    uint32_t mt = 0;
+    if (kfs_call(KFS_STAT, path, 0, 0, 0) == 0) mt = g_kfs_stat_mtime;
+    if (slot < 0 && g_nsdprog < SDPROG_MAX) slot = g_nsdprog++;
+    if (slot >= 0) {
         int i = 0;
-        for (; path[i] && i < 63; i++) g_sdprog[g_nsdprog].path[i] = path[i];
-        g_sdprog[g_nsdprog].path[i] = 0;
-        g_sdprog[g_nsdprog].data = (const uint8_t *)buf;
-        g_sdprog[g_nsdprog].len  = (uint32_t)sz;
-        g_nsdprog++;
+        for (; path[i] && i < 63; i++) g_sdprog[slot].path[i] = path[i];
+        g_sdprog[slot].path[i] = 0;
+        g_sdprog[slot].data  = (const uint8_t *)buf;
+        g_sdprog[slot].len   = (uint32_t)sz;
+        g_sdprog[slot].mtime = mt;
     }
     *data = (const uint8_t *)buf; *len = (uint32_t)sz;
     return 1;
@@ -3762,7 +3956,7 @@ void frtos_set_host(const xtld_host *h) { g_khost = h; }
 K(_sbrk)
 K(_write) K(_read) K(_exit) K(_close) K(_lseek) K(_fstat) K(_isatty)
 K(_open) K(_stat) K(_kill) K(_getpid) K(_gettimeofday) K(_times) K(_link)
-K(_unlink) K(_fork) K(_execve) K(_fcntl) K(_getentropy) K(_mkdir)
+K(_unlink) K(_fork) K(_execve) K(_fcntl) K(_getentropy) K(_getrandom) K(_mkdir)
 K(_init) K(_fini) K(_jp2uc_l) K(_uc2jp_l) K(_wait)
 extern int regcomp(void*,const void*,int); extern int regexec(const void*,const void*,unsigned,void*,int);
 extern void regfree(void*); extern int sigprocmask(int,const void*,void*);
@@ -3795,6 +3989,7 @@ uintptr_t frtos_ksym(const char *name, void *u)
         {"_gettimeofday",(void*)_gettimeofday},{"_times",(void*)_times},
         {"_link",(void*)_link},{"_unlink",(void*)_unlink},{"_fork",(void*)_fork},
         {"_execve",(void*)_execve},{"_fcntl",(void*)_fcntl},{"_getentropy",(void*)_getentropy},
+        {"_getrandom",(void*)_getrandom},
         {"_mkdir",(void*)_mkdir},{"_init",(void*)_init},{"_fini",(void*)_fini},
         {"_jp2uc_l",(void*)_jp2uc_l},{"_uc2jp_l",(void*)_uc2jp_l},{"_wait",(void*)_wait},
         {"regcomp",(void*)regcomp},{"regexec",(void*)regexec},

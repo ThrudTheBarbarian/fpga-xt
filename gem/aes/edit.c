@@ -13,6 +13,14 @@
 
 static struct { OBJECT *tree; int obj; int caret; } g_ed = { 0, -1, 0 };
 
+// XG (and any client that owns its own damage/repaint) drives field redraws through its own
+// paint cycle, where the draw surface is bound.  The AES's own edit-redraw runs OUTSIDE that
+// cycle (straight from objc_edit) and would blit to an unbound surface.  A client sets this to
+// route the caret/text update through its next paint instead.  gemd leaves it 0 (its form_do
+// dialogs draw directly).  Per-process, so it never crosses the client/server boundary.
+static int g_ed_nodraw = 0;
+void objc_edit_set_nodraw(int on) { g_ed_nodraw = on; }
+
 int objc_edit_state(OBJECT *tree, int obj, int *caret) {
     if (g_ed.tree != tree || g_ed.obj != obj) return 0;
     if (caret) *caret = g_ed.caret;
@@ -87,6 +95,7 @@ static int pv_filter(const TEDINFO *te, int pos, int c) {
 
 // Redraw one field in place (+ flush its rect so modal draws present).
 static void ed_redraw(OBJECT *tree, int obj) {
+    if (g_ed_nodraw) return;
     int x, y; objc_offset(tree, obj, &x, &y);
     objc_draw(tree, obj, 0, x, y, tree[obj].ob_w, tree[obj].ob_h);
     aes_flush_rect(x, y, tree[obj].ob_w, tree[obj].ob_h);

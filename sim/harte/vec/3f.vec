@@ -1,0 +1,18451 @@
+800
+7bd7 61 e4 c9 a5 21
+6
+7bd7 3f
+7bd8 6b
+7bd9 a0
+a034 e3
+a134 fb
+7bda 90
+7
+7bd7 3f 1
+7bd8 6b 1
+7bd9 a0 1
+a034 e3 1
+a134 fb 1
+a134 fb 0
+a134 f7 0
+7bda 61 e4 c9 a5 a1
+6
+7bd7 3f
+7bd8 6b
+7bd9 a0
+7bda 90
+a034 e3
+a134 f7
+a1ab 31 a1 37 1e 6f
+5
+a1ab 3f
+a1ac 2e
+a1ad 56
+5665 8f
+a1ae 53
+7
+a1ab 3f 1
+a1ac 2e 1
+a1ad 56 1
+5665 8f 1
+5665 8f 1
+5665 8f 0
+5665 1f 0
+a1ae 31 01 37 1e 6d
+5
+5665 1f
+a1ab 3f
+a1ac 2e
+a1ad 56
+a1ae 53
+a827 4f aa ae 1f a8
+5
+a827 3f
+a828 24
+a829 bd
+bdd2 35
+a82a f7
+7
+a827 3f 1
+a828 24 1
+a829 bd 1
+bdd2 35 1
+bdd2 35 1
+bdd2 35 0
+bdd2 6a 0
+a82a 4f 2a ae 1f 28
+5
+a827 3f
+a828 24
+a829 bd
+a82a f7
+bdd2 6a
+4cd3 69 7d 09 25 62
+5
+4cd3 3f
+4cd4 25
+4cd5 7b
+7b2e 92
+4cd6 72
+7
+4cd3 3f 1
+4cd4 25 1
+4cd5 7b 1
+7b2e 92 1
+7b2e 92 1
+7b2e 92 0
+7b2e 24 0
+4cd6 69 24 09 25 61
+5
+4cd3 3f
+4cd4 25
+4cd5 7b
+4cd6 72
+7b2e 24
+b8b5 76 dd cc 0e af
+6
+b8b5 3f
+b8b6 5b
+b8b7 68
+6827 3e
+6927 2b
+b8b8 cf
+7
+b8b5 3f 1
+b8b6 5b 1
+b8b7 68 1
+6827 3e 1
+6927 2b 1
+6927 2b 0
+6927 57 0
+b8b8 76 55 cc 0e 2c
+6
+6827 3e
+6927 57
+b8b5 3f
+b8b6 5b
+b8b7 68
+b8b8 cf
+a9e1 5b 05 47 0f 2a
+6
+a9e1 3f
+a9e2 f1
+a9e3 fb
+fb38 61
+fc38 aa
+a9e4 55
+7
+a9e1 3f 1
+a9e2 f1 1
+a9e3 fb 1
+fb38 61 1
+fc38 aa 1
+fc38 aa 0
+fc38 54 0
+a9e4 5b 04 47 0f 29
+6
+a9e1 3f
+a9e2 f1
+a9e3 fb
+a9e4 55
+fb38 61
+fc38 54
+9029 a3 7a 0e 2e aa
+5
+9029 3f
+902a 63
+902b 8a
+8a71 15
+902c e9
+7
+9029 3f 1
+902a 63 1
+902b 8a 1
+8a71 15 1
+8a71 15 1
+8a71 15 0
+8a71 2a 0
+902c a3 2a 0e 2e 28
+5
+8a71 2a
+9029 3f
+902a 63
+902b 8a
+902c e9
+5779 36 b7 3e ec 65
+5
+5779 3f
+577a a3
+577b 06
+06e1 bc
+577c 78
+7
+5779 3f 1
+577a a3 1
+577b 06 1
+06e1 bc 1
+06e1 bc 1
+06e1 bc 0
+06e1 79 0
+577c 36 31 3e ec 65
+5
+06e1 79
+5779 3f
+577a a3
+577b 06
+577c 78
+6f51 29 9f 3d 03 a0
+5
+6f51 3f
+6f52 13
+6f53 a5
+a550 47
+6f54 1e
+7
+6f51 3f 1
+6f52 13 1
+6f53 a5 1
+a550 47 1
+a550 47 1
+a550 47 0
+a550 8e 0
+6f54 29 8e 3d 03 a0
+5
+6f51 3f
+6f52 13
+6f53 a5
+6f54 1e
+a550 8e
+2d4c 5d 46 87 a1 aa
+6
+2d4c 3f
+2d4d bd
+2d4e 2e
+2e44 fd
+2f44 f6
+2d4f 2a
+7
+2d4c 3f 1
+2d4d bd 1
+2d4e 2e 1
+2e44 fd 1
+2f44 f6 1
+2f44 f6 0
+2f44 ec 0
+2d4f 5d 44 87 a1 29
+6
+2d4c 3f
+2d4d bd
+2d4e 2e
+2d4f 2a
+2e44 fd
+2f44 ec
+cd7c fe 48 1a 7c af
+5
+cd7c 3f
+cd7d c5
+cd7e fe
+fedf a5
+cd7f 3c
+7
+cd7c 3f 1
+cd7d c5 1
+cd7e fe 1
+fedf a5 1
+fedf a5 1
+fedf a5 0
+fedf 4b 0
+cd7f fe 48 1a 7c 2d
+5
+cd7c 3f
+cd7d c5
+cd7e fe
+cd7f 3c
+fedf 4b
+a35e ff 76 14 75 eb
+5
+a35e 3f
+a35f a7
+a360 b5
+b5bb 1a
+a361 f6
+7
+a35e 3f 1
+a35f a7 1
+a360 b5 1
+b5bb 1a 1
+b5bb 1a 1
+b5bb 1a 0
+b5bb 35 0
+a361 ff 34 14 75 68
+5
+a35e 3f
+a35f a7
+a360 b5
+a361 f6
+b5bb 35
+ee70 dd 31 65 5c 26
+5
+ee70 3f
+ee71 1f
+ee72 1a
+1a84 c1
+ee73 89
+7
+ee70 3f 1
+ee71 1f 1
+ee72 1a 1
+1a84 c1 1
+1a84 c1 1
+1a84 c1 0
+1a84 82 0
+ee73 dd 00 65 5c 27
+5
+1a84 82
+ee70 3f
+ee71 1f
+ee72 1a
+ee73 89
+7111 0f 20 7e 84 e6
+6
+7111 3f
+7112 e8
+7113 5d
+5d66 f1
+5e66 81
+7114 da
+7
+7111 3f 1
+7112 e8 1
+7113 5d 1
+5d66 f1 1
+5e66 81 1
+5e66 81 0
+5e66 02 0
+7114 0f 00 7e 84 67
+6
+5d66 f1
+5e66 02
+7111 3f
+7112 e8
+7113 5d
+7114 da
+e060 14 36 fd 67 e7
+6
+e060 3f
+e061 48
+e062 af
+af45 ae
+b045 4b
+e063 7d
+7
+e060 3f 1
+e061 48 1
+e062 af 1
+af45 ae 1
+b045 4b 1
+b045 4b 0
+b045 97 0
+e063 14 16 fd 67 64
+6
+af45 ae
+b045 97
+e060 3f
+e061 48
+e062 af
+e063 7d
+0320 be fb 4d ee a2
+5
+0320 3f
+0321 af
+0322 31
+31fc c1
+0323 45
+7
+0320 3f 1
+0321 af 1
+0322 31 1
+31fc c1 1
+31fc c1 1
+31fc c1 0
+31fc 82 0
+0323 be 82 4d ee a1
+5
+0320 3f
+0321 af
+0322 31
+0323 45
+31fc 82
+1929 8e 8f 0c 4f 28
+5
+1929 3f
+192a 35
+192b 61
+6141 92
+192c 53
+7
+1929 3f 1
+192a 35 1
+192b 61 1
+6141 92 1
+6141 92 1
+6141 92 0
+6141 24 0
+192c 8e 04 0c 4f 29
+5
+1929 3f
+192a 35
+192b 61
+192c 53
+6141 24
+5a8a 79 0b b1 0a 20
+5
+5a8a 3f
+5a8b 15
+5a8c 22
+22c6 d6
+5a8d 71
+7
+5a8a 3f 1
+5a8b 15 1
+5a8c 22 1
+22c6 d6 1
+22c6 d6 1
+22c6 d6 0
+22c6 ac 0
+5a8d 79 08 b1 0a 21
+5
+22c6 ac
+5a8a 3f
+5a8b 15
+5a8c 22
+5a8d 71
+8635 66 31 35 d1 a9
+5
+8635 3f
+8636 37
+8637 6e
+6e6c 3a
+8638 28
+7
+8635 3f 1
+8636 37 1
+8637 6e 1
+6e6c 3a 1
+6e6c 3a 1
+6e6c 3a 0
+6e6c 75 0
+8638 66 31 35 d1 28
+5
+6e6c 75
+8635 3f
+8636 37
+8637 6e
+8638 28
+a7de 0d e2 d3 c3 ea
+6
+a7de 3f
+a7df f2
+a7e0 32
+32c5 59
+33c5 e3
+a7e1 6a
+7
+a7de 3f 1
+a7df f2 1
+a7e0 32 1
+32c5 59 1
+33c5 e3 1
+33c5 e3 0
+33c5 c6 0
+a7e1 0d c2 d3 c3 e9
+6
+32c5 59
+33c5 c6
+a7de 3f
+a7df f2
+a7e0 32
+a7e1 6a
+3413 f4 bc 8d 64 22
+5
+3413 3f
+3414 51
+3415 14
+14de 45
+3416 60
+7
+3413 3f 1
+3414 51 1
+3415 14 1
+14de 45 1
+14de 45 1
+14de 45 0
+14de 8a 0
+3416 f4 88 8d 64 a0
+5
+14de 8a
+3413 3f
+3414 51
+3415 14
+3416 60
+d131 3e 15 c7 b4 a6
+6
+d131 3f
+d132 f5
+d133 95
+95bc 30
+96bc 9d
+d134 19
+7
+d131 3f 1
+d132 f5 1
+d133 95 1
+95bc 30 1
+96bc 9d 1
+96bc 9d 0
+96bc 3a 0
+d134 3e 10 c7 b4 25
+6
+95bc 30
+96bc 3a
+d131 3f
+d132 f5
+d133 95
+d134 19
+3709 9e 54 c4 0a e7
+5
+3709 3f
+370a 10
+370b b7
+b7d4 5a
+370c da
+7
+3709 3f 1
+370a 10 1
+370b b7 1
+b7d4 5a 1
+b7d4 5a 1
+b7d4 5a 0
+b7d4 b5 0
+370c 9e 14 c4 0a 64
+5
+3709 3f
+370a 10
+370b b7
+370c da
+b7d4 b5
+cbcb 21 1d a7 fa 64
+6
+cbcb 3f
+cbcc bf
+cbcd 42
+4266 42
+4366 da
+cbce 8b
+7
+cbcb 3f 1
+cbcc bf 1
+cbcd 42 1
+4266 42 1
+4366 da 1
+4366 da 0
+4366 b4 0
+cbce 21 14 a7 fa 65
+6
+4266 42
+4366 b4
+cbcb 3f
+cbcc bf
+cbcd 42
+cbce 8b
+23d3 68 a4 07 f4 e6
+5
+23d3 3f
+23d4 8d
+23d5 1d
+1d94 5e
+23d6 3c
+7
+23d3 3f 1
+23d4 8d 1
+23d5 1d 1
+1d94 5e 1
+1d94 5e 1
+1d94 5e 0
+1d94 bc 0
+23d6 68 a4 07 f4 e4
+5
+1d94 bc
+23d3 3f
+23d4 8d
+23d5 1d
+23d6 3c
+507c c9 3a 86 35 eb
+5
+507c 3f
+507d 4c
+507e 59
+59d2 72
+507f 1c
+7
+507c 3f 1
+507d 4c 1
+507e 59 1
+59d2 72 1
+59d2 72 1
+59d2 72 0
+59d2 e5 0
+507f c9 20 86 35 68
+5
+507c 3f
+507d 4c
+507e 59
+507f 1c
+59d2 e5
+a0a5 d0 1f 87 aa e2
+5
+a0a5 3f
+a0a6 66
+a0a7 9a
+9aed 33
+a0a8 76
+7
+a0a5 3f 1
+a0a6 66 1
+a0a7 9a 1
+9aed 33 1
+9aed 33 1
+9aed 33 0
+9aed 66 0
+a0a8 d0 06 87 aa 60
+5
+9aed 66
+a0a5 3f
+a0a6 66
+a0a7 9a
+a0a8 76
+6895 c5 98 1a ba e0
+6
+6895 3f
+6896 fc
+6897 87
+8716 32
+8816 76
+6898 b1
+7
+6895 3f 1
+6896 fc 1
+6897 87 1
+8716 32 1
+8816 76 1
+8816 76 0
+8816 ec 0
+6898 c5 88 1a ba e0
+6
+6895 3f
+6896 fc
+6897 87
+6898 b1
+8716 32
+8816 ec
+43b8 9e 28 0d 98 69
+5
+43b8 3f
+43b9 11
+43ba 6c
+6c1e 80
+43bb 4f
+7
+43b8 3f 1
+43b9 11 1
+43ba 6c 1
+6c1e 80 1
+6c1e 80 1
+6c1e 80 0
+6c1e 01 0
+43bb 9e 00 0d 98 6b
+5
+43b8 3f
+43b9 11
+43ba 6c
+43bb 4f
+6c1e 01
+0c61 ec 24 5f 8d 6c
+6
+0c61 3f
+0c62 fd
+0c63 22
+225c 14
+235c 2c
+0c64 9e
+7
+0c61 3f 1
+0c62 fd 1
+0c63 22 1
+225c 14 1
+235c 2c 1
+235c 2c 0
+235c 58 0
+0c64 ec 00 5f 8d 6e
+6
+0c61 3f
+0c62 fd
+0c63 22
+0c64 9e
+225c 14
+235c 58
+e914 50 2b 82 51 e5
+6
+e914 3f
+e915 bd
+e916 2f
+2f3f 1f
+303f 46
+e917 e6
+7
+e914 3f 1
+e915 bd 1
+e916 2f 1
+2f3f 1f 1
+303f 46 1
+303f 46 0
+303f 8d 0
+e917 50 09 82 51 64
+6
+2f3f 1f
+303f 8d
+e914 3f
+e915 bd
+e916 2f
+e917 e6
+7593 73 c8 4c 37 ed
+5
+7593 3f
+7594 5f
+7595 35
+35ab 4d
+7596 2a
+7
+7593 3f 1
+7594 5f 1
+7595 35 1
+35ab 4d 1
+35ab 4d 1
+35ab 4d 0
+35ab 9b 0
+7596 73 88 4c 37 ec
+5
+35ab 9b
+7593 3f
+7594 5f
+7595 35
+7596 2a
+c716 82 62 c3 7c a2
+6
+c716 3f
+c717 71
+c718 a8
+a834 dc
+a934 db
+c719 e3
+7
+c716 3f 1
+c717 71 1
+c718 a8 1
+a834 dc 1
+a934 db 1
+a934 db 0
+a934 b6 0
+c719 82 22 c3 7c 21
+6
+a834 dc
+a934 b6
+c716 3f
+c717 71
+c718 a8
+c719 e3
+783e 42 ba 5f b5 a1
+6
+783e 3f
+783f fc
+7840 ef
+ef5b 4b
+f05b 09
+7841 46
+7
+783e 3f 1
+783f fc 1
+7840 ef 1
+ef5b 4b 1
+f05b 09 1
+f05b 09 0
+f05b 13 0
+7841 42 12 5f b5 20
+6
+783e 3f
+783f fc
+7840 ef
+7841 46
+ef5b 4b
+f05b 13
+afa3 f0 5e 66 81 61
+5
+afa3 3f
+afa4 56
+afa5 06
+06bc a2
+afa6 91
+7
+afa3 3f 1
+afa4 56 1
+afa5 06 1
+06bc a2 1
+06bc a2 1
+06bc a2 0
+06bc 45 0
+afa6 f0 44 66 81 61
+5
+06bc 45
+afa3 3f
+afa4 56
+afa5 06
+afa6 91
+36fd 5c d0 5c 57 60
+5
+36fd 3f
+36fe 0f
+36ff da
+da6b 67
+3700 fb
+7
+36fd 3f 1
+36fe 0f 1
+36ff da 1
+da6b 67 1
+da6b 67 1
+da6b 67 0
+da6b ce 0
+3700 5c c0 5c 57 e0
+5
+36fd 3f
+36fe 0f
+36ff da
+3700 fb
+da6b ce
+7620 b2 5e 5f 67 26
+6
+7620 3f
+7621 c8
+7622 b1
+b127 a0
+b227 17
+7623 18
+7
+7620 3f 1
+7621 c8 1
+7622 b1 1
+b127 a0 1
+b227 17 1
+b227 17 0
+b227 2e 0
+7623 b2 0e 5f 67 24
+6
+7620 3f
+7621 c8
+7622 b1
+7623 18
+b127 a0
+b227 2e
+b9c7 cf f3 7e de 64
+5
+b9c7 3f
+b9c8 4e
+b9c9 cc
+cccc 22
+b9ca c8
+7
+b9c7 3f 1
+b9c8 4e 1
+b9c9 cc 1
+cccc 22 1
+cccc 22 1
+cccc 22 0
+cccc 44 0
+b9ca cf 40 7e de 64
+5
+b9c7 3f
+b9c8 4e
+b9c9 cc
+b9ca c8
+cccc 44
+fde8 aa 32 b8 5f 6d
+6
+fde8 3f
+fde9 f9
+fdea fe
+feb1 d3
+ffb1 34
+fdeb e0
+7
+fde8 3f 1
+fde9 f9 1
+fdea fe 1
+feb1 d3 1
+ffb1 34 1
+ffb1 34 0
+ffb1 69 0
+fdeb aa 20 b8 5f 6c
+6
+fde8 3f
+fde9 f9
+fdea fe
+fdeb e0
+feb1 d3
+ffb1 69
+1465 e8 f9 3c 21 a0
+6
+1465 3f
+1466 cd
+1467 5c
+5c09 b6
+5d09 d3
+1468 62
+7
+1465 3f 1
+1466 cd 1
+1467 5c 1
+5c09 b6 1
+5d09 d3 1
+5d09 d3 0
+5d09 a6 0
+1468 e8 a0 3c 21 a1
+6
+1465 3f
+1466 cd
+1467 5c
+1468 62
+5c09 b6
+5d09 a6
+8f5b a4 83 2e f2 a1
+6
+8f5b 3f
+8f5c ec
+8f5d 17
+171a af
+181a ea
+8f5e 7b
+7
+8f5b 3f 1
+8f5c ec 1
+8f5d 17 1
+171a af 1
+181a ea 1
+181a ea 0
+181a d5 0
+8f5e a4 81 2e f2 a1
+6
+171a af
+181a d5
+8f5b 3f
+8f5c ec
+8f5d 17
+8f5e 7b
+f615 4c 83 f9 ca 25
+6
+f615 3f
+f616 9e
+f617 ad
+ad97 3d
+ae97 0a
+f618 3c
+7
+f615 3f 1
+f616 9e 1
+f617 ad 1
+ad97 3d 1
+ae97 0a 1
+ae97 0a 0
+ae97 15 0
+f618 4c 01 f9 ca 24
+6
+ad97 3d
+ae97 15
+f615 3f
+f616 9e
+f617 ad
+f618 3c
+a4d8 a6 47 70 e3 2f
+5
+a4d8 3f
+a4d9 2d
+a4da c2
+c29d fa
+a4db c6
+7
+a4d8 3f 1
+a4d9 2d 1
+a4da c2 1
+c29d fa 1
+c29d fa 1
+c29d fa 0
+c29d f5 0
+a4db a6 45 70 e3 2d
+5
+a4d8 3f
+a4d9 2d
+a4da c2
+a4db c6
+c29d f5
+03df 61 2e f8 85 a2
+6
+03df 3f
+03e0 46
+03e1 9b
+9b3e b5
+9c3e d2
+03e2 62
+7
+03df 3f 1
+03e0 46 1
+03e1 9b 1
+9b3e b5 1
+9c3e d2 1
+9c3e d2 0
+9c3e a4 0
+03e2 61 24 f8 85 21
+6
+03df 3f
+03e0 46
+03e1 9b
+03e2 62
+9b3e b5
+9c3e a4
+680f ec 8c cf 9d e9
+6
+680f 3f
+6810 a5
+6811 57
+5774 ed
+5874 d8
+6812 0c
+7
+680f 3f 1
+6810 a5 1
+6811 57 1
+5774 ed 1
+5874 d8 1
+5874 d8 0
+5874 b1 0
+6812 ec 80 cf 9d e9
+6
+5774 ed
+5874 b1
+680f 3f
+6810 a5
+6811 57
+6812 0c
+acc7 54 38 b3 df a7
+5
+acc7 3f
+acc8 35
+acc9 c9
+c9e8 29
+acca 92
+7
+acc7 3f 1
+acc8 35 1
+acc9 c9 1
+c9e8 29 1
+c9e8 29 1
+c9e8 29 0
+c9e8 53 0
+acca 54 10 b3 df 24
+5
+acc7 3f
+acc8 35
+acc9 c9
+acca 92
+c9e8 53
+5820 ec 3e 2f a8 2d
+6
+5820 3f
+5821 e8
+5822 ce
+ce17 5d
+cf17 b3
+5823 10
+7
+5820 3f 1
+5821 e8 1
+5822 ce 1
+ce17 5d 1
+cf17 b3 1
+cf17 b3 0
+cf17 67 0
+5823 ec 26 2f a8 2d
+6
+5820 3f
+5821 e8
+5822 ce
+5823 10
+ce17 5d
+cf17 67
+ebe3 1f 92 c1 b9 a0
+5
+ebe3 3f
+ebe4 2d
+ebe5 76
+76ee ea
+ebe6 8e
+7
+ebe3 3f 1
+ebe4 2d 1
+ebe5 76 1
+76ee ea 1
+76ee ea 1
+76ee ea 0
+76ee d4 0
+ebe6 1f 90 c1 b9 a1
+5
+76ee d4
+ebe3 3f
+ebe4 2d
+ebe5 76
+ebe6 8e
+b7ce 2b 49 a9 a7 63
+6
+b7ce 3f
+b7cf eb
+b7d0 c0
+c094 4a
+c194 fe
+b7d1 7e
+7
+b7ce 3f 1
+b7cf eb 1
+b7d0 c0 1
+c094 4a 1
+c194 fe 1
+c194 fe 0
+c194 fd 0
+b7d1 2b 49 a9 a7 61
+6
+b7ce 3f
+b7cf eb
+b7d0 c0
+b7d1 7e
+c094 4a
+c194 fd
+9c15 6d 72 88 03 26
+6
+9c15 3f
+9c16 7f
+9c17 52
+5207 c4
+5307 6e
+9c18 59
+7
+9c15 3f 1
+9c16 7f 1
+9c17 52 1
+5207 c4 1
+5307 6e 1
+5307 6e 0
+5307 dc 0
+9c18 6d 50 88 03 24
+6
+5207 c4
+5307 dc
+9c15 3f
+9c16 7f
+9c17 52
+9c18 59
+b392 98 c1 cf c8 a4
+6
+b392 3f
+b393 36
+b394 60
+6005 89
+6105 fd
+b395 60
+7
+b392 3f 1
+b393 36 1
+b394 60 1
+6005 89 1
+6105 fd 1
+6105 fd 0
+6105 fa 0
+b395 98 c0 cf c8 a5
+6
+6005 89
+6105 fa
+b392 3f
+b393 36
+b394 60
+b395 60
+45b2 74 09 f1 fd e7
+6
+45b2 3f
+45b3 60
+45b4 69
+6951 1d
+6a51 d0
+45b5 49
+7
+45b2 3f 1
+45b3 60 1
+45b4 69 1
+6951 1d 1
+6a51 d0 1
+6a51 d0 0
+6a51 a1 0
+45b5 74 01 f1 fd 65
+6
+45b2 3f
+45b3 60
+45b4 69
+45b5 49
+6951 1d
+6a51 a1
+b9ca 7e 99 3e 78 28
+5
+b9ca 3f
+b9cb 6b
+b9cc aa
+aaa9 01
+b9cd d6
+7
+b9ca 3f 1
+b9cb 6b 1
+b9cc aa 1
+aaa9 01 1
+aaa9 01 1
+aaa9 01 0
+aaa9 02 0
+b9cd 7e 00 3e 78 2a
+5
+aaa9 02
+b9ca 3f
+b9cb 6b
+b9cc aa
+b9cd d6
+1577 9d d1 4d d8 a5
+6
+1577 3f
+1578 e8
+1579 9b
+9b35 38
+9c35 26
+157a 24
+7
+1577 3f 1
+1578 e8 1
+1579 9b 1
+9b35 38 1
+9c35 26 1
+9c35 26 0
+9c35 4d 0
+157a 9d 41 4d d8 24
+6
+1577 3f
+1578 e8
+1579 9b
+157a 24
+9b35 38
+9c35 4d
+b124 75 d2 a4 b6 62
+6
+b124 3f
+b125 99
+b126 c1
+c13d af
+c23d d9
+b127 6d
+7
+b124 3f 1
+b125 99 1
+b126 c1 1
+c13d af 1
+c23d d9 1
+c23d d9 0
+c23d b2 0
+b127 75 92 a4 b6 e1
+6
+b124 3f
+b125 99
+b126 c1
+b127 6d
+c13d af
+c23d b2
+c3e4 bb 75 f1 9a 6c
+6
+c3e4 3f
+c3e5 70
+c3e6 9f
+9f61 ea
+a061 93
+c3e7 17
+7
+c3e4 3f 1
+c3e5 70 1
+c3e6 9f 1
+9f61 ea 1
+a061 93 1
+a061 93 0
+a061 26 0
+c3e7 bb 24 f1 9a 6d
+6
+9f61 ea
+a061 26
+c3e4 3f
+c3e5 70
+c3e6 9f
+c3e7 17
+df50 4c 94 5e d2 60
+6
+df50 3f
+df51 d2
+df52 74
+7430 64
+7530 d4
+df53 67
+7
+df50 3f 1
+df51 d2 1
+df52 74 1
+7430 64 1
+7530 d4 1
+7530 d4 0
+7530 a8 0
+df53 4c 80 5e d2 e1
+6
+7430 64
+7530 a8
+df50 3f
+df51 d2
+df52 74
+df53 67
+18fd c1 d7 8d 45 28
+6
+18fd 3f
+18fe ca
+18ff 8c
+8c57 70
+8d57 08
+1900 49
+7
+18fd 3f 1
+18fe ca 1
+18ff 8c 1
+8c57 70 1
+8d57 08 1
+8d57 08 0
+8d57 10 0
+1900 c1 10 8d 45 28
+6
+18fd 3f
+18fe ca
+18ff 8c
+1900 49
+8c57 70
+8d57 10
+1923 f7 94 75 6a 27
+6
+1923 3f
+1924 ab
+1925 ad
+ad20 57
+ae20 8c
+1926 70
+7
+1923 3f 1
+1924 ab 1
+1925 ad 1
+ad20 57 1
+ae20 8c 1
+ae20 8c 0
+ae20 19 0
+1926 f7 10 75 6a 25
+6
+1923 3f
+1924 ab
+1925 ad
+1926 70
+ad20 57
+ae20 19
+3343 f1 98 f9 b4 2c
+6
+3343 3f
+3344 2d
+3345 76
+7626 e0
+7726 f8
+3346 27
+7
+3343 3f 1
+3344 2d 1
+3345 76 1
+7626 e0 1
+7726 f8 1
+7726 f8 0
+7726 f0 0
+3346 f1 90 f9 b4 ad
+6
+3343 3f
+3344 2d
+3345 76
+3346 27
+7626 e0
+7726 f0
+6309 51 40 c0 8f 67
+6
+6309 3f
+630a e4
+630b 74
+74a4 6f
+75a4 44
+630c 2e
+7
+6309 3f 1
+630a e4 1
+630b 74 1
+74a4 6f 1
+75a4 44 1
+75a4 44 0
+75a4 89 0
+630c 51 00 c0 8f 66
+6
+6309 3f
+630a e4
+630b 74
+630c 2e
+74a4 6f
+75a4 89
+9dc1 a3 f4 70 0b ab
+6
+9dc1 3f
+9dc2 e5
+9dc3 f0
+f055 1f
+f155 44
+9dc4 67
+7
+9dc1 3f 1
+9dc2 e5 1
+9dc3 f0 1
+f055 1f 1
+f155 44 1
+f155 44 0
+f155 89 0
+9dc4 a3 80 70 0b a8
+6
+9dc1 3f
+9dc2 e5
+9dc3 f0
+9dc4 67
+f055 1f
+f155 89
+6e73 f4 00 3d 57 a7
+5
+6e73 3f
+6e74 37
+6e75 5f
+5f74 0c
+6e76 95
+7
+6e73 3f 1
+6e74 37 1
+6e75 5f 1
+5f74 0c 1
+5f74 0c 1
+5f74 0c 0
+5f74 19 0
+6e76 f4 00 3d 57 26
+5
+5f74 19
+6e73 3f
+6e74 37
+6e75 5f
+6e76 95
+8017 d1 17 89 ee 26
+6
+8017 3f
+8018 c8
+8019 07
+0751 6d
+0851 a9
+801a 62
+7
+8017 3f 1
+8018 c8 1
+8019 07 1
+0751 6d 1
+0851 a9 1
+0851 a9 0
+0851 52 0
+801a d1 12 89 ee 25
+6
+0751 6d
+0851 52
+8017 3f
+8018 c8
+8019 07
+801a 62
+c37b cb c0 0a 99 a7
+5
+c37b 3f
+c37c 1e
+c37d 4a
+4a28 b5
+c37e 6e
+7
+c37b 3f 1
+c37c 1e 1
+c37d 4a 1
+4a28 b5 1
+4a28 b5 1
+4a28 b5 0
+4a28 6b 0
+c37e cb 40 0a 99 25
+5
+4a28 6b
+c37b 3f
+c37c 1e
+c37d 4a
+c37e 6e
+0143 56 4d f7 0a af
+6
+0143 3f
+0144 c5
+0145 78
+78bc ef
+79bc 11
+0146 40
+7
+0143 3f 1
+0144 c5 1
+0145 78 1
+78bc ef 1
+79bc 11 1
+79bc 11 0
+79bc 23 0
+0146 56 01 f7 0a 2c
+6
+0143 3f
+0144 c5
+0145 78
+0146 40
+78bc ef
+79bc 23
+8345 d1 66 f2 44 2b
+6
+8345 3f
+8346 49
+8347 eb
+eb3b 33
+ec3b b3
+8348 7e
+7
+8345 3f 1
+8346 49 1
+8347 eb 1
+eb3b 33 1
+ec3b b3 1
+ec3b b3 0
+ec3b 67 0
+8348 d1 66 f2 44 29
+6
+8345 3f
+8346 49
+8347 eb
+8348 7e
+eb3b 33
+ec3b 67
+2749 6c eb b0 5e e1
+6
+2749 3f
+274a 72
+274b 09
+0922 57
+0a22 0a
+274c 74
+7
+2749 3f 1
+274a 72 1
+274b 09 1
+0922 57 1
+0a22 0a 1
+0a22 0a 0
+0a22 15 0
+274c 6c 01 b0 5e 60
+6
+0922 57
+0a22 15
+2749 3f
+274a 72
+274b 09
+274c 74
+3ee8 52 15 cd da 63
+6
+3ee8 3f
+3ee9 fb
+3eea 67
+67c8 25
+68c8 d6
+3eeb 18
+7
+3ee8 3f 1
+3ee9 fb 1
+3eea 67 1
+67c8 25 1
+68c8 d6 1
+68c8 d6 0
+68c8 ad 0
+3eeb 52 05 cd da 61
+6
+3ee8 3f
+3ee9 fb
+3eea 67
+3eeb 18
+67c8 25
+68c8 ad
+7df9 16 09 bb db 68
+5
+7df9 3f
+7dfa 20
+7dfb e2
+e2db 1b
+7dfc 9e
+7
+7df9 3f 1
+7dfa 20 1
+7dfb e2 1
+e2db 1b 1
+e2db 1b 1
+e2db 1b 0
+e2db 36 0
+7dfc 16 00 bb db 6a
+5
+7df9 3f
+7dfa 20
+7dfb e2
+7dfc 9e
+e2db 36
+d54f 3b 07 9b 4c e4
+6
+d54f 3f
+d550 99
+d551 a0
+a034 58
+a134 b5
+d552 ce
+7
+d54f 3f 1
+d550 99 1
+d551 a0 1
+a034 58 1
+a134 b5 1
+a134 b5 0
+a134 6a 0
+d552 3b 02 9b 4c 65
+6
+a034 58
+a134 6a
+d54f 3f
+d550 99
+d551 a0
+d552 ce
+6e82 99 07 50 18 e0
+5
+6e82 3f
+6e83 7f
+6e84 71
+71cf af
+6e85 3c
+7
+6e82 3f 1
+6e83 7f 1
+6e84 71 1
+71cf af 1
+71cf af 1
+71cf af 0
+71cf 5e 0
+6e85 99 06 50 18 61
+5
+6e82 3f
+6e83 7f
+6e84 71
+6e85 3c
+71cf 5e
+1360 b4 1c 11 0e e8
+5
+1360 3f
+1361 d9
+1362 a6
+a6ea 5b
+1363 51
+7
+1360 3f 1
+1361 d9 1
+1362 a6 1
+a6ea 5b 1
+a6ea 5b 1
+a6ea 5b 0
+a6ea b6 0
+1363 b4 14 11 0e 68
+5
+1360 3f
+1361 d9
+1362 a6
+1363 51
+a6ea b6
+e9ae f2 3e 59 6a a9
+5
+e9ae 3f
+e9af 05
+e9b0 e6
+e65e 32
+e9b1 a3
+7
+e9ae 3f 1
+e9af 05 1
+e9b0 e6 1
+e65e 32 1
+e65e 32 1
+e65e 32 0
+e65e 65 0
+e9b1 f2 24 59 6a 28
+5
+e65e 65
+e9ae 3f
+e9af 05
+e9b0 e6
+e9b1 a3
+8627 2b f4 04 70 a4
+5
+8627 3f
+8628 39
+8629 34
+343d d7
+862a e6
+7
+8627 3f 1
+8628 39 1
+8629 34 1
+343d d7 1
+343d d7 1
+343d d7 0
+343d ae 0
+862a 2b a4 04 70 a5
+5
+343d ae
+8627 3f
+8628 39
+8629 34
+862a e6
+bbdf 8b a9 bd ed e7
+6
+bbdf 3f
+bbe0 ed
+bbe1 a3
+a3aa 4c
+a4aa dc
+bbe2 2b
+7
+bbdf 3f 1
+bbe0 ed 1
+bbe1 a3 1
+a3aa 4c 1
+a4aa dc 1
+a4aa dc 0
+a4aa b9 0
+bbe2 8b a9 bd ed e5
+6
+a3aa 4c
+a4aa b9
+bbdf 3f
+bbe0 ed
+bbe1 a3
+bbe2 2b
+184b 7f bf 7a 6d ec
+5
+184b 3f
+184c 1a
+184d 43
+4394 97
+184e a8
+7
+184b 3f 1
+184c 1a 1
+184d 43 1
+4394 97 1
+4394 97 1
+4394 97 0
+4394 2e 0
+184e 7f 2e 7a 6d 6d
+5
+184b 3f
+184c 1a
+184d 43
+184e a8
+4394 2e
+539b 87 34 41 35 a8
+5
+539b 3f
+539c 82
+539d 79
+79c3 dc
+539e b3
+7
+539b 3f 1
+539c 82 1
+539d 79 1
+79c3 dc 1
+79c3 dc 1
+79c3 dc 0
+79c3 b8 0
+539e 87 30 41 35 29
+5
+539b 3f
+539c 82
+539d 79
+539e b3
+79c3 b8
+b01b 3a f5 9e 1c 24
+6
+b01b 3f
+b01c b5
+b01d 11
+1153 f3
+1253 cb
+b01e bc
+7
+b01b 3f 1
+b01c b5 1
+b01d 11 1
+1153 f3 1
+1253 cb 1
+1253 cb 0
+1253 96 0
+b01e 3a 94 9e 1c a5
+6
+1153 f3
+1253 96
+b01b 3f
+b01c b5
+b01d 11
+b01e bc
+938f f9 cb 94 12 69
+5
+938f 3f
+9390 22
+9391 23
+23b6 88
+9392 dc
+7
+938f 3f 1
+9390 22 1
+9391 23 1
+23b6 88 1
+23b6 88 1
+23b6 88 0
+23b6 11 0
+9392 f9 01 94 12 69
+5
+23b6 11
+938f 3f
+9390 22
+9391 23
+9392 dc
+7bca 53 32 a8 3d ad
+6
+7bca 3f
+7bcb 5c
+7bcc b1
+b104 09
+b204 22
+7bcd e7
+7
+7bca 3f 1
+7bcb 5c 1
+7bcc b1 1
+b104 09 1
+b204 22 1
+b204 22 0
+b204 45 0
+7bcd 53 00 a8 3d 2e
+6
+7bca 3f
+7bcb 5c
+7bcc b1
+7bcd e7
+b104 09
+b204 45
+6fa8 c2 3e db df 6b
+6
+6fa8 3f
+6fa9 a7
+6faa 59
+5982 4b
+5a82 2f
+6fab 63
+7
+6fa8 3f 1
+6fa9 a7 1
+6faa 59 1
+5982 4b 1
+5a82 2f 1
+5a82 2f 0
+5a82 5f 0
+6fab c2 1e db df 68
+6
+5982 4b
+5a82 5f
+6fa8 3f
+6fa9 a7
+6faa 59
+6fab 63
+c3ac af 04 b5 da 6f
+5
+c3ac 3f
+c3ad 43
+c3ae f8
+f8f8 c8
+c3af be
+7
+c3ac 3f 1
+c3ad 43 1
+c3ae f8 1
+f8f8 c8 1
+f8f8 c8 1
+f8f8 c8 0
+f8f8 91 0
+c3af af 00 b5 da 6f
+5
+c3ac 3f
+c3ad 43
+c3ae f8
+c3af be
+f8f8 91
+ada9 98 27 9e a5 ed
+6
+ada9 3f
+adaa cb
+adab c4
+c469 d9
+c569 9a
+adac fd
+7
+ada9 3f 1
+adaa cb 1
+adab c4 1
+c469 d9 1
+c569 9a 1
+c569 9a 0
+c569 35 0
+adac 98 25 9e a5 6d
+6
+ada9 3f
+adaa cb
+adab c4
+adac fd
+c469 d9
+c569 35
+b7f5 32 f6 dc 00 20
+6
+b7f5 3f
+b7f6 92
+b7f7 1d
+1d6e 6d
+1e6e 67
+b7f8 11
+7
+b7f5 3f 1
+b7f6 92 1
+b7f7 1d 1
+1d6e 6d 1
+1e6e 67 1
+1e6e 67 0
+1e6e ce 0
+b7f8 32 c6 dc 00 a0
+6
+1d6e 6d
+1e6e ce
+b7f5 3f
+b7f6 92
+b7f7 1d
+b7f8 11
+6f6d 16 7a e1 f3 ea
+6
+6f6d 3f
+6f6e ce
+6f6f 2f
+2faf 9a
+30af d4
+6f70 97
+7
+6f6d 3f 1
+6f6e ce 1
+6f6f 2f 1
+2faf 9a 1
+30af d4 1
+30af d4 0
+30af a8 0
+6f70 16 28 e1 f3 69
+6
+2faf 9a
+30af a8
+6f6d 3f
+6f6e ce
+6f6f 2f
+6f70 97
+6f98 34 ac f9 95 e0
+6
+6f98 3f
+6f99 4a
+6f9a a1
+a143 ef
+a243 8d
+6f9b 90
+7
+6f98 3f 1
+6f99 4a 1
+6f9a a1 1
+a143 ef 1
+a243 8d 1
+a243 8d 0
+a243 1a 0
+6f9b 34 08 f9 95 61
+6
+6f98 3f
+6f99 4a
+6f9a a1
+6f9b 90
+a143 ef
+a243 1a
+c0c1 eb e8 27 14 e1
+6
+c0c1 3f
+c0c2 fa
+c0c3 ee
+ee21 df
+ef21 98
+c0c4 69
+7
+c0c1 3f 1
+c0c2 fa 1
+c0c3 ee 1
+ee21 df 1
+ef21 98 1
+ef21 98 0
+ef21 31 0
+c0c4 eb 20 27 14 61
+6
+c0c1 3f
+c0c2 fa
+c0c3 ee
+c0c4 69
+ee21 df
+ef21 31
+ef92 72 1b da 6a 22
+6
+ef92 3f
+ef93 aa
+ef94 a7
+a784 4b
+a884 81
+ef95 58
+7
+ef92 3f 1
+ef93 aa 1
+ef94 a7 1
+a784 4b 1
+a884 81 1
+a884 81 0
+a884 02 0
+ef95 72 02 da 6a 21
+6
+a784 4b
+a884 02
+ef92 3f
+ef93 aa
+ef94 a7
+ef95 58
+6ae5 c4 28 05 6f e2
+5
+6ae5 3f
+6ae6 33
+6ae7 a7
+a738 1e
+6ae8 ed
+7
+6ae5 3f 1
+6ae6 33 1
+6ae7 a7 1
+a738 1e 1
+a738 1e 1
+a738 1e 0
+a738 3c 0
+6ae8 c4 28 05 6f 60
+5
+6ae5 3f
+6ae6 33
+6ae7 a7
+6ae8 ed
+a738 3c
+227a 04 d8 5a ff e1
+6
+227a 3f
+227b a6
+227c 94
+9400 ef
+9500 24
+227d 20
+7
+227a 3f 1
+227b a6 1
+227c 94 1
+9400 ef 1
+9500 24 1
+9500 24 0
+9500 49 0
+227d 04 48 5a ff 60
+6
+227a 3f
+227b a6
+227c 94
+227d 20
+9400 ef
+9500 49
+0108 69 e9 f3 aa 62
+6
+0108 3f
+0109 5a
+010a 7e
+7e4d f8
+7f4d 8f
+010b 0d
+7
+0108 3f 1
+0109 5a 1
+010a 7e 1
+7e4d f8 1
+7f4d 8f 1
+7f4d 8f 0
+7f4d 1e 0
+010b 69 08 f3 aa 61
+6
+0108 3f
+0109 5a
+010a 7e
+010b 0d
+7e4d f8
+7f4d 1e
+bd25 58 3e e1 b4 6f
+6
+bd25 3f
+bd26 c3
+bd27 eb
+eba4 5e
+eca4 fd
+bd28 91
+7
+bd25 3f 1
+bd26 c3 1
+bd27 eb 1
+eba4 5e 1
+eca4 fd 1
+eca4 fd 0
+eca4 fb 0
+bd28 58 3a e1 b4 6d
+6
+bd25 3f
+bd26 c3
+bd27 eb
+bd28 91
+eba4 5e
+eca4 fb
+b41a b2 74 54 90 e8
+5
+b41a 3f
+b41b 87
+b41c 89
+89db e7
+b41d 71
+7
+b41a 3f 1
+b41b 87 1
+b41c 89 1
+89db e7 1
+89db e7 1
+89db e7 0
+89db ce 0
+b41d b2 44 54 90 69
+5
+89db ce
+b41a 3f
+b41b 87
+b41c 89
+b41d 71
+8591 85 4c 78 3a a9
+6
+8591 3f
+8592 c2
+8593 94
+943a 96
+953a 43
+8594 e9
+7
+8591 3f 1
+8592 c2 1
+8593 94 1
+943a 96 1
+953a 43 1
+953a 43 0
+953a 87 0
+8594 85 04 78 3a 28
+6
+8591 3f
+8592 c2
+8593 94
+8594 e9
+943a 96
+953a 87
+034c 29 0a 33 ef 6f
+5
+034c 3f
+034d 5a
+034e 7a
+7a8d 23
+034f 79
+7
+034c 3f 1
+034d 5a 1
+034e 7a 1
+7a8d 23 1
+7a8d 23 1
+7a8d 23 0
+7a8d 47 0
+034f 29 02 33 ef 6c
+5
+034c 3f
+034d 5a
+034e 7a
+034f 79
+7a8d 47
+56bb 49 4f 03 a6 ae
+5
+56bb 3f
+56bc 64
+56bd 8a
+8a67 fb
+56be 52
+7
+56bb 3f 1
+56bc 64 1
+56bd 8a 1
+8a67 fb 1
+8a67 fb 1
+8a67 fb 0
+8a67 f6 0
+56be 49 46 03 a6 2d
+5
+56bb 3f
+56bc 64
+56bd 8a
+56be 52
+8a67 f6
+9609 59 82 a1 ab 61
+6
+9609 3f
+960a 64
+960b 3d
+3d05 24
+3e05 eb
+960c 86
+7
+9609 3f 1
+960a 64 1
+960b 3d 1
+3d05 24 1
+3e05 eb 1
+3e05 eb 0
+3e05 d7 0
+960c 59 82 a1 ab e1
+6
+3d05 24
+3e05 d7
+9609 3f
+960a 64
+960b 3d
+960c 86
+92c3 77 89 b6 36 2d
+6
+92c3 3f
+92c4 98
+92c5 8a
+8a4e 0b
+8b4e 78
+92c6 c6
+7
+92c3 3f 1
+92c4 98 1
+92c5 8a 1
+8a4e 0b 1
+8b4e 78 1
+8b4e 78 0
+8b4e f1 0
+92c6 77 81 b6 36 ac
+6
+8a4e 0b
+8b4e f1
+92c3 3f
+92c4 98
+92c5 8a
+92c6 c6
+af4a 86 f4 8d 10 2c
+6
+af4a 3f
+af4b c4
+af4c 8b
+8b51 52
+8c51 34
+af4d d2
+7
+af4a 3f 1
+af4b c4 1
+af4c 8b 1
+8b51 52 1
+8c51 34 1
+8c51 34 0
+8c51 68 0
+af4d 86 60 8d 10 2c
+6
+8b51 52
+8c51 68
+af4a 3f
+af4b c4
+af4c 8b
+af4d d2
+5ec0 81 db a9 45 ed
+6
+5ec0 3f
+5ec1 de
+5ec2 5f
+5f87 5c
+6087 c5
+5ec3 af
+7
+5ec0 3f 1
+5ec1 de 1
+5ec2 5f 1
+5f87 5c 1
+6087 c5 1
+6087 c5 0
+6087 8b 0
+5ec3 81 8b a9 45 ed
+6
+5ec0 3f
+5ec1 de
+5ec2 5f
+5ec3 af
+5f87 5c
+6087 8b
+91ff 68 41 81 df 66
+5
+91ff 3f
+9200 4c
+9201 f7
+f7cd da
+9202 29
+7
+91ff 3f 1
+9200 4c 1
+9201 f7 1
+f7cd da 1
+f7cd da 1
+f7cd da 0
+f7cd b4 0
+9202 68 00 81 df 67
+5
+91ff 3f
+9200 4c
+9201 f7
+9202 29
+f7cd b4
+c4cf 66 a8 0c 46 ed
+5
+c4cf 3f
+c4d0 af
+c4d1 d1
+d1bb 4e
+c4d2 5d
+7
+c4cf 3f 1
+c4d0 af 1
+c4d1 d1 1
+d1bb 4e 1
+d1bb 4e 1
+d1bb 4e 0
+d1bb 9d 0
+c4d2 66 88 0c 46 ec
+5
+c4cf 3f
+c4d0 af
+c4d1 d1
+c4d2 5d
+d1bb 9d
+b247 57 af 30 ee a2
+5
+b247 3f
+b248 ba
+b249 ff
+ffea af
+b24a 1f
+7
+b247 3f 1
+b248 ba 1
+b249 ff 1
+ffea af 1
+ffea af 1
+ffea af 0
+ffea 5e 0
+b24a 57 0e 30 ee 21
+5
+b247 3f
+b248 ba
+b249 ff
+b24a 1f
+ffea 5e
+a250 0a c7 1b c1 61
+5
+a250 3f
+a251 40
+a252 e2
+e25b fa
+a253 fe
+7
+a250 3f 1
+a251 40 1
+a252 e2 1
+e25b fa 1
+e25b fa 1
+e25b fa 0
+e25b f5 0
+a253 0a c5 1b c1 e1
+5
+a250 3f
+a251 40
+a252 e2
+a253 fe
+e25b f5
+7ae6 66 bb ca 42 a3
+6
+7ae6 3f
+7ae7 8b
+7ae8 76
+7655 ab
+7755 6d
+7ae9 dc
+7
+7ae6 3f 1
+7ae7 8b 1
+7ae8 76 1
+7655 ab 1
+7755 6d 1
+7755 6d 0
+7755 db 0
+7ae9 66 9b ca 42 a0
+6
+7655 ab
+7755 db
+7ae6 3f
+7ae7 8b
+7ae8 76
+7ae9 dc
+3303 1d 37 2a 5c e0
+6
+3303 3f
+3304 ef
+3305 cd
+cd19 0c
+ce19 9c
+3306 d6
+7
+3303 3f 1
+3304 ef 1
+3305 cd 1
+cd19 0c 1
+ce19 9c 1
+ce19 9c 0
+ce19 38 0
+3306 1d 30 2a 5c 61
+6
+3303 3f
+3304 ef
+3305 cd
+3306 d6
+cd19 0c
+ce19 38
+c7de 02 a4 7d 4e 68
+5
+c7de 3f
+c7df 4f
+c7e0 d6
+d6cc e0
+c7e1 88
+7
+c7de 3f 1
+c7df 4f 1
+c7e0 d6 1
+d6cc e0 1
+d6cc e0 1
+d6cc e0 0
+d6cc c0 0
+c7e1 02 80 7d 4e e9
+5
+c7de 3f
+c7df 4f
+c7e0 d6
+c7e1 88
+d6cc c0
+a49b 06 ee 57 71 e4
+6
+a49b 3f
+a49c f5
+a49d 91
+914c 20
+924c 5c
+a49e 89
+7
+a49b 3f 1
+a49c f5 1
+a49d 91 1
+914c 20 1
+924c 5c 1
+924c 5c 0
+924c b8 0
+a49e 06 a8 57 71 e4
+6
+914c 20
+924c b8
+a49b 3f
+a49c f5
+a49d 91
+a49e 89
+5abd 04 cf c3 cc e0
+5
+5abd 3f
+5abe 25
+5abf f0
+f0e8 f0
+5ac0 8e
+7
+5abd 3f 1
+5abe 25 1
+5abf f0 1
+f0e8 f0 1
+f0e8 f0 1
+f0e8 f0 0
+f0e8 e0 0
+5ac0 04 c0 c3 cc e1
+5
+5abd 3f
+5abe 25
+5abf f0
+5ac0 8e
+f0e8 e0
+4499 aa 80 da 14 e3
+6
+4499 3f
+449a c6
+449b 1a
+1aa0 f9
+1ba0 34
+449c de
+7
+4499 3f 1
+449a c6 1
+449b 1a 1
+1aa0 f9 1
+1ba0 34 1
+1ba0 34 0
+1ba0 69 0
+449c aa 00 da 14 62
+6
+1aa0 f9
+1ba0 69
+4499 3f
+449a c6
+449b 1a
+449c de
+9bfb bd 56 6d e3 2f
+6
+9bfb 3f
+9bfc d9
+9bfd f9
+f946 f0
+fa46 67
+9bfe ab
+7
+9bfb 3f 1
+9bfc d9 1
+9bfd f9 1
+f946 f0 1
+fa46 67 1
+fa46 67 0
+fa46 cf 0
+9bfe bd 46 6d e3 2c
+6
+9bfb 3f
+9bfc d9
+9bfd f9
+9bfe ab
+f946 f0
+fa46 cf
+6f40 19 f0 b1 52 ed
+6
+6f40 3f
+6f41 df
+6f42 d4
+d490 6c
+d590 09
+6f43 72
+7
+6f40 3f 1
+6f41 df 1
+6f42 d4 1
+d490 6c 1
+d590 09 1
+d590 09 0
+d590 13 0
+6f43 19 10 b1 52 6c
+6
+6f40 3f
+6f41 df
+6f42 d4
+6f43 72
+d490 6c
+d590 13
+d26d 4a f7 34 f1 24
+5
+d26d 3f
+d26e 94
+d26f 86
+86c8 08
+d270 ac
+7
+d26d 3f 1
+d26e 94 1
+d26f 86 1
+86c8 08 1
+86c8 08 1
+86c8 08 0
+86c8 10 0
+d270 4a 10 34 f1 24
+5
+86c8 10
+d26d 3f
+d26e 94
+d26f 86
+d270 ac
+c941 0e 16 b5 4b ae
+6
+c941 3f
+c942 94
+c943 26
+2649 2d
+2749 87
+c944 28
+7
+c941 3f 1
+c942 94 1
+c943 26 1
+2649 2d 1
+2749 87 1
+2749 87 0
+2749 0e 0
+c944 0e 06 b5 4b 2d
+6
+2649 2d
+2749 0e
+c941 3f
+c942 94
+c943 26
+c944 28
+99e2 7b 8a 3f 46 ac
+5
+99e2 3f
+99e3 20
+99e4 8a
+8a5f c1
+99e5 67
+7
+99e2 3f 1
+99e3 20 1
+99e4 8a 1
+8a5f c1 1
+8a5f c1 1
+8a5f c1 0
+8a5f 82 0
+99e5 7b 82 3f 46 ad
+5
+8a5f 82
+99e2 3f
+99e3 20
+99e4 8a
+99e5 67
+1a63 3d e5 1f eb ec
+5
+1a63 3f
+1a64 65
+1a65 7b
+7b84 7e
+1a66 a6
+7
+1a63 3f 1
+1a64 65 1
+1a65 7b 1
+7b84 7e 1
+7b84 7e 1
+7b84 7e 0
+7b84 fc 0
+1a66 3d e4 1f eb ec
+5
+1a63 3f
+1a64 65
+1a65 7b
+1a66 a6
+7b84 fc
+7974 78 e3 cb a8 67
+6
+7974 3f
+7975 64
+7976 d9
+d92f b8
+da2f 5d
+7977 31
+7
+7974 3f 1
+7975 64 1
+7976 d9 1
+d92f b8 1
+da2f 5d 1
+da2f 5d 0
+da2f bb 0
+7977 78 a3 cb a8 e4
+6
+7974 3f
+7975 64
+7976 d9
+7977 31
+d92f b8
+da2f bb
+415b 37 5d 97 87 a9
+5
+415b 3f
+415c 25
+415d c4
+c4bc a8
+415e 7c
+7
+415b 3f 1
+415c 25 1
+415d c4 1
+c4bc a8 1
+c4bc a8 1
+c4bc a8 0
+c4bc 51 0
+415e 37 51 97 87 29
+5
+415b 3f
+415c 25
+415d c4
+415e 7c
+c4bc 51
+4c78 a3 d3 d6 ec 6a
+6
+4c78 3f
+4c79 42
+4c7a df
+df18 d2
+e018 1e
+4c7b e8
+7
+4c78 3f 1
+4c79 42 1
+4c7a df 1
+df18 d2 1
+e018 1e 1
+e018 1e 0
+e018 3c 0
+4c7b a3 10 d6 ec 68
+6
+4c78 3f
+4c79 42
+4c7a df
+4c7b e8
+df18 d2
+e018 3c
+da4b a7 e1 77 05 ee
+6
+da4b 3f
+da4c b8
+da4d 43
+432f 29
+442f 99
+da4e ec
+7
+da4b 3f 1
+da4c b8 1
+da4d 43 1
+432f 29 1
+442f 99 1
+442f 99 0
+442f 32 0
+da4e a7 20 77 05 6d
+6
+432f 29
+442f 32
+da4b 3f
+da4c b8
+da4d 43
+da4e ec
+26fa cb b6 c3 10 a0
+6
+26fa 3f
+26fb 6b
+26fc 47
+472e 19
+482e 9c
+26fd e1
+7
+26fa 3f 1
+26fb 6b 1
+26fc 47 1
+472e 19 1
+482e 9c 1
+482e 9c 0
+482e 38 0
+26fd cb 30 c3 10 21
+6
+26fa 3f
+26fb 6b
+26fc 47
+26fd e1
+472e 19
+482e 38
+d884 c9 d8 5d 44 68
+5
+d884 3f
+d885 4e
+d886 7d
+7dab 25
+d887 89
+7
+d884 3f 1
+d885 4e 1
+d886 7d 1
+7dab 25 1
+7dab 25 1
+7dab 25 0
+7dab 4a 0
+d887 c9 48 5d 44 68
+5
+7dab 4a
+d884 3f
+d885 4e
+d886 7d
+d887 89
+79b9 33 af e7 a7 6a
+6
+79b9 3f
+79ba ec
+79bb a9
+a9d3 15
+aad3 60
+79bc 2b
+7
+79b9 3f 1
+79ba ec 1
+79bb a9 1
+a9d3 15 1
+aad3 60 1
+aad3 60 0
+aad3 c0 0
+79bc 33 80 e7 a7 e8
+6
+79b9 3f
+79ba ec
+79bb a9
+79bc 2b
+a9d3 15
+aad3 c0
+5164 40 c4 6c 6e e8
+5
+5164 3f
+5165 27
+5166 a8
+a893 64
+5167 b5
+7
+5164 3f 1
+5165 27 1
+5166 a8 1
+a893 64 1
+a893 64 1
+a893 64 0
+a893 c8 0
+5167 40 c0 6c 6e e8
+5
+5164 3f
+5165 27
+5166 a8
+5167 b5
+a893 c8
+7765 f3 b2 0a 42 23
+5
+7765 3f
+7766 6b
+7767 65
+6575 78
+7768 44
+7
+7765 3f 1
+7766 6b 1
+7767 65 1
+6575 78 1
+6575 78 1
+6575 78 0
+6575 f1 0
+7768 f3 b0 0a 42 a0
+5
+6575 f1
+7765 3f
+7766 6b
+7767 65
+7768 44
+23c9 51 a1 2e f1 2c
+5
+23c9 3f
+23ca 58
+23cb fe
+fe86 e8
+23cc d3
+7
+23c9 3f 1
+23ca 58 1
+23cb fe 1
+fe86 e8 1
+fe86 e8 1
+fe86 e8 0
+fe86 d0 0
+23cc 51 80 2e f1 ad
+5
+23c9 3f
+23ca 58
+23cb fe
+23cc d3
+fe86 d0
+7699 54 be 5d d3 ee
+5
+7699 3f
+769a 3d
+769b c6
+c69a 2e
+769c 4b
+7
+7699 3f 1
+769a 3d 1
+769b c6 1
+c69a 2e 1
+c69a 2e 1
+c69a 2e 0
+c69a 5c 0
+769c 54 1c 5d d3 6c
+5
+7699 3f
+769a 3d
+769b c6
+769c 4b
+c69a 5c
+0c86 63 9b 1b 8d a3
+5
+0c86 3f
+0c87 50
+0c88 43
+436b d5
+0c89 29
+7
+0c86 3f 1
+0c87 50 1
+0c88 43 1
+436b d5 1
+436b d5 1
+436b d5 0
+436b ab 0
+0c89 63 8b 1b 8d a1
+5
+0c86 3f
+0c87 50
+0c88 43
+0c89 29
+436b ab
+7920 db 2b d3 61 eb
+5
+7920 3f
+7921 14
+7922 89
+89e7 c9
+7923 5b
+7
+7920 3f 1
+7921 14 1
+7922 89 1
+89e7 c9 1
+89e7 c9 1
+89e7 c9 0
+89e7 93 0
+7923 db 03 d3 61 69
+5
+7920 3f
+7921 14
+7922 89
+7923 5b
+89e7 93
+2f41 e0 a1 13 c7 a0
+5
+2f41 3f
+2f42 26
+2f43 cb
+cb39 f0
+2f44 11
+7
+2f41 3f 1
+2f42 26 1
+2f43 cb 1
+cb39 f0 1
+cb39 f0 1
+cb39 f0 0
+cb39 e0 0
+2f44 e0 a0 13 c7 a1
+5
+2f41 3f
+2f42 26
+2f43 cb
+2f44 11
+cb39 e0
+da4d a3 76 c2 f1 ae
+6
+da4d 3f
+da4e e7
+da4f 33
+33a9 2c
+34a9 ad
+da50 2b
+7
+da4d 3f 1
+da4e e7 1
+da4f 33 1
+33a9 2c 1
+34a9 ad 1
+34a9 ad 0
+34a9 5a 0
+da50 a3 52 c2 f1 2d
+6
+33a9 2c
+34a9 5a
+da4d 3f
+da4e e7
+da4f 33
+da50 2b
+019f ee ea f3 09 ab
+6
+019f 3f
+01a0 bc
+01a1 4a
+4aaf 1f
+4baf de
+01a2 c2
+7
+019f 3f 1
+01a0 bc 1
+01a1 4a 1
+4aaf 1f 1
+4baf de 1
+4baf de 0
+4baf bd 0
+01a2 ee a8 f3 09 a9
+6
+019f 3f
+01a0 bc
+01a1 4a
+01a2 c2
+4aaf 1f
+4baf bd
+bfe3 22 94 c7 5c 69
+6
+bfe3 3f
+bfe4 43
+bfe5 a6
+a60a 2a
+a70a 19
+bfe6 7b
+7
+bfe3 3f 1
+bfe4 43 1
+bfe5 a6 1
+a60a 2a 1
+a70a 19 1
+a70a 19 0
+a70a 33 0
+bfe6 22 10 c7 5c 68
+6
+a60a 2a
+a70a 33
+bfe3 3f
+bfe4 43
+bfe5 a6
+bfe6 7b
+2188 b7 41 83 f6 ad
+6
+2188 3f
+2189 9c
+218a 7f
+7f1f ef
+801f 59
+218b 8d
+7
+2188 3f 1
+2189 9c 1
+218a 7f 1
+7f1f ef 1
+801f 59 1
+801f 59 0
+801f b3 0
+218b b7 01 83 f6 2c
+6
+2188 3f
+2189 9c
+218a 7f
+218b 8d
+7f1f ef
+801f b3
+d5b1 8b 1c 74 27 ef
+6
+d5b1 3f
+d5b2 b6
+d5b3 3a
+3a2a 00
+3b2a 30
+d5b4 dd
+7
+d5b1 3f 1
+d5b2 b6 1
+d5b3 3a 1
+3a2a 00 1
+3b2a 30 1
+3b2a 30 0
+3b2a 61 0
+d5b4 8b 00 74 27 6e
+6
+3a2a 00
+3b2a 61
+d5b1 3f
+d5b2 b6
+d5b3 3a
+d5b4 dd
+3f7e 40 dd ed d2 a1
+6
+3f7e 3f
+3f7f 25
+3f80 a6
+a612 ab
+a712 60
+3f81 3d
+7
+3f7e 3f 1
+3f7f 25 1
+3f80 a6 1
+a612 ab 1
+a712 60 1
+a712 60 0
+a712 c1 0
+3f81 40 c1 ed d2 a0
+6
+3f7e 3f
+3f7f 25
+3f80 a6
+3f81 3d
+a612 ab
+a712 c1
+bfc4 cb e3 31 dd a3
+5
+bfc4 3f
+bfc5 ce
+bfc6 5c
+5cff 38
+bfc7 3a
+7
+bfc4 3f 1
+bfc5 ce 1
+bfc6 5c 1
+5cff 38 1
+5cff 38 1
+5cff 38 0
+5cff 71 0
+bfc7 cb 61 31 dd 20
+5
+5cff 71
+bfc4 3f
+bfc5 ce
+bfc6 5c
+bfc7 3a
+b987 47 53 1f 20 aa
+6
+b987 3f
+b988 e1
+b989 15
+1500 d3
+1600 70
+b98a 8e
+7
+b987 3f 1
+b988 e1 1
+b989 15 1
+1500 d3 1
+1600 70 1
+1600 70 0
+1600 e0 0
+b98a 47 40 1f 20 28
+6
+1500 d3
+1600 e0
+b987 3f
+b988 e1
+b989 15
+b98a 8e
+5ad5 a5 65 35 9c e2
+6
+5ad5 3f
+5ad6 f8
+5ad7 47
+472d de
+482d 8f
+5ad8 b9
+7
+5ad5 3f 1
+5ad6 f8 1
+5ad7 47 1
+472d de 1
+482d 8f 1
+482d 8f 0
+482d 1e 0
+5ad8 a5 04 35 9c 61
+6
+472d de
+482d 1e
+5ad5 3f
+5ad6 f8
+5ad7 47
+5ad8 b9
+d0f0 fc ca 8e 3e ef
+6
+d0f0 3f
+d0f1 bb
+d0f2 69
+6949 4f
+6a49 1c
+d0f3 f9
+7
+d0f0 3f 1
+d0f1 bb 1
+d0f2 69 1
+6949 4f 1
+6a49 1c 1
+6a49 1c 0
+6a49 39 0
+d0f3 fc 08 8e 3e 6c
+6
+6949 4f
+6a49 39
+d0f0 3f
+d0f1 bb
+d0f2 69
+d0f3 f9
+7901 33 68 98 b6 65
+5
+7901 3f
+7902 4f
+7903 ee
+eee7 79
+7904 44
+7
+7901 3f 1
+7902 4f 1
+7903 ee 1
+eee7 79 1
+eee7 79 1
+eee7 79 0
+eee7 f3 0
+7904 33 60 98 b6 64
+5
+7901 3f
+7902 4f
+7903 ee
+7904 44
+eee7 f3
+7dd9 19 e9 68 06 e1
+6
+7dd9 3f
+7dda dc
+7ddb 62
+6244 53
+6344 b2
+7ddc be
+7
+7dd9 3f 1
+7dda dc 1
+7ddb 62 1
+6244 53 1
+6344 b2 1
+6344 b2 0
+6344 65 0
+7ddc 19 61 68 06 61
+6
+6244 53
+6344 65
+7dd9 3f
+7dda dc
+7ddb 62
+7ddc be
+818b ca 08 10 f8 a1
+5
+818b 3f
+818c 6e
+818d 7c
+7c7e 5b
+818e 53
+7
+818b 3f 1
+818c 6e 1
+818d 7c 1
+7c7e 5b 1
+7c7e 5b 1
+7c7e 5b 0
+7c7e b7 0
+818e ca 00 10 f8 22
+5
+7c7e b7
+818b 3f
+818c 6e
+818d 7c
+818e 53
+f659 d4 29 72 46 6f
+6
+f659 3f
+f65a b3
+f65b a1
+a125 b1
+a225 a5
+f65c 1f
+7
+f659 3f 1
+f65a b3 1
+f65b a1 1
+a125 b1 1
+a225 a5 1
+a225 a5 0
+a225 4b 0
+f65c d4 09 72 46 6d
+6
+a125 b1
+a225 4b
+f659 3f
+f65a b3
+f65b a1
+f65c 1f
+6117 79 ba f9 3f a1
+6
+6117 3f
+6118 17
+6119 1f
+1f10 eb
+2010 b4
+611a db
+7
+6117 3f 1
+6118 17 1
+6119 1f 1
+1f10 eb 1
+2010 b4 1
+2010 b4 0
+2010 69 0
+611a 79 28 f9 3f 21
+6
+1f10 eb
+2010 69
+6117 3f
+6118 17
+6119 1f
+611a db
+c181 8d 54 0a 18 ac
+5
+c181 3f
+c182 2d
+c183 6a
+6a37 b5
+c184 f7
+7
+c181 3f 1
+c182 2d 1
+c183 6a 1
+6a37 b5 1
+6a37 b5 1
+6a37 b5 0
+6a37 6a 0
+c184 8d 40 0a 18 2d
+5
+6a37 6a
+c181 3f
+c182 2d
+c183 6a
+c184 f7
+39b8 c7 e1 f5 21 21
+6
+39b8 3f
+39b9 ab
+39ba 1b
+1ba0 1e
+1ca0 0d
+39bb ba
+7
+39b8 3f 1
+39b9 ab 1
+39ba 1b 1
+1ba0 1e 1
+1ca0 0d 1
+1ca0 0d 0
+1ca0 1b 0
+39bb c7 01 f5 21 20
+6
+1ba0 1e
+1ca0 1b
+39b8 3f
+39b9 ab
+39ba 1b
+39bb ba
+3fe2 4d e7 a6 e3 ac
+5
+3fe2 3f
+3fe3 1b
+3fe4 7c
+7cc1 f9
+3fe5 6f
+7
+3fe2 3f 1
+3fe3 1b 1
+3fe4 7c 1
+7cc1 f9 1
+7cc1 f9 1
+7cc1 f9 0
+7cc1 f2 0
+3fe5 4d e2 a6 e3 ad
+5
+3fe2 3f
+3fe3 1b
+3fe4 7c
+3fe5 6f
+7cc1 f2
+bcb3 fd f9 05 12 a2
+5
+bcb3 3f
+bcb4 52
+bcb5 d8
+d857 69
+bcb6 91
+7
+bcb3 3f 1
+bcb4 52 1
+bcb5 d8 1
+d857 69 1
+d857 69 1
+d857 69 0
+d857 d2 0
+bcb6 fd d0 05 12 a0
+5
+bcb3 3f
+bcb4 52
+bcb5 d8
+bcb6 91
+d857 d2
+994e 3e c7 45 e5 2f
+5
+994e 3f
+994f 94
+9950 43
+43d9 f5
+9951 37
+7
+994e 3f 1
+994f 94 1
+9950 43 1
+43d9 f5 1
+43d9 f5 1
+43d9 f5 0
+43d9 eb 0
+9951 3e c3 45 e5 ad
+5
+43d9 eb
+994e 3f
+994f 94
+9950 43
+9951 37
+94d2 43 96 82 65 2f
+5
+94d2 3f
+94d3 6e
+94d4 e9
+e9f0 78
+94d5 5f
+7
+94d2 3f 1
+94d3 6e 1
+94d4 e9 1
+e9f0 78 1
+e9f0 78 1
+e9f0 78 0
+e9f0 f1 0
+94d5 43 90 82 65 ac
+5
+94d2 3f
+94d3 6e
+94d4 e9
+94d5 5f
+e9f0 f1
+72ac 3c 4a be 7a af
+6
+72ac 3f
+72ad 54
+72ae 05
+0512 f0
+0612 50
+72af 96
+7
+72ac 3f 1
+72ad 54 1
+72ae 05 1
+0512 f0 1
+0612 50 1
+0612 50 0
+0612 a1 0
+72af 3c 00 be 7a 2e
+6
+0512 f0
+0612 a1
+72ac 3f
+72ad 54
+72ae 05
+72af 96
+d15d 05 8c fd a2 a5
+5
+d15d 3f
+d15e 00
+d15f cb
+cbfd e4
+d160 36
+7
+d15d 3f 1
+d15e 00 1
+d15f cb 1
+cbfd e4 1
+cbfd e4 1
+cbfd e4 0
+cbfd c9 0
+d160 05 88 fd a2 a5
+5
+cbfd c9
+d15d 3f
+d15e 00
+d15f cb
+d160 36
+ad72 52 a3 5c d7 a4
+5
+ad72 3f
+ad73 1a
+ad74 76
+7676 0a
+ad75 0b
+7
+ad72 3f 1
+ad73 1a 1
+ad74 76 1
+7676 0a 1
+7676 0a 1
+7676 0a 0
+7676 14 0
+ad75 52 00 5c d7 26
+5
+7676 14
+ad72 3f
+ad73 1a
+ad74 76
+ad75 0b
+5ced 86 ed c7 42 6b
+6
+5ced 3f
+5cee a6
+5cef 8b
+8b6d aa
+8c6d 53
+5cf0 36
+7
+5ced 3f 1
+5cee a6 1
+5cef 8b 1
+8b6d aa 1
+8c6d 53 1
+8c6d 53 0
+8c6d a7 0
+5cf0 86 a5 c7 42 e8
+6
+5ced 3f
+5cee a6
+5cef 8b
+5cf0 36
+8b6d aa
+8c6d a7
+3ffb 44 0d 26 8b ae
+5
+3ffb 3f
+3ffc c1
+3ffd 94
+94e7 fb
+3ffe 15
+7
+3ffb 3f 1
+3ffc c1 1
+3ffd 94 1
+94e7 fb 1
+94e7 fb 1
+94e7 fb 0
+94e7 f6 0
+3ffe 44 04 26 8b 2d
+5
+3ffb 3f
+3ffc c1
+3ffd 94
+3ffe 15
+94e7 f6
+708a 76 0e 91 19 2d
+6
+708a 3f
+708b 78
+708c 83
+8309 f9
+8409 e6
+708d 65
+7
+708a 3f 1
+708b 78 1
+708c 83 1
+8309 f9 1
+8409 e6 1
+8409 e6 0
+8409 cd 0
+708d 76 0c 91 19 2d
+6
+708a 3f
+708b 78
+708c 83
+708d 65
+8309 f9
+8409 cd
+41db c9 c3 da 36 a3
+6
+41db 3f
+41dc 57
+41dd 8c
+8c31 ba
+8d31 84
+41de 7b
+7
+41db 3f 1
+41dc 57 1
+41dd 8c 1
+8c31 ba 1
+8d31 84 1
+8d31 84 0
+8d31 09 0
+41de c9 01 da 36 21
+6
+41db 3f
+41dc 57
+41dd 8c
+41de 7b
+8c31 ba
+8d31 09
+85e1 b0 a9 04 6f ae
+5
+85e1 3f
+85e2 a1
+85e3 98
+98a5 2d
+85e4 c1
+7
+85e1 3f 1
+85e2 a1 1
+85e3 98 1
+98a5 2d 1
+98a5 2d 1
+98a5 2d 0
+98a5 5a 0
+85e4 b0 08 04 6f 2c
+5
+85e1 3f
+85e2 a1
+85e3 98
+85e4 c1
+98a5 5a
+6da5 e0 17 9e ba 6a
+5
+6da5 3f
+6da6 1f
+6da7 dd
+ddbd c4
+6da8 d1
+7
+6da5 3f 1
+6da6 1f 1
+6da7 dd 1
+ddbd c4 1
+ddbd c4 1
+ddbd c4 0
+ddbd 88 0
+6da8 e0 00 9e ba 6b
+5
+6da5 3f
+6da6 1f
+6da7 dd
+6da8 d1
+ddbd 88
+43f7 15 f6 b3 ef 21
+6
+43f7 3f
+43f8 c4
+43f9 cf
+cf77 dd
+d077 d0
+43fa 36
+7
+43f7 3f 1
+43f8 c4 1
+43f9 cf 1
+cf77 dd 1
+d077 d0 1
+d077 d0 0
+d077 a1 0
+43fa 15 a0 b3 ef a1
+6
+43f7 3f
+43f8 c4
+43f9 cf
+43fa 36
+cf77 dd
+d077 a1
+0de0 3e 5a 10 81 24
+5
+0de0 3f
+0de1 a8
+0de2 f3
+f3b8 9e
+0de3 d2
+7
+0de0 3f 1
+0de1 a8 1
+0de2 f3 1
+f3b8 9e 1
+f3b8 9e 1
+f3b8 9e 0
+f3b8 3c 0
+0de3 3e 18 10 81 25
+5
+0de0 3f
+0de1 a8
+0de2 f3
+0de3 d2
+f3b8 3c
+73de ab 73 b5 1a 60
+6
+73de 3f
+73df b1
+73e0 d0
+d066 69
+d166 18
+73e1 ac
+7
+73de 3f 1
+73df b1 1
+73e0 d0 1
+d066 69 1
+d166 18 1
+d166 18 0
+d166 30 0
+73e1 ab 30 b5 1a 60
+6
+73de 3f
+73df b1
+73e0 d0
+73e1 ac
+d066 69
+d166 30
+f217 0c 11 b0 fc 6c
+5
+f217 3f
+f218 22
+f219 84
+84d2 87
+f21a 18
+7
+f217 3f 1
+f218 22 1
+f219 84 1
+84d2 87 1
+84d2 87 1
+84d2 87 0
+84d2 0e 0
+f21a 0c 00 b0 fc 6f
+5
+84d2 0e
+f217 3f
+f218 22
+f219 84
+f21a 18
+876c 3e ee df 84 ad
+6
+876c 3f
+876d f5
+876e af
+afd4 e9
+b0d4 19
+876f f4
+7
+876c 3f 1
+876d f5 1
+876e af 1
+afd4 e9 1
+b0d4 19 1
+b0d4 19 0
+b0d4 33 0
+876f 3e 22 df 84 2c
+6
+876c 3f
+876d f5
+876e af
+876f f4
+afd4 e9
+b0d4 33
+4117 60 72 a2 e4 29
+6
+4117 3f
+4118 6a
+4119 36
+360c e5
+370c 5f
+411a 0c
+7
+4117 3f 1
+4118 6a 1
+4119 36 1
+360c e5 1
+370c 5f 1
+370c 5f 0
+370c bf 0
+411a 60 32 a2 e4 28
+6
+360c e5
+370c bf
+4117 3f
+4118 6a
+4119 36
+411a 0c
+bb52 e4 d9 df 5f 6a
+6
+bb52 3f
+bb53 56
+bb54 05
+0535 78
+0635 1e
+bb55 40
+7
+bb52 3f 1
+bb53 56 1
+bb54 05 1
+0535 78 1
+0635 1e 1
+0635 1e 0
+0635 3c 0
+bb55 e4 18 df 5f 68
+6
+0535 78
+0635 3c
+bb52 3f
+bb53 56
+bb54 05
+bb55 40
+4b70 a3 82 44 a5 e6
+5
+4b70 3f
+4b71 03
+4b72 14
+1447 9d
+4b73 a1
+7
+4b70 3f 1
+4b71 03 1
+4b72 14 1
+1447 9d 1
+1447 9d 1
+1447 9d 0
+1447 3a 0
+4b73 a3 02 44 a5 65
+5
+1447 3a
+4b70 3f
+4b71 03
+4b72 14
+4b73 a1
+fa98 78 3d 71 e9 62
+6
+fa98 3f
+fa99 bf
+fa9a a7
+a730 ee
+a830 7f
+fa9b ad
+7
+fa98 3f 1
+fa99 bf 1
+fa9a a7 1
+a730 ee 1
+a830 7f 1
+a830 7f 0
+a830 fe 0
+fa9b 78 3c 71 e9 60
+6
+a730 ee
+a830 fe
+fa98 3f
+fa99 bf
+fa9a a7
+fa9b ad
+942d 65 e2 1e 66 e3
+5
+942d 3f
+942e a1
+942f 7d
+7dbf 7b
+9430 d2
+7
+942d 3f 1
+942e a1 1
+942f 7d 1
+7dbf 7b 1
+7dbf 7b 1
+7dbf 7b 0
+7dbf f7 0
+9430 65 e2 1e 66 e0
+5
+7dbf f7
+942d 3f
+942e a1
+942f 7d
+9430 d2
+46d7 44 c7 bd 18 e8
+6
+46d7 3f
+46d8 95
+46d9 24
+2452 e6
+2552 39
+46da 3f
+7
+46d7 3f 1
+46d8 95 1
+46d9 24 1
+2452 e6 1
+2552 39 1
+2552 39 0
+2552 72 0
+46da 44 42 bd 18 68
+6
+2452 e6
+2552 72
+46d7 3f
+46d8 95
+46d9 24
+46da 3f
+cdd7 64 17 09 e0 29
+5
+cdd7 3f
+cdd8 8a
+cdd9 4b
+4b93 04
+cdda d8
+7
+cdd7 3f 1
+cdd8 8a 1
+cdd9 4b 1
+4b93 04 1
+4b93 04 1
+4b93 04 0
+4b93 09 0
+cdda 64 01 09 e0 28
+5
+4b93 09
+cdd7 3f
+cdd8 8a
+cdd9 4b
+cdda d8
+09f4 a4 dc 19 26 68
+5
+09f4 3f
+09f5 34
+09f6 9c
+9c4d f6
+09f7 6d
+7
+09f4 3f 1
+09f5 34 1
+09f6 9c 1
+9c4d f6 1
+9c4d f6 1
+9c4d f6 0
+9c4d ec 0
+09f7 a4 cc 19 26 e9
+5
+09f4 3f
+09f5 34
+09f6 9c
+09f7 6d
+9c4d ec
+501a c9 ee 80 d2 6f
+6
+501a 3f
+501b fc
+501c bc
+bc7c 56
+bd7c 86
+501d 4e
+7
+501a 3f 1
+501b fc 1
+501c bc 1
+bc7c 56 1
+bd7c 86 1
+bd7c 86 0
+bd7c 0d 0
+501d c9 0c 80 d2 6d
+6
+501a 3f
+501b fc
+501c bc
+501d 4e
+bc7c 56
+bd7c 0d
+5c88 fe c8 e1 fd 68
+6
+5c88 3f
+5c89 c9
+5c8a bb
+bbaa 57
+bcaa 5b
+5c8b 31
+7
+5c88 3f 1
+5c89 c9 1
+5c8a bb 1
+bbaa 57 1
+bcaa 5b 1
+bcaa 5b 0
+bcaa b6 0
+5c8b fe 80 e1 fd e8
+6
+5c88 3f
+5c89 c9
+5c8a bb
+5c8b 31
+bbaa 57
+bcaa b6
+df59 35 49 fd 40 a2
+6
+df59 3f
+df5a 58
+df5b bd
+bd55 60
+be55 8d
+df5c bb
+7
+df59 3f 1
+df5a 58 1
+df5b bd 1
+bd55 60 1
+be55 8d 1
+be55 8d 0
+be55 1a 0
+df5c 35 08 fd 40 21
+6
+bd55 60
+be55 1a
+df59 3f
+df5a 58
+df5b bd
+df5c bb
+8394 99 0d 25 7a aa
+5
+8394 3f
+8395 27
+8396 36
+364c bb
+8397 7d
+7
+8394 3f 1
+8395 27 1
+8396 36 1
+364c bb 1
+364c bb 1
+364c bb 0
+364c 76 0
+8397 99 04 25 7a 29
+5
+364c 76
+8394 3f
+8395 27
+8396 36
+8397 7d
+5807 99 f8 f1 58 af
+6
+5807 3f
+5808 ac
+5809 be
+be9d 5f
+bf9d 86
+580a 7f
+7
+5807 3f 1
+5808 ac 1
+5809 be 1
+be9d 5f 1
+bf9d 86 1
+bf9d 86 0
+bf9d 0d 0
+580a 99 08 f1 58 2d
+6
+5807 3f
+5808 ac
+5809 be
+580a 7f
+be9d 5f
+bf9d 0d
+940f 3b db 83 b0 e5
+6
+940f 3f
+9410 f4
+9411 ff
+ff77 a9
+0077 60
+9412 34
+7
+940f 3f 1
+9410 f4 1
+9411 ff 1
+ff77 a9 1
+0077 60 1
+0077 60 0
+0077 c1 0
+9412 3b c1 83 b0 e4
+6
+0077 c1
+940f 3f
+9410 f4
+9411 ff
+9412 34
+ff77 a9
+7ae5 f0 cd e8 af 6b
+6
+7ae5 3f
+7ae6 91
+7ae7 1a
+1a79 54
+1b79 a7
+7ae8 a8
+7
+7ae5 3f 1
+7ae6 91 1
+7ae7 1a 1
+1a79 54 1
+1b79 a7 1
+1b79 a7 0
+1b79 4f 0
+7ae8 f0 4d e8 af 69
+6
+1a79 54
+1b79 4f
+7ae5 3f
+7ae6 91
+7ae7 1a
+7ae8 a8
+66b3 7a 9a 3b 27 27
+5
+66b3 3f
+66b4 c3
+66b5 cc
+ccfe ce
+66b6 61
+7
+66b3 3f 1
+66b4 c3 1
+66b5 cc 1
+ccfe ce 1
+ccfe ce 1
+ccfe ce 0
+ccfe 9d 0
+66b6 7a 98 3b 27 a5
+5
+66b3 3f
+66b4 c3
+66b5 cc
+66b6 61
+ccfe 9d
+901f 80 31 20 88 2a
+5
+901f 3f
+9020 1c
+9021 65
+653c e8
+9022 00
+7
+901f 3f 1
+9020 1c 1
+9021 65 1
+653c e8 1
+653c e8 1
+653c e8 0
+653c d0 0
+9022 80 10 20 88 29
+5
+653c d0
+901f 3f
+9020 1c
+9021 65
+9022 00
+1b5e 99 ef 2b 9c a1
+5
+1b5e 3f
+1b5f 67
+1b60 4c
+4c92 01
+1b61 18
+7
+1b5e 3f 1
+1b5f 67 1
+1b60 4c 1
+4c92 01 1
+4c92 01 1
+4c92 01 0
+4c92 03 0
+1b61 99 03 2b 9c 20
+5
+1b5e 3f
+1b5f 67
+1b60 4c
+1b61 18
+4c92 03
+8163 66 9c 4b a6 ea
+5
+8163 3f
+8164 5e
+8165 d5
+d5a9 8b
+8166 9a
+7
+8163 3f 1
+8164 5e 1
+8165 d5 1
+d5a9 8b 1
+d5a9 8b 1
+d5a9 8b 0
+d5a9 16 0
+8166 66 14 4b a6 69
+5
+8163 3f
+8164 5e
+8165 d5
+8166 9a
+d5a9 16
+ad5a 90 cb 2e 2b 29
+5
+ad5a 3f
+ad5b 09
+ad5c 26
+2637 8a
+ad5d ee
+7
+ad5a 3f 1
+ad5b 09 1
+ad5c 26 1
+2637 8a 1
+2637 8a 1
+2637 8a 0
+2637 15 0
+ad5d 90 01 2e 2b 29
+5
+2637 15
+ad5a 3f
+ad5b 09
+ad5c 26
+ad5d ee
+ab34 28 4f de c8 6f
+6
+ab34 3f
+ab35 30
+ab36 20
+200e c4
+210e 71
+ab37 de
+7
+ab34 3f 1
+ab35 30 1
+ab36 20 1
+200e c4 1
+210e 71 1
+210e 71 0
+210e e3 0
+ab37 28 43 de c8 6c
+6
+200e c4
+210e e3
+ab34 3f
+ab35 30
+ab36 20
+ab37 de
+3d4b 76 42 98 66 e6
+6
+3d4b 3f
+3d4c d9
+3d4d 9a
+9a71 4c
+9b71 89
+3d4e 66
+7
+3d4b 3f 1
+3d4c d9 1
+3d4d 9a 1
+9a71 4c 1
+9b71 89 1
+9b71 89 0
+9b71 12 0
+3d4e 76 02 98 66 65
+6
+3d4b 3f
+3d4c d9
+3d4d 9a
+3d4e 66
+9a71 4c
+9b71 12
+e41c 17 84 e6 3d 22
+6
+e41c 3f
+e41d fd
+e41e ee
+eee3 98
+efe3 2f
+e41f d0
+7
+e41c 3f 1
+e41d fd 1
+e41e ee 1
+eee3 98 1
+efe3 2f 1
+efe3 2f 0
+efe3 5e 0
+e41f 17 04 e6 3d 20
+6
+e41c 3f
+e41d fd
+e41e ee
+e41f d0
+eee3 98
+efe3 5e
+8b2c a1 6c af ef ec
+6
+8b2c 3f
+8b2d 7f
+8b2e 56
+562e 17
+572e 7b
+8b2f 4d
+7
+8b2c 3f 1
+8b2d 7f 1
+8b2e 56 1
+562e 17 1
+572e 7b 1
+572e 7b 0
+572e f6 0
+8b2f a1 64 af ef 6c
+6
+562e 17
+572e f6
+8b2c 3f
+8b2d 7f
+8b2e 56
+8b2f 4d
+7aec 17 50 77 aa 25
+5
+7aec 3f
+7aed 57
+7aee 34
+34ce 44
+7aef 82
+7
+7aec 3f 1
+7aed 57 1
+7aee 34 1
+34ce 44 1
+34ce 44 1
+34ce 44 0
+34ce 89 0
+7aef 17 00 77 aa 26
+5
+34ce 89
+7aec 3f
+7aed 57
+7aee 34
+7aef 82
+ca72 ab 50 ef 42 aa
+6
+ca72 3f
+ca73 5f
+ca74 c9
+c94e 6d
+ca4e 38
+ca75 f6
+7
+ca72 3f 1
+ca73 5f 1
+ca74 c9 1
+c94e 6d 1
+ca4e 38 1
+ca4e 38 0
+ca4e 70 0
+ca75 ab 50 ef 42 28
+6
+c94e 6d
+ca4e 70
+ca72 3f
+ca73 5f
+ca74 c9
+ca75 f6
+123a f9 4f 14 d8 a4
+5
+123a 3f
+123b 45
+123c 02
+0259 de
+123d 91
+7
+123a 3f 1
+123b 45 1
+123c 02 1
+0259 de 1
+0259 de 1
+0259 de 0
+0259 bc 0
+123d f9 0c 14 d8 25
+5
+0259 bc
+123a 3f
+123b 45
+123c 02
+123d 91
+e4b8 a4 d7 57 1f 61
+5
+e4b8 3f
+e4b9 46
+e4ba c9
+c99d 9f
+e4bb 4a
+7
+e4b8 3f 1
+e4b9 46 1
+e4ba c9 1
+c99d 9f 1
+c99d 9f 1
+c99d 9f 0
+c99d 3f 0
+e4bb a4 17 57 1f 61
+5
+c99d 3f
+e4b8 3f
+e4b9 46
+e4ba c9
+e4bb 4a
+2788 31 11 45 ac 6d
+5
+2788 3f
+2789 0f
+278a 5a
+5a54 1d
+278b 2b
+7
+2788 3f 1
+2789 0f 1
+278a 5a 1
+5a54 1d 1
+5a54 1d 1
+5a54 1d 0
+5a54 3b 0
+278b 31 11 45 ac 6c
+5
+2788 3f
+2789 0f
+278a 5a
+278b 2b
+5a54 3b
+8300 22 93 d1 8a 63
+6
+8300 3f
+8301 ff
+8302 38
+38d0 7b
+39d0 44
+8303 85
+7
+8300 3f 1
+8301 ff 1
+8302 38 1
+38d0 7b 1
+39d0 44 1
+39d0 44 0
+39d0 89 0
+8303 22 81 d1 8a e0
+6
+38d0 7b
+39d0 89
+8300 3f
+8301 ff
+8302 38
+8303 85
+5de3 55 a7 47 0a ec
+5
+5de3 3f
+5de4 5c
+5de5 8e
+8ea3 43
+5de6 b2
+7
+5de3 3f 1
+5de4 5c 1
+5de5 8e 1
+8ea3 43 1
+8ea3 43 1
+8ea3 43 0
+8ea3 86 0
+5de6 55 86 47 0a ec
+5
+5de3 3f
+5de4 5c
+5de5 8e
+5de6 b2
+8ea3 86
+1492 08 0c 9b bb 6e
+6
+1492 3f
+1493 da
+1494 c6
+c675 52
+c775 28
+1495 b5
+7
+1492 3f 1
+1493 da 1
+1494 c6 1
+c675 52 1
+c775 28 1
+c775 28 0
+c775 50 0
+1495 08 00 9b bb 6e
+6
+1492 3f
+1493 da
+1494 c6
+1495 b5
+c675 52
+c775 50
+5023 eb 2a 26 22 ef
+5
+5023 3f
+5024 2d
+5025 0e
+0e53 13
+5026 02
+7
+5023 3f 1
+5024 2d 1
+5025 0e 1
+0e53 13 1
+0e53 13 1
+0e53 13 0
+0e53 27 0
+5026 eb 22 26 22 6c
+5
+0e53 27
+5023 3f
+5024 2d
+5025 0e
+5026 02
+0a9e 88 1a 66 24 60
+6
+0a9e 3f
+0a9f cb
+0aa0 9e
+9e31 f8
+9f31 31
+0aa1 07
+7
+0a9e 3f 1
+0a9f cb 1
+0aa0 9e 1
+9e31 f8 1
+9f31 31 1
+9f31 31 0
+9f31 62 0
+0aa1 88 02 66 24 60
+6
+0a9e 3f
+0a9f cb
+0aa0 9e
+0aa1 07
+9e31 f8
+9f31 62
+eb92 df 24 c5 cc e7
+6
+eb92 3f
+eb93 b4
+eb94 0c
+0c79 83
+0d79 cb
+eb95 e4
+7
+eb92 3f 1
+eb93 b4 1
+eb94 0c 1
+0c79 83 1
+0d79 cb 1
+0d79 cb 0
+0d79 97 0
+eb95 df 04 c5 cc 65
+6
+0c79 83
+0d79 97
+eb92 3f
+eb93 b4
+eb94 0c
+eb95 e4
+da12 cd 51 38 47 6b
+5
+da12 3f
+da13 31
+da14 98
+9869 45
+da15 85
+7
+da12 3f 1
+da13 31 1
+da14 98 1
+9869 45 1
+9869 45 1
+9869 45 0
+9869 8b 0
+da15 cd 01 38 47 68
+5
+9869 8b
+da12 3f
+da13 31
+da14 98
+da15 85
+c0ef 22 9c f5 37 ef
+6
+c0ef 3f
+c0f0 95
+c0f1 52
+528a f9
+538a c0
+c0f2 86
+7
+c0ef 3f 1
+c0f0 95 1
+c0f1 52 1
+528a f9 1
+538a c0 1
+538a c0 0
+538a 81 0
+c0f2 22 80 f5 37 ed
+6
+528a f9
+538a 81
+c0ef 3f
+c0f0 95
+c0f1 52
+c0f2 86
+1f4c 60 42 65 6c a0
+5
+1f4c 3f
+1f4d 6f
+1f4e da
+dad4 62
+1f4f be
+7
+1f4c 3f 1
+1f4d 6f 1
+1f4e da 1
+dad4 62 1
+dad4 62 1
+dad4 62 0
+dad4 c4 0
+1f4f 60 40 65 6c 20
+5
+1f4c 3f
+1f4d 6f
+1f4e da
+1f4f be
+dad4 c4
+096f 3b 7d af 53 23
+6
+096f 3f
+0970 7d
+0971 65
+652c 6e
+662c bc
+0972 c6
+7
+096f 3f 1
+0970 7d 1
+0971 65 1
+652c 6e 1
+662c bc 1
+662c bc 0
+662c 79 0
+0972 3b 79 af 53 21
+6
+096f 3f
+0970 7d
+0971 65
+0972 c6
+652c 6e
+662c 79
+31a2 aa 1a 6e f4 e8
+6
+31a2 3f
+31a3 d6
+31a4 6d
+6d44 12
+6e44 0d
+31a5 03
+7
+31a2 3f 1
+31a3 d6 1
+31a4 6d 1
+6d44 12 1
+6e44 0d 1
+6e44 0d 0
+6e44 1a 0
+31a5 aa 1a 6e f4 68
+6
+31a2 3f
+31a3 d6
+31a4 6d
+31a5 03
+6d44 12
+6e44 1a
+858e 0c f6 1f e4 af
+6
+858e 3f
+858f f5
+8590 cc
+cc14 f2
+cd14 5e
+8591 22
+7
+858e 3f 1
+858f f5 1
+8590 cc 1
+cc14 f2 1
+cd14 5e 1
+cd14 5e 0
+cd14 bd 0
+8591 0c b4 1f e4 ac
+6
+858e 3f
+858f f5
+8590 cc
+8591 22
+cc14 f2
+cd14 bd
+0a51 6e 95 01 89 2e
+5
+0a51 3f
+0a52 e5
+0a53 ec
+ece6 98
+0a54 3b
+7
+0a51 3f 1
+0a52 e5 1
+0a53 ec 1
+ece6 98 1
+ece6 98 1
+ece6 98 0
+ece6 30 0
+0a54 6e 10 01 89 2d
+5
+0a51 3f
+0a52 e5
+0a53 ec
+0a54 3b
+ece6 30
+c503 5a ea de fd e0
+6
+c503 3f
+c504 a3
+c505 04
+0481 cf
+0581 26
+c506 47
+7
+c503 3f 1
+c504 a3 1
+c505 04 1
+0481 cf 1
+0581 26 1
+0581 26 0
+0581 4c 0
+c506 5a 48 de fd 60
+6
+0481 cf
+0581 4c
+c503 3f
+c504 a3
+c505 04
+c506 47
+a880 c3 aa be f0 e7
+6
+a880 3f
+a881 5f
+a882 4e
+4e1d 14
+4f1d 63
+a883 2d
+7
+a880 3f 1
+a881 5f 1
+a882 4e 1
+4e1d 14 1
+4f1d 63 1
+4f1d 63 0
+4f1d c7 0
+a883 c3 82 be f0 e4
+6
+4e1d 14
+4f1d c7
+a880 3f
+a881 5f
+a882 4e
+a883 2d
+46ac 44 2b 04 52 24
+5
+46ac 3f
+46ad d0
+46ae 22
+22d4 35
+46af 0e
+7
+46ac 3f 1
+46ad d0 1
+46ae 22 1
+22d4 35 1
+22d4 35 1
+22d4 35 0
+22d4 6a 0
+46af 44 2a 04 52 24
+5
+22d4 6a
+46ac 3f
+46ad d0
+46ae 22
+46af 0e
+c985 55 4e 76 12 e4
+6
+c985 3f
+c986 ab
+c987 ae
+ae21 95
+af21 01
+c988 71
+7
+c985 3f 1
+c986 ab 1
+c987 ae 1
+ae21 95 1
+af21 01 1
+af21 01 0
+af21 02 0
+c988 55 02 76 12 64
+6
+ae21 95
+af21 02
+c985 3f
+c986 ab
+c987 ae
+c988 71
+a412 12 8e 4d 33 ad
+5
+a412 3f
+a413 49
+a414 00
+0096 68
+a415 06
+7
+a412 3f 1
+a413 49 1
+a414 00 1
+0096 68 1
+0096 68 1
+0096 68 0
+0096 d1 0
+a415 12 80 4d 33 ac
+5
+0096 d1
+a412 3f
+a413 49
+a414 00
+a415 06
+c4bb 4c 0e 00 cc ef
+5
+c4bb 3f
+c4bc ea
+c4bd 52
+52ea ad
+c4be 74
+7
+c4bb 3f 1
+c4bc ea 1
+c4bd 52 1
+52ea ad 1
+52ea ad 1
+52ea ad 0
+52ea 5b 0
+c4be 4c 0a 00 cc 6d
+5
+52ea 5b
+c4bb 3f
+c4bc ea
+c4bd 52
+c4be 74
+7fad 60 c0 2a 18 69
+5
+7fad 3f
+7fae 5d
+7faf f8
+f887 da
+7fb0 65
+7
+7fad 3f 1
+7fae 5d 1
+7faf f8 1
+f887 da 1
+f887 da 1
+f887 da 0
+f887 b5 0
+7fb0 60 80 2a 18 e9
+5
+7fad 3f
+7fae 5d
+7faf f8
+7fb0 65
+f887 b5
+7507 01 32 a3 54 21
+6
+7507 3f
+7508 62
+7509 09
+0905 4d
+0a05 8a
+750a c1
+7
+7507 3f 1
+7508 62 1
+7509 09 1
+0905 4d 1
+0a05 8a 1
+0a05 8a 0
+0a05 15 0
+750a 01 10 a3 54 21
+6
+0905 4d
+0a05 15
+7507 3f
+7508 62
+7509 09
+750a c1
+b028 c5 72 16 68 aa
+5
+b028 3f
+b029 50
+b02a 96
+9666 ac
+b02b 7f
+7
+b028 3f 1
+b029 50 1
+b02a 96 1
+9666 ac 1
+9666 ac 1
+9666 ac 0
+9666 58 0
+b02b c5 50 16 68 29
+5
+9666 58
+b028 3f
+b029 50
+b02a 96
+b02b 7f
+3035 75 7f 9d 54 6c
+6
+3035 3f
+3036 f7
+3037 ad
+ad94 de
+ae94 cd
+3038 4b
+7
+3035 3f 1
+3036 f7 1
+3037 ad 1
+ad94 de 1
+ae94 cd 1
+ae94 cd 0
+ae94 9a 0
+3038 75 1a 9d 54 6d
+6
+3035 3f
+3036 f7
+3037 ad
+3038 4b
+ad94 de
+ae94 9a
+b40c e9 98 c2 f5 e0
+6
+b40c 3f
+b40d 96
+b40e 82
+8258 0b
+8358 cd
+b40f 98
+7
+b40c 3f 1
+b40d 96 1
+b40e 82 1
+8258 0b 1
+8358 cd 1
+8358 cd 0
+8358 9a 0
+b40f e9 98 c2 f5 e1
+6
+8258 0b
+8358 9a
+b40c 3f
+b40d 96
+b40e 82
+b40f 98
+1648 9b a4 15 a4 a7
+5
+1648 3f
+1649 ea
+164a b6
+b6ff f2
+164b 00
+7
+1648 3f 1
+1649 ea 1
+164a b6 1
+b6ff f2 1
+b6ff f2 1
+b6ff f2 0
+b6ff e5 0
+164b 9b a4 15 a4 a5
+5
+1648 3f
+1649 ea
+164a b6
+164b 00
+b6ff e5
+f416 64 3b a8 cb 23
+6
+f416 3f
+f417 ad
+f418 a7
+a755 d6
+a855 d4
+f419 01
+7
+f416 3f 1
+f417 ad 1
+f418 a7 1
+a755 d6 1
+a855 d4 1
+a855 d4 0
+a855 a9 0
+f419 64 29 a8 cb 21
+6
+a755 d6
+a855 a9
+f416 3f
+f417 ad
+f418 a7
+f419 01
+9686 84 d7 bb 63 e9
+6
+9686 3f
+9687 a1
+9688 1b
+1b5c e2
+1c5c 6c
+9689 bb
+7
+9686 3f 1
+9687 a1 1
+9688 1b 1
+1b5c e2 1
+1c5c 6c 1
+1c5c 6c 0
+1c5c d9 0
+9689 84 d1 bb 63 e8
+6
+1b5c e2
+1c5c d9
+9686 3f
+9687 a1
+9688 1b
+9689 bb
+6dfe 1f c4 72 c7 6a
+6
+6dfe 3f
+6dff f2
+6e00 f5
+f564 c4
+f664 66
+6e01 89
+7
+6dfe 3f 1
+6dff f2 1
+6e00 f5 1
+f564 c4 1
+f664 66 1
+f664 66 0
+f664 cc 0
+6e01 1f c4 72 c7 e8
+6
+6dfe 3f
+6dff f2
+6e00 f5
+6e01 89
+f564 c4
+f664 cc
+7fbc b7 c6 55 9c ab
+6
+7fbc 3f
+7fbd f4
+7fbe da
+da49 44
+db49 30
+7fbf 31
+7
+7fbc 3f 1
+7fbd f4 1
+7fbe da 1
+da49 44 1
+db49 30 1
+db49 30 0
+db49 61 0
+7fbf b7 40 55 9c 28
+6
+7fbc 3f
+7fbd f4
+7fbe da
+7fbf 31
+da49 44
+db49 61
+c63c eb 68 a0 3d 2f
+5
+c63c 3f
+c63d 59
+c63e fa
+faf9 a0
+c63f c7
+7
+c63c 3f 1
+c63d 59 1
+c63e fa 1
+faf9 a0 1
+faf9 a0 1
+faf9 a0 0
+faf9 41 0
+c63f eb 40 a0 3d 2d
+5
+c63c 3f
+c63d 59
+c63e fa
+c63f c7
+faf9 41
+65b9 a8 96 d3 43 ab
+5
+65b9 3f
+65ba 20
+65bb df
+dff3 a1
+65bc 5e
+7
+65b9 3f 1
+65ba 20 1
+65bb df 1
+dff3 a1 1
+dff3 a1 1
+dff3 a1 0
+dff3 43 0
+65bc a8 02 d3 43 29
+5
+65b9 3f
+65ba 20
+65bb df
+65bc 5e
+dff3 43
+266d 0c 36 cb 50 25
+6
+266d 3f
+266e 48
+266f 05
+0513 93
+0613 8a
+2670 1e
+7
+266d 3f 1
+266e 48 1
+266f 05 1
+0513 93 1
+0613 8a 1
+0613 8a 0
+0613 15 0
+2670 0c 14 cb 50 25
+6
+0513 93
+0613 15
+266d 3f
+266e 48
+266f 05
+2670 1e
+aed3 a3 db 7e 6a ab
+5
+aed3 3f
+aed4 38
+aed5 a0
+a0b6 19
+aed6 0a
+7
+aed3 3f 1
+aed4 38 1
+aed5 a0 1
+a0b6 19 1
+a0b6 19 1
+a0b6 19 0
+a0b6 33 0
+aed6 a3 13 7e 6a 28
+5
+a0b6 33
+aed3 3f
+aed4 38
+aed5 a0
+aed6 0a
+4300 39 91 9e bd a2
+6
+4300 3f
+4301 96
+4302 ee
+ee34 99
+ef34 f8
+4303 be
+7
+4300 3f 1
+4301 96 1
+4302 ee 1
+ee34 99 1
+ef34 f8 1
+ef34 f8 0
+ef34 f0 0
+4303 39 90 9e bd a1
+6
+4300 3f
+4301 96
+4302 ee
+4303 be
+ee34 99
+ef34 f0
+9c81 55 65 9d 64 26
+6
+9c81 3f
+9c82 ff
+9c83 74
+749c c0
+759c 8e
+9c84 76
+7
+9c81 3f 1
+9c82 ff 1
+9c83 74 1
+749c c0 1
+759c 8e 1
+759c 8e 0
+759c 1c 0
+9c84 55 04 9d 64 25
+6
+749c c0
+759c 1c
+9c81 3f
+9c82 ff
+9c83 74
+9c84 76
+3463 4b 02 a9 a9 27
+6
+3463 3f
+3464 a8
+3465 b0
+b051 82
+b151 3d
+3466 5b
+7
+3463 3f 1
+3464 a8 1
+3465 b0 1
+b051 82 1
+b151 3d 1
+b151 3d 0
+b151 7b 0
+3466 4b 02 a9 a9 24
+6
+3463 3f
+3464 a8
+3465 b0
+3466 5b
+b051 82
+b151 7b
+a478 26 10 92 28 ab
+6
+a478 3f
+a479 7d
+a47a 15
+150f 72
+160f b2
+a47b b1
+7
+a478 3f 1
+a479 7d 1
+a47a 15 1
+150f 72 1
+160f b2 1
+160f b2 0
+160f 65 0
+a47b 26 00 92 28 2b
+6
+150f 72
+160f 65
+a478 3f
+a479 7d
+a47a 15
+a47b b1
+86fb cf ff ec 4f e8
+5
+86fb 3f
+86fc 10
+86fd ac
+acfc 05
+86fe 57
+7
+86fb 3f 1
+86fc 10 1
+86fd ac 1
+acfc 05 1
+acfc 05 1
+acfc 05 0
+acfc 0a 0
+86fe cf 0a ec 4f 68
+5
+86fb 3f
+86fc 10
+86fd ac
+86fe 57
+acfc 0a
+925a 31 ac 15 b1 21
+5
+925a 3f
+925b dc
+925c c9
+c9f1 11
+925d eb
+7
+925a 3f 1
+925b dc 1
+925c c9 1
+c9f1 11 1
+c9f1 11 1
+c9f1 11 0
+c9f1 23 0
+925d 31 20 15 b1 20
+5
+925a 3f
+925b dc
+925c c9
+925d eb
+c9f1 23
+ccca cf dd 6b d7 6a
+5
+ccca 3f
+cccb 16
+cccc 42
+4281 79
+cccd 45
+7
+ccca 3f 1
+cccb 16 1
+cccc 42 1
+4281 79 1
+4281 79 1
+4281 79 0
+4281 f2 0
+cccd cf d0 6b d7 e8
+5
+4281 f2
+ccca 3f
+cccb 16
+cccc 42
+cccd 45
+b1c5 fb e6 4f aa a2
+6
+b1c5 3f
+b1c6 f3
+b1c7 df
+df42 93
+e042 34
+b1c8 ee
+7
+b1c5 3f 1
+b1c6 f3 1
+b1c7 df 1
+df42 93 1
+e042 34 1
+e042 34 0
+e042 68 0
+b1c8 fb 60 4f aa 20
+6
+b1c5 3f
+b1c6 f3
+b1c7 df
+b1c8 ee
+df42 93
+e042 68
+b712 09 35 ca 84 60
+6
+b712 3f
+b713 8b
+b714 0c
+0c55 fb
+0d55 b3
+b715 07
+7
+b712 3f 1
+b713 8b 1
+b714 0c 1
+0c55 fb 1
+0d55 b3 1
+0d55 b3 0
+0d55 66 0
+b715 09 24 ca 84 61
+6
+0c55 fb
+0d55 66
+b712 3f
+b713 8b
+b714 0c
+b715 07
+4796 4d 59 e2 d3 61
+6
+4796 3f
+4797 9f
+4798 f5
+f581 04
+f681 24
+4799 6d
+7
+4796 3f 1
+4797 9f 1
+4798 f5 1
+f581 04 1
+f681 24 1
+f681 24 0
+f681 49 0
+4799 4d 49 e2 d3 60
+6
+4796 3f
+4797 9f
+4798 f5
+4799 6d
+f581 04
+f681 49
+58e6 90 1e d0 5e ea
+6
+58e6 3f
+58e7 e7
+58e8 b8
+b8b7 29
+b9b7 40
+58e9 45
+7
+58e6 3f 1
+58e7 e7 1
+58e8 b8 1
+b8b7 29 1
+b9b7 40 1
+b9b7 40 0
+b9b7 80 0
+58e9 90 00 d0 5e 6a
+6
+58e6 3f
+58e7 e7
+58e8 b8
+58e9 45
+b8b7 29
+b9b7 80
+4037 81 52 d7 00 ec
+6
+4037 3f
+4038 b6
+4039 8e
+8e8d 48
+8f8d de
+403a c6
+7
+4037 3f 1
+4038 b6 1
+4039 8e 1
+8e8d 48 1
+8f8d de 1
+8f8d de 0
+8f8d bc 0
+403a 81 10 d7 00 6d
+6
+4037 3f
+4038 b6
+4039 8e
+403a c6
+8e8d 48
+8f8d bc
+dbe7 00 26 cc 9c a0
+6
+dbe7 3f
+dbe8 8b
+dbe9 77
+7757 bf
+7857 ff
+dbea 27
+7
+dbe7 3f 1
+dbe8 8b 1
+dbe9 77 1
+7757 bf 1
+7857 ff 1
+7857 ff 0
+7857 fe 0
+dbea 00 26 cc 9c 21
+6
+7757 bf
+7857 fe
+dbe7 3f
+dbe8 8b
+dbe9 77
+dbea 27
+d8ed ca 7a 4d 1c e2
+5
+d8ed 3f
+d8ee 01
+d8ef 0b
+0b4e cb
+d8f0 8e
+7
+d8ed 3f 1
+d8ee 01 1
+d8ef 0b 1
+0b4e cb 1
+0b4e cb 1
+0b4e cb 0
+0b4e 96 0
+d8f0 ca 12 4d 1c 61
+5
+0b4e 96
+d8ed 3f
+d8ee 01
+d8ef 0b
+d8f0 8e
+e136 ea 30 ea 05 6d
+6
+e136 3f
+e137 4b
+e138 6d
+6d35 50
+6e35 c4
+e139 6a
+7
+e136 3f 1
+e137 4b 1
+e138 6d 1
+6d35 50 1
+6e35 c4 1
+6e35 c4 0
+6e35 89 0
+e139 ea 00 ea 05 6f
+6
+6d35 50
+6e35 89
+e136 3f
+e137 4b
+e138 6d
+e139 6a
+4d72 75 1d 9e 73 ea
+5
+4d72 3f
+4d73 55
+4d74 8f
+8ff3 aa
+4d75 1e
+7
+4d72 3f 1
+4d73 55 1
+4d74 8f 1
+8ff3 aa 1
+8ff3 aa 1
+8ff3 aa 0
+8ff3 54 0
+4d75 75 14 9e 73 69
+5
+4d72 3f
+4d73 55
+4d74 8f
+4d75 1e
+8ff3 54
+ba08 b1 3e c1 ce ab
+6
+ba08 3f
+ba09 90
+ba0a 0c
+0c51 45
+0d51 7c
+ba0b ea
+7
+ba08 3f 1
+ba09 90 1
+ba0a 0c 1
+0c51 45 1
+0d51 7c 1
+0d51 7c 0
+0d51 f9 0
+ba0b b1 38 c1 ce 28
+6
+0c51 45
+0d51 f9
+ba08 3f
+ba09 90
+ba0a 0c
+ba0b ea
+6c1e 7d 58 42 c1 a4
+6
+6c1e 3f
+6c1f d1
+6c20 a5
+a513 18
+a613 42
+6c21 43
+7
+6c1e 3f 1
+6c1f d1 1
+6c20 a5 1
+a513 18 1
+a613 42 1
+a613 42 0
+a613 84 0
+6c21 7d 00 42 c1 26
+6
+6c1e 3f
+6c1f d1
+6c20 a5
+6c21 43
+a513 18
+a613 84
+32a0 7c 45 01 5c 26
+5
+32a0 3f
+32a1 04
+32a2 2f
+2f05 a4
+32a3 3a
+7
+32a0 3f 1
+32a1 04 1
+32a2 2f 1
+2f05 a4 1
+2f05 a4 1
+2f05 a4 0
+2f05 48 0
+32a3 7c 40 01 5c 25
+5
+2f05 48
+32a0 3f
+32a1 04
+32a2 2f
+32a3 3a
+84b6 b2 4e e7 65 67
+6
+84b6 3f
+84b7 55
+84b8 1f
+1f3c 9c
+203c bb
+84b9 4f
+7
+84b6 3f 1
+84b7 55 1
+84b8 1f 1
+1f3c 9c 1
+203c bb 1
+203c bb 0
+203c 77 0
+84b9 b2 46 e7 65 65
+6
+1f3c 9c
+203c 77
+84b6 3f
+84b7 55
+84b8 1f
+84b9 4f
+f8fa 53 e1 81 bc 20
+6
+f8fa 3f
+f8fb c4
+f8fc 4f
+4f45 ba
+5045 06
+f8fd d6
+7
+f8fa 3f 1
+f8fb c4 1
+f8fc 4f 1
+4f45 ba 1
+5045 06 1
+5045 06 0
+5045 0c 0
+f8fd 53 00 81 bc 22
+6
+4f45 ba
+5045 0c
+f8fa 3f
+f8fb c4
+f8fc 4f
+f8fd d6
+bceb f4 ae 76 4c 21
+6
+bceb 3f
+bcec a1
+bced 0b
+0b17 b0
+0c17 0f
+bcee 35
+7
+bceb 3f 1
+bcec a1 1
+bced 0b 1
+0b17 b0 1
+0c17 0f 1
+0c17 0f 0
+0c17 1f 0
+bcee f4 0e 76 4c 20
+6
+0b17 b0
+0c17 1f
+bceb 3f
+bcec a1
+bced 0b
+bcee 35
+67e8 27 50 d9 bc 60
+6
+67e8 3f
+67e9 a3
+67ea c5
+c57c 5b
+c67c 03
+67eb 6d
+7
+67e8 3f 1
+67e9 a3 1
+67ea c5 1
+c57c 5b 1
+c67c 03 1
+c67c 03 0
+c67c 06 0
+67eb 27 00 d9 bc 62
+6
+67e8 3f
+67e9 a3
+67ea c5
+67eb 6d
+c57c 5b
+c67c 06
+7959 28 08 bd 91 e7
+6
+7959 3f
+795a c7
+795b ca
+ca84 72
+cb84 1e
+795c a7
+7
+7959 3f 1
+795a c7 1
+795b ca 1
+ca84 72 1
+cb84 1e 1
+cb84 1e 0
+cb84 3d 0
+795c 28 08 bd 91 64
+6
+7959 3f
+795a c7
+795b ca
+795c a7
+ca84 72
+cb84 3d
+0bcc 06 1e ae a7 23
+6
+0bcc 3f
+0bcd fa
+0bce 7d
+7da8 15
+7ea8 69
+0bcf cb
+7
+0bcc 3f 1
+0bcd fa 1
+0bce 7d 1
+7da8 15 1
+7ea8 69 1
+7ea8 69 0
+7ea8 d3 0
+0bcf 06 12 ae a7 20
+6
+0bcc 3f
+0bcd fa
+0bce 7d
+0bcf cb
+7da8 15
+7ea8 d3
+898d 6d 3f 5b 5b 28
+5
+898d 3f
+898e 70
+898f ff
+ffcb 91
+8990 a2
+7
+898d 3f 1
+898e 70 1
+898f ff 1
+ffcb 91 1
+ffcb 91 1
+ffcb 91 0
+ffcb 22 0
+8990 6d 22 5b 5b 29
+5
+898d 3f
+898e 70
+898f ff
+8990 a2
+ffcb 22
+c97c c0 38 4d cb ae
+5
+c97c 3f
+c97d 38
+c97e ae
+ae85 52
+c97f 90
+7
+c97c 3f 1
+c97d 38 1
+c97e ae 1
+ae85 52 1
+ae85 52 1
+ae85 52 0
+ae85 a4 0
+c97f c0 20 4d cb 2c
+5
+ae85 a4
+c97c 3f
+c97d 38
+c97e ae
+c97f 90
+5e82 e7 0d ac a9 e4
+5
+5e82 3f
+5e83 49
+5e84 21
+21f5 5e
+5e85 95
+7
+5e82 3f 1
+5e83 49 1
+5e84 21 1
+21f5 5e 1
+21f5 5e 1
+21f5 5e 0
+21f5 bc 0
+5e85 e7 0c ac a9 64
+5
+21f5 bc
+5e82 3f
+5e83 49
+5e84 21
+5e85 95
+79d1 fa c4 8d 00 a6
+6
+79d1 3f
+79d2 eb
+79d3 ff
+ff78 0b
+0078 4c
+79d4 af
+7
+79d1 3f 1
+79d2 eb 1
+79d3 ff 1
+ff78 0b 1
+0078 4c 1
+0078 4c 0
+0078 98 0
+79d4 fa 80 8d 00 a4
+6
+0078 98
+79d1 3f
+79d2 eb
+79d3 ff
+79d4 af
+ff78 0b
+9a1d 4f 73 ef ac 63
+6
+9a1d 3f
+9a1e 2e
+9a1f 13
+131d d7
+141d ff
+9a20 f7
+7
+9a1d 3f 1
+9a1e 2e 1
+9a1f 13 1
+131d d7 1
+141d ff 1
+141d ff 0
+141d ff 0
+9a20 4f 73 ef ac 61
+6
+131d d7
+141d ff
+9a1d 3f
+9a1e 2e
+9a1f 13
+9a20 f7
+4c46 20 c8 1b 8f e5
+5
+4c46 3f
+4c47 d6
+4c48 03
+03f1 73
+4c49 c7
+7
+4c46 3f 1
+4c47 d6 1
+4c48 03 1
+03f1 73 1
+03f1 73 1
+03f1 73 0
+03f1 e7 0
+4c49 20 c0 1b 8f e4
+5
+03f1 e7
+4c46 3f
+4c47 d6
+4c48 03
+4c49 c7
+0d92 a5 9f da 4f 25
+6
+0d92 3f
+0d93 d1
+0d94 66
+66ab e8
+67ab 9d
+0d95 60
+7
+0d92 3f 1
+0d93 d1 1
+0d94 66 1
+66ab e8 1
+67ab 9d 1
+67ab 9d 0
+67ab 3b 0
+0d95 a5 1b da 4f 25
+6
+0d92 3f
+0d93 d1
+0d94 66
+0d95 60
+66ab e8
+67ab 3b
+c350 3c 45 80 2e e7
+5
+c350 3f
+c351 67
+c352 38
+38e7 aa
+c353 d6
+7
+c350 3f 1
+c351 67 1
+c352 38 1
+38e7 aa 1
+38e7 aa 1
+38e7 aa 0
+38e7 55 0
+c353 3c 45 80 2e 65
+5
+38e7 55
+c350 3f
+c351 67
+c352 38
+c353 d6
+0517 e2 a6 9e 25 e8
+5
+0517 3f
+0518 3d
+0519 00
+00db cf
+051a 66
+7
+0517 3f 1
+0518 3d 1
+0519 00 1
+00db cf 1
+00db cf 1
+00db cf 0
+00db 9e 0
+051a e2 86 9e 25 e9
+5
+00db 9e
+0517 3f
+0518 3d
+0519 00
+051a 66
+1f0c 29 e1 72 21 6d
+6
+1f0c 3f
+1f0d e2
+1f0e 82
+8254 12
+8354 b1
+1f0f 2a
+7
+1f0c 3f 1
+1f0d e2 1
+1f0e 82 1
+8254 12 1
+8354 b1 1
+8354 b1 0
+8354 63 0
+1f0f 29 61 72 21 6d
+6
+1f0c 3f
+1f0d e2
+1f0e 82
+1f0f 2a
+8254 12
+8354 63
+a08d 9a 72 1b 49 6f
+5
+a08d 3f
+a08e 48
+a08f 90
+9063 39
+a090 1d
+7
+a08d 3f 1
+a08e 48 1
+a08f 90 1
+9063 39 1
+9063 39 1
+9063 39 0
+9063 73 0
+a090 9a 72 1b 49 6c
+5
+9063 73
+a08d 3f
+a08e 48
+a08f 90
+a090 1d
+5435 70 5f 72 62 2e
+6
+5435 3f
+5436 f7
+5437 30
+3069 23
+3169 f4
+5438 37
+7
+5435 3f 1
+5436 f7 1
+5437 30 1
+3069 23 1
+3169 f4 1
+3169 f4 0
+3169 e8 0
+5438 70 48 72 62 2d
+6
+3069 23
+3169 e8
+5435 3f
+5436 f7
+5437 30
+5438 37
+960b 27 2d 84 e8 e7
+5
+960b 3f
+960c 53
+960d de
+ded7 26
+960e ba
+7
+960b 3f 1
+960c 53 1
+960d de 1
+ded7 26 1
+ded7 26 1
+ded7 26 0
+ded7 4d 0
+960e 27 0d 84 e8 64
+5
+960b 3f
+960c 53
+960d de
+960e ba
+ded7 4d
+18ea fb 51 d3 0b e0
+6
+18ea 3f
+18eb 50
+18ec ff
+ff23 28
+0023 fd
+18ed 97
+7
+18ea 3f 1
+18eb 50 1
+18ec ff 1
+ff23 28 1
+0023 fd 1
+0023 fd 0
+0023 fa 0
+18ed fb 50 d3 0b 61
+6
+0023 fa
+18ea 3f
+18eb 50
+18ec ff
+18ed 97
+ff23 28
+cc44 49 d5 a4 49 6b
+5
+cc44 3f
+cc45 06
+cc46 ca
+caaa 8a
+cc47 57
+7
+cc44 3f 1
+cc45 06 1
+cc46 ca 1
+caaa 8a 1
+caaa 8a 1
+caaa 8a 0
+caaa 15 0
+cc47 49 15 a4 49 69
+5
+caaa 15
+cc44 3f
+cc45 06
+cc46 ca
+cc47 57
+948c ea d0 95 5e e6
+5
+948c 3f
+948d 69
+948e a5
+a5fe 69
+948f ae
+7
+948c 3f 1
+948d 69 1
+948e a5 1
+a5fe 69 1
+a5fe 69 1
+a5fe 69 0
+a5fe d2 0
+948f ea d0 95 5e e4
+5
+948c 3f
+948d 69
+948e a5
+948f ae
+a5fe d2
+4636 78 25 7f a9 65
+5
+4636 3f
+4637 30
+4638 3c
+3caf 7b
+4639 e1
+7
+4636 3f 1
+4637 30 1
+4638 3c 1
+3caf 7b 1
+3caf 7b 1
+3caf 7b 0
+3caf f7 0
+4639 78 25 7f a9 64
+5
+3caf f7
+4636 3f
+4637 30
+4638 3c
+4639 e1
+2fdf cb b0 49 12 e6
+5
+2fdf 3f
+2fe0 2e
+2fe1 64
+6477 3b
+2fe2 b5
+7
+2fdf 3f 1
+2fe0 2e 1
+2fe1 64 1
+6477 3b 1
+6477 3b 1
+6477 3b 0
+6477 76 0
+2fe2 cb 30 49 12 64
+5
+2fdf 3f
+2fe0 2e
+2fe1 64
+2fe2 b5
+6477 76
+951b 87 de e2 55 67
+6
+951b 3f
+951c 9a
+951d ac
+ac7c 52
+ad7c ff
+951e de
+7
+951b 3f 1
+951c 9a 1
+951d ac 1
+ac7c 52 1
+ad7c ff 1
+ad7c ff 0
+ad7c ff 0
+951e 87 de e2 55 e5
+6
+951b 3f
+951c 9a
+951d ac
+951e de
+ac7c 52
+ad7c ff
+2cfb 12 05 93 21 6b
+6
+2cfb 3f
+2cfc ee
+2cfd a5
+a581 70
+a681 53
+2cfe 85
+7
+2cfb 3f 1
+2cfc ee 1
+2cfd a5 1
+a581 70 1
+a681 53 1
+a681 53 0
+a681 a7 0
+2cfe 12 05 93 21 68
+6
+2cfb 3f
+2cfc ee
+2cfd a5
+2cfe 85
+a581 70
+a681 a7
+07da 68 e0 f8 74 6e
+5
+07da 3f
+07db 04
+07dc 08
+08fc 74
+07dd ef
+7
+07da 3f 1
+07db 04 1
+07dc 08 1
+08fc 74 1
+08fc 74 1
+08fc 74 0
+08fc e8 0
+07dd 68 e0 f8 74 ec
+5
+07da 3f
+07db 04
+07dc 08
+07dd ef
+08fc e8
+27a9 85 53 9e f0 6a
+6
+27a9 3f
+27aa 97
+27ab 91
+9135 e8
+9235 45
+27ac dc
+7
+27a9 3f 1
+27aa 97 1
+27ab 91 1
+9135 e8 1
+9235 45 1
+9235 45 0
+9235 8a 0
+27ac 85 02 9e f0 68
+6
+27a9 3f
+27aa 97
+27ab 91
+27ac dc
+9135 e8
+9235 8a
+a265 b7 f8 89 d8 e4
+5
+a265 3f
+a266 36
+a267 e6
+e6bf 26
+a268 9d
+7
+a265 3f 1
+a266 36 1
+a267 e6 1
+e6bf 26 1
+e6bf 26 1
+e6bf 26 0
+e6bf 4c 0
+a268 b7 48 89 d8 64
+5
+a265 3f
+a266 36
+a267 e6
+a268 9d
+e6bf 4c
+5a68 1d e7 39 40 2b
+6
+5a68 3f
+5a69 e7
+5a6a b3
+b320 13
+b420 7e
+5a6b 77
+7
+5a68 3f 1
+5a69 e7 1
+5a6a b3 1
+b320 13 1
+b420 7e 1
+b420 7e 0
+b420 fd 0
+5a6b 1d e5 39 40 a8
+6
+5a68 3f
+5a69 e7
+5a6a b3
+5a6b 77
+b320 13
+b420 fd
+ff72 6f 07 e5 e2 67
+6
+ff72 3f
+ff73 fe
+ff74 0f
+0fe3 fd
+10e3 7b
+ff75 1b
+7
+ff72 3f 1
+ff73 fe 1
+ff74 0f 1
+0fe3 fd 1
+10e3 7b 1
+10e3 7b 0
+10e3 f7 0
+ff75 6f 07 e5 e2 64
+6
+0fe3 fd
+10e3 f7
+ff72 3f
+ff73 fe
+ff74 0f
+ff75 1b
+b855 45 62 0c 94 a4
+5
+b855 3f
+b856 ce
+b857 0a
+0ada b8
+b858 7b
+7
+b855 3f 1
+b856 ce 1
+b857 0a 1
+0ada b8 1
+0ada b8 1
+0ada b8 0
+0ada 70 0
+b858 45 60 0c 94 25
+5
+0ada 70
+b855 3f
+b856 ce
+b857 0a
+b858 7b
+e358 73 40 1b 1d ae
+6
+e358 3f
+e359 f0
+e35a 51
+510b b9
+520b d4
+e35b 7c
+7
+e358 3f 1
+e359 f0 1
+e35a 51 1
+510b b9 1
+520b d4 1
+520b d4 0
+520b a8 0
+e35b 73 00 1b 1d 2f
+6
+510b b9
+520b a8
+e358 3f
+e359 f0
+e35a 51
+e35b 7c
+de7f ea 70 5f bd aa
+5
+de7f 3f
+de80 46
+de81 d7
+d7a5 fc
+de82 43
+7
+de7f 3f 1
+de80 46 1
+de81 d7 1
+d7a5 fc 1
+d7a5 fc 1
+d7a5 fc 0
+d7a5 f8 0
+de82 ea 70 5f bd 29
+5
+d7a5 f8
+de7f 3f
+de80 46
+de81 d7
+de82 43
+dc97 32 91 f8 ce 25
+6
+dc97 3f
+dc98 c9
+dc99 25
+25c1 d1
+26c1 9c
+dc9a 36
+7
+dc97 3f 1
+dc98 c9 1
+dc99 25 1
+25c1 d1 1
+26c1 9c 1
+26c1 9c 0
+26c1 39 0
+dc9a 32 11 f8 ce 25
+6
+25c1 d1
+26c1 39
+dc97 3f
+dc98 c9
+dc99 25
+dc9a 36
+e362 ce 85 4e f3 2e
+5
+e362 3f
+e363 2f
+e364 e0
+e07d dd
+e365 09
+7
+e362 3f 1
+e363 2f 1
+e364 e0 1
+e07d dd 1
+e07d dd 1
+e07d dd 0
+e07d ba 0
+e365 ce 80 4e f3 ad
+5
+e07d ba
+e362 3f
+e363 2f
+e364 e0
+e365 09
+56de 96 f1 24 24 26
+5
+56de 3f
+56df 2e
+56e0 bb
+bb52 99
+56e1 e6
+7
+56de 3f 1
+56df 2e 1
+56e0 bb 1
+bb52 99 1
+bb52 99 1
+bb52 99 0
+bb52 32 0
+56e1 96 30 24 24 25
+5
+56de 3f
+56df 2e
+56e0 bb
+56e1 e6
+bb52 32
+e346 f2 36 d3 d6 22
+6
+e346 3f
+e347 ce
+e348 9c
+9ca1 fe
+9da1 5a
+e349 47
+7
+e346 3f 1
+e347 ce 1
+e348 9c 1
+9ca1 fe 1
+9da1 5a 1
+9da1 5a 0
+9da1 b4 0
+e349 f2 34 d3 d6 20
+6
+9ca1 fe
+9da1 b4
+e346 3f
+e347 ce
+e348 9c
+e349 47
+ed6d 9c 10 51 74 6b
+6
+ed6d 3f
+ed6e ec
+ed6f 21
+213d 9c
+223d 7a
+ed70 8b
+7
+ed6d 3f 1
+ed6e ec 1
+ed6f 21 1
+213d 9c 1
+223d 7a 1
+223d 7a 0
+223d f5 0
+ed70 9c 10 51 74 68
+6
+213d 9c
+223d f5
+ed6d 3f
+ed6e ec
+ed6f 21
+ed70 8b
+15ba 4a 0d 0d 4a a7
+5
+15ba 3f
+15bb 12
+15bc 2b
+2b1f ec
+15bd 97
+7
+15ba 3f 1
+15bb 12 1
+15bc 2b 1
+2b1f ec 1
+2b1f ec 1
+2b1f ec 0
+2b1f d9 0
+15bd 4a 09 0d 4a 25
+5
+15ba 3f
+15bb 12
+15bc 2b
+15bd 97
+2b1f d9
+5294 32 d5 3d 43 a5
+5
+5294 3f
+5295 1a
+5296 f7
+f757 4e
+5297 53
+7
+5294 3f 1
+5295 1a 1
+5296 f7 1
+f757 4e 1
+f757 4e 1
+f757 4e 0
+f757 9d 0
+5297 32 95 3d 43 a4
+5
+5294 3f
+5295 1a
+5296 f7
+5297 53
+f757 9d
+e4e9 3e 54 37 70 ee
+5
+e4e9 3f
+e4ea 33
+e4eb 07
+076a 10
+e4ec 3a
+7
+e4e9 3f 1
+e4ea 33 1
+e4eb 07 1
+076a 10 1
+076a 10 1
+076a 10 0
+076a 20 0
+e4ec 3e 00 37 70 6e
+5
+076a 20
+e4e9 3f
+e4ea 33
+e4eb 07
+e4ec 3a
+d134 f9 7c 3e 7a 66
+6
+d134 3f
+d135 c5
+d136 15
+1503 9c
+1603 2b
+d137 aa
+7
+d134 3f 1
+d135 c5 1
+d136 15 1
+1503 9c 1
+1603 2b 1
+1603 2b 0
+1603 56 0
+d137 f9 54 3e 7a 64
+6
+1503 9c
+1603 56
+d134 3f
+d135 c5
+d136 15
+d137 aa
+13f8 77 06 49 2e 6b
+5
+13f8 3f
+13f9 45
+13fa 7d
+7d8e 63
+13fb 32
+7
+13f8 3f 1
+13f9 45 1
+13fa 7d 1
+7d8e 63 1
+7d8e 63 1
+7d8e 63 0
+7d8e c7 0
+13fb 77 06 49 2e 68
+5
+13f8 3f
+13f9 45
+13fa 7d
+13fb 32
+7d8e c7
+2b5b 87 10 36 0f e7
+5
+2b5b 3f
+2b5c 88
+2b5d 2e
+2ebe 88
+2b5e 81
+7
+2b5b 3f 1
+2b5c 88 1
+2b5d 2e 1
+2ebe 88 1
+2ebe 88 1
+2ebe 88 0
+2ebe 11 0
+2b5e 87 10 36 0f 65
+5
+2b5b 3f
+2b5c 88
+2b5d 2e
+2b5e 81
+2ebe 11
+d976 d1 f2 a7 d2 64
+6
+d976 3f
+d977 c6
+d978 7f
+7f6d 8b
+806d 5d
+d979 62
+7
+d976 3f 1
+d977 c6 1
+d978 7f 1
+7f6d 8b 1
+806d 5d 1
+806d 5d 0
+806d ba 0
+d979 d1 b2 a7 d2 e4
+6
+7f6d 8b
+806d ba
+d976 3f
+d977 c6
+d978 7f
+d979 62
+7e02 bb e2 ca d0 ef
+6
+7e02 3f
+7e03 9d
+7e04 ad
+ad67 5a
+ae67 c3
+7e05 8e
+7
+7e02 3f 1
+7e03 9d 1
+7e04 ad 1
+ad67 5a 1
+ae67 c3 1
+ae67 c3 0
+ae67 87 0
+7e05 bb 82 ca d0 ed
+6
+7e02 3f
+7e03 9d
+7e04 ad
+7e05 8e
+ad67 5a
+ae67 87
+75dd 43 1b f2 1c 63
+6
+75dd 3f
+75de 27
+75df 04
+0419 be
+0519 79
+75e0 e8
+7
+75dd 3f 1
+75de 27 1
+75df 04 1
+0419 be 1
+0519 79 1
+0519 79 0
+0519 f3 0
+75e0 43 13 f2 1c 60
+6
+0419 be
+0519 f3
+75dd 3f
+75de 27
+75df 04
+75e0 e8
+06ef 0d 1b c5 2f 22
+5
+06ef 3f
+06f0 27
+06f1 14
+14ec b8
+06f2 34
+7
+06ef 3f 1
+06f0 27 1
+06f1 14 1
+14ec b8 1
+14ec b8 1
+14ec b8 0
+14ec 70 0
+06f2 0d 10 c5 2f 21
+5
+06ef 3f
+06f0 27
+06f1 14
+06f2 34
+14ec 70
+bfb4 41 c0 40 33 2f
+6
+bfb4 3f
+bfb5 f7
+bfb6 e8
+e837 b3
+e937 02
+bfb7 31
+7
+bfb4 3f 1
+bfb5 f7 1
+bfb6 e8 1
+e837 b3 1
+e937 02 1
+e937 02 0
+e937 05 0
+bfb7 41 00 40 33 2e
+6
+bfb4 3f
+bfb5 f7
+bfb6 e8
+bfb7 31
+e837 b3
+e937 05
+cffe fa 87 d0 33 25
+6
+cffe 3f
+cfff 59
+d000 37
+3729 88
+3829 0e
+d001 9f
+7
+cffe 3f 1
+cfff 59 1
+d000 37 1
+3729 88 1
+3829 0e 1
+3829 0e 0
+3829 1d 0
+d001 fa 05 d0 33 24
+6
+3729 88
+3829 1d
+cffe 3f
+cfff 59
+d000 37
+d001 9f
+565a 21 33 f8 5f e8
+6
+565a 3f
+565b be
+565c 03
+03b6 65
+04b6 f6
+565d 89
+7
+565a 3f 1
+565b be 1
+565c 03 1
+03b6 65 1
+04b6 f6 1
+04b6 f6 0
+04b6 ec 0
+565d 21 20 f8 5f 69
+6
+03b6 65
+04b6 ec
+565a 3f
+565b be
+565c 03
+565d 89
+9e9f 56 4d ea 43 2f
+6
+9e9f 3f
+9ea0 f2
+9ea1 01
+01dc ed
+02dc 3c
+9ea2 4e
+7
+9e9f 3f 1
+9ea0 f2 1
+9ea1 01 1
+01dc ed 1
+02dc 3c 1
+02dc 3c 0
+02dc 79 0
+9ea2 56 49 ea 43 2c
+6
+01dc ed
+02dc 79
+9e9f 3f
+9ea0 f2
+9ea1 01
+9ea2 4e
+8047 d8 f7 7e 12 6f
+6
+8047 3f
+8048 b6
+8049 fb
+fb34 48
+fc34 b2
+804a 0d
+7
+8047 3f 1
+8048 b6 1
+8049 fb 1
+fb34 48 1
+fc34 b2 1
+fc34 b2 0
+fc34 65 0
+804a d8 65 7e 12 6d
+6
+8047 3f
+8048 b6
+8049 fb
+804a 0d
+fb34 48
+fc34 65
+7e64 aa 95 7f 9a e8
+5
+7e64 3f
+7e65 5e
+7e66 34
+34dd 82
+7e67 a5
+7
+7e64 3f 1
+7e65 5e 1
+7e66 34 1
+34dd 82 1
+34dd 82 1
+34dd 82 0
+34dd 04 0
+7e67 aa 04 7f 9a 69
+5
+34dd 04
+7e64 3f
+7e65 5e
+7e66 34
+7e67 a5
+de2c 81 89 e4 d4 23
+6
+de2c 3f
+de2d e3
+de2e a9
+a9c7 0b
+aac7 95
+de2f d1
+7
+de2c 3f 1
+de2d e3 1
+de2e a9 1
+a9c7 0b 1
+aac7 95 1
+aac7 95 0
+aac7 2b 0
+de2f 81 09 e4 d4 21
+6
+a9c7 0b
+aac7 2b
+de2c 3f
+de2d e3
+de2e a9
+de2f d1
+98ba 22 d3 a0 be ea
+5
+98ba 3f
+98bb 4e
+98bc 16
+16ee 6f
+98bd 43
+7
+98ba 3f 1
+98bb 4e 1
+98bc 16 1
+16ee 6f 1
+16ee 6f 1
+16ee 6f 0
+16ee de 0
+98bd 22 d2 a0 be e8
+5
+16ee de
+98ba 3f
+98bb 4e
+98bc 16
+98bd 43
+b074 b7 40 d9 9f 6e
+6
+b074 3f
+b075 fb
+b076 1c
+1cd4 9c
+1dd4 93
+b077 90
+7
+b074 3f 1
+b075 fb 1
+b076 1c 1
+1cd4 9c 1
+1dd4 93 1
+1dd4 93 0
+1dd4 26 0
+b077 b7 00 d9 9f 6f
+6
+1cd4 9c
+1dd4 26
+b074 3f
+b075 fb
+b076 1c
+b077 90
+04b0 4b ef 38 c4 a0
+5
+04b0 3f
+04b1 0e
+04b2 db
+db46 d8
+04b3 02
+7
+04b0 3f 1
+04b1 0e 1
+04b2 db 1
+db46 d8 1
+db46 d8 1
+db46 d8 0
+db46 b0 0
+04b3 4b a0 38 c4 a1
+5
+04b0 3f
+04b1 0e
+04b2 db
+04b3 02
+db46 b0
+b2b7 72 bb 08 57 ea
+5
+b2b7 3f
+b2b8 4d
+b2b9 61
+6155 d9
+b2ba b2
+7
+b2b7 3f 1
+b2b8 4d 1
+b2b9 61 1
+6155 d9 1
+6155 d9 1
+6155 d9 0
+6155 b2 0
+b2ba 72 b2 08 57 e9
+5
+6155 b2
+b2b7 3f
+b2b8 4d
+b2b9 61
+b2ba b2
+305e df 26 a6 44 2c
+5
+305e 3f
+305f 08
+3060 0b
+0bae 65
+3061 a4
+7
+305e 3f 1
+305f 08 1
+3060 0b 1
+0bae 65 1
+0bae 65 1
+0bae 65 0
+0bae ca 0
+3061 df 02 a6 44 2c
+5
+0bae ca
+305e 3f
+305f 08
+3060 0b
+3061 a4
+1514 8a 4b 6d c8 ee
+6
+1514 3f
+1515 ea
+1516 f2
+f257 81
+f357 1a
+1517 d5
+7
+1514 3f 1
+1515 ea 1
+1516 f2 1
+f257 81 1
+f357 1a 1
+f357 1a 0
+f357 34 0
+1517 8a 00 6d c8 6e
+6
+1514 3f
+1515 ea
+1516 f2
+1517 d5
+f257 81
+f357 34
+7299 23 4a fe c7 2e
+6
+7299 3f
+729a b6
+729b 22
+22b4 10
+23b4 95
+729c 20
+7
+7299 3f 1
+729a b6 1
+729b 22 1
+22b4 10 1
+23b4 95 1
+23b4 95 0
+23b4 2a 0
+729c 23 0a fe c7 2d
+6
+22b4 10
+23b4 2a
+7299 3f
+729a b6
+729b 22
+729c 20
+8cf1 ad b3 ed 49 a8
+6
+8cf1 3f
+8cf2 27
+8cf3 1e
+1e14 5e
+1f14 bc
+8cf4 fd
+7
+8cf1 3f 1
+8cf2 27 1
+8cf3 1e 1
+1e14 5e 1
+1f14 bc 1
+1f14 bc 0
+1f14 78 0
+8cf4 ad 30 ed 49 29
+6
+1e14 5e
+1f14 78
+8cf1 3f
+8cf2 27
+8cf3 1e
+8cf4 fd
+ce6d 4a 60 47 af 2c
+5
+ce6d 3f
+ce6e 9f
+ce6f c4
+c4e6 06
+ce70 48
+7
+ce6d 3f 1
+ce6e 9f 1
+ce6f c4 1
+c4e6 06 1
+c4e6 06 1
+c4e6 06 0
+c4e6 0c 0
+ce70 4a 00 47 af 2e
+5
+c4e6 0c
+ce6d 3f
+ce6e 9f
+ce6f c4
+ce70 48
+4000 46 47 83 6d 69
+5
+4000 3f
+4001 44
+4002 e9
+e9c7 68
+4003 15
+7
+4000 3f 1
+4001 44 1
+4002 e9 1
+e9c7 68 1
+e9c7 68 1
+e9c7 68 0
+e9c7 d1 0
+4003 46 41 83 6d 68
+5
+4000 3f
+4001 44
+4002 e9
+4003 15
+e9c7 d1
+e902 1d d2 4b d9 6a
+5
+e902 3f
+e903 5b
+e904 f0
+f0a6 79
+e905 bc
+7
+e902 3f 1
+e903 5b 1
+e904 f0 1
+f0a6 79 1
+f0a6 79 1
+f0a6 79 0
+f0a6 f2 0
+e905 1d d2 4b d9 e8
+5
+e902 3f
+e903 5b
+e904 f0
+e905 bc
+f0a6 f2
+5c2d 2e 17 06 a0 2b
+5
+5c2d 3f
+5c2e 81
+5c2f 25
+2587 0a
+5c30 48
+7
+5c2d 3f 1
+5c2e 81 1
+5c2f 25 1
+2587 0a 1
+2587 0a 1
+2587 0a 0
+2587 15 0
+5c30 2e 15 06 a0 28
+5
+2587 15
+5c2d 3f
+5c2e 81
+5c2f 25
+5c30 48
+a9c0 83 b8 e5 34 ed
+6
+a9c0 3f
+a9c1 4f
+a9c2 48
+4834 70
+4934 31
+a9c3 96
+7
+a9c0 3f 1
+a9c1 4f 1
+a9c2 48 1
+4834 70 1
+4934 31 1
+4934 31 0
+4934 63 0
+a9c3 83 20 e5 34 6c
+6
+4834 70
+4934 63
+a9c0 3f
+a9c1 4f
+a9c2 48
+a9c3 96
+9184 d7 af 46 18 62
+5
+9184 3f
+9185 0c
+9186 de
+de52 0f
+9187 43
+7
+9184 3f 1
+9185 0c 1
+9186 de 1
+de52 0f 1
+de52 0f 1
+de52 0f 0
+de52 1e 0
+9187 d7 0e 46 18 60
+5
+9184 3f
+9185 0c
+9186 de
+9187 43
+de52 1e
+ae2f ed 79 0e c8 69
+5
+ae2f 3f
+ae30 ac
+ae31 91
+91ba db
+ae32 22
+7
+ae2f 3f 1
+ae30 ac 1
+ae31 91 1
+91ba db 1
+91ba db 1
+91ba db 0
+91ba b7 0
+ae32 ed 31 0e c8 69
+5
+91ba b7
+ae2f 3f
+ae30 ac
+ae31 91
+ae32 22
+e17c 68 07 9e b5 27
+5
+e17c 3f
+e17d 27
+e17e 27
+27c5 bb
+e17f 2b
+7
+e17c 3f 1
+e17d 27 1
+e17e 27 1
+27c5 bb 1
+27c5 bb 1
+27c5 bb 0
+27c5 77 0
+e17f 68 07 9e b5 25
+5
+27c5 77
+e17c 3f
+e17d 27
+e17e 27
+e17f 2b
+1cdd 75 d3 d8 2e a9
+6
+1cdd 3f
+1cde 4f
+1cdf 55
+5527 88
+5627 14
+1ce0 2a
+7
+1cdd 3f 1
+1cde 4f 1
+1cdf 55 1
+5527 88 1
+5627 14 1
+5627 14 0
+5627 29 0
+1ce0 75 01 d8 2e 28
+6
+1cdd 3f
+1cde 4f
+1cdf 55
+1ce0 2a
+5527 88
+5627 29
+9c2c a0 3d 91 cb 24
+6
+9c2c 3f
+9c2d ee
+9c2e 7c
+7c7f 98
+7d7f 2f
+9c2f d1
+7
+9c2c 3f 1
+9c2d ee 1
+9c2e 7c 1
+7c7f 98 1
+7d7f 2f 1
+7d7f 2f 0
+7d7f 5e 0
+9c2f a0 1c 91 cb 24
+6
+7c7f 98
+7d7f 5e
+9c2c 3f
+9c2d ee
+9c2e 7c
+9c2f d1
+b0ae 2f 5b 1c 06 ea
+5
+b0ae 3f
+b0af 8b
+b0b0 da
+daa7 28
+b0b1 70
+7
+b0ae 3f 1
+b0af 8b 1
+b0b0 da 1
+daa7 28 1
+daa7 28 1
+daa7 28 0
+daa7 50 0
+b0b1 2f 50 1c 06 68
+5
+b0ae 3f
+b0af 8b
+b0b0 da
+b0b1 70
+daa7 50
+3539 17 c0 f4 4e ac
+6
+3539 3f
+353a 19
+353b 04
+040d 83
+050d b1
+353c 6a
+7
+3539 3f 1
+353a 19 1
+353b 04 1
+040d 83 1
+050d b1 1
+050d b1 0
+050d 62 0
+353c 17 40 f4 4e 2d
+6
+040d 83
+050d 62
+3539 3f
+353a 19
+353b 04
+353c 6a
+5ef8 83 e6 71 8e 6f
+6
+5ef8 3f
+5ef9 e4
+5efa 4c
+4c55 7c
+4d55 04
+5efb d6
+7
+5ef8 3f 1
+5ef9 e4 1
+5efa 4c 1
+4c55 7c 1
+4d55 04 1
+4d55 04 0
+4d55 09 0
+5efb 83 00 71 8e 6e
+6
+4c55 7c
+4d55 09
+5ef8 3f
+5ef9 e4
+5efa 4c
+5efb d6
+bf8b c5 40 35 92 e1
+5
+bf8b 3f
+bf8c 28
+bf8d fc
+fc5d 5a
+bf8e e5
+7
+bf8b 3f 1
+bf8c 28 1
+bf8d fc 1
+fc5d 5a 1
+fc5d 5a 1
+fc5d 5a 0
+fc5d b5 0
+bf8e c5 00 35 92 62
+5
+bf8b 3f
+bf8c 28
+bf8d fc
+bf8e e5
+fc5d b5
+24e2 db 1e 2e 43 a1
+5
+24e2 3f
+24e3 4d
+24e4 a4
+a47b 58
+24e5 14
+7
+24e2 3f 1
+24e3 4d 1
+24e4 a4 1
+a47b 58 1
+a47b 58 1
+a47b 58 0
+a47b b1 0
+24e5 db 10 2e 43 20
+5
+24e2 3f
+24e3 4d
+24e4 a4
+24e5 14
+a47b b1
+c0e1 8e 2e 68 c5 20
+6
+c0e1 3f
+c0e2 d8
+c0e3 15
+1540 5a
+1640 9c
+c0e4 f5
+7
+c0e1 3f 1
+c0e2 d8 1
+c0e3 15 1
+1540 5a 1
+1640 9c 1
+1640 9c 0
+1640 38 0
+c0e4 8e 28 68 c5 21
+6
+1540 5a
+1640 38
+c0e1 3f
+c0e2 d8
+c0e3 15
+c0e4 f5
+2439 50 66 24 62 2f
+5
+2439 3f
+243a 47
+243b 47
+476b 97
+243c 03
+7
+2439 3f 1
+243a 47 1
+243b 47 1
+476b 97 1
+476b 97 1
+476b 97 0
+476b 2f 0
+243c 50 26 24 62 2d
+5
+2439 3f
+243a 47
+243b 47
+243c 03
+476b 2f
+c0b9 8c d7 09 5f 27
+5
+c0b9 3f
+c0ba 1e
+c0bb 12
+1227 72
+c0bc 36
+7
+c0b9 3f 1
+c0ba 1e 1
+c0bb 12 1
+1227 72 1
+1227 72 1
+1227 72 0
+1227 e5 0
+c0bc 8c c5 09 5f a4
+5
+1227 e5
+c0b9 3f
+c0ba 1e
+c0bb 12
+c0bc 36
+bc42 d6 40 25 df 66
+5
+bc42 3f
+bc43 b7
+bc44 aa
+aadc b5
+bc45 55
+7
+bc42 3f 1
+bc43 b7 1
+bc44 aa 1
+aadc b5 1
+aadc b5 1
+aadc b5 0
+aadc 6a 0
+bc45 d6 40 25 df 65
+5
+aadc 6a
+bc42 3f
+bc43 b7
+bc44 aa
+bc45 55
+1aab 26 71 80 d3 ea
+6
+1aab 3f
+1aac 87
+1aad d4
+d407 d5
+d507 6e
+1aae 70
+7
+1aab 3f 1
+1aac 87 1
+1aad d4 1
+d407 d5 1
+d507 6e 1
+d507 6e 0
+d507 dc 0
+1aae 26 50 80 d3 68
+6
+1aab 3f
+1aac 87
+1aad d4
+1aae 70
+d407 d5
+d507 dc
+d1e7 56 21 bf 8d e1
+6
+d1e7 3f
+d1e8 bc
+d1e9 78
+787b 2a
+797b 60
+d1ea cb
+7
+d1e7 3f 1
+d1e8 bc 1
+d1e9 78 1
+787b 2a 1
+797b 60 1
+797b 60 0
+797b c1 0
+d1ea 56 01 bf 8d 60
+6
+787b 2a
+797b c1
+d1e7 3f
+d1e8 bc
+d1e9 78
+d1ea cb
+5382 b5 ee a2 5b 63
+6
+5382 3f
+5383 b1
+5384 30
+3053 70
+3153 45
+5385 39
+7
+5382 3f 1
+5383 b1 1
+5384 30 1
+3053 70 1
+3153 45 1
+3153 45 0
+3153 8b 0
+5385 b5 8a a2 5b e0
+6
+3053 70
+3153 8b
+5382 3f
+5383 b1
+5384 30
+5385 39
+1f20 d9 29 4d a0 2e
+5
+1f20 3f
+1f21 43
+1f22 9a
+9a90 27
+1f23 c2
+7
+1f20 3f 1
+1f21 43 1
+1f22 9a 1
+9a90 27 1
+9a90 27 1
+9a90 27 0
+9a90 4e 0
+1f23 d9 08 4d a0 2c
+5
+1f20 3f
+1f21 43
+1f22 9a
+1f23 c2
+9a90 4e
+7cad 02 70 44 00 a8
+6
+7cad 3f
+7cae c2
+7caf 8c
+8c06 6a
+8d06 4b
+7cb0 ec
+7
+7cad 3f 1
+7cae c2 1
+7caf 8c 1
+8c06 6a 1
+8d06 4b 1
+8d06 4b 0
+8d06 96 0
+7cb0 02 10 44 00 28
+6
+7cad 3f
+7cae c2
+7caf 8c
+7cb0 ec
+8c06 6a
+8d06 96
+f98b 77 1e de 63 a1
+6
+f98b 3f
+f98c fb
+f98d 1b
+1bd9 c6
+1cd9 fa
+f98e e8
+7
+f98b 3f 1
+f98c fb 1
+f98d 1b 1
+1bd9 c6 1
+1cd9 fa 1
+1cd9 fa 0
+1cd9 f5 0
+f98e 77 14 de 63 21
+6
+1bd9 c6
+1cd9 f5
+f98b 3f
+f98c fb
+f98d 1b
+f98e e8
+e485 88 f0 5a 05 a6
+6
+e485 3f
+e486 b3
+e487 f6
+f60d 9d
+f70d 43
+e488 b5
+7
+e485 3f 1
+e486 b3 1
+e487 f6 1
+f60d 9d 1
+f70d 43 1
+f70d 43 0
+f70d 86 0
+e488 88 80 5a 05 a4
+6
+e485 3f
+e486 b3
+e487 f6
+e488 b5
+f60d 9d
+f70d 86
+8e1d cb 6a cd 0c 2d
+5
+8e1d 3f
+8e1e 05
+8e1f a1
+a1d2 92
+8e20 2d
+7
+8e1d 3f 1
+8e1e 05 1
+8e1f a1 1
+a1d2 92 1
+a1d2 92 1
+a1d2 92 0
+a1d2 25 0
+8e20 cb 20 cd 0c 2d
+5
+8e1d 3f
+8e1e 05
+8e1f a1
+8e20 2d
+a1d2 25
+53a0 6c 91 51 2c a1
+5
+53a0 3f
+53a1 2a
+53a2 90
+907b 5f
+53a3 b3
+7
+53a0 3f 1
+53a1 2a 1
+53a2 90 1
+907b 5f 1
+907b 5f 1
+907b 5f 0
+907b bf 0
+53a3 6c 91 51 2c a0
+5
+53a0 3f
+53a1 2a
+53a2 90
+53a3 b3
+907b bf
+4ea5 c1 fa e2 0a 69
+6
+4ea5 3f
+4ea6 bf
+4ea7 75
+75a1 9a
+76a1 14
+4ea8 80
+7
+4ea5 3f 1
+4ea6 bf 1
+4ea7 75 1
+75a1 9a 1
+76a1 14 1
+76a1 14 0
+76a1 29 0
+4ea8 c1 28 e2 0a 68
+6
+4ea5 3f
+4ea6 bf
+4ea7 75
+4ea8 80
+75a1 9a
+76a1 29
+c50f cf e2 92 4e ec
+6
+c50f 3f
+c510 b4
+c511 9c
+9c46 af
+9d46 1d
+c512 cd
+7
+c50f 3f 1
+c510 b4 1
+c511 9c 1
+9c46 af 1
+9d46 1d 1
+9d46 1d 0
+9d46 3a 0
+c512 cf 22 92 4e 6c
+6
+9c46 af
+9d46 3a
+c50f 3f
+c510 b4
+c511 9c
+c512 cd
+2d2f b7 f8 fa dc aa
+6
+2d2f 3f
+2d30 eb
+2d31 05
+05e5 0e
+06e5 a2
+2d32 33
+7
+2d2f 3f 1
+2d30 eb 1
+2d31 05 1
+05e5 0e 1
+06e5 a2 1
+06e5 a2 0
+06e5 44 0
+2d32 b7 40 fa dc 29
+6
+05e5 0e
+06e5 44
+2d2f 3f
+2d30 eb
+2d31 05
+2d32 33
+7457 26 3a ef 8d a3
+6
+7457 3f
+7458 54
+7459 cd
+cd43 c2
+ce43 07
+745a 64
+7
+7457 3f 1
+7458 54 1
+7459 cd 1
+cd43 c2 1
+ce43 07 1
+ce43 07 0
+ce43 0f 0
+745a 26 0a ef 8d 20
+6
+7457 3f
+7458 54
+7459 cd
+745a 64
+cd43 c2
+ce43 0f
+8ca4 0d fe bc 8a 2e
+5
+8ca4 3f
+8ca5 30
+8ca6 37
+37ec 5e
+8ca7 31
+7
+8ca4 3f 1
+8ca5 30 1
+8ca6 37 1
+37ec 5e 1
+37ec 5e 1
+37ec 5e 0
+37ec bc 0
+8ca7 0d bc bc 8a ac
+5
+37ec bc
+8ca4 3f
+8ca5 30
+8ca6 37
+8ca7 31
+4912 8b a0 96 40 aa
+5
+4912 3f
+4913 33
+4914 fb
+fbc9 c2
+4915 24
+7
+4912 3f 1
+4913 33 1
+4914 fb 1
+fbc9 c2 1
+fbc9 c2 1
+fbc9 c2 0
+fbc9 84 0
+4915 8b 80 96 40 a9
+5
+4912 3f
+4913 33
+4914 fb
+4915 24
+fbc9 84
+eeea 68 59 68 fb 69
+6
+eeea 3f
+eeeb f4
+eeec 28
+285c 97
+295c 30
+eeed 0f
+7
+eeea 3f 1
+eeeb f4 1
+eeec 28 1
+285c 97 1
+295c 30 1
+295c 30 0
+295c 61 0
+eeed 68 41 68 fb 68
+6
+285c 97
+295c 61
+eeea 3f
+eeeb f4
+eeec 28
+eeed 0f
+9337 3f 5d 2d 97 ab
+6
+9337 3f
+9338 e9
+9339 04
+0416 5f
+0516 70
+933a 3b
+7
+9337 3f 1
+9338 e9 1
+9339 04 1
+0416 5f 1
+0516 70 1
+0516 70 0
+0516 e1 0
+933a 3f 41 2d 97 28
+6
+0416 5f
+0516 e1
+9337 3f
+9338 e9
+9339 04
+933a 3b
+1a55 c5 e5 41 20 64
+5
+1a55 3f
+1a56 39
+1a57 9f
+9f7a a7
+1a58 d2
+7
+1a55 3f 1
+1a56 39 1
+1a57 9f 1
+9f7a a7 1
+9f7a a7 1
+9f7a a7 0
+9f7a 4e 0
+1a58 c5 44 41 20 65
+5
+1a55 3f
+1a56 39
+1a57 9f
+1a58 d2
+9f7a 4e
+13ad da 1f 02 cd 2f
+5
+13ad 3f
+13ae 75
+13af 39
+3977 d5
+13b0 46
+7
+13ad 3f 1
+13ae 75 1
+13af 39 1
+3977 d5 1
+3977 d5 1
+3977 d5 0
+3977 ab 0
+13b0 da 0b 02 cd 2d
+5
+13ad 3f
+13ae 75
+13af 39
+13b0 46
+3977 ab
+c5ee 03 50 0d 1b 23
+5
+c5ee 3f
+c5ef c6
+c5f0 c3
+c3d3 25
+c5f1 3f
+7
+c5ee 3f 1
+c5ef c6 1
+c5f0 c3 1
+c3d3 25 1
+c3d3 25 1
+c3d3 25 0
+c3d3 4b 0
+c5f1 03 40 0d 1b 20
+5
+c3d3 4b
+c5ee 3f
+c5ef c6
+c5f0 c3
+c5f1 3f
+2f54 53 6d 51 1d 6e
+5
+2f54 3f
+2f55 54
+2f56 57
+57a5 c4
+2f57 e7
+7
+2f54 3f 1
+2f55 54 1
+2f56 57 1
+57a5 c4 1
+57a5 c4 1
+57a5 c4 0
+57a5 88 0
+2f57 53 08 51 1d 6d
+5
+2f54 3f
+2f55 54
+2f56 57
+2f57 e7
+57a5 88
+1f8d 97 6d 44 48 e7
+6
+1f8d 3f
+1f8e ca
+1f8f 54
+540e bd
+550e 32
+1f90 0a
+7
+1f8d 3f 1
+1f8e ca 1
+1f8f 54 1
+540e bd 1
+550e 32 1
+550e 32 0
+550e 65 0
+1f90 97 65 44 48 64
+6
+1f8d 3f
+1f8e ca
+1f8f 54
+1f90 0a
+540e bd
+550e 65
+c245 6b e3 35 14 6a
+5
+c245 3f
+c246 4b
+c247 b7
+b780 35
+c248 82
+7
+c245 3f 1
+c246 4b 1
+c247 b7 1
+b780 35 1
+b780 35 1
+b780 35 0
+b780 6a 0
+c248 6b 62 35 14 68
+5
+b780 6a
+c245 3f
+c246 4b
+c247 b7
+c248 82
+b9b4 e3 2a 7f 3a a6
+6
+b9b4 3f
+b9b5 dc
+b9b6 8f
+8f5b 5f
+905b 29
+b9b7 05
+7
+b9b4 3f 1
+b9b5 dc 1
+b9b6 8f 1
+8f5b 5f 1
+905b 29 1
+905b 29 0
+905b 52 0
+b9b7 e3 02 7f 3a 24
+6
+8f5b 5f
+905b 52
+b9b4 3f
+b9b5 dc
+b9b6 8f
+b9b7 05
+c5df 62 fe 04 3c 26
+5
+c5df 3f
+c5e0 88
+c5e1 d8
+d88c ab
+c5e2 b3
+7
+c5df 3f 1
+c5e0 88 1
+c5e1 d8 1
+d88c ab 1
+d88c ab 1
+d88c ab 0
+d88c 56 0
+c5e2 62 56 04 3c 25
+5
+c5df 3f
+c5e0 88
+c5e1 d8
+c5e2 b3
+d88c 56
+1909 2e c6 f5 72 a0
+6
+1909 3f
+190a 18
+190b e7
+e70d bc
+e80d 2e
+190c 3f
+7
+1909 3f 1
+190a 18 1
+190b e7 1
+e70d bc 1
+e80d 2e 1
+e80d 2e 0
+e80d 5c 0
+190c 2e 44 f5 72 20
+6
+1909 3f
+190a 18
+190b e7
+190c 3f
+e70d bc
+e80d 5c
+680b c6 33 c3 0e 2c
+5
+680b 3f
+680c 1f
+680d d3
+d3e2 0d
+680e 08
+7
+680b 3f 1
+680c 1f 1
+680d d3 1
+d3e2 0d 1
+d3e2 0d 1
+d3e2 0d 0
+d3e2 1a 0
+680e c6 12 c3 0e 2c
+5
+680b 3f
+680c 1f
+680d d3
+680e 08
+d3e2 1a
+753a 59 75 17 23 e3
+5
+753a 3f
+753b 13
+753c ec
+ec2a c4
+753d e4
+7
+753a 3f 1
+753b 13 1
+753c ec 1
+ec2a c4 1
+ec2a c4 1
+ec2a c4 0
+ec2a 89 0
+753d 59 01 17 23 61
+5
+753a 3f
+753b 13
+753c ec
+753d e4
+ec2a 89
+144a df 8a 86 31 2e
+5
+144a 3f
+144b 0f
+144c e4
+e495 ea
+144d ae
+7
+144a 3f 1
+144b 0f 1
+144c e4 1
+e495 ea 1
+e495 ea 1
+e495 ea 0
+e495 d4 0
+144d df 80 86 31 ad
+5
+144a 3f
+144b 0f
+144c e4
+144d ae
+e495 d4
+1ec3 0a 49 ec ff a1
+6
+1ec3 3f
+1ec4 3d
+1ec5 fa
+fa29 28
+fb29 17
+1ec6 24
+7
+1ec3 3f 1
+1ec4 3d 1
+1ec5 fa 1
+fa29 28 1
+fb29 17 1
+fb29 17 0
+fb29 2f 0
+1ec6 0a 09 ec ff 20
+6
+1ec3 3f
+1ec4 3d
+1ec5 fa
+1ec6 24
+fa29 28
+fb29 2f
+6e04 c4 05 c9 b4 60
+6
+6e04 3f
+6e05 da
+6e06 5e
+5ea3 35
+5fa3 81
+6e07 50
+7
+6e04 3f 1
+6e05 da 1
+6e06 5e 1
+5ea3 35 1
+5fa3 81 1
+5fa3 81 0
+5fa3 02 0
+6e07 c4 00 c9 b4 63
+6
+5ea3 35
+5fa3 02
+6e04 3f
+6e05 da
+6e06 5e
+6e07 50
+018e a7 09 db 78 6b
+6
+018e 3f
+018f b7
+0190 fa
+fa92 03
+fb92 4e
+0191 11
+7
+018e 3f 1
+018f b7 1
+0190 fa 1
+fa92 03 1
+fb92 4e 1
+fb92 4e 0
+fb92 9d 0
+0191 a7 09 db 78 68
+6
+018e 3f
+018f b7
+0190 fa
+0191 11
+fa92 03
+fb92 9d
+bb30 a8 ce c5 21 6e
+6
+bb30 3f
+bb31 f9
+bb32 50
+50be 71
+51be 4b
+bb33 36
+7
+bb30 3f 1
+bb31 f9 1
+bb32 50 1
+50be 71 1
+51be 4b 1
+51be 4b 0
+51be 96 0
+bb33 a8 86 c5 21 ec
+6
+50be 71
+51be 96
+bb30 3f
+bb31 f9
+bb32 50
+bb33 36
+348a 07 83 5d fd e3
+6
+348a 3f
+348b bf
+348c 6b
+6b1c 56
+6c1c e3
+348d ad
+7
+348a 3f 1
+348b bf 1
+348c 6b 1
+6b1c 56 1
+6c1c e3 1
+6c1c e3 0
+6c1c c7 0
+348d 07 83 5d fd e1
+6
+348a 3f
+348b bf
+348c 6b
+348d ad
+6b1c 56
+6c1c c7
+82d7 b5 7e 3a 1a a5
+5
+82d7 3f
+82d8 7e
+82d9 8e
+8eb8 8e
+82da 8c
+7
+82d7 3f 1
+82d8 7e 1
+82d9 8e 1
+8eb8 8e 1
+8eb8 8e 1
+8eb8 8e 0
+8eb8 1d 0
+82da b5 1c 3a 1a 25
+5
+82d7 3f
+82d8 7e
+82d9 8e
+82da 8c
+8eb8 1d
+ade9 e0 c9 56 54 ac
+6
+ade9 3f
+adea be
+adeb 06
+0614 5c
+0714 65
+adec 86
+7
+ade9 3f 1
+adea be 1
+adeb 06 1
+0614 5c 1
+0714 65 1
+0714 65 0
+0714 ca 0
+adec e0 c8 56 54 ac
+6
+0614 5c
+0714 ca
+ade9 3f
+adea be
+adeb 06
+adec 86
+242a 9a 22 34 6a e7
+5
+242a 3f
+242b 5e
+242c 69
+6992 32
+242d e0
+7
+242a 3f 1
+242b 5e 1
+242c 69 1
+6992 32 1
+6992 32 1
+6992 32 0
+6992 65 0
+242d 9a 20 34 6a 64
+5
+242a 3f
+242b 5e
+242c 69
+242d e0
+6992 65
+eb89 df d9 df f5 e1
+6
+eb89 3f
+eb8a 62
+eb8b c3
+c341 97
+c441 36
+eb8c 58
+7
+eb89 3f 1
+eb8a 62 1
+eb8b c3 1
+c341 97 1
+c441 36 1
+c441 36 0
+c441 6d 0
+eb8c df 49 df f5 60
+6
+c341 97
+c441 6d
+eb89 3f
+eb8a 62
+eb8b c3
+eb8c 58
+6ffa 47 1e e2 11 e7
+6
+6ffa 3f
+6ffb e9
+6ffc 56
+56cb 27
+57cb 07
+6ffd 8b
+7
+6ffa 3f 1
+6ffb e9 1
+6ffc 56 1
+56cb 27 1
+57cb 07 1
+57cb 07 0
+57cb 0f 0
+6ffd 47 0e e2 11 64
+6
+56cb 27
+57cb 0f
+6ffa 3f
+6ffb e9
+6ffc 56
+6ffd 8b
+45dc f4 67 2f 89 e9
+5
+45dc 3f
+45dd a4
+45de 90
+90d3 ac
+45df c9
+7
+45dc 3f 1
+45dd a4 1
+45de 90 1
+90d3 ac 1
+90d3 ac 1
+90d3 ac 0
+90d3 59 0
+45df f4 41 2f 89 69
+5
+45dc 3f
+45dd a4
+45de 90
+45df c9
+90d3 59
+45c2 62 de 45 26 2a
+5
+45c2 3f
+45c3 85
+45c4 31
+31ca e7
+45c5 b3
+7
+45c2 3f 1
+45c3 85 1
+45c4 31 1
+31ca e7 1
+31ca e7 1
+31ca e7 0
+31ca ce 0
+45c5 62 ce 45 26 a9
+5
+31ca ce
+45c2 3f
+45c3 85
+45c4 31
+45c5 b3
+19b1 d2 26 f4 38 2b
+6
+19b1 3f
+19b2 77
+19b3 fb
+fb6b f6
+fc6b 24
+19b4 4a
+7
+19b1 3f 1
+19b2 77 1
+19b3 fb 1
+fb6b f6 1
+fc6b 24 1
+fc6b 24 0
+fc6b 49 0
+19b4 d2 00 f4 38 2a
+6
+19b1 3f
+19b2 77
+19b3 fb
+19b4 4a
+fb6b f6
+fc6b 49
+de8e 71 88 3d 70 a3
+6
+de8e 3f
+de8f e7
+de90 28
+2824 5b
+2924 ed
+de91 d8
+7
+de8e 3f 1
+de8f e7 1
+de90 28 1
+2824 5b 1
+2924 ed 1
+2924 ed 0
+2924 db 0
+de91 71 88 3d 70 a1
+6
+2824 5b
+2924 db
+de8e 3f
+de8f e7
+de90 28
+de91 d8
+b895 0c eb 31 51 a2
+5
+b895 3f
+b896 33
+b897 59
+5964 b3
+b898 69
+7
+b895 3f 1
+b896 33 1
+b897 59 1
+5964 b3 1
+5964 b3 1
+5964 b3 0
+5964 66 0
+b898 0c 62 31 51 21
+5
+5964 66
+b895 3f
+b896 33
+b897 59
+b898 69
+3929 e5 ba 63 a4 aa
+5
+3929 3f
+392a 8a
+392b 8f
+8fed c2
+392c 9f
+7
+3929 3f 1
+392a 8a 1
+392b 8f 1
+8fed c2 1
+8fed c2 1
+8fed c2 0
+8fed 84 0
+392c e5 80 63 a4 a9
+5
+3929 3f
+392a 8a
+392b 8f
+392c 9f
+8fed 84
+922c dd ab 62 84 24
+5
+922c 3f
+922d 0b
+922e ec
+ec6d f1
+922f f3
+7
+922c 3f 1
+922d 0b 1
+922e ec 1
+ec6d f1 1
+ec6d f1 1
+ec6d f1 0
+ec6d e2 0
+922f dd a2 62 84 a5
+5
+922c 3f
+922d 0b
+922e ec
+922f f3
+ec6d e2
+4c2c a2 71 7b 95 a4
+6
+4c2c 3f
+4c2d d7
+4c2e e8
+e852 c5
+e952 90
+4c2f 1a
+7
+4c2c 3f 1
+4c2d d7 1
+4c2e e8 1
+e852 c5 1
+e952 90 1
+e952 90 0
+e952 20 0
+4c2f a2 20 7b 95 25
+6
+4c2c 3f
+4c2d d7
+4c2e e8
+4c2f 1a
+e852 c5
+e952 20
+801a 86 53 fe dd a7
+6
+801a 3f
+801b 85
+801c 8b
+8b83 e5
+8c83 39
+801d 87
+7
+801a 3f 1
+801b 85 1
+801c 8b 1
+8b83 e5 1
+8c83 39 1
+8c83 39 0
+8c83 73 0
+801d 86 53 fe dd 24
+6
+801a 3f
+801b 85
+801c 8b
+801d 87
+8b83 e5
+8c83 73
+31f2 a8 53 2d 0f 6e
+5
+31f2 3f
+31f3 0d
+31f4 c4
+c43a 23
+31f5 05
+7
+31f2 3f 1
+31f3 0d 1
+31f4 c4 1
+c43a 23 1
+c43a 23 1
+c43a 23 0
+c43a 46 0
+31f5 a8 42 2d 0f 6c
+5
+31f2 3f
+31f3 0d
+31f4 c4
+31f5 05
+c43a 46
+683d f1 b2 e6 02 21
+6
+683d 3f
+683e 5a
+683f 8f
+8f40 11
+9040 3a
+6840 8a
+7
+683d 3f 1
+683e 5a 1
+683f 8f 1
+8f40 11 1
+9040 3a 1
+9040 3a 0
+9040 75 0
+6840 f1 30 e6 02 20
+6
+683d 3f
+683e 5a
+683f 8f
+6840 8a
+8f40 11
+9040 75
+a157 73 18 89 18 67
+5
+a157 3f
+a158 3d
+a159 0a
+0ac6 40
+a15a 23
+7
+a157 3f 1
+a158 3d 1
+a159 0a 1
+0ac6 40 1
+0ac6 40 1
+0ac6 40 0
+0ac6 81 0
+a15a 73 00 89 18 66
+5
+0ac6 81
+a157 3f
+a158 3d
+a159 0a
+a15a 23
+8f45 7a 38 d8 97 e1
+6
+8f45 3f
+8f46 71
+8f47 06
+0649 83
+0749 79
+8f48 1c
+7
+8f45 3f 1
+8f46 71 1
+8f47 06 1
+0649 83 1
+0749 79 1
+0749 79 0
+0749 f3 0
+8f48 7a 30 d8 97 60
+6
+0649 83
+0749 f3
+8f45 3f
+8f46 71
+8f47 06
+8f48 1c
+0fc5 8a 74 dc 32 26
+6
+0fc5 3f
+0fc6 36
+0fc7 09
+0912 5b
+0a12 53
+0fc8 c1
+7
+0fc5 3f 1
+0fc6 36 1
+0fc7 09 1
+0912 5b 1
+0a12 53 1
+0a12 53 0
+0a12 a6 0
+0fc8 8a 24 dc 32 24
+6
+0912 5b
+0a12 a6
+0fc5 3f
+0fc6 36
+0fc7 09
+0fc8 c1
+3061 98 d7 b5 43 aa
+6
+3061 3f
+3062 bc
+3063 4a
+4a71 2f
+4b71 24
+3064 a0
+7
+3061 3f 1
+3062 bc 1
+3063 4a 1
+4a71 2f 1
+4b71 24 1
+4b71 24 0
+4b71 48 0
+3064 98 40 b5 43 28
+6
+3061 3f
+3062 bc
+3063 4a
+3064 a0
+4a71 2f
+4b71 48
+5650 cd 35 e0 97 6a
+6
+5650 3f
+5651 69
+5652 6c
+6c49 1d
+6d49 9e
+5653 dd
+7
+5650 3f 1
+5651 69 1
+5652 6c 1
+6c49 1d 1
+6d49 9e 1
+6d49 9e 0
+6d49 3c 0
+5653 cd 34 e0 97 69
+6
+5650 3f
+5651 69
+5652 6c
+5653 dd
+6c49 1d
+6d49 3c
+ae16 9f cd 94 8a 6c
+6
+ae16 3f
+ae17 a0
+ae18 9b
+9b34 32
+9c34 7e
+ae19 49
+7
+ae16 3f 1
+ae17 a0 1
+ae18 9b 1
+9b34 32 1
+9c34 7e 1
+9c34 7e 0
+9c34 fc 0
+ae19 9f cc 94 8a ec
+6
+9b34 32
+9c34 fc
+ae16 3f
+ae17 a0
+ae18 9b
+ae19 49
+598c e2 d6 82 14 ec
+6
+598c 3f
+598d c2
+598e 8d
+8d44 5a
+8e44 f2
+598f b6
+7
+598c 3f 1
+598d c2 1
+598e 8d 1
+8d44 5a 1
+8e44 f2 1
+8e44 f2 0
+8e44 e4 0
+598f e2 c4 82 14 ed
+6
+598c 3f
+598d c2
+598e 8d
+598f b6
+8d44 5a
+8e44 e4
+74c5 21 97 d3 d4 a2
+6
+74c5 3f
+74c6 4f
+74c7 eb
+eb22 69
+ec22 36
+74c8 22
+7
+74c5 3f 1
+74c6 4f 1
+74c7 eb 1
+eb22 69 1
+ec22 36 1
+ec22 36 0
+ec22 6c 0
+74c8 21 04 d3 d4 20
+6
+74c5 3f
+74c6 4f
+74c7 eb
+74c8 22
+eb22 69
+ec22 6c
+7c65 c6 f6 f3 df 61
+5
+7c65 3f
+7c66 02
+7c67 73
+73f5 06
+7c68 4b
+7
+7c65 3f 1
+7c66 02 1
+7c67 73 1
+73f5 06 1
+73f5 06 1
+73f5 06 0
+73f5 0d 0
+7c68 c6 04 f3 df 60
+5
+73f5 0d
+7c65 3f
+7c66 02
+7c67 73
+7c68 4b
+86ae f4 60 1f 92 e2
+5
+86ae 3f
+86af 23
+86b0 a1
+a142 e5
+86b1 70
+7
+86ae 3f 1
+86af 23 1
+86b0 a1 1
+a142 e5 1
+a142 e5 1
+a142 e5 0
+a142 ca 0
+86b1 f4 40 1f 92 61
+5
+86ae 3f
+86af 23
+86b0 a1
+86b1 70
+a142 ca
+37aa df 8b 01 7d 2d
+5
+37aa 3f
+37ab e7
+37ac c1
+c1e8 5a
+37ad 7d
+7
+37aa 3f 1
+37ab e7 1
+37ac c1 1
+c1e8 5a 1
+c1e8 5a 1
+c1e8 5a 0
+c1e8 b5 0
+37ad df 81 01 7d ac
+5
+37aa 3f
+37ab e7
+37ac c1
+37ad 7d
+c1e8 b5
+5846 81 3a 5e 5e 2e
+5
+5846 3f
+5847 a0
+5848 dd
+ddfe 52
+5849 3c
+7
+5846 3f 1
+5847 a0 1
+5848 dd 1
+ddfe 52 1
+ddfe 52 1
+ddfe 52 0
+ddfe a4 0
+5849 81 20 5e 5e 2c
+5
+5846 3f
+5847 a0
+5848 dd
+5849 3c
+ddfe a4
+c132 fa 09 3a c0 e2
+5
+c132 3f
+c133 c2
+c134 24
+24fc fc
+c135 a8
+7
+c132 3f 1
+c133 c2 1
+c134 24 1
+24fc fc 1
+24fc fc 1
+24fc fc 0
+24fc f8 0
+c135 fa 08 3a c0 61
+5
+24fc f8
+c132 3f
+c133 c2
+c134 24
+c135 a8
+1f3a 24 fc 8b 84 66
+5
+1f3a 3f
+1f3b 40
+1f3c 3b
+3bcb 56
+1f3d 19
+7
+1f3a 3f 1
+1f3b 40 1
+1f3c 3b 1
+3bcb 56 1
+3bcb 56 1
+3bcb 56 0
+3bcb ac 0
+1f3d 24 ac 8b 84 e4
+5
+1f3a 3f
+1f3b 40
+1f3c 3b
+1f3d 19
+3bcb ac
+995c 13 07 36 ae ed
+5
+995c 3f
+995d ad
+995e cb
+cbe3 b1
+995f 54
+7
+995c 3f 1
+995d ad 1
+995e cb 1
+cbe3 b1 1
+cbe3 b1 1
+cbe3 b1 0
+cbe3 63 0
+995f 13 03 36 ae 6d
+5
+995c 3f
+995d ad
+995e cb
+995f 54
+cbe3 63
+f613 54 b7 ed 39 24
+6
+f613 3f
+f614 9a
+f615 bc
+bc87 ae
+bd87 79
+f616 bd
+7
+f613 3f 1
+f614 9a 1
+f615 bc 1
+bc87 ae 1
+bd87 79 1
+bd87 79 0
+bd87 f2 0
+f616 54 b2 ed 39 a4
+6
+bc87 ae
+bd87 f2
+f613 3f
+f614 9a
+f615 bc
+f616 bd
+2563 47 ce 07 30 6d
+5
+2563 3f
+2564 8c
+2565 03
+0393 62
+2566 89
+7
+2563 3f 1
+2564 8c 1
+2565 03 1
+0393 62 1
+0393 62 1
+0393 62 0
+0393 c5 0
+2566 47 c4 07 30 ec
+5
+0393 c5
+2563 3f
+2564 8c
+2565 03
+2566 89
+e6d5 80 55 cd fa 62
+6
+e6d5 3f
+e6d6 eb
+e6d7 d0
+d0b8 36
+d1b8 c7
+e6d8 15
+7
+e6d5 3f 1
+e6d6 eb 1
+e6d7 d0 1
+d0b8 36 1
+d1b8 c7 1
+d1b8 c7 0
+d1b8 8e 0
+e6d8 80 04 cd fa 61
+6
+d0b8 36
+d1b8 8e
+e6d5 3f
+e6d6 eb
+e6d7 d0
+e6d8 15
+a891 3c cb fc 43 29
+6
+a891 3f
+a892 19
+a893 52
+5215 82
+5315 89
+a894 24
+7
+a891 3f 1
+a892 19 1
+a893 52 1
+5215 82 1
+5315 89 1
+5315 89 0
+5315 13 0
+a894 3c 03 fc 43 29
+6
+5215 82
+5315 13
+a891 3f
+a892 19
+a893 52
+a894 24
+7764 5a 3d c3 a3 2f
+6
+7764 3f
+7765 90
+7766 fb
+fb53 18
+fc53 5b
+7767 be
+7
+7764 3f 1
+7765 90 1
+7766 fb 1
+fb53 18 1
+fc53 5b 1
+fc53 5b 0
+fc53 b7 0
+7767 5a 35 c3 a3 2c
+6
+7764 3f
+7765 90
+7766 fb
+7767 be
+fb53 18
+fc53 b7
+5f04 98 5f 71 f1 6f
+6
+5f04 3f
+5f05 f5
+5f06 65
+6566 fb
+6666 e1
+5f07 52
+7
+5f04 3f 1
+5f05 f5 1
+5f06 65 1
+6566 fb 1
+6666 e1 1
+6666 e1 0
+6666 c3 0
+5f07 98 43 71 f1 6d
+6
+5f04 3f
+5f05 f5
+5f06 65
+5f07 52
+6566 fb
+6666 c3
+2632 9d c4 92 f6 a6
+6
+2632 3f
+2633 71
+2634 33
+3303 43
+3403 65
+2635 85
+7
+2632 3f 1
+2633 71 1
+2634 33 1
+3303 43 1
+3403 65 1
+3403 65 0
+3403 ca 0
+2635 9d c0 92 f6 a4
+6
+2632 3f
+2633 71
+2634 33
+2635 85
+3303 43
+3403 ca
+59cb e4 d1 ab 08 2a
+5
+59cb 3f
+59cc 24
+59cd 47
+47cf ca
+59ce 56
+7
+59cb 3f 1
+59cc 24 1
+59cd 47 1
+47cf ca 1
+47cf ca 1
+47cf ca 0
+47cf 94 0
+59ce e4 90 ab 08 a9
+5
+47cf 94
+59cb 3f
+59cc 24
+59cd 47
+59ce 56
+90bc 26 a2 8e 78 6a
+6
+90bc 3f
+90bd ff
+90be e3
+e38d 96
+e48d 8b
+90bf 72
+7
+90bc 3f 1
+90bd ff 1
+90be e3 1
+e38d 96 1
+e48d 8b 1
+e48d 8b 0
+e48d 16 0
+90bf 26 02 8e 78 69
+6
+90bc 3f
+90bd ff
+90be e3
+90bf 72
+e38d 96
+e48d 16
+237c 02 bf 40 33 60
+6
+237c 3f
+237d e0
+237e 8b
+8b20 dc
+8c20 d0
+237f 81
+7
+237c 3f 1
+237d e0 1
+237e 8b 1
+8b20 dc 1
+8c20 d0 1
+8c20 d0 0
+8c20 a0 0
+237f 02 a0 40 33 e1
+6
+237c 3f
+237d e0
+237e 8b
+237f 81
+8b20 dc
+8c20 a0
+c41a cd 7e 3b 3d 20
+5
+c41a 3f
+c41b 18
+c41c 0d
+0d53 d5
+c41d e6
+7
+c41a 3f 1
+c41b 18 1
+c41c 0d 1
+0d53 d5 1
+0d53 d5 1
+0d53 d5 0
+0d53 aa 0
+c41d cd 2a 3b 3d 21
+5
+0d53 aa
+c41a 3f
+c41b 18
+c41c 0d
+c41d e6
+a1d1 1a 04 55 39 a1
+5
+a1d1 3f
+a1d2 8e
+a1d3 a6
+a6e3 95
+a1d4 ce
+7
+a1d1 3f 1
+a1d2 8e 1
+a1d3 a6 1
+a6e3 95 1
+a6e3 95 1
+a6e3 95 0
+a6e3 2b 0
+a1d4 1a 00 55 39 23
+5
+a1d1 3f
+a1d2 8e
+a1d3 a6
+a1d4 ce
+a6e3 2b
+b216 65 86 00 ce 2a
+5
+b216 3f
+b217 6c
+b218 32
+326c 8a
+b219 45
+7
+b216 3f 1
+b217 6c 1
+b218 32 1
+326c 8a 1
+326c 8a 1
+326c 8a 0
+326c 14 0
+b219 65 04 00 ce 29
+5
+326c 14
+b216 3f
+b217 6c
+b218 32
+b219 45
+4c1e 7d d7 6e 0c 6a
+6
+4c1e 3f
+4c1f ca
+4c20 59
+5938 29
+5a38 1e
+4c21 42
+7
+4c1e 3f 1
+4c1f ca 1
+4c20 59 1
+5938 29 1
+5a38 1e 1
+5a38 1e 0
+5a38 3c 0
+4c21 7d 14 6e 0c 68
+6
+4c1e 3f
+4c1f ca
+4c20 59
+4c21 42
+5938 29
+5a38 3c
+2009 de c2 ed 30 a0
+6
+2009 3f
+200a e8
+200b 55
+55d5 3b
+56d5 ff
+200c 9f
+7
+2009 3f 1
+200a e8 1
+200b 55 1
+55d5 3b 1
+56d5 ff 1
+56d5 ff 0
+56d5 fe 0
+200c de c2 ed 30 a1
+6
+2009 3f
+200a e8
+200b 55
+200c 9f
+55d5 3b
+56d5 fe
+8bbb fc 9f 6a 4d 60
+5
+8bbb 3f
+8bbc 57
+8bbd f9
+f9c1 d9
+8bbe fa
+7
+8bbb 3f 1
+8bbc 57 1
+8bbd f9 1
+f9c1 d9 1
+f9c1 d9 1
+f9c1 d9 0
+f9c1 b2 0
+8bbe fc 92 6a 4d e1
+5
+8bbb 3f
+8bbc 57
+8bbd f9
+8bbe fa
+f9c1 b2
+98c1 bd 10 36 02 ac
+5
+98c1 3f
+98c2 8b
+98c3 d1
+d1c1 21
+98c4 42
+7
+98c1 3f 1
+98c2 8b 1
+98c3 d1 1
+d1c1 21 1
+d1c1 21 1
+d1c1 21 0
+d1c1 42 0
+98c4 bd 00 36 02 2e
+5
+98c1 3f
+98c2 8b
+98c3 d1
+98c4 42
+d1c1 42
+6043 47 9c 87 c5 27
+5
+6043 3f
+6044 61
+6045 1f
+1fe8 ab
+6046 32
+7
+6043 3f 1
+6044 61 1
+6045 1f 1
+1fe8 ab 1
+1fe8 ab 1
+1fe8 ab 0
+1fe8 57 0
+6046 47 14 87 c5 25
+5
+1fe8 57
+6043 3f
+6044 61
+6045 1f
+6046 32
+2b05 e5 df 21 e0 a3
+5
+2b05 3f
+2b06 4b
+2b07 88
+886c fc
+2b08 1d
+7
+2b05 3f 1
+2b06 4b 1
+2b07 88 1
+886c fc 1
+886c fc 1
+886c fc 0
+886c f9 0
+2b08 e5 d9 21 e0 a1
+5
+2b05 3f
+2b06 4b
+2b07 88
+2b08 1d
+886c f9
+8f6b d4 a4 61 17 64
+5
+8f6b 3f
+8f6c 1e
+8f6d 44
+447f ed
+8f6e 17
+7
+8f6b 3f 1
+8f6c 1e 1
+8f6d 44 1
+447f ed 1
+447f ed 1
+447f ed 0
+447f da 0
+8f6e d4 80 61 17 e5
+5
+447f da
+8f6b 3f
+8f6c 1e
+8f6d 44
+8f6e 17
+61d6 3c 09 56 0f 2b
+5
+61d6 3f
+61d7 9d
+61d8 21
+21f3 dc
+61d9 28
+7
+61d6 3f 1
+61d7 9d 1
+61d8 21 1
+21f3 dc 1
+21f3 dc 1
+21f3 dc 0
+21f3 b9 0
+61d9 3c 09 56 0f 29
+5
+21f3 b9
+61d6 3f
+61d7 9d
+61d8 21
+61d9 28
+83c4 fb 78 b1 5c e1
+6
+83c4 3f
+83c5 be
+83c6 47
+476f 45
+486f 01
+83c7 ed
+7
+83c4 3f 1
+83c5 be 1
+83c6 47 1
+476f 45 1
+486f 01 1
+486f 01 0
+486f 03 0
+83c7 fb 00 b1 5c 62
+6
+476f 45
+486f 03
+83c4 3f
+83c5 be
+83c6 47
+83c7 ed
+3588 23 09 49 39 29
+5
+3588 3f
+3589 2a
+358a a0
+a073 02
+358b 6d
+7
+3588 3f 1
+3589 2a 1
+358a a0 1
+a073 02 1
+a073 02 1
+a073 02 0
+a073 05 0
+358b 23 01 49 39 28
+5
+3588 3f
+3589 2a
+358a a0
+358b 6d
+a073 05
+3272 89 65 ce 4b e7
+5
+3272 3f
+3273 2a
+3274 f5
+f5f8 18
+3275 63
+7
+3272 3f 1
+3273 2a 1
+3274 f5 1
+f5f8 18 1
+f5f8 18 1
+f5f8 18 0
+f5f8 31 0
+3275 89 21 ce 4b 64
+5
+3272 3f
+3273 2a
+3274 f5
+3275 63
+f5f8 31
+e247 d9 b1 5c 0b 63
+5
+e247 3f
+e248 99
+e249 d6
+d6f5 38
+e24a 53
+7
+e247 3f 1
+e248 99 1
+e249 d6 1
+d6f5 38 1
+d6f5 38 1
+d6f5 38 0
+d6f5 71 0
+e24a d9 31 5c 0b 60
+5
+d6f5 71
+e247 3f
+e248 99
+e249 d6
+e24a 53
+62c0 d9 79 24 01 68
+5
+62c0 3f
+62c1 d3
+62c2 d9
+d9f7 9f
+62c3 4b
+7
+62c0 3f 1
+62c1 d3 1
+62c2 d9 1
+d9f7 9f 1
+d9f7 9f 1
+d9f7 9f 0
+d9f7 3e 0
+62c3 d9 38 24 01 69
+5
+62c0 3f
+62c1 d3
+62c2 d9
+62c3 4b
+d9f7 3e
+58f7 ad b4 4f 88 24
+6
+58f7 3f
+58f8 ce
+58f9 28
+281d 61
+291d 1d
+58fa 49
+7
+58f7 3f 1
+58f8 ce 1
+58f9 28 1
+281d 61 1
+291d 1d 1
+291d 1d 0
+291d 3a 0
+58fa ad 30 4f 88 24
+6
+281d 61
+291d 3a
+58f7 3f
+58f8 ce
+58f9 28
+58fa 49
+d3f9 97 fa 15 22 65
+5
+d3f9 3f
+d3fa df
+d3fb 1e
+1ef4 97
+d3fc d4
+7
+d3f9 3f 1
+d3fa df 1
+d3fb 1e 1
+1ef4 97 1
+1ef4 97 1
+1ef4 97 0
+1ef4 2f 0
+d3fc 97 2a 15 22 65
+5
+1ef4 2f
+d3f9 3f
+d3fa df
+d3fb 1e
+d3fc d4
+f3cf 60 c9 14 cc 2e
+5
+f3cf 3f
+f3d0 bf
+f3d1 bc
+bcd3 5a
+f3d2 c9
+7
+f3cf 3f 1
+f3d0 bf 1
+f3d1 bc 1
+bcd3 5a 1
+bcd3 5a 1
+bcd3 5a 0
+bcd3 b4 0
+f3d2 60 80 14 cc ac
+5
+bcd3 b4
+f3cf 3f
+f3d0 bf
+f3d1 bc
+f3d2 c9
+f890 f3 d7 2b a5 6a
+5
+f890 3f
+f891 07
+f892 32
+3232 df
+f893 59
+7
+f890 3f 1
+f891 07 1
+f892 32 1
+3232 df 1
+3232 df 1
+3232 df 0
+3232 be 0
+f893 f3 96 2b a5 e9
+5
+3232 be
+f890 3f
+f891 07
+f892 32
+f893 59
+24dc cd 44 78 5b ec
+5
+24dc 3f
+24dd 4f
+24de 80
+80c7 6a
+24df 58
+7
+24dc 3f 1
+24dd 4f 1
+24de 80 1
+80c7 6a 1
+80c7 6a 1
+80c7 6a 0
+80c7 d4 0
+24df cd 44 78 5b 6c
+5
+24dc 3f
+24dd 4f
+24de 80
+24df 58
+80c7 d4
+97ad 71 17 40 87 21
+5
+97ad 3f
+97ae 88
+97af f9
+f9c8 7b
+97b0 3d
+7
+97ad 3f 1
+97ae 88 1
+97af f9 1
+f9c8 7b 1
+f9c8 7b 1
+f9c8 7b 0
+f9c8 f7 0
+97b0 71 17 40 87 20
+5
+97ad 3f
+97ae 88
+97af f9
+97b0 3d
+f9c8 f7
+a84a f5 e6 d2 bf a1
+6
+a84a 3f
+a84b 32
+a84c 45
+4504 03
+4604 fa
+a84d fd
+7
+a84a 3f 1
+a84b 32 1
+a84c 45 1
+4504 03 1
+4604 fa 1
+4604 fa 0
+4604 f5 0
+a84d f5 e4 d2 bf a1
+6
+4504 03
+4604 f5
+a84a 3f
+a84b 32
+a84c 45
+a84d fd
+5e2b 6f 19 6a 0d 28
+6
+5e2b 3f
+5e2c a5
+5e2d ea
+ea0f be
+eb0f ad
+5e2e 18
+7
+5e2b 3f 1
+5e2c a5 1
+5e2d ea 1
+ea0f be 1
+eb0f ad 1
+eb0f ad 0
+eb0f 5a 0
+5e2e 6f 18 6a 0d 29
+6
+5e2b 3f
+5e2c a5
+5e2d ea
+5e2e 18
+ea0f be
+eb0f 5a
+15a5 da 4c a7 7f 68
+6
+15a5 3f
+15a6 71
+15a7 cf
+cf18 4f
+d018 e5
+15a8 96
+7
+15a5 3f 1
+15a6 71 1
+15a7 cf 1
+cf18 4f 1
+d018 e5 1
+d018 e5 0
+d018 ca 0
+15a8 da 48 a7 7f 69
+6
+15a5 3f
+15a6 71
+15a7 cf
+15a8 96
+cf18 4f
+d018 ca
+c113 31 99 ed 28 e5
+6
+c113 3f
+c114 90
+c115 7e
+7e7d f0
+7f7d 7f
+c116 ad
+7
+c113 3f 1
+c114 90 1
+c115 7e 1
+7e7d f0 1
+7f7d 7f 1
+7f7d 7f 0
+7f7d ff 0
+c116 31 99 ed 28 e4
+6
+7e7d f0
+7f7d ff
+c113 3f
+c114 90
+c115 7e
+c116 ad
+995e 82 6c 7e 0b 24
+6
+995e 3f
+995f 8f
+9960 00
+000d 04
+010d fa
+9961 d2
+7
+995e 3f 1
+995f 8f 1
+9960 00 1
+000d 04 1
+010d fa 1
+010d fa 0
+010d f4 0
+9961 82 64 7e 0b 25
+6
+000d 04
+010d f4
+995e 3f
+995f 8f
+9960 00
+9961 d2
+374c 23 58 20 f1 2a
+5
+374c 3f
+374d df
+374e d7
+d7ff 62
+374f c7
+7
+374c 3f 1
+374d df 1
+374e d7 1
+d7ff 62 1
+d7ff 62 1
+d7ff 62 0
+d7ff c4 0
+374f 23 40 20 f1 28
+5
+374c 3f
+374d df
+374e d7
+374f c7
+d7ff c4
+b845 48 c6 11 42 67
+5
+b845 3f
+b846 c1
+b847 9b
+9bd2 11
+b848 ba
+7
+b845 3f 1
+b846 c1 1
+b847 9b 1
+9bd2 11 1
+9bd2 11 1
+9bd2 11 0
+9bd2 23 0
+b848 48 02 11 42 64
+5
+9bd2 23
+b845 3f
+b846 c1
+b847 9b
+b848 ba
+c241 02 41 20 b8 a1
+5
+c241 3f
+c242 8e
+c243 af
+afae 2a
+c244 41
+7
+c241 3f 1
+c242 8e 1
+c243 af 1
+afae 2a 1
+afae 2a 1
+afae 2a 0
+afae 55 0
+c244 02 41 20 b8 20
+5
+afae 55
+c241 3f
+c242 8e
+c243 af
+c244 41
+dcc5 08 6d 0b 73 6c
+6
+dcc5 3f
+dcc6 f7
+dcc7 36
+3602 22
+3702 30
+dcc8 10
+7
+dcc5 3f 1
+dcc6 f7 1
+dcc7 36 1
+3602 22 1
+3702 30 1
+3702 30 0
+3702 60 0
+dcc8 08 60 0b 73 6c
+6
+3602 22
+3702 60
+dcc5 3f
+dcc6 f7
+dcc7 36
+dcc8 10
+4abb 9d 63 55 ef 6d
+6
+4abb 3f
+4abc f6
+4abd 2d
+2d4b d2
+2e4b 16
+4abe 0c
+7
+4abb 3f 1
+4abc f6 1
+4abd 2d 1
+2d4b d2 1
+2e4b 16 1
+2e4b 16 0
+2e4b 2d 0
+4abe 9d 21 55 ef 6c
+6
+2d4b d2
+2e4b 2d
+4abb 3f
+4abc f6
+4abd 2d
+4abe 0c
+043a 7f 00 06 98 60
+5
+043a 3f
+043b b4
+043c b2
+b2ba 6a
+043d 30
+7
+043a 3f 1
+043b b4 1
+043c b2 1
+b2ba 6a 1
+b2ba 6a 1
+b2ba 6a 0
+b2ba d4 0
+043d 7f 00 06 98 62
+5
+043a 3f
+043b b4
+043c b2
+043d 30
+b2ba d4
+398d f1 be 7c 48 ac
+5
+398d 3f
+398e 75
+398f 56
+56f1 74
+3990 53
+7
+398d 3f 1
+398e 75 1
+398f 56 1
+56f1 74 1
+56f1 74 1
+56f1 74 0
+56f1 e8 0
+3990 f1 a8 7c 48 ac
+5
+398d 3f
+398e 75
+398f 56
+3990 53
+56f1 e8
+942c 73 03 93 47 2d
+5
+942c 3f
+942d 12
+942e 66
+66a5 65
+942f 34
+7
+942c 3f 1
+942d 12 1
+942e 66 1
+66a5 65 1
+66a5 65 1
+66a5 65 0
+66a5 cb 0
+942f 73 03 93 47 2c
+5
+66a5 cb
+942c 3f
+942d 12
+942e 66
+942f 34
+f6c1 d3 ca a3 19 a0
+5
+f6c1 3f
+f6c2 40
+f6c3 46
+46e3 92
+f6c4 ef
+7
+f6c1 3f 1
+f6c2 40 1
+f6c3 46 1
+46e3 92 1
+46e3 92 1
+46e3 92 0
+46e3 24 0
+f6c4 d3 00 a3 19 23
+5
+46e3 24
+f6c1 3f
+f6c2 40
+f6c3 46
+f6c4 ef
+c703 57 03 21 84 ed
+6
+c703 3f
+c704 e6
+c705 10
+1007 3b
+1107 9a
+c706 e3
+7
+c703 3f 1
+c704 e6 1
+c705 10 1
+1007 3b 1
+1107 9a 1
+1107 9a 0
+1107 35 0
+c706 57 01 21 84 6d
+6
+1007 3b
+1107 35
+c703 3f
+c704 e6
+c705 10
+c706 e3
+5a7b 8f f8 74 15 2f
+6
+5a7b 3f
+5a7c fe
+5a7d 93
+9372 8b
+9472 e5
+5a7e fd
+7
+5a7b 3f 1
+5a7c fe 1
+5a7d 93 1
+9372 8b 1
+9472 e5 1
+9472 e5 0
+9472 cb 0
+5a7e 8f c8 74 15 ad
+6
+5a7b 3f
+5a7c fe
+5a7d 93
+5a7e fd
+9372 8b
+9472 cb
+f13c 65 7f f4 25 27
+6
+f13c 3f
+f13d 67
+f13e aa
+aa5b 38
+ab5b 06
+f13f 47
+7
+f13c 3f 1
+f13d 67 1
+f13e aa 1
+aa5b 38 1
+ab5b 06 1
+ab5b 06 0
+ab5b 0d 0
+f13f 65 0d f4 25 24
+6
+aa5b 38
+ab5b 0d
+f13c 3f
+f13d 67
+f13e aa
+f13f 47
+6a0c 22 d0 30 d6 26
+6
+6a0c 3f
+6a0d e3
+6a0e 08
+0813 28
+0913 3c
+6a0f 2c
+7
+6a0c 3f 1
+6a0d e3 1
+6a0e 08 1
+0813 28 1
+0913 3c 1
+0913 3c 0
+0913 78 0
+6a0f 22 50 30 d6 24
+6
+0813 28
+0913 78
+6a0c 3f
+6a0d e3
+6a0e 08
+6a0f 2c
+f289 00 13 ca db aa
+6
+f289 3f
+f28a 97
+f28b 88
+8861 b4
+8961 dc
+f28c 79
+7
+f289 3f 1
+f28a 97 1
+f28b 88 1
+8861 b4 1
+8961 dc 1
+8961 dc 0
+8961 b8 0
+f28c 00 10 ca db 29
+6
+8861 b4
+8961 b8
+f289 3f
+f28a 97
+f28b 88
+f28c 79
+3464 87 57 72 31 69
+5
+3464 3f
+3465 47
+3466 50
+50b9 9f
+3467 c3
+7
+3464 3f 1
+3465 47 1
+3466 50 1
+50b9 9f 1
+50b9 9f 1
+50b9 9f 0
+50b9 3f 0
+3467 87 17 72 31 69
+5
+3464 3f
+3465 47
+3466 50
+3467 c3
+50b9 3f
+8664 84 df 1d 69 ae
+5
+8664 3f
+8665 25
+8666 5b
+5b42 fe
+8667 7a
+7
+8664 3f 1
+8665 25 1
+8666 5b 1
+5b42 fe 1
+5b42 fe 1
+5b42 fe 0
+5b42 fc 0
+8667 84 dc 1d 69 ad
+5
+5b42 fc
+8664 3f
+8665 25
+8666 5b
+8667 7a
+c2fd b5 a3 fa ea 66
+6
+c2fd 3f
+c2fe 1c
+c2ff b3
+b316 a7
+b416 15
+c300 98
+7
+c2fd 3f 1
+c2fe 1c 1
+c2ff b3 1
+b316 a7 1
+b416 15 1
+b416 15 0
+b416 2a 0
+c300 b5 22 fa ea 64
+6
+b316 a7
+b416 2a
+c2fd 3f
+c2fe 1c
+c2ff b3
+c300 98
+cb9c a1 9e c6 d8 ef
+5
+cb9c 3f
+cb9d 29
+cb9e be
+beef ac
+cb9f 5a
+7
+cb9c 3f 1
+cb9d 29 1
+cb9e be 1
+beef ac 1
+beef ac 1
+beef ac 0
+beef 59 0
+cb9f a1 18 c6 d8 6d
+5
+beef 59
+cb9c 3f
+cb9d 29
+cb9e be
+cb9f 5a
+3b69 4d 7c f3 5e e4
+6
+3b69 3f
+3b6a 97
+3b6b e3
+e38a 3b
+e48a 97
+3b6c 6d
+7
+3b69 3f 1
+3b6a 97 1
+3b6b e3 1
+e38a 3b 1
+e48a 97 1
+e48a 97 0
+e48a 2e 0
+3b6c 4d 2c f3 5e 65
+6
+3b69 3f
+3b6a 97
+3b6b e3
+3b6c 6d
+e38a 3b
+e48a 2e
+3032 20 c4 f8 1d e7
+6
+3032 3f
+3033 47
+3034 af
+af3f 2f
+b03f 38
+3035 53
+7
+3032 3f 1
+3033 47 1
+3034 af 1
+af3f 2f 1
+b03f 38 1
+b03f 38 0
+b03f 71 0
+3035 20 40 f8 1d 64
+6
+3032 3f
+3033 47
+3034 af
+3035 53
+af3f 2f
+b03f 71
+8f11 74 95 b1 f1 24
+6
+8f11 3f
+8f12 e2
+8f13 f9
+f993 0a
+fa93 79
+8f14 f9
+7
+8f11 3f 1
+8f12 e2 1
+8f13 f9 1
+f993 0a 1
+fa93 79 1
+fa93 79 0
+fa93 f2 0
+8f14 74 90 b1 f1 a4
+6
+8f11 3f
+8f12 e2
+8f13 f9
+8f14 f9
+f993 0a
+fa93 f2
+9f25 09 25 f3 3f ef
+5
+9f25 3f
+9f26 09
+9f27 f3
+f3fc 81
+9f28 fd
+7
+9f25 3f 1
+9f26 09 1
+9f27 f3 1
+f3fc 81 1
+f3fc 81 1
+f3fc 81 0
+f3fc 03 0
+9f28 09 01 f3 3f 6d
+5
+9f25 3f
+9f26 09
+9f27 f3
+9f28 fd
+f3fc 03
+5ba0 42 e1 23 62 ac
+5
+5ba0 3f
+5ba1 1c
+5ba2 3c
+3c3f dc
+5ba3 94
+7
+5ba0 3f 1
+5ba1 1c 1
+5ba2 3c 1
+3c3f dc 1
+3c3f dc 1
+3c3f dc 0
+3c3f b8 0
+5ba3 42 a0 23 62 ad
+5
+3c3f b8
+5ba0 3f
+5ba1 1c
+5ba2 3c
+5ba3 94
+86ac 38 9e 31 08 a6
+5
+86ac 3f
+86ad 18
+86ae 8d
+8d49 00
+86af 77
+7
+86ac 3f 1
+86ad 18 1
+86ae 8d 1
+8d49 00 1
+8d49 00 1
+8d49 00 0
+8d49 00 0
+86af 38 00 31 08 26
+5
+86ac 3f
+86ad 18
+86ae 8d
+86af 77
+8d49 00
+2c69 4c 08 32 c3 af
+5
+2c69 3f
+2c6a 83
+2c6b 36
+36b5 ec
+2c6c 1b
+7
+2c69 3f 1
+2c6a 83 1
+2c6b 36 1
+36b5 ec 1
+36b5 ec 1
+36b5 ec 0
+36b5 d9 0
+2c6c 4c 08 32 c3 2d
+5
+2c69 3f
+2c6a 83
+2c6b 36
+2c6c 1b
+36b5 d9
+aad9 f8 a2 28 8d 6f
+5
+aad9 3f
+aada a7
+aadb 5e
+5ecf 78
+aadc 80
+7
+aad9 3f 1
+aada a7 1
+aadb 5e 1
+5ecf 78 1
+5ecf 78 1
+5ecf 78 0
+5ecf f1 0
+aadc f8 a0 28 8d ec
+5
+5ecf f1
+aad9 3f
+aada a7
+aadb 5e
+aadc 80
+3fa6 7d 9d d4 c5 a1
+6
+3fa6 3f
+3fa7 91
+3fa8 4e
+4e65 81
+4f65 16
+3fa9 35
+7
+3fa6 3f 1
+3fa7 91 1
+3fa8 4e 1
+4e65 81 1
+4f65 16 1
+4f65 16 0
+4f65 2d 0
+3fa9 7d 0d d4 c5 20
+6
+3fa6 3f
+3fa7 91
+3fa8 4e
+3fa9 35
+4e65 81
+4f65 2d
+a379 a4 9e 91 53 a2
+6
+a379 3f
+a37a d7
+a37b 15
+1568 ff
+1668 d4
+a37c 17
+7
+a379 3f 1
+a37a d7 1
+a37b 15 1
+1568 ff 1
+1668 d4 1
+1668 d4 0
+1668 a8 0
+a37c a4 88 91 53 a1
+6
+1568 ff
+1668 a8
+a379 3f
+a37a d7
+a37b 15
+a37c 17
+106a 2e 7c 3f 49 a3
+5
+106a 3f
+106b 85
+106c 0e
+0ec4 9b
+106d 1f
+7
+106a 3f 1
+106b 85 1
+106c 0e 1
+0ec4 9b 1
+0ec4 9b 1
+0ec4 9b 0
+0ec4 37 0
+106d 2e 34 3f 49 21
+5
+0ec4 37
+106a 3f
+106b 85
+106c 0e
+106d 1f
+1d8d 53 03 80 e3 a2
+6
+1d8d 3f
+1d8e 97
+1d8f 72
+7217 a5
+7317 33
+1d90 40
+7
+1d8d 3f 1
+1d8e 97 1
+1d8f 72 1
+7217 a5 1
+7317 33 1
+7317 33 0
+7317 66 0
+1d90 53 02 80 e3 20
+6
+1d8d 3f
+1d8e 97
+1d8f 72
+1d90 40
+7217 a5
+7317 66
+5153 cc f2 ec e5 eb
+6
+5153 3f
+5154 90
+5155 cc
+cc7c 17
+cd7c ea
+5156 89
+7
+5153 3f 1
+5154 90 1
+5155 cc 1
+cc7c 17 1
+cd7c ea 1
+cd7c ea 0
+cd7c d5 0
+5156 cc d0 ec e5 e9
+6
+5153 3f
+5154 90
+5155 cc
+5156 89
+cc7c 17
+cd7c d5
+e6ed 65 96 06 62 60
+6
+e6ed 3f
+e6ee ff
+e6ef b1
+b105 0a
+b205 0c
+e6f0 88
+7
+e6ed 3f 1
+e6ee ff 1
+e6ef b1 1
+b105 0a 1
+b205 0c 1
+b205 0c 0
+b205 18 0
+e6f0 65 10 06 62 60
+6
+b105 0a
+b205 18
+e6ed 3f
+e6ee ff
+e6ef b1
+e6f0 88
+b09b dc e1 9a 6d 6a
+6
+b09b 3f
+b09c a3
+b09d 5b
+5b3d d0
+5c3d 5b
+b09e a6
+7
+b09b 3f 1
+b09c a3 1
+b09d 5b 1
+5b3d d0 1
+5c3d 5b 1
+5c3d 5b 0
+5c3d b6 0
+b09e dc a0 9a 6d e8
+6
+5b3d d0
+5c3d b6
+b09b 3f
+b09c a3
+b09d 5b
+b09e a6
+efc4 8d 71 3e 25 ad
+5
+efc4 3f
+efc5 75
+efc6 8f
+8fb3 70
+efc7 83
+7
+efc4 3f 1
+efc5 75 1
+efc6 8f 1
+8fb3 70 1
+8fb3 70 1
+8fb3 70 0
+8fb3 e1 0
+efc7 8d 61 3e 25 2c
+5
+8fb3 e1
+efc4 3f
+efc5 75
+efc6 8f
+efc7 83
+1260 98 af 03 86 e7
+5
+1260 3f
+1261 51
+1262 90
+9054 24
+1263 78
+7
+1260 3f 1
+1261 51 1
+1262 90 1
+9054 24 1
+9054 24 1
+9054 24 0
+9054 49 0
+1263 98 09 03 86 64
+5
+1260 3f
+1261 51
+1262 90
+1263 78
+9054 49
+3abe d3 73 98 32 20
+6
+3abe 3f
+3abf d4
+3ac0 d0
+d06c 85
+d16c 81
+3ac1 08
+7
+3abe 3f 1
+3abf d4 1
+3ac0 d0 1
+d06c 85 1
+d16c 81 1
+d16c 81 0
+d16c 02 0
+3ac1 d3 02 98 32 21
+6
+3abe 3f
+3abf d4
+3ac0 d0
+3ac1 08
+d06c 85
+d16c 02
+bbf5 62 6d df ce 60
+6
+bbf5 3f
+bbf6 7c
+bbf7 ec
+ec5b cd
+ed5b fe
+bbf8 83
+7
+bbf5 3f 1
+bbf6 7c 1
+bbf7 ec 1
+ec5b cd 1
+ed5b fe 1
+ed5b fe 0
+ed5b fc 0
+bbf8 62 6c df ce 61
+6
+bbf5 3f
+bbf6 7c
+bbf7 ec
+bbf8 83
+ec5b cd
+ed5b fc
+33dd 88 42 87 03 2f
+6
+33dd 3f
+33de 80
+33df 5a
+5a07 4f
+5b07 bf
+33e0 6d
+7
+33dd 3f 1
+33de 80 1
+33df 5a 1
+5a07 4f 1
+5b07 bf 1
+5b07 bf 0
+5b07 7f 0
+33e0 88 42 87 03 2d
+6
+33dd 3f
+33de 80
+33df 5a
+33e0 6d
+5a07 4f
+5b07 7f
+8775 82 10 95 dd 25
+6
+8775 3f
+8776 ef
+8777 3c
+3c84 de
+3d84 76
+8778 90
+7
+8775 3f 1
+8776 ef 1
+8777 3c 1
+3c84 de 1
+3d84 76 1
+3d84 76 0
+3d84 ed 0
+8778 82 00 95 dd 26
+6
+3c84 de
+3d84 ed
+8775 3f
+8776 ef
+8777 3c
+8778 90
+2d93 3b df ad ff 23
+5
+2d93 3f
+2d94 04
+2d95 8a
+8ab1 55
+2d96 10
+7
+2d93 3f 1
+2d94 04 1
+2d95 8a 1
+8ab1 55 1
+8ab1 55 1
+8ab1 55 0
+8ab1 ab 0
+2d96 3b 8b ad ff a0
+5
+2d93 3f
+2d94 04
+2d95 8a
+2d96 10
+8ab1 ab
+f2c4 3a 98 48 c9 65
+5
+f2c4 3f
+f2c5 5f
+f2c6 13
+13a7 04
+f2c7 8e
+7
+f2c4 3f 1
+f2c5 5f 1
+f2c6 13 1
+13a7 04 1
+13a7 04 1
+13a7 04 0
+13a7 09 0
+f2c7 3a 08 48 c9 64
+5
+13a7 09
+f2c4 3f
+f2c5 5f
+f2c6 13
+f2c7 8e
+d51e 93 be 36 68 ab
+6
+d51e 3f
+d51f ea
+d520 5e
+5e20 13
+5f20 29
+d521 68
+7
+d51e 3f 1
+d51f ea 1
+d520 5e 1
+5e20 13 1
+5f20 29 1
+5f20 29 0
+5f20 53 0
+d521 93 12 36 68 28
+6
+5e20 13
+5f20 53
+d51e 3f
+d51f ea
+d520 5e
+d521 68
+fbdd b9 22 e5 db 2e
+6
+fbdd 3f
+fbde 7d
+fbdf da
+da62 e1
+db62 0b
+fbe0 c9
+7
+fbdd 3f 1
+fbde 7d 1
+fbdf da 1
+da62 e1 1
+db62 0b 1
+db62 0b 0
+db62 16 0
+fbe0 b9 02 e5 db 2c
+6
+da62 e1
+db62 16
+fbdd 3f
+fbde 7d
+fbdf da
+fbe0 c9
+824f 01 b8 5e ea 69
+5
+824f 3f
+8250 4e
+8251 b9
+b9ac 7f
+8252 93
+7
+824f 3f 1
+8250 4e 1
+8251 b9 1
+b9ac 7f 1
+b9ac 7f 1
+b9ac 7f 0
+b9ac ff 0
+8252 01 b8 5e ea e8
+5
+824f 3f
+8250 4e
+8251 b9
+8252 93
+b9ac ff
+b889 2d a0 ae 7f eb
+6
+b889 3f
+b88a b9
+b88b 8b
+8b67 e2
+8c67 dc
+b88c ab
+7
+b889 3f 1
+b88a b9 1
+b88b 8b 1
+8b67 e2 1
+8c67 dc 1
+8c67 dc 0
+8c67 b9 0
+b88c 2d a0 ae 7f e9
+6
+8b67 e2
+8c67 b9
+b889 3f
+b88a b9
+b88b 8b
+b88c ab
+1dfa 51 e6 6d 93 e6
+5
+1dfa 3f
+1dfb 11
+1dfc 9f
+9f7e 60
+1dfd 5c
+7
+1dfa 3f 1
+1dfb 11 1
+1dfc 9f 1
+9f7e 60 1
+9f7e 60 1
+9f7e 60 0
+9f7e c0 0
+1dfd 51 c0 6d 93 e4
+5
+1dfa 3f
+1dfb 11
+1dfc 9f
+1dfd 5c
+9f7e c0
+b624 8c e0 80 56 e0
+6
+b624 3f
+b625 ee
+b626 92
+926e 77
+936e 49
+b627 49
+7
+b624 3f 1
+b625 ee 1
+b626 92 1
+926e 77 1
+936e 49 1
+936e 49 0
+936e 92 0
+b627 8c 80 80 56 e0
+6
+926e 77
+936e 92
+b624 3f
+b625 ee
+b626 92
+b627 49
+3828 e0 67 ac 66 ec
+5
+3828 3f
+3829 0d
+382a 29
+29b9 a2
+382b 00
+7
+3828 3f 1
+3829 0d 1
+382a 29 1
+29b9 a2 1
+29b9 a2 1
+29b9 a2 0
+29b9 44 0
+382b e0 44 ac 66 6d
+5
+29b9 44
+3828 3f
+3829 0d
+382a 29
+382b 00
+2665 3c 92 dc 16 22
+6
+2665 3f
+2666 4f
+2667 34
+342b 90
+352b 50
+2668 c3
+7
+2665 3f 1
+2666 4f 1
+2667 34 1
+342b 90 1
+352b 50 1
+352b 50 0
+352b a0 0
+2668 3c 80 dc 16 a0
+6
+2665 3f
+2666 4f
+2667 34
+2668 c3
+342b 90
+352b a0
+d274 9a 23 ca c2 22
+6
+d274 3f
+d275 aa
+d276 49
+4974 2b
+4a74 1e
+d277 bf
+7
+d274 3f 1
+d275 aa 1
+d276 49 1
+4974 2b 1
+4a74 1e 1
+4a74 1e 0
+4a74 3c 0
+d277 9a 20 ca c2 20
+6
+4974 2b
+4a74 3c
+d274 3f
+d275 aa
+d276 49
+d277 bf
+e78d 7b 7c 7e a1 63
+6
+e78d 3f
+e78e e7
+e78f 3f
+3f65 95
+4065 2f
+e790 ad
+7
+e78d 3f 1
+e78e e7 1
+e78f 3f 1
+3f65 95 1
+4065 2f 1
+4065 2f 0
+4065 5f 0
+e790 7b 5c 7e a1 60
+6
+3f65 95
+4065 5f
+e78d 3f
+e78e e7
+e78f 3f
+e790 ad
+4c28 dc f4 cf 17 2e
+6
+4c28 3f
+4c29 6d
+4c2a 73
+733c 8d
+743c 8b
+4c2b 6e
+7
+4c28 3f 1
+4c29 6d 1
+4c2a 73 1
+733c 8d 1
+743c 8b 1
+743c 8b 0
+743c 16 0
+4c2b dc 14 cf 17 2d
+6
+4c28 3f
+4c29 6d
+4c2a 73
+4c2b 6e
+733c 8d
+743c 16
+2f1e 41 0e 9c 5c e3
+5
+2f1e 3f
+2f1f 42
+2f20 fa
+fade fd
+2f21 98
+7
+2f1e 3f 1
+2f1f 42 1
+2f20 fa 1
+fade fd 1
+fade fd 1
+fade fd 0
+fade fb 0
+2f21 41 0a 9c 5c 61
+5
+2f1e 3f
+2f1f 42
+2f20 fa
+2f21 98
+fade fb
+5f16 fe 21 41 73 ad
+5
+5f16 3f
+5f17 45
+5f18 02
+0286 15
+5f19 e1
+7
+5f16 3f 1
+5f17 45 1
+5f18 02 1
+0286 15 1
+0286 15 1
+0286 15 0
+0286 2b 0
+5f19 fe 21 41 73 2c
+5
+0286 2b
+5f16 3f
+5f17 45
+5f18 02
+5f19 e1
+c6e8 10 90 41 98 65
+6
+c6e8 3f
+c6e9 c6
+c6ea c5
+c507 e5
+c607 b9
+c6eb 5d
+7
+c6e8 3f 1
+c6e9 c6 1
+c6ea c5 1
+c507 e5 1
+c607 b9 1
+c607 b9 0
+c607 73 0
+c6eb 10 10 41 98 65
+6
+c507 e5
+c607 73
+c6e8 3f
+c6e9 c6
+c6ea c5
+c6eb 5d
+d8a9 3d b0 f3 42 e3
+6
+d8a9 3f
+d8aa 87
+d8ab 27
+277a 7c
+287a 90
+d8ac b2
+7
+d8a9 3f 1
+d8aa 87 1
+d8ab 27 1
+277a 7c 1
+287a 90 1
+287a 90 0
+287a 21 0
+d8ac 3d 20 f3 42 61
+6
+277a 7c
+287a 21
+d8a9 3f
+d8aa 87
+d8ab 27
+d8ac b2
+d9be 9b 98 2b 2d ac
+6
+d9be 3f
+d9bf fb
+d9c0 7b
+7b26 de
+7c26 13
+d9c1 ea
+7
+d9be 3f 1
+d9bf fb 1
+d9c0 7b 1
+7b26 de 1
+7c26 13 1
+7c26 13 0
+7c26 26 0
+d9c1 9b 00 2b 2d 2e
+6
+7b26 de
+7c26 26
+d9be 3f
+d9bf fb
+d9c0 7b
+d9c1 ea
+892d 77 c9 20 ff aa
+5
+892d 3f
+892e 46
+892f 84
+8466 40
+8930 7f
+7
+892d 3f 1
+892e 46 1
+892f 84 1
+8466 40 1
+8466 40 1
+8466 40 0
+8466 80 0
+8930 77 80 20 ff a8
+5
+8466 80
+892d 3f
+892e 46
+892f 84
+8930 7f
+8f60 de 40 dc 81 64
+6
+8f60 3f
+8f61 d8
+8f62 aa
+aab4 42
+abb4 43
+8f63 8d
+7
+8f60 3f 1
+8f61 d8 1
+8f62 aa 1
+aab4 42 1
+abb4 43 1
+abb4 43 0
+abb4 86 0
+8f63 de 00 dc 81 66
+6
+8f60 3f
+8f61 d8
+8f62 aa
+8f63 8d
+aab4 42
+abb4 86
+f006 79 4a 6f cf 65
+6
+f006 3f
+f007 de
+f008 2d
+2d4d 3e
+2e4d c7
+f009 fa
+7
+f006 3f 1
+f007 de 1
+f008 2d 1
+2d4d 3e 1
+2e4d c7 1
+2e4d c7 0
+2e4d 8f 0
+f009 79 0a 6f cf 65
+6
+2d4d 3e
+2e4d 8f
+f006 3f
+f007 de
+f008 2d
+f009 fa
+6343 6d 86 f3 e9 6e
+6
+6343 3f
+6344 db
+6345 c0
+c0ce cb
+c1ce 19
+6346 6a
+7
+6343 3f 1
+6344 db 1
+6345 c0 1
+c0ce cb 1
+c1ce 19 1
+c1ce 19 0
+c1ce 32 0
+6346 6d 02 f3 e9 6c
+6
+6343 3f
+6344 db
+6345 c0
+6346 6a
+c0ce cb
+c1ce 32
+0ff8 c4 19 eb 15 6b
+6
+0ff8 3f
+0ff9 ec
+0ffa ab
+abd7 b9
+acd7 40
+0ffb d9
+7
+0ff8 3f 1
+0ff9 ec 1
+0ffa ab 1
+abd7 b9 1
+acd7 40 1
+acd7 40 0
+acd7 81 0
+0ffb c4 01 eb 15 68
+6
+0ff8 3f
+0ff9 ec
+0ffa ab
+0ffb d9
+abd7 b9
+acd7 81
+740f 45 e7 df bb 20
+6
+740f 3f
+7410 6a
+7411 e5
+e549 c9
+e649 80
+7412 e3
+7
+740f 3f 1
+7410 6a 1
+7411 e5 1
+e549 c9 1
+e649 80 1
+e649 80 0
+e649 00 0
+7412 45 00 df bb 23
+6
+740f 3f
+7410 6a
+7411 e5
+7412 e3
+e549 c9
+e649 00
+f77b 79 f1 dc 8f e6
+6
+f77b 3f
+f77c e1
+f77d 86
+86bd c7
+87bd ca
+f77e 7f
+7
+f77b 3f 1
+f77c e1 1
+f77d 86 1
+86bd c7 1
+87bd ca 1
+87bd ca 0
+87bd 94 0
+f77e 79 90 dc 8f e5
+6
+86bd c7
+87bd 94
+f77b 3f
+f77c e1
+f77d 86
+f77e 7f
+e387 9a d5 5f 16 e9
+5
+e387 3f
+e388 12
+e389 fc
+fc71 d0
+e38a cc
+7
+e387 3f 1
+e388 12 1
+e389 fc 1
+fc71 d0 1
+fc71 d0 1
+fc71 d0 0
+fc71 a1 0
+e38a 9a 81 5f 16 e9
+5
+e387 3f
+e388 12
+e389 fc
+e38a cc
+fc71 a1
+5992 bd fe a0 52 e4
+6
+5992 3f
+5993 94
+5994 d4
+d434 2c
+d534 e1
+5995 67
+7
+5992 3f 1
+5993 94 1
+5994 d4 1
+d434 2c 1
+d534 e1 1
+d534 e1 0
+d534 c2 0
+5995 bd c2 a0 52 e5
+6
+5992 3f
+5993 94
+5994 d4
+5995 67
+d434 2c
+d534 c2
+16a4 b0 e3 78 ff 6c
+6
+16a4 3f
+16a5 a6
+16a6 a8
+a81e 5e
+a91e 4b
+16a7 a1
+7
+16a4 3f 1
+16a5 a6 1
+16a6 a8 1
+a81e 5e 1
+a91e 4b 1
+a91e 4b 0
+a91e 96 0
+16a7 b0 82 78 ff ec
+6
+16a4 3f
+16a5 a6
+16a6 a8
+16a7 a1
+a81e 5e
+a91e 96
+0ae4 a7 29 0d c1 ae
+5
+0ae4 3f
+0ae5 5e
+0ae6 05
+056b 9f
+0ae7 c8
+7
+0ae4 3f 1
+0ae5 5e 1
+0ae6 05 1
+056b 9f 1
+056b 9f 1
+056b 9f 0
+056b 3e 0
+0ae7 a7 28 0d c1 2d
+5
+056b 3e
+0ae4 3f
+0ae5 5e
+0ae6 05
+0ae7 c8
+f9b8 4a d8 ea 12 a6
+6
+f9b8 3f
+f9b9 fb
+f9ba 09
+09e5 82
+0ae5 3c
+f9bb 1c
+7
+f9b8 3f 1
+f9b9 fb 1
+f9ba 09 1
+09e5 82 1
+0ae5 3c 1
+0ae5 3c 0
+0ae5 78 0
+f9bb 4a 58 ea 12 24
+6
+09e5 82
+0ae5 78
+f9b8 3f
+f9b9 fb
+f9ba 09
+f9bb 1c
+f9dc 3c 0e 10 52 e5
+5
+f9dc 3f
+f9dd 07
+f9de bd
+bd17 de
+f9df fd
+7
+f9dc 3f 1
+f9dd 07 1
+f9de bd 1
+bd17 de 1
+bd17 de 1
+bd17 de 0
+bd17 bd 0
+f9df 3c 0c 10 52 65
+5
+bd17 bd
+f9dc 3f
+f9dd 07
+f9de bd
+f9df fd
+51a9 b1 61 ec 24 ef
+5
+51a9 3f
+51aa 0f
+51ab 4b
+4bfb ca
+51ac e6
+7
+51a9 3f 1
+51aa 0f 1
+51ab 4b 1
+4bfb ca 1
+4bfb ca 1
+4bfb ca 0
+4bfb 95 0
+51ac b1 01 ec 24 6d
+5
+4bfb 95
+51a9 3f
+51aa 0f
+51ab 4b
+51ac e6
+87a1 c5 9f 6a 78 eb
+6
+87a1 3f
+87a2 ac
+87a3 ad
+ad16 d0
+ae16 58
+87a4 09
+7
+87a1 3f 1
+87a2 ac 1
+87a3 ad 1
+ad16 d0 1
+ae16 58 1
+ae16 58 0
+ae16 b1 0
+87a4 c5 91 6a 78 e8
+6
+87a1 3f
+87a2 ac
+87a3 ad
+87a4 09
+ad16 d0
+ae16 b1
+ff46 71 ea e2 3f e3
+6
+ff46 3f
+ff47 49
+ff48 5c
+5c2b 81
+5d2b f0
+ff49 46
+7
+ff46 3f 1
+ff47 49 1
+ff48 5c 1
+5c2b 81 1
+5d2b f0 1
+5d2b f0 0
+5d2b e1 0
+ff49 71 e0 e2 3f e1
+6
+5c2b 81
+5d2b e1
+ff46 3f
+ff47 49
+ff48 5c
+ff49 46
+5cb2 e7 9c f4 e0 62
+6
+5cb2 3f
+5cb3 67
+5cb4 b6
+b65b 4e
+b75b a0
+5cb5 e2
+7
+5cb2 3f 1
+5cb3 67 1
+5cb4 b6 1
+b65b 4e 1
+b75b a0 1
+b75b a0 0
+b75b 40 0
+5cb5 e7 00 f4 e0 63
+6
+5cb2 3f
+5cb3 67
+5cb4 b6
+5cb5 e2
+b65b 4e
+b75b 40
+a7df aa 98 82 0a ee
+6
+a7df 3f
+a7e0 a9
+a7e1 b2
+b22b 55
+b32b 75
+a7e2 89
+7
+a7df 3f 1
+a7e0 a9 1
+a7e1 b2 1
+b22b 55 1
+b32b 75 1
+b32b 75 0
+b32b ea 0
+a7e2 aa 88 82 0a ec
+6
+a7df 3f
+a7e0 a9
+a7e1 b2
+a7e2 89
+b22b 55
+b32b ea
+1637 47 4b 0e 45 60
+5
+1637 3f
+1638 d2
+1639 08
+08e0 b5
+163a d4
+7
+1637 3f 1
+1638 d2 1
+1639 08 1
+08e0 b5 1
+08e0 b5 1
+08e0 b5 0
+08e0 6a 0
+163a 47 4a 0e 45 61
+5
+08e0 6a
+1637 3f
+1638 d2
+1639 08
+163a d4
+cffa 4e cb 2a cd 28
+6
+cffa 3f
+cffb d8
+cffc d0
+d002 60
+d102 5d
+cffd 99
+7
+cffa 3f 1
+cffb d8 1
+cffc d0 1
+d002 60 1
+d102 5d 1
+d102 5d 0
+d102 ba 0
+cffd 4e 8a 2a cd a8
+6
+cffa 3f
+cffb d8
+cffc d0
+cffd 99
+d002 60
+d102 ba
+382a dc 5e db db 22
+6
+382a 3f
+382b 9c
+382c f5
+f577 93
+f677 56
+382d 5a
+7
+382a 3f 1
+382b 9c 1
+382c f5 1
+f577 93 1
+f677 56 1
+f677 56 0
+f677 ac 0
+382d dc 0c db db 20
+6
+382a 3f
+382b 9c
+382c f5
+382d 5a
+f577 93
+f677 ac
+977b 44 2f 0d 72 6e
+5
+977b 3f
+977c 3e
+977d 60
+604b b9
+977e 3e
+7
+977b 3f 1
+977c 3e 1
+977d 60 1
+604b b9 1
+604b b9 1
+604b b9 0
+604b 72 0
+977e 44 22 0d 72 6d
+5
+604b 72
+977b 3f
+977c 3e
+977d 60
+977e 3e
+311a 78 a7 ac ed e0
+6
+311a 3f
+311b 95
+311c ef
+ef41 96
+f041 cf
+311d 2b
+7
+311a 3f 1
+311b 95 1
+311c ef 1
+ef41 96 1
+f041 cf 1
+f041 cf 0
+f041 9e 0
+311d 78 86 ac ed e1
+6
+311a 3f
+311b 95
+311c ef
+311d 2b
+ef41 96
+f041 9e
+99ff bd 2b b1 4d 68
+6
+99ff 3f
+9a00 ac
+9a01 fb
+fb5d 3c
+fc5d c4
+9a02 88
+7
+99ff 3f 1
+9a00 ac 1
+9a01 fb 1
+fb5d 3c 1
+fc5d c4 1
+fc5d c4 0
+fc5d 88 0
+9a02 bd 08 b1 4d 69
+6
+99ff 3f
+9a00 ac
+9a01 fb
+9a02 88
+fb5d 3c
+fc5d 88
+7eee d7 9a c5 00 a4
+6
+7eee 3f
+7eef 77
+7ef0 95
+953c db
+963c 57
+7ef1 9c
+7
+7eee 3f 1
+7eef 77 1
+7ef0 95 1
+953c db 1
+963c 57 1
+963c 57 0
+963c ae 0
+7ef1 d7 8a c5 00 a4
+6
+7eee 3f
+7eef 77
+7ef0 95
+7ef1 9c
+953c db
+963c ae
+ec23 cb 74 ee c3 2d
+6
+ec23 3f
+ec24 c5
+ec25 be
+beb3 14
+bfb3 a5
+ec26 32
+7
+ec23 3f 1
+ec24 c5 1
+ec25 be 1
+beb3 14 1
+bfb3 a5 1
+bfb3 a5 0
+bfb3 4b 0
+ec26 cb 40 ee c3 2d
+6
+beb3 14
+bfb3 4b
+ec23 3f
+ec24 c5
+ec25 be
+ec26 32
+045d b5 c8 a6 c8 ec
+5
+045d 3f
+045e 24
+045f 96
+96ca 1a
+0460 b3
+7
+045d 3f 1
+045e 24 1
+045f 96 1
+96ca 1a 1
+96ca 1a 1
+96ca 1a 0
+96ca 34 0
+0460 b5 00 a6 c8 6e
+5
+045d 3f
+045e 24
+045f 96
+0460 b3
+96ca 34
+84aa 6d 43 56 56 2a
+5
+84aa 3f
+84ab 1e
+84ac 6a
+6a74 0b
+84ad ad
+7
+84aa 3f 1
+84ab 1e 1
+84ac 6a 1
+6a74 0b 1
+6a74 0b 1
+6a74 0b 0
+6a74 16 0
+84ad 6d 02 56 56 28
+5
+6a74 16
+84aa 3f
+84ab 1e
+84ac 6a
+84ad ad
+6034 a2 b2 8a ad eb
+5
+6034 3f
+6035 6c
+6036 41
+41f6 1b
+6037 ce
+7
+6034 3f 1
+6035 6c 1
+6036 41 1
+41f6 1b 1
+41f6 1b 1
+41f6 1b 0
+41f6 37 0
+6037 a2 32 8a ad 68
+5
+41f6 37
+6034 3f
+6035 6c
+6036 41
+6037 ce
+492e 0d 81 42 7a 29
+5
+492e 3f
+492f 4a
+4930 d4
+d48c f7
+4931 0f
+7
+492e 3f 1
+492f 4a 1
+4930 d4 1
+d48c f7 1
+d48c f7 1
+d48c f7 0
+d48c ef 0
+4931 0d 81 42 7a a9
+5
+492e 3f
+492f 4a
+4930 d4
+4931 0f
+d48c ef
+bacb 7f 3e b6 c0 ac
+6
+bacb 3f
+bacc f6
+bacd 45
+45ac 56
+46ac 36
+bace f3
+7
+bacb 3f 1
+bacc f6 1
+bacd 45 1
+45ac 56 1
+46ac 36 1
+46ac 36 0
+46ac 6c 0
+bace 7f 2c b6 c0 2c
+6
+45ac 56
+46ac 6c
+bacb 3f
+bacc f6
+bacd 45
+bace f3
+5776 70 22 93 06 23
+6
+5776 3f
+5777 b4
+5778 38
+3847 b5
+3947 ab
+5779 dc
+7
+5776 3f 1
+5777 b4 1
+5778 38 1
+3847 b5 1
+3947 ab 1
+3947 ab 0
+3947 57 0
+5779 70 02 93 06 21
+6
+3847 b5
+3947 57
+5776 3f
+5777 b4
+5778 38
+5779 dc
+ca18 e0 b3 e3 9d aa
+5
+ca18 3f
+ca19 04
+ca1a 0e
+0ee7 4a
+ca1b a1
+7
+ca18 3f 1
+ca19 04 1
+ca1a 0e 1
+0ee7 4a 1
+0ee7 4a 1
+0ee7 4a 0
+0ee7 94 0
+ca1b e0 90 e3 9d a8
+5
+0ee7 94
+ca18 3f
+ca19 04
+ca1a 0e
+ca1b a1
+30bb 27 a6 c4 c4 6a
+5
+30bb 3f
+30bc 2c
+30bd 42
+42f0 f8
+30be a9
+7
+30bb 3f 1
+30bc 2c 1
+30bd 42 1
+42f0 f8 1
+42f0 f8 1
+42f0 f8 0
+42f0 f0 0
+30be 27 a0 c4 c4 e9
+5
+30bb 3f
+30bc 2c
+30bd 42
+30be a9
+42f0 f0
+d720 50 fc c3 d3 2f
+6
+d720 3f
+d721 ad
+d722 bb
+bb70 1c
+bc70 e8
+d723 26
+7
+d720 3f 1
+d721 ad 1
+d722 bb 1
+bb70 1c 1
+bc70 e8 1
+bc70 e8 0
+bc70 d1 0
+d723 50 d0 c3 d3 ad
+6
+bb70 1c
+bc70 d1
+d720 3f
+d721 ad
+d722 bb
+d723 26
+be6a 4f 41 89 e1 e0
+5
+be6a 3f
+be6b 2e
+be6c e8
+e8b7 47
+be6d 6c
+7
+be6a 3f 1
+be6b 2e 1
+be6c e8 1
+e8b7 47 1
+e8b7 47 1
+e8b7 47 0
+e8b7 8e 0
+be6d 4f 00 89 e1 62
+5
+be6a 3f
+be6b 2e
+be6c e8
+be6d 6c
+e8b7 8e
+1833 db 61 99 fe a4
+6
+1833 3f
+1834 ce
+1835 39
+3967 c0
+3a67 be
+1836 60
+7
+1833 3f 1
+1834 ce 1
+1835 39 1
+3967 c0 1
+3a67 be 1
+3a67 be 0
+3a67 7c 0
+1836 db 60 99 fe 25
+6
+1833 3f
+1834 ce
+1835 39
+1836 60
+3967 c0
+3a67 7c
+f9c8 58 a4 61 40 6f
+6
+f9c8 3f
+f9c9 ab
+f9ca 85
+850c 32
+860c 02
+f9cb d2
+7
+f9c8 3f 1
+f9c9 ab 1
+f9ca 85 1
+850c 32 1
+860c 02 1
+860c 02 0
+860c 05 0
+f9cb 58 04 61 40 6c
+6
+850c 32
+860c 05
+f9c8 3f
+f9c9 ab
+f9ca 85
+f9cb d2
+84a3 44 b3 a6 db af
+6
+84a3 3f
+84a4 63
+84a5 9c
+9c09 d3
+9d09 fa
+84a6 86
+7
+84a3 3f 1
+84a4 63 1
+84a5 9c 1
+9c09 d3 1
+9d09 fa 1
+9d09 fa 0
+9d09 f5 0
+84a6 44 b1 a6 db ad
+6
+84a3 3f
+84a4 63
+84a5 9c
+84a6 86
+9c09 d3
+9d09 f5
+e451 95 29 60 b9 ef
+5
+e451 3f
+e452 51
+e453 0a
+0ab1 f0
+e454 79
+7
+e451 3f 1
+e452 51 1
+e453 0a 1
+0ab1 f0 1
+0ab1 f0 1
+0ab1 f0 0
+0ab1 e1 0
+e454 95 21 60 b9 6d
+5
+0ab1 e1
+e451 3f
+e452 51
+e453 0a
+e454 79
+485e d4 50 db 7f ad
+6
+485e 3f
+485f 3a
+4860 b4
+b415 48
+b515 56
+4861 f0
+7
+485e 3f 1
+485f 3a 1
+4860 b4 1
+b415 48 1
+b515 56 1
+b515 56 0
+b515 ad 0
+4861 d4 00 db 7f 2e
+6
+485e 3f
+485f 3a
+4860 b4
+4861 f0
+b415 48
+b515 ad
+9b4e 91 29 63 0d e0
+6
+9b4e 3f
+9b4f d8
+9b50 58
+583b 2d
+593b 9e
+9b51 6e
+7
+9b4e 3f 1
+9b4f d8 1
+9b50 58 1
+583b 2d 1
+593b 9e 1
+593b 9e 0
+593b 3c 0
+9b51 91 28 63 0d 61
+6
+583b 2d
+593b 3c
+9b4e 3f
+9b4f d8
+9b50 58
+9b51 6e
+97d3 2c 8a 0f ba 60
+5
+97d3 3f
+97d4 31
+97d5 f2
+f240 65
+97d6 8a
+7
+97d3 3f 1
+97d4 31 1
+97d5 f2 1
+f240 65 1
+f240 65 1
+f240 65 0
+f240 ca 0
+97d6 2c 8a 0f ba e0
+5
+97d3 3f
+97d4 31
+97d5 f2
+97d6 8a
+f240 ca
+01cd c4 f1 f1 74 a8
+6
+01cd 3f
+01ce 62
+01cf 74
+7453 39
+7553 e4
+01d0 3b
+7
+01cd 3f 1
+01ce 62 1
+01cf 74 1
+7453 39 1
+7553 e4 1
+7553 e4 0
+7553 c8 0
+01d0 c4 c0 f1 74 a9
+6
+01cd 3f
+01ce 62
+01cf 74
+01d0 3b
+7453 39
+7553 c8
+ec09 c2 47 d8 80 69
+5
+ec09 3f
+ec0a 14
+ec0b 30
+30ec d0
+ec0c f0
+7
+ec09 3f 1
+ec0a 14 1
+ec0b 30 1
+30ec d0 1
+30ec d0 1
+30ec d0 0
+30ec a1 0
+ec0c c2 01 d8 80 69
+5
+30ec a1
+ec09 3f
+ec0a 14
+ec0b 30
+ec0c f0
+62e8 bb 11 0c f7 65
+5
+62e8 3f
+62e9 8e
+62ea ff
+ff9a 21
+62eb eb
+7
+62e8 3f 1
+62e9 8e 1
+62ea ff 1
+ff9a 21 1
+ff9a 21 1
+ff9a 21 0
+ff9a 43 0
+62eb bb 01 0c f7 64
+5
+62e8 3f
+62e9 8e
+62ea ff
+62eb eb
+ff9a 43
+ac80 f6 3e 45 5a 2b
+5
+ac80 3f
+ac81 54
+ac82 55
+5599 7f
+ac83 f4
+7
+ac80 3f 1
+ac81 54 1
+ac82 55 1
+5599 7f 1
+5599 7f 1
+5599 7f 0
+5599 ff 0
+ac83 f6 3e 45 5a 28
+5
+5599 ff
+ac80 3f
+ac81 54
+ac82 55
+ac83 f4
+0964 cf ff 1d 00 e9
+5
+0964 3f
+0965 1f
+0966 74
+743c 3c
+0967 9c
+7
+0964 3f 1
+0965 1f 1
+0966 74 1
+743c 3c 1
+743c 3c 1
+743c 3c 0
+743c 79 0
+0967 cf 79 1d 00 68
+5
+0964 3f
+0965 1f
+0966 74
+0967 9c
+743c 79
+a5b5 aa 7b a6 85 6e
+6
+a5b5 3f
+a5b6 bb
+a5b7 ce
+ce61 0e
+cf61 76
+a5b8 aa
+7
+a5b5 3f 1
+a5b6 bb 1
+a5b7 ce 1
+ce61 0e 1
+cf61 76 1
+cf61 76 0
+cf61 ec 0
+a5b8 aa 68 a6 85 6c
+6
+a5b5 3f
+a5b6 bb
+a5b7 ce
+a5b8 aa
+ce61 0e
+cf61 ec
+567b 33 5b e8 6f ac
+6
+567b 3f
+567c d2
+567d 1a
+1aba 7d
+1bba 73
+567e 46
+7
+567b 3f 1
+567c d2 1
+567d 1a 1
+1aba 7d 1
+1bba 73 1
+1bba 73 0
+1bba e6 0
+567e 33 42 e8 6f 2c
+6
+1aba 7d
+1bba e6
+567b 3f
+567c d2
+567d 1a
+567e 46
+9f53 52 8f e8 9b e8
+6
+9f53 3f
+9f54 61
+9f55 2f
+2f49 64
+3049 37
+9f56 84
+7
+9f53 3f 1
+9f54 61 1
+9f55 2f 1
+2f49 64 1
+3049 37 1
+3049 37 0
+3049 6e 0
+9f56 52 0e e8 9b 68
+6
+2f49 64
+3049 6e
+9f53 3f
+9f54 61
+9f55 2f
+9f56 84
+bf12 13 0d 28 5e 2b
+5
+bf12 3f
+bf13 26
+bf14 8d
+8d4e fb
+bf15 1b
+7
+bf12 3f 1
+bf13 26 1
+bf14 8d 1
+8d4e fb 1
+8d4e fb 1
+8d4e fb 0
+8d4e f7 0
+bf15 13 05 28 5e 29
+5
+8d4e f7
+bf12 3f
+bf13 26
+bf14 8d
+bf15 1b
+44c9 48 ce aa ae e6
+6
+44c9 3f
+44ca 72
+44cb 48
+481c 0f
+491c 37
+44cc a9
+7
+44c9 3f 1
+44ca 72 1
+44cb 48 1
+481c 0f 1
+491c 37 1
+491c 37 0
+491c 6e 0
+44cc 48 4e aa ae 64
+6
+44c9 3f
+44ca 72
+44cb 48
+44cc a9
+481c 0f
+491c 6e
+6c4a ed 76 0e ab a4
+5
+6c4a 3f
+6c4b 4f
+6c4c df
+df5d 42
+6c4d 74
+7
+6c4a 3f 1
+6c4b 4f 1
+6c4c df 1
+df5d 42 1
+df5d 42 1
+df5d 42 0
+df5d 84 0
+6c4d ed 04 0e ab 24
+5
+6c4a 3f
+6c4b 4f
+6c4c df
+6c4d 74
+df5d 84
+0622 b3 9b e9 b1 ae
+6
+0622 3f
+0623 6f
+0624 cd
+cd58 d1
+ce58 8b
+0625 da
+7
+0622 3f 1
+0623 6f 1
+0624 cd 1
+cd58 d1 1
+ce58 8b 1
+ce58 8b 0
+ce58 16 0
+0625 b3 12 e9 b1 2d
+6
+0622 3f
+0623 6f
+0624 cd
+0625 da
+cd58 d1
+ce58 16
+196b 20 a3 5c 14 eb
+5
+196b 3f
+196c 0d
+196d 28
+2869 e9
+196e 63
+7
+196b 3f 1
+196c 0d 1
+196d 28 1
+2869 e9 1
+2869 e9 1
+2869 e9 0
+2869 d3 0
+196e 20 83 5c 14 e9
+5
+196b 3f
+196c 0d
+196d 28
+196e 63
+2869 d3
+ce6e e0 f0 03 3f ae
+5
+ce6e 3f
+ce6f 18
+ce70 20
+201b 59
+ce71 2e
+7
+ce6e 3f 1
+ce6f 18 1
+ce70 20 1
+201b 59 1
+201b 59 1
+201b 59 0
+201b b2 0
+ce71 e0 b0 03 3f ac
+5
+201b b2
+ce6e 3f
+ce6f 18
+ce70 20
+ce71 2e
+0ed2 a6 b0 09 71 22
+6
+0ed2 3f
+0ed3 f9
+0ed4 11
+1102 a3
+1202 3a
+0ed5 a8
+7
+0ed2 3f 1
+0ed3 f9 1
+0ed4 11 1
+1102 a3 1
+1202 3a 1
+1202 3a 0
+1202 74 0
+0ed5 a6 30 09 71 20
+6
+0ed2 3f
+0ed3 f9
+0ed4 11
+0ed5 a8
+1102 a3
+1202 74
+7cb7 99 1d 79 6f a1
+5
+7cb7 3f
+7cb8 66
+7cb9 d0
+d0df 6f
+7cba 92
+7
+7cb7 3f 1
+7cb8 66 1
+7cb9 d0 1
+d0df 6f 1
+d0df 6f 1
+d0df 6f 0
+d0df df 0
+7cba 99 1d 79 6f 20
+5
+7cb7 3f
+7cb8 66
+7cb9 d0
+7cba 92
+d0df df
+cf48 fc d4 e8 a2 6c
+6
+cf48 3f
+cf49 9d
+cf4a c1
+c185 44
+c285 7c
+cf4b ed
+7
+cf48 3f 1
+cf49 9d 1
+cf4a c1 1
+c185 44 1
+c285 7c 1
+c285 7c 0
+c285 f8 0
+cf4b fc d0 e8 a2 ec
+6
+c185 44
+c285 f8
+cf48 3f
+cf49 9d
+cf4a c1
+cf4b ed
+9354 bf 41 76 a4 6a
+5
+9354 3f
+9355 5b
+9356 20
+20d1 25
+9357 cc
+7
+9354 3f 1
+9355 5b 1
+9356 20 1
+20d1 25 1
+20d1 25 1
+20d1 25 0
+20d1 4a 0
+9357 bf 40 76 a4 68
+5
+20d1 4a
+9354 3f
+9355 5b
+9356 20
+9357 cc
+7243 59 1e 92 4d e2
+6
+7243 3f
+7244 74
+7245 7b
+7b06 d2
+7c06 6c
+7246 73
+7
+7243 3f 1
+7244 74 1
+7245 7b 1
+7b06 d2 1
+7c06 6c 1
+7c06 6c 0
+7c06 d8 0
+7246 59 18 92 4d 60
+6
+7243 3f
+7244 74
+7245 7b
+7246 73
+7b06 d2
+7c06 d8
+2f9f d5 ec f5 00 e5
+5
+2f9f 3f
+2fa0 0a
+2fa1 a9
+a9ff b9
+2fa2 0f
+7
+2f9f 3f 1
+2fa0 0a 1
+2fa1 a9 1
+a9ff b9 1
+a9ff b9 1
+a9ff b9 0
+a9ff 73 0
+2fa2 d5 60 f5 00 65
+5
+2f9f 3f
+2fa0 0a
+2fa1 a9
+2fa2 0f
+a9ff 73
+9606 bb bb f8 78 68
+6
+9606 3f
+9607 f9
+9608 c3
+c3f1 78
+c4f1 6b
+9609 33
+7
+9606 3f 1
+9607 f9 1
+9608 c3 1
+c3f1 78 1
+c4f1 6b 1
+c4f1 6b 0
+c4f1 d6 0
+9609 bb 92 f8 78 e8
+6
+9606 3f
+9607 f9
+9608 c3
+9609 33
+c3f1 78
+c4f1 d6
+6989 26 ea 07 46 2c
+6
+6989 3f
+698a fa
+698b 63
+6301 4b
+6401 0e
+698c fe
+7
+6989 3f 1
+698a fa 1
+698b 63 1
+6301 4b 1
+6401 0e 1
+6401 0e 0
+6401 1c 0
+698c 26 08 07 46 2c
+6
+6301 4b
+6401 1c
+6989 3f
+698a fa
+698b 63
+698c fe
+897d 59 db 97 d7 67
+6
+897d 3f
+897e f4
+897f 8c
+8c8b 32
+8d8b 07
+8980 0f
+7
+897d 3f 1
+897e f4 1
+897f 8c 1
+8c8b 32 1
+8d8b 07 1
+8d8b 07 0
+8d8b 0f 0
+8980 59 0b 97 d7 64
+6
+897d 3f
+897e f4
+897f 8c
+8980 0f
+8c8b 32
+8d8b 0f
+cba3 4c 82 1d b3 29
+5
+cba3 3f
+cba4 6e
+cba5 5a
+5a8b 94
+cba6 3e
+7
+cba3 3f 1
+cba4 6e 1
+cba5 5a 1
+5a8b 94 1
+5a8b 94 1
+5a8b 94 0
+5a8b 29 0
+cba6 4c 00 1d b3 2b
+5
+5a8b 29
+cba3 3f
+cba4 6e
+cba5 5a
+cba6 3e
+10ca f8 30 93 74 66
+6
+10ca 3f
+10cb fc
+10cc d6
+d68f 1e
+d78f f6
+10cd de
+7
+10ca 3f 1
+10cb fc 1
+10cc d6 1
+d68f 1e 1
+d78f f6 1
+d78f f6 0
+d78f ec 0
+10cd f8 20 93 74 65
+6
+10ca 3f
+10cb fc
+10cc d6
+10cd de
+d68f 1e
+d78f ec
+c06f 79 92 c3 54 a8
+6
+c06f 3f
+c070 98
+c071 29
+295b a8
+2a5b a5
+c072 e8
+7
+c06f 3f 1
+c070 98 1
+c071 29 1
+295b a8 1
+2a5b a5 1
+2a5b a5 0
+2a5b 4a 0
+c072 79 02 c3 54 29
+6
+295b a8
+2a5b 4a
+c06f 3f
+c070 98
+c071 29
+c072 e8
+1fb1 18 4a f0 5f 6e
+6
+1fb1 3f
+1fb2 62
+1fb3 a2
+a252 ce
+a352 e1
+1fb4 57
+7
+1fb1 3f 1
+1fb2 62 1
+1fb3 a2 1
+a252 ce 1
+a352 e1 1
+a352 e1 0
+a352 c2 0
+1fb4 18 42 f0 5f 6d
+6
+1fb1 3f
+1fb2 62
+1fb3 a2
+1fb4 57
+a252 ce
+a352 c2
+2e96 a3 b6 3d ce ee
+5
+2e96 3f
+2e97 4b
+2e98 49
+4988 86
+2e99 11
+7
+2e96 3f 1
+2e97 4b 1
+2e98 49 1
+4988 86 1
+4988 86 1
+4988 86 0
+4988 0c 0
+2e99 a3 04 3d ce 6d
+5
+2e96 3f
+2e97 4b
+2e98 49
+2e99 11
+4988 0c
+99e7 8b f9 83 b1 69
+6
+99e7 3f
+99e8 c8
+99e9 8e
+8e4b 5b
+8f4b 2b
+99ea dd
+7
+99e7 3f 1
+99e8 c8 1
+99e9 8e 1
+8e4b 5b 1
+8f4b 2b 1
+8f4b 2b 0
+8f4b 57 0
+99ea 8b 51 83 b1 68
+6
+8e4b 5b
+8f4b 57
+99e7 3f
+99e8 c8
+99e9 8e
+99ea dd
+5701 b6 33 30 e4 e0
+5
+5701 3f
+5702 2c
+5703 8b
+8b5c 4d
+5704 d3
+7
+5701 3f 1
+5702 2c 1
+5703 8b 1
+8b5c 4d 1
+8b5c 4d 1
+8b5c 4d 0
+8b5c 9a 0
+5704 b6 12 30 e4 60
+5
+5701 3f
+5702 2c
+5703 8b
+5704 d3
+8b5c 9a
+096c cb 65 5b 02 e9
+6
+096c 3f
+096d aa
+096e c5
+c505 7b
+c605 f1
+096f 63
+7
+096c 3f 1
+096d aa 1
+096e c5 1
+c505 7b 1
+c605 f1 1
+c605 f1 0
+c605 e3 0
+096f cb 61 5b 02 69
+6
+096c 3f
+096d aa
+096e c5
+096f 63
+c505 7b
+c605 e3
+f81d 3b 6b 72 f0 6a
+5
+f81d 3f
+f81e 0b
+f81f 34
+347d 51
+f820 58
+7
+f81d 3f 1
+f81e 0b 1
+f81f 34 1
+347d 51 1
+347d 51 1
+347d 51 0
+347d a2 0
+f820 3b 22 72 f0 68
+5
+347d a2
+f81d 3f
+f81e 0b
+f81f 34
+f820 58
+e9bc f8 23 9e 99 62
+6
+e9bc 3f
+e9bd d3
+e9be 1a
+1a71 20
+1b71 b4
+e9bf b9
+7
+e9bc 3f 1
+e9bd d3 1
+e9be 1a 1
+1a71 20 1
+1b71 b4 1
+1b71 b4 0
+1b71 68 0
+e9bf f8 20 9e 99 61
+6
+1a71 20
+1b71 68
+e9bc 3f
+e9bd d3
+e9be 1a
+e9bf b9
+76c0 f3 c1 2a cb ef
+5
+76c0 3f
+76c1 b9
+76c2 f2
+f2e3 ac
+76c3 e3
+7
+76c0 3f 1
+76c1 b9 1
+76c2 f2 1
+f2e3 ac 1
+f2e3 ac 1
+f2e3 ac 0
+f2e3 59 0
+76c3 f3 41 2a cb 6d
+5
+76c0 3f
+76c1 b9
+76c2 f2
+76c3 e3
+f2e3 59
+d164 2d 75 f3 f0 e5
+6
+d164 3f
+d165 12
+d166 7d
+7d05 d1
+7e05 f1
+d167 6e
+7
+d164 3f 1
+d165 12 1
+d166 7d 1
+7d05 d1 1
+7e05 f1 1
+7e05 f1 0
+7e05 e3 0
+d167 2d 61 f3 f0 65
+6
+7d05 d1
+7e05 e3
+d164 3f
+d165 12
+d166 7d
+d167 6e
+e800 20 57 bb d5 2b
+5
+e800 3f
+e801 1e
+e802 dd
+ddd9 af
+e803 6a
+7
+e800 3f 1
+e801 1e 1
+e802 dd 1
+ddd9 af 1
+ddd9 af 1
+ddd9 af 0
+ddd9 5f 0
+e803 20 57 bb d5 29
+5
+ddd9 5f
+e800 3f
+e801 1e
+e802 dd
+e803 6a
+161a 8c 13 be 03 69
+5
+161a 3f
+161b 0c
+161c bc
+bcca 1d
+161d 6e
+7
+161a 3f 1
+161b 0c 1
+161c bc 1
+bcca 1d 1
+bcca 1d 1
+bcca 1d 0
+bcca 3b 0
+161d 8c 13 be 03 68
+5
+161a 3f
+161b 0c
+161c bc
+161d 6e
+bcca 3b
+6af8 8b e1 4a 20 22
+6
+6af8 3f
+6af9 fa
+6afa b4
+b444 a7
+b544 df
+6afb 3e
+7
+6af8 3f 1
+6af9 fa 1
+6afa b4 1
+b444 a7 1
+b544 df 1
+b544 df 0
+b544 be 0
+6afb 8b a0 4a 20 a1
+6
+6af8 3f
+6af9 fa
+6afa b4
+6afb 3e
+b444 a7
+b544 be
+be2c c7 c5 10 e7 e1
+5
+be2c 3f
+be2d 2a
+be2e 20
+203a ab
+be2f 16
+7
+be2c 3f 1
+be2d 2a 1
+be2e 20 1
+203a ab 1
+203a ab 1
+203a ab 0
+203a 57 0
+be2f c7 45 10 e7 61
+5
+203a 57
+be2c 3f
+be2d 2a
+be2e 20
+be2f 16
+cb52 c3 19 08 4d 2c
+5
+cb52 3f
+cb53 41
+cb54 51
+5149 fc
+cb55 1d
+7
+cb52 3f 1
+cb53 41 1
+cb54 51 1
+5149 fc 1
+5149 fc 1
+5149 fc 0
+5149 f8 0
+cb55 c3 18 08 4d 2d
+5
+5149 f8
+cb52 3f
+cb53 41
+cb54 51
+cb55 1d
+5ef7 bb 02 65 8f e7
+5
+5ef7 3f
+5ef8 53
+5ef9 f4
+f4b8 07
+5efa 39
+7
+5ef7 3f 1
+5ef8 53 1
+5ef9 f4 1
+f4b8 07 1
+f4b8 07 1
+f4b8 07 0
+f4b8 0f 0
+5efa bb 02 65 8f 64
+5
+5ef7 3f
+5ef8 53
+5ef9 f4
+5efa 39
+f4b8 0f
+86b5 95 c1 c3 6c a2
+6
+86b5 3f
+86b6 a7
+86b7 b4
+b46a a4
+b56a c4
+86b8 d5
+7
+86b5 3f 1
+86b6 a7 1
+86b7 b4 1
+b46a a4 1
+b56a c4 1
+b56a c4 0
+b56a 88 0
+86b8 95 80 c3 6c a1
+6
+86b5 3f
+86b6 a7
+86b7 b4
+86b8 d5
+b46a a4
+b56a 88
+c1b3 c5 c9 1e 4a 2b
+5
+c1b3 3f
+c1b4 ce
+c1b5 15
+15ec 7a
+c1b6 82
+7
+c1b3 3f 1
+c1b4 ce 1
+c1b5 15 1
+15ec 7a 1
+15ec 7a 1
+15ec 7a 0
+15ec f5 0
+c1b6 c5 c1 1e 4a a8
+5
+15ec f5
+c1b3 3f
+c1b4 ce
+c1b5 15
+c1b6 82
+b2f9 21 ad ab 50 68
+5
+b2f9 3f
+b2fa 48
+b2fb fd
+fdf3 18
+b2fc d7
+7
+b2f9 3f 1
+b2fa 48 1
+b2fb fd 1
+fdf3 18 1
+fdf3 18 1
+fdf3 18 0
+fdf3 30 0
+b2fc 21 20 ab 50 68
+5
+b2f9 3f
+b2fa 48
+b2fb fd
+b2fc d7
+fdf3 30
+8c5e 54 ba 8e f3 a5
+6
+8c5e 3f
+8c5f c4
+8c60 32
+3252 ee
+3352 ad
+8c61 52
+7
+8c5e 3f 1
+8c5f c4 1
+8c60 32 1
+3252 ee 1
+3352 ad 1
+3352 ad 0
+3352 5b 0
+8c61 54 1a 8e f3 25
+6
+3252 ee
+3352 5b
+8c5e 3f
+8c5f c4
+8c60 32
+8c61 52
+f6ea 63 5d 35 34 2c
+5
+f6ea 3f
+f6eb bf
+f6ec ad
+adf4 8f
+f6ed 6a
+7
+f6ea 3f 1
+f6eb bf 1
+f6ec ad 1
+adf4 8f 1
+adf4 8f 1
+adf4 8f 0
+adf4 1e 0
+f6ed 63 1c 35 34 2d
+5
+adf4 1e
+f6ea 3f
+f6eb bf
+f6ec ad
+f6ed 6a
+57ef 01 da 38 c4 e5
+5
+57ef 3f
+57f0 4c
+57f1 30
+3084 47
+57f2 7a
+7
+57ef 3f 1
+57f0 4c 1
+57f1 30 1
+3084 47 1
+3084 47 1
+3084 47 0
+3084 8f 0
+57f2 01 8a 38 c4 e4
+5
+3084 8f
+57ef 3f
+57f0 4c
+57f1 30
+57f2 7a
+731a c1 7e c0 de 23
+5
+731a 3f
+731b 2b
+731c 6c
+6ceb 63
+731d 59
+7
+731a 3f 1
+731b 2b 1
+731c 6c 1
+6ceb 63 1
+6ceb 63 1
+6ceb 63 0
+6ceb c7 0
+731d c1 46 c0 de 20
+5
+6ceb c7
+731a 3f
+731b 2b
+731c 6c
+731d 59
+6b2e a3 4a 03 03 22
+5
+6b2e 3f
+6b2f 22
+6b30 a0
+a025 3f
+6b31 08
+7
+6b2e 3f 1
+6b2f 22 1
+6b30 a0 1
+a025 3f 1
+a025 3f 1
+a025 3f 0
+a025 7e 0
+6b31 a3 4a 03 03 20
+5
+6b2e 3f
+6b2f 22
+6b30 a0
+6b31 08
+a025 7e
+5111 8a 2a b1 37 6b
+6
+5111 3f
+5112 97
+5113 e0
+e048 e1
+e148 42
+5114 30
+7
+5111 3f 1
+5112 97 1
+5113 e0 1
+e048 e1 1
+e148 42 1
+e148 42 0
+e148 85 0
+5114 8a 00 b1 37 6a
+6
+5111 3f
+5112 97
+5113 e0
+5114 30
+e048 e1
+e148 85
+f179 25 b2 b9 cb ae
+6
+f179 3f
+f17a 69
+f17b ea
+ea22 2e
+eb22 3a
+f17c 7a
+7
+f179 3f 1
+f17a 69 1
+f17b ea 1
+ea22 2e 1
+eb22 3a 1
+eb22 3a 0
+eb22 74 0
+f17c 25 30 b9 cb 2c
+6
+ea22 2e
+eb22 74
+f179 3f
+f17a 69
+f17b ea
+f17c 7a
+f36b a9 a1 aa 41 63
+6
+f36b 3f
+f36c d8
+f36d 6a
+6a82 79
+6b82 ed
+f36e a4
+7
+f36b 3f 1
+f36c d8 1
+f36d 6a 1
+6a82 79 1
+6b82 ed 1
+6b82 ed 0
+6b82 db 0
+f36e a9 81 aa 41 e1
+6
+6a82 79
+6b82 db
+f36b 3f
+f36c d8
+f36d 6a
+f36e a4
+d15a 93 d5 df 6a 6a
+6
+d15a 3f
+d15b 9d
+d15c 68
+687c ae
+697c 99
+d15d dd
+7
+d15a 3f 1
+d15b 9d 1
+d15c 68 1
+687c ae 1
+697c 99 1
+697c 99 0
+697c 32 0
+d15d 93 10 df 6a 69
+6
+687c ae
+697c 32
+d15a 3f
+d15b 9d
+d15c 68
+d15d dd
+2157 59 1a 3d 69 e7
+6
+2157 3f
+2158 d9
+2159 2a
+2a16 cb
+2b16 b5
+215a 06
+7
+2157 3f 1
+2158 d9 1
+2159 2a 1
+2a16 cb 1
+2b16 b5 1
+2b16 b5 0
+2b16 6b 0
+215a 59 0a 3d 69 65
+6
+2157 3f
+2158 d9
+2159 2a
+215a 06
+2a16 cb
+2b16 6b
+232f 28 e6 bd 1d 22
+6
+232f 3f
+2330 bf
+2331 16
+167c 5c
+177c d0
+2332 21
+7
+232f 3f 1
+2330 bf 1
+2331 16 1
+167c 5c 1
+177c d0 1
+177c d0 0
+177c a0 0
+2332 28 a0 bd 1d a1
+6
+167c 5c
+177c a0
+232f 3f
+2330 bf
+2331 16
+2332 21
+5516 41 b3 89 5b e2
+6
+5516 3f
+5517 9e
+5518 0d
+0d27 ff
+0e27 c4
+5519 8f
+7
+5516 3f 1
+5517 9e 1
+5518 0d 1
+0d27 ff 1
+0e27 c4 1
+0e27 c4 0
+0e27 88 0
+5519 41 80 89 5b e1
+6
+0d27 ff
+0e27 88
+5516 3f
+5517 9e
+5518 0d
+5519 8f
+e15b f6 f2 28 f2 69
+5
+e15b 3f
+e15c d0
+e15d f5
+f5f8 c7
+e15e 6d
+7
+e15b 3f 1
+e15c d0 1
+e15d f5 1
+f5f8 c7 1
+f5f8 c7 1
+f5f8 c7 0
+f5f8 8f 0
+e15e f6 82 28 f2 e9
+5
+e15b 3f
+e15c d0
+e15d f5
+e15e 6d
+f5f8 8f
+eace 47 22 88 53 aa
+6
+eace 3f
+eacf be
+ead0 7b
+7b46 a7
+7c46 48
+ead1 f8
+7
+eace 3f 1
+eacf be 1
+ead0 7b 1
+7b46 a7 1
+7c46 48 1
+7c46 48 0
+7c46 90 0
+ead1 47 00 88 53 2a
+6
+7b46 a7
+7c46 90
+eace 3f
+eacf be
+ead0 7b
+ead1 f8
+5a5e f4 19 74 84 ed
+6
+5a5e 3f
+5a5f 9f
+5a60 12
+1213 b5
+1313 d1
+5a61 1b
+7
+5a5e 3f 1
+5a5f 9f 1
+5a60 12 1
+1213 b5 1
+1313 d1 1
+1313 d1 0
+1313 a3 0
+5a61 f4 01 74 84 6d
+6
+1213 b5
+1313 a3
+5a5e 3f
+5a5f 9f
+5a60 12
+5a61 1b
+37e3 72 d5 0b cb ad
+5
+37e3 3f
+37e4 68
+37e5 42
+4273 de
+37e6 e6
+7
+37e3 3f 1
+37e4 68 1
+37e5 42 1
+4273 de 1
+4273 de 1
+4273 de 0
+4273 bd 0
+37e6 72 95 0b cb ad
+5
+37e3 3f
+37e4 68
+37e5 42
+37e6 e6
+4273 bd
+16c4 bc 41 a9 56 6f
+5
+16c4 3f
+16c5 46
+16c6 34
+34ef 51
+16c7 51
+7
+16c4 3f 1
+16c5 46 1
+16c6 34 1
+34ef 51 1
+34ef 51 1
+34ef 51 0
+34ef a3 0
+16c7 bc 01 a9 56 6c
+5
+16c4 3f
+16c5 46
+16c6 34
+16c7 51
+34ef a3
+02b6 6f 09 e4 42 69
+6
+02b6 3f
+02b7 9b
+02b8 a6
+a67f e4
+a77f e8
+02b9 81
+7
+02b6 3f 1
+02b7 9b 1
+02b8 a6 1
+a67f e4 1
+a77f e8 1
+a77f e8 0
+a77f d1 0
+02b9 6f 01 e4 42 69
+6
+02b6 3f
+02b7 9b
+02b8 a6
+02b9 81
+a67f e4
+a77f d1
+671f b8 b7 ad 4f 2e
+6
+671f 3f
+6720 9d
+6721 69
+694a ed
+6a4a 51
+6722 6e
+7
+671f 3f 1
+6720 9d 1
+6721 69 1
+694a ed 1
+6a4a 51 1
+6a4a 51 0
+6a4a a2 0
+6722 b8 a2 ad 4f ac
+6
+671f 3f
+6720 9d
+6721 69
+6722 6e
+694a ed
+6a4a a2
+82e9 0b 48 0a 05 27
+5
+82e9 3f
+82ea 03
+82eb 52
+520d df
+82ec 77
+7
+82e9 3f 1
+82ea 03 1
+82eb 52 1
+520d df 1
+520d df 1
+520d df 0
+520d bf 0
+82ec 0b 08 0a 05 25
+5
+520d bf
+82e9 3f
+82ea 03
+82eb 52
+82ec 77
+7809 02 10 3d e1 61
+6
+7809 3f
+780a ee
+780b d2
+d22b cd
+d32b 0f
+780c 25
+7
+7809 3f 1
+780a ee 1
+780b d2 1
+d22b cd 1
+d32b 0f 1
+d32b 0f 0
+d32b 1f 0
+780c 02 10 3d e1 60
+6
+7809 3f
+780a ee
+780b d2
+780c 25
+d22b cd
+d32b 1f
+79ff 96 99 49 33 a3
+6
+79ff 3f
+7a00 ee
+7a01 a4
+a437 bd
+a537 86
+7a02 55
+7
+79ff 3f 1
+7a00 ee 1
+7a01 a4 1
+a437 bd 1
+a537 86 1
+a537 86 0
+a537 0d 0
+7a02 96 09 49 33 21
+6
+79ff 3f
+7a00 ee
+7a01 a4
+7a02 55
+a437 bd
+a537 0d
+fcf5 a8 e0 04 c3 2a
+5
+fcf5 3f
+fcf6 f4
+fcf7 18
+18f8 ee
+fcf8 77
+7
+fcf5 3f 1
+fcf6 f4 1
+fcf7 18 1
+18f8 ee 1
+18f8 ee 1
+18f8 ee 0
+18f8 dc 0
+fcf8 a8 c0 04 c3 a9
+5
+18f8 dc
+fcf5 3f
+fcf6 f4
+fcf7 18
+fcf8 77
+25ce 10 22 10 14 af
+5
+25ce 3f
+25cf 1c
+25d0 6f
+6f2c 3b
+25d1 56
+7
+25ce 3f 1
+25cf 1c 1
+25d0 6f 1
+6f2c 3b 1
+6f2c 3b 1
+6f2c 3b 0
+6f2c 77 0
+25d1 10 22 10 14 2c
+5
+25ce 3f
+25cf 1c
+25d0 6f
+25d1 56
+6f2c 77
+cc71 a9 e2 80 5a a6
+6
+cc71 3f
+cc72 ae
+cc73 e4
+e42e 83
+e52e 96
+cc74 b7
+7
+cc71 3f 1
+cc72 ae 1
+cc73 e4 1
+e42e 83 1
+e52e 96 1
+e52e 96 0
+e52e 2c 0
+cc74 a9 20 80 5a 25
+6
+cc71 3f
+cc72 ae
+cc73 e4
+cc74 b7
+e42e 83
+e52e 2c
+f96a 08 c7 dc 38 2e
+6
+f96a 3f
+f96b 3c
+f96c 70
+7018 ee
+7118 fe
+f96d 75
+7
+f96a 3f 1
+f96b 3c 1
+f96c 70 1
+7018 ee 1
+7118 fe 1
+7118 fe 0
+7118 fc 0
+f96d 08 c4 dc 38 ad
+6
+7018 ee
+7118 fc
+f96a 3f
+f96b 3c
+f96c 70
+f96d 75
+48b1 32 1b 3d 37 a4
+5
+48b1 3f
+48b2 af
+48b3 a4
+a4ec b1
+48b4 bb
+7
+48b1 3f 1
+48b2 af 1
+48b3 a4 1
+a4ec b1 1
+a4ec b1 1
+a4ec b1 0
+a4ec 62 0
+48b4 32 02 3d 37 25
+5
+48b1 3f
+48b2 af
+48b3 a4
+48b4 bb
+a4ec 62
+8cf2 4c 37 31 fa e9
+6
+8cf2 3f
+8cf3 e7
+8cf4 ab
+ab18 b1
+ac18 97
+8cf5 fa
+7
+8cf2 3f 1
+8cf3 e7 1
+8cf4 ab 1
+ab18 b1 1
+ac18 97 1
+ac18 97 0
+ac18 2f 0
+8cf5 4c 27 31 fa 69
+6
+8cf2 3f
+8cf3 e7
+8cf4 ab
+8cf5 fa
+ab18 b1
+ac18 2f
+8882 92 2a 25 73 29
+5
+8882 3f
+8883 1b
+8884 6e
+6e40 c3
+8885 b2
+7
+8882 3f 1
+8883 1b 1
+8884 6e 1
+6e40 c3 1
+6e40 c3 1
+6e40 c3 0
+6e40 87 0
+8885 92 02 25 73 29
+5
+6e40 87
+8882 3f
+8883 1b
+8884 6e
+8885 b2
+37eb d0 fd 89 20 a4
+5
+37eb 3f
+37ec 41
+37ed 83
+83ca 96
+37ee c1
+7
+37eb 3f 1
+37ec 41 1
+37ed 83 1
+83ca 96 1
+83ca 96 1
+83ca 96 0
+83ca 2c 0
+37ee d0 2c 89 20 25
+5
+37eb 3f
+37ec 41
+37ed 83
+37ee c1
+83ca 2c
+84e9 7b f8 f1 49 ae
+6
+84e9 3f
+84ea 5a
+84eb 81
+814b d3
+824b 65
+84ec 02
+7
+84e9 3f 1
+84ea 5a 1
+84eb 81 1
+814b d3 1
+824b 65 1
+824b 65 0
+824b ca 0
+84ec 7b c8 f1 49 ac
+6
+814b d3
+824b ca
+84e9 3f
+84ea 5a
+84eb 81
+84ec 02
+85c2 18 91 f3 65 e6
+6
+85c2 3f
+85c3 aa
+85c4 a7
+a79d 99
+a89d 68
+85c5 92
+7
+85c2 3f 1
+85c3 aa 1
+85c4 a7 1
+a79d 99 1
+a89d 68 1
+a89d 68 0
+a89d d0 0
+85c5 18 90 f3 65 e4
+6
+85c2 3f
+85c3 aa
+85c4 a7
+85c5 92
+a79d 99
+a89d d0
+64d7 8d 17 95 59 a5
+6
+64d7 3f
+64d8 e8
+64d9 ed
+ed7d 5c
+ee7d 91
+64da e5
+7
+64d7 3f 1
+64d8 e8 1
+64d9 ed 1
+ed7d 5c 1
+ee7d 91 1
+ee7d 91 0
+ee7d 23 0
+64da 8d 03 95 59 25
+6
+64d7 3f
+64d8 e8
+64d9 ed
+64da e5
+ed7d 5c
+ee7d 23
+d21f bb f8 ac 9b a3
+6
+d21f 3f
+d220 c1
+d221 fe
+fe6d 69
+ff6d 94
+d222 ce
+7
+d21f 3f 1
+d220 c1 1
+d221 fe 1
+fe6d 69 1
+ff6d 94 1
+ff6d 94 0
+ff6d 29 0
+d222 bb 28 ac 9b 21
+6
+d21f 3f
+d220 c1
+d221 fe
+d222 ce
+fe6d 69
+ff6d 29
+009e ea 22 a9 ec 62
+6
+009e 3f
+009f c6
+00a0 1b
+1b6f 1b
+1c6f f0
+00a1 fa
+7
+009e 3f 1
+009f c6 1
+00a0 1b 1
+1b6f 1b 1
+1c6f f0 1
+1c6f f0 0
+1c6f e0 0
+00a1 ea 20 a9 ec 61
+6
+009e 3f
+009f c6
+00a0 1b
+00a1 fa
+1b6f 1b
+1c6f e0
+1132 d1 08 1e c2 ad
+5
+1132 3f
+1133 b2
+1134 46
+46d0 5d
+1135 1a
+7
+1132 3f 1
+1133 b2 1
+1134 46 1
+46d0 5d 1
+46d0 5d 1
+46d0 5d 0
+46d0 bb 0
+1135 d1 08 1e c2 2c
+5
+1132 3f
+1133 b2
+1134 46
+1135 1a
+46d0 bb
+4088 db 81 19 83 aa
+5
+4088 3f
+4089 02
+408a dd
+dd1b 9e
+408b 59
+7
+4088 3f 1
+4089 02 1
+408a dd 1
+dd1b 9e 1
+dd1b 9e 1
+dd1b 9e 0
+dd1b 3c 0
+408b db 00 19 83 2b
+5
+4088 3f
+4089 02
+408a dd
+408b 59
+dd1b 3c
+8571 db dd 6a c3 e5
+5
+8571 3f
+8572 7b
+8573 04
+04e5 5e
+8574 6f
+7
+8571 3f 1
+8572 7b 1
+8573 04 1
+04e5 5e 1
+04e5 5e 1
+04e5 5e 0
+04e5 bd 0
+8574 db 9d 6a c3 e4
+5
+04e5 bd
+8571 3f
+8572 7b
+8573 04
+8574 6f
+6240 0c 26 17 e2 a7
+5
+6240 3f
+6241 01
+6242 5f
+5f18 07
+6243 7b
+7
+6240 3f 1
+6241 01 1
+6242 5f 1
+5f18 07 1
+5f18 07 1
+5f18 07 0
+5f18 0f 0
+6243 0c 06 17 e2 24
+5
+5f18 0f
+6240 3f
+6241 01
+6242 5f
+6243 7b
+656b 07 ed e6 44 68
+6
+656b 3f
+656c c4
+656d f0
+f0aa 9e
+f1aa a2
+656e 8d
+7
+656b 3f 1
+656c c4 1
+656d f0 1
+f0aa 9e 1
+f1aa a2 1
+f1aa a2 0
+f1aa 44 0
+656e 07 44 e6 44 69
+6
+656b 3f
+656c c4
+656d f0
+656e 8d
+f0aa 9e
+f1aa 44
+9a22 b0 7b 7e 69 e6
+6
+9a22 3f
+9a23 a9
+9a24 eb
+eb27 2e
+ec27 36
+9a25 8c
+7
+9a22 3f 1
+9a23 a9 1
+9a24 eb 1
+eb27 2e 1
+ec27 36 1
+ec27 36 0
+ec27 6c 0
+9a25 b0 68 7e 69 64
+6
+9a22 3f
+9a23 a9
+9a24 eb
+9a25 8c
+eb27 2e
+ec27 6c
+9f1d 72 e9 cd d6 a3
+6
+9f1d 3f
+9f1e 4c
+9f1f 02
+0219 97
+0319 34
+9f20 7f
+7
+9f1d 3f 1
+9f1e 4c 1
+9f1f 02 1
+0219 97 1
+0319 34 1
+0319 34 0
+0319 69 0
+9f20 72 69 cd d6 20
+6
+0219 97
+0319 69
+9f1d 3f
+9f1e 4c
+9f1f 02
+9f20 7f
+5607 96 e0 05 cf af
+5
+5607 3f
+5608 68
+5609 ff
+ff6d 36
+560a b0
+7
+5607 3f 1
+5608 68 1
+5609 ff 1
+ff6d 36 1
+ff6d 36 1
+ff6d 36 0
+ff6d 6d 0
+560a 96 60 05 cf 2c
+5
+5607 3f
+5608 68
+5609 ff
+560a b0
+ff6d 6d
+ce66 44 d9 26 58 ec
+5
+ce66 3f
+ce67 a1
+ce68 5b
+5bc7 81
+ce69 a7
+7
+ce66 3f 1
+ce67 a1 1
+ce68 5b 1
+5bc7 81 1
+5bc7 81 1
+5bc7 81 0
+5bc7 02 0
+ce69 44 00 26 58 6f
+5
+5bc7 02
+ce66 3f
+ce67 a1
+ce68 5b
+ce69 a7
+d0d9 b1 88 1c 41 ad
+5
+d0d9 3f
+d0da c3
+d0db 6d
+6ddf 31
+d0dc ef
+7
+d0d9 3f 1
+d0da c3 1
+d0db 6d 1
+6ddf 31 1
+6ddf 31 1
+6ddf 31 0
+6ddf 63 0
+d0dc b1 00 1c 41 2e
+5
+6ddf 63
+d0d9 3f
+d0da c3
+d0db 6d
+d0dc ef
+d364 1e c1 7b a6 eb
+5
+d364 3f
+d365 10
+d366 94
+948b 79
+d367 13
+7
+d364 3f 1
+d365 10 1
+d366 94 1
+948b 79 1
+948b 79 1
+948b 79 0
+948b f3 0
+d367 1e c1 7b a6 e8
+5
+948b f3
+d364 3f
+d365 10
+d366 94
+d367 13
+4a78 7f 29 91 70 e1
+5
+4a78 3f
+4a79 4c
+4a7a e8
+e8dd 23
+4a7b de
+7
+4a78 3f 1
+4a79 4c 1
+4a7a e8 1
+e8dd 23 1
+e8dd 23 1
+e8dd 23 0
+e8dd 47 0
+4a7b 7f 01 91 70 60
+5
+4a78 3f
+4a79 4c
+4a7a e8
+4a7b de
+e8dd 47
+7c9c c6 2b 57 b2 67
+5
+7c9c 3f
+7c9d 89
+7c9e 2e
+2ee0 6a
+7c9f a6
+7
+7c9c 3f 1
+7c9d 89 1
+7c9e 2e 1
+2ee0 6a 1
+2ee0 6a 1
+2ee0 6a 0
+2ee0 d5 0
+7c9f c6 01 57 b2 64
+5
+2ee0 d5
+7c9c 3f
+7c9d 89
+7c9e 2e
+7c9f a6
+b479 1a 53 e6 7e e3
+6
+b479 3f
+b47a 82
+b47b ec
+ec68 10
+ed68 1c
+b47c 59
+7
+b479 3f 1
+b47a 82 1
+b47b ec 1
+ec68 10 1
+ed68 1c 1
+ed68 1c 0
+ed68 39 0
+b47c 1a 11 e6 7e 60
+6
+b479 3f
+b47a 82
+b47b ec
+b47c 59
+ec68 10
+ed68 39
+2fac 0b 43 74 e8 a3
+5
+2fac 3f
+2fad 4e
+2fae 19
+19c2 66
+2faf 1f
+7
+2fac 3f 1
+2fad 4e 1
+2fae 19 1
+19c2 66 1
+19c2 66 1
+19c2 66 0
+19c2 cd 0
+2faf 0b 41 74 e8 20
+5
+19c2 cd
+2fac 3f
+2fad 4e
+2fae 19
+2faf 1f
+4224 57 c1 56 24 27
+5
+4224 3f
+4225 36
+4226 62
+628c ab
+4227 85
+7
+4224 3f 1
+4225 36 1
+4226 62 1
+628c ab 1
+628c ab 1
+628c ab 0
+628c 57 0
+4227 57 41 56 24 25
+5
+4224 3f
+4225 36
+4226 62
+4227 85
+628c 57
+94ab ff 5a 7c 54 6e
+5
+94ab 3f
+94ac 53
+94ad 76
+76cf 70
+94ae 9e
+7
+94ab 3f 1
+94ac 53 1
+94ad 76 1
+76cf 70 1
+76cf 70 1
+76cf 70 0
+76cf e0 0
+94ae ff 40 7c 54 6c
+5
+76cf e0
+94ab 3f
+94ac 53
+94ad 76
+94ae 9e
+9acc 21 9c 1c 55 a7
+5
+9acc 3f
+9acd 58
+9ace d1
+d174 ab
+9acf c7
+7
+9acc 3f 1
+9acd 58 1
+9ace d1 1
+d174 ab 1
+d174 ab 1
+d174 ab 0
+d174 57 0
+9acf 21 14 1c 55 25
+5
+9acc 3f
+9acd 58
+9ace d1
+9acf c7
+d174 57
+3de5 43 1a 25 60 a0
+5
+3de5 3f
+3de6 a7
+3de7 20
+20cc 5a
+3de8 b9
+7
+3de5 3f 1
+3de6 a7 1
+3de7 20 1
+20cc 5a 1
+20cc 5a 1
+20cc 5a 0
+20cc b4 0
+3de8 43 10 25 60 20
+5
+20cc b4
+3de5 3f
+3de6 a7
+3de7 20
+3de8 b9
+a012 24 08 06 0d a0
+5
+a012 3f
+a013 f4
+a014 78
+78fa c2
+a015 0d
+7
+a012 3f 1
+a013 f4 1
+a014 78 1
+78fa c2 1
+78fa c2 1
+78fa c2 0
+78fa 84 0
+a015 24 00 06 0d 23
+5
+78fa 84
+a012 3f
+a013 f4
+a014 78
+a015 0d
+ffb8 8a e7 94 dc 6f
+5
+ffb8 3f
+ffb9 05
+ffba 49
+4999 41
+ffbb 23
+7
+ffb8 3f 1
+ffb9 05 1
+ffba 49 1
+4999 41 1
+4999 41 1
+4999 41 0
+4999 83 0
+ffbb 8a 83 94 dc ec
+5
+4999 83
+ffb8 3f
+ffb9 05
+ffba 49
+ffbb 23
+ce86 e5 62 3b 03 61
+5
+ce86 3f
+ce87 a0
+ce88 f7
+f7db c7
+ce89 45
+7
+ce86 3f 1
+ce87 a0 1
+ce88 f7 1
+f7db c7 1
+f7db c7 1
+f7db c7 0
+f7db 8f 0
+ce89 e5 02 3b 03 61
+5
+ce86 3f
+ce87 a0
+ce88 f7
+ce89 45
+f7db 8f
+2166 f5 44 8b 64 26
+5
+2166 3f
+2167 74
+2168 9f
+9fff ae
+2169 9f
+7
+2166 3f 1
+2167 74 1
+2168 9f 1
+9fff ae 1
+9fff ae 1
+9fff ae 0
+9fff 5c 0
+2169 f5 44 8b 64 25
+5
+2166 3f
+2167 74
+2168 9f
+2169 9f
+9fff 5c
+3392 48 df 7d ba ac
+5
+3392 3f
+3393 5e
+3394 ff
+ffdb d3
+3395 31
+7
+3392 3f 1
+3393 5e 1
+3394 ff 1
+ffdb d3 1
+ffdb d3 1
+ffdb d3 0
+ffdb a6 0
+3395 48 86 7d ba ad
+5
+3392 3f
+3393 5e
+3394 ff
+3395 31
+ffdb a6
+2d70 de 89 ef 30 67
+6
+2d70 3f
+2d71 16
+2d72 6a
+6a05 0f
+6b05 d6
+2d73 41
+7
+2d70 3f 1
+2d71 16 1
+2d72 6a 1
+6a05 0f 1
+6b05 d6 1
+6b05 d6 0
+6b05 ad 0
+2d73 de 89 ef 30 e5
+6
+2d70 3f
+2d71 16
+2d72 6a
+2d73 41
+6a05 0f
+6b05 ad
+50b6 80 13 a1 18 a0
+5
+50b6 3f
+50b7 0c
+50b8 22
+22ad 34
+50b9 6a
+7
+50b6 3f 1
+50b7 0c 1
+50b8 22 1
+22ad 34 1
+22ad 34 1
+22ad 34 0
+22ad 68 0
+50b9 80 00 a1 18 22
+5
+22ad 68
+50b6 3f
+50b7 0c
+50b8 22
+50b9 6a
+b529 67 f7 f3 cc e2
+6
+b529 3f
+b52a fa
+b52b bf
+bfed 23
+c0ed 6a
+b52c 53
+7
+b529 3f 1
+b52a fa 1
+b52b bf 1
+bfed 23 1
+c0ed 6a 1
+c0ed 6a 0
+c0ed d4 0
+b52c 67 d4 f3 cc e0
+6
+b529 3f
+b52a fa
+b52b bf
+b52c 53
+bfed 23
+c0ed d4
+2d1a a6 36 3f e9 26
+5
+2d1a 3f
+2d1b 1b
+2d1c c0
+c05a ae
+2d1d 1d
+7
+2d1a 3f 1
+2d1b 1b 1
+2d1c c0 1
+c05a ae 1
+c05a ae 1
+c05a ae 0
+c05a 5c 0
+2d1d a6 14 3f e9 25
+5
+2d1a 3f
+2d1b 1b
+2d1c c0
+2d1d 1d
+c05a 5c
+2ff8 c5 e9 6c 29 64
+5
+2ff8 3f
+2ff9 83
+2ffa fe
+feef 38
+2ffb 01
+7
+2ff8 3f 1
+2ff9 83 1
+2ffa fe 1
+feef 38 1
+feef 38 1
+feef 38 0
+feef 70 0
+2ffb c5 60 6c 29 64
+5
+2ff8 3f
+2ff9 83
+2ffa fe
+2ffb 01
+feef 70
+b3eb e0 ee 94 27 e6
+6
+b3eb 3f
+b3ec 81
+b3ed 62
+6215 e4
+6315 2f
+b3ee 6b
+7
+b3eb 3f 1
+b3ec 81 1
+b3ed 62 1
+6215 e4 1
+6315 2f 1
+6315 2f 0
+6315 5e 0
+b3ee e0 4e 94 27 64
+6
+6215 e4
+6315 5e
+b3eb 3f
+b3ec 81
+b3ed 62
+b3ee 6b
+4c57 53 0c 68 53 2a
+6
+4c57 3f
+4c58 a6
+4c59 ae
+ae0e ae
+af0e db
+4c5a a8
+7
+4c57 3f 1
+4c58 a6 1
+4c59 ae 1
+ae0e ae 1
+af0e db 1
+af0e db 0
+af0e b6 0
+4c5a 53 04 68 53 29
+6
+4c57 3f
+4c58 a6
+4c59 ae
+4c5a a8
+ae0e ae
+af0e b6
+f0e0 86 04 1e ac ec
+5
+f0e0 3f
+f0e1 0d
+f0e2 8e
+8e2b 84
+f0e3 e1
+7
+f0e0 3f 1
+f0e1 0d 1
+f0e2 8e 1
+8e2b 84 1
+8e2b 84 1
+8e2b 84 0
+8e2b 08 0
+f0e3 86 00 1e ac 6f
+5
+8e2b 08
+f0e0 3f
+f0e1 0d
+f0e2 8e
+f0e3 e1
+afb5 0c f4 39 d1 a2
+5
+afb5 3f
+afb6 6e
+afb7 e3
+e3a7 9a
+afb8 5b
+7
+afb5 3f 1
+afb6 6e 1
+afb7 e3 1
+e3a7 9a 1
+e3a7 9a 1
+e3a7 9a 0
+e3a7 34 0
+afb8 0c 34 39 d1 21
+5
+afb5 3f
+afb6 6e
+afb7 e3
+afb8 5b
+e3a7 34
+3f44 72 cd 36 65 27
+5
+3f44 3f
+3f45 58
+3f46 33
+338e 7c
+3f47 43
+7
+3f44 3f 1
+3f45 58 1
+3f46 33 1
+338e 7c 1
+338e 7c 1
+338e 7c 0
+338e f9 0
+3f47 72 c9 36 65 a4
+5
+338e f9
+3f44 3f
+3f45 58
+3f46 33
+3f47 43
+b87c ad 36 3c 8c 62
+5
+b87c 3f
+b87d 01
+b87e ab
+ab3d 8d
+b87f fc
+7
+b87c 3f 1
+b87d 01 1
+b87e ab 1
+ab3d 8d 1
+ab3d 8d 1
+ab3d 8d 0
+ab3d 1a 0
+b87f ad 12 3c 8c 61
+5
+ab3d 1a
+b87c 3f
+b87d 01
+b87e ab
+b87f fc
+51f5 b1 11 79 3b 6a
+5
+51f5 3f
+51f6 29
+51f7 c4
+c4a2 b1
+51f8 0f
+7
+51f5 3f 1
+51f6 29 1
+51f7 c4 1
+c4a2 b1 1
+c4a2 b1 1
+c4a2 b1 0
+c4a2 62 0
+51f8 b1 00 79 3b 6b
+5
+51f5 3f
+51f6 29
+51f7 c4
+51f8 0f
+c4a2 62
+4d7f 83 26 cd a5 60
+6
+4d7f 3f
+4d80 38
+4d81 3d
+3d05 0c
+3e05 4c
+4d82 b5
+7
+4d7f 3f 1
+4d80 38 1
+4d81 3d 1
+3d05 0c 1
+3e05 4c 1
+3e05 4c 0
+3e05 98 0
+4d82 83 00 cd a5 62
+6
+3d05 0c
+3e05 98
+4d7f 3f
+4d80 38
+4d81 3d
+4d82 b5
+fb67 43 72 97 ee 63
+6
+fb67 3f
+fb68 d5
+fb69 94
+946c 4d
+956c 62
+fb6a 00
+7
+fb67 3f 1
+fb68 d5 1
+fb69 94 1
+946c 4d 1
+956c 62 1
+956c 62 0
+956c c5 0
+fb6a 43 40 97 ee 60
+6
+946c 4d
+956c c5
+fb67 3f
+fb68 d5
+fb69 94
+fb6a 00
+ef04 69 e0 a8 be ee
+6
+ef04 3f
+ef05 9c
+ef06 9e
+9e44 b2
+9f44 5f
+ef07 fc
+7
+ef04 3f 1
+ef05 9c 1
+ef06 9e 1
+9e44 b2 1
+9f44 5f 1
+9f44 5f 0
+9f44 be 0
+ef07 69 a0 a8 be ec
+6
+9e44 b2
+9f44 be
+ef04 3f
+ef05 9c
+ef06 9e
+ef07 fc
+5d03 c9 3a fd 70 29
+6
+5d03 3f
+5d04 90
+5d05 94
+948d 0a
+958d 29
+5d06 01
+7
+5d03 3f 1
+5d04 90 1
+5d05 94 1
+948d 0a 1
+958d 29 1
+958d 29 0
+958d 53 0
+5d06 c9 12 fd 70 28
+6
+5d03 3f
+5d04 90
+5d05 94
+5d06 01
+948d 0a
+958d 53
+189d fa 19 e6 f4 a7
+6
+189d 3f
+189e 22
+189f 11
+1108 ca
+1208 ff
+18a0 3a
+7
+189d 3f 1
+189e 22 1
+189f 11 1
+1108 ca 1
+1208 ff 1
+1208 ff 0
+1208 ff 0
+18a0 fa 19 e6 f4 25
+6
+1108 ca
+1208 ff
+189d 3f
+189e 22
+189f 11
+18a0 3a
+75da 85 5f 5f 6d ad
+5
+75da 3f
+75db 95
+75dc 45
+45f4 a2
+75dd f0
+7
+75da 3f 1
+75db 95 1
+75dc 45 1
+45f4 a2 1
+45f4 a2 1
+45f4 a2 0
+45f4 45 0
+75dd 85 45 5f 6d 2d
+5
+45f4 45
+75da 3f
+75db 95
+75dc 45
+75dd f0
+89b1 68 a6 a7 50 6a
+6
+89b1 3f
+89b2 74
+89b3 95
+951b 76
+961b 9b
+89b4 38
+7
+89b1 3f 1
+89b2 74 1
+89b3 95 1
+951b 76 1
+961b 9b 1
+961b 9b 0
+961b 36 0
+89b4 68 26 a7 50 69
+6
+89b1 3f
+89b2 74
+89b3 95
+89b4 38
+951b 76
+961b 36
+5e29 9e e3 20 b3 a7
+5
+5e29 3f
+5e2a 0c
+5e2b 89
+892c 5b
+5e2c 9f
+7
+5e29 3f 1
+5e2a 0c 1
+5e2b 89 1
+892c 5b 1
+892c 5b 1
+892c 5b 0
+892c b7 0
+5e2c 9e a3 20 b3 a4
+5
+5e29 3f
+5e2a 0c
+5e2b 89
+5e2c 9f
+892c b7
+2aa5 d0 69 82 ac 2a
+6
+2aa5 3f
+2aa6 85
+2aa7 1a
+1a07 ba
+1b07 67
+2aa8 91
+7
+2aa5 3f 1
+2aa6 85 1
+2aa7 1a 1
+1a07 ba 1
+1b07 67 1
+1b07 67 0
+1b07 ce 0
+2aa8 d0 48 82 ac 28
+6
+1a07 ba
+1b07 ce
+2aa5 3f
+2aa6 85
+2aa7 1a
+2aa8 91
+3dd7 9f 97 be 6b 64
+6
+3dd7 3f
+3dd8 b0
+3dd9 1e
+1e6e 0e
+1f6e 3a
+3dda 0a
+7
+3dd7 3f 1
+3dd8 b0 1
+3dd9 1e 1
+1e6e 0e 1
+1f6e 3a 1
+1f6e 3a 0
+1f6e 74 0
+3dda 9f 14 be 6b 64
+6
+1e6e 0e
+1f6e 74
+3dd7 3f
+3dd8 b0
+3dd9 1e
+3dda 0a
+8c55 26 a5 ea ea e2
+5
+8c55 3f
+8c56 08
+8c57 65
+65f2 64
+8c58 57
+7
+8c55 3f 1
+8c56 08 1
+8c57 65 1
+65f2 64 1
+65f2 64 1
+65f2 64 0
+65f2 c8 0
+8c58 26 80 ea ea e0
+5
+65f2 c8
+8c55 3f
+8c56 08
+8c57 65
+8c58 57
+70b9 47 ac f8 d4 22
+6
+70b9 3f
+70ba 43
+70bb 98
+983b 6d
+993b 13
+70bc 51
+7
+70b9 3f 1
+70ba 43 1
+70bb 98 1
+983b 6d 1
+993b 13 1
+993b 13 0
+993b 26 0
+70bc 47 24 f8 d4 20
+6
+70b9 3f
+70ba 43
+70bb 98
+70bc 51
+983b 6d
+993b 26
+5302 1a b9 f7 4c ab
+6
+5302 3f
+5303 cd
+5304 c3
+c3c4 1f
+c4c4 f3
+5305 9d
+7
+5302 3f 1
+5303 cd 1
+5304 c3 1
+c3c4 1f 1
+c4c4 f3 1
+c4c4 f3 0
+c4c4 e7 0
+5305 1a a1 f7 4c a9
+6
+5302 3f
+5303 cd
+5304 c3
+5305 9d
+c3c4 1f
+c4c4 e7
+92fc 65 39 97 86 e3
+6
+92fc 3f
+92fd 8e
+92fe 9f
+9f25 c8
+a025 75
+92ff 34
+7
+92fc 3f 1
+92fd 8e 1
+92fe 9f 1
+9f25 c8 1
+a025 75 1
+a025 75 0
+a025 eb 0
+92ff 65 29 97 86 60
+6
+92fc 3f
+92fd 8e
+92fe 9f
+92ff 34
+9f25 c8
+a025 eb
+a617 54 f0 f4 cf 62
+6
+a617 3f
+a618 7b
+a619 92
+926f ff
+936f 41
+a61a e6
+7
+a617 3f 1
+a618 7b 1
+a619 92 1
+926f ff 1
+936f 41 1
+936f 41 0
+936f 82 0
+a61a 54 80 f4 cf e0
+6
+926f ff
+936f 82
+a617 3f
+a618 7b
+a619 92
+a61a e6
+5101 34 1f 26 9d 2f
+5
+5101 3f
+5102 0a
+5103 3f
+3f30 36
+5104 0a
+7
+5101 3f 1
+5102 0a 1
+5103 3f 1
+3f30 36 1
+3f30 36 1
+3f30 36 0
+3f30 6d 0
+5104 34 0d 26 9d 2c
+5
+3f30 6d
+5101 3f
+5102 0a
+5103 3f
+5104 0a
+abae e1 a7 d0 10 20
+6
+abae 3f
+abaf 3a
+abb0 66
+660a a1
+670a bd
+abb1 9d
+7
+abae 3f 1
+abaf 3a 1
+abb0 66 1
+660a a1 1
+670a bd 1
+670a bd 0
+670a 7a 0
+abb1 e1 22 d0 10 21
+6
+660a a1
+670a 7a
+abae 3f
+abaf 3a
+abb0 66
+abb1 9d
+f98c 8d b1 24 1f e7
+6
+f98c 3f
+f98d f7
+f98e 92
+921b d7
+931b cb
+f98f 26
+7
+f98c 3f 1
+f98d f7 1
+f98e 92 1
+921b d7 1
+931b cb 1
+931b cb 0
+931b 97 0
+f98f 8d 91 24 1f e5
+6
+921b d7
+931b 97
+f98c 3f
+f98d f7
+f98e 92
+f98f 26
+a6b5 5b 4d 45 40 a6
+5
+a6b5 3f
+a6b6 33
+a6b7 a3
+a378 eb
+a6b8 32
+7
+a6b5 3f 1
+a6b6 33 1
+a6b7 a3 1
+a378 eb 1
+a378 eb 1
+a378 eb 0
+a378 d6 0
+a6b8 5b 44 45 40 25
+5
+a378 d6
+a6b5 3f
+a6b6 33
+a6b7 a3
+a6b8 32
+0fc5 d5 0c 00 8f 2b
+5
+0fc5 3f
+0fc6 d8
+0fc7 f4
+f4d8 70
+0fc8 64
+7
+0fc5 3f 1
+0fc6 d8 1
+0fc7 f4 1
+f4d8 70 1
+f4d8 70 1
+f4d8 70 0
+f4d8 e1 0
+0fc8 d5 00 00 8f 2a
+5
+0fc5 3f
+0fc6 d8
+0fc7 f4
+0fc8 64
+f4d8 e1
+dfa8 b4 05 d0 ee a0
+6
+dfa8 3f
+dfa9 98
+dfaa 50
+5068 97
+5168 17
+dfab cb
+7
+dfa8 3f 1
+dfa9 98 1
+dfaa 50 1
+5068 97 1
+5168 17 1
+5168 17 0
+5168 2e 0
+dfab b4 04 d0 ee 20
+6
+5068 97
+5168 2e
+dfa8 3f
+dfa9 98
+dfaa 50
+dfab cb
+0bdd 64 d4 7f 23 2e
+6
+0bdd 3f
+0bde d1
+0bdf 01
+0150 d0
+0250 4b
+0be0 3b
+7
+0bdd 3f 1
+0bde d1 1
+0bdf 01 1
+0150 d0 1
+0250 4b 1
+0250 4b 0
+0250 96 0
+0be0 64 94 7f 23 ac
+6
+0150 d0
+0250 96
+0bdd 3f
+0bde d1
+0bdf 01
+0be0 3b
+f919 9f 8e 9e 02 ac
+6
+f919 3f
+f91a 78
+f91b 36
+3616 de
+3716 e5
+f91c a0
+7
+f919 3f 1
+f91a 78 1
+f91b 36 1
+3616 de 1
+3716 e5 1
+3716 e5 0
+3716 ca 0
+f91c 9f 8a 9e 02 ad
+6
+3616 de
+3716 ca
+f919 3f
+f91a 78
+f91b 36
+f91c a0
+3c64 9f 40 fb 0e 6f
+6
+3c64 3f
+3c65 06
+3c66 67
+6701 01
+6801 4b
+3c67 10
+7
+3c64 3f 1
+3c65 06 1
+3c66 67 1
+6701 01 1
+6801 4b 1
+6801 4b 0
+6801 97 0
+3c67 9f 00 fb 0e 6e
+6
+3c64 3f
+3c65 06
+3c66 67
+3c67 10
+6701 01
+6801 97
+1b10 50 24 97 63 a5
+6
+1b10 3f
+1b11 ef
+1b12 73
+7386 f3
+7486 f4
+1b13 f4
+7
+1b10 3f 1
+1b11 ef 1
+1b12 73 1
+7386 f3 1
+7486 f4 1
+7486 f4 0
+7486 e9 0
+1b13 50 20 97 63 25
+6
+1b10 3f
+1b11 ef
+1b12 73
+1b13 f4
+7386 f3
+7486 e9
+847d 37 27 c7 1a 6a
+6
+847d 3f
+847e ce
+847f 86
+8695 bb
+8795 59
+8480 b4
+7
+847d 3f 1
+847e ce 1
+847f 86 1
+8695 bb 1
+8795 59 1
+8795 59 0
+8795 b2 0
+8480 37 22 c7 1a 68
+6
+847d 3f
+847e ce
+847f 86
+8480 b4
+8695 bb
+8795 b2
+9973 e3 4d c0 57 60
+6
+9973 3f
+9974 7c
+9975 02
+023c c4
+033c 61
+9976 63
+7
+9973 3f 1
+9974 7c 1
+9975 02 1
+023c c4 1
+033c 61 1
+033c 61 0
+033c c2 0
+9976 e3 40 c0 57 60
+6
+023c c4
+033c c2
+9973 3f
+9974 7c
+9975 02
+9976 63
+b283 80 78 4a 88 aa
+5
+b283 3f
+b284 78
+b285 31
+31c2 f3
+b286 ab
+7
+b283 3f 1
+b284 78 1
+b285 31 1
+31c2 f3 1
+31c2 f3 1
+31c2 f3 0
+31c2 e6 0
+b286 80 60 4a 88 29
+5
+31c2 e6
+b283 3f
+b284 78
+b285 31
+b286 ab
+5e87 0c bf fa a4 a8
+6
+5e87 3f
+5e88 5e
+5e89 fc
+fc58 0a
+fd58 59
+5e8a cb
+7
+5e87 3f 1
+5e88 5e 1
+5e89 fc 1
+fc58 0a 1
+fd58 59 1
+fd58 59 0
+fd58 b2 0
+5e8a 0c b2 fa a4 a8
+6
+5e87 3f
+5e88 5e
+5e89 fc
+5e8a cb
+fc58 0a
+fd58 b2
+c233 fa 62 34 54 2f
+5
+c233 3f
+c234 2a
+c235 5e
+5e5e c4
+c236 d0
+7
+c233 3f 1
+c234 2a 1
+c235 5e 1
+5e5e c4 1
+5e5e c4 1
+5e5e c4 0
+5e5e 89 0
+c236 fa 00 34 54 2f
+5
+5e5e 89
+c233 3f
+c234 2a
+c235 5e
+c236 d0
+5b0e 23 22 ac 49 26
+5
+5b0e 3f
+5b0f 30
+5b10 20
+20dc 0c
+5b11 45
+7
+5b0e 3f 1
+5b0f 30 1
+5b10 20 1
+20dc 0c 1
+20dc 0c 1
+20dc 0c 0
+20dc 18 0
+5b11 23 00 ac 49 26
+5
+20dc 18
+5b0e 3f
+5b0f 30
+5b10 20
+5b11 45
+dd81 b1 f6 85 b9 a2
+5
+dd81 3f
+dd82 35
+dd83 03
+03ba 3f
+dd84 97
+7
+dd81 3f 1
+dd82 35 1
+dd83 03 1
+03ba 3f 1
+03ba 3f 1
+03ba 3f 0
+03ba 7e 0
+dd84 b1 76 85 b9 20
+5
+03ba 7e
+dd81 3f
+dd82 35
+dd83 03
+dd84 97
+cfbf 80 f8 e5 85 65
+5
+cfbf 3f
+cfc0 19
+cfc1 db
+dbfe 30
+cfc2 1d
+7
+cfbf 3f 1
+cfc0 19 1
+cfc1 db 1
+dbfe 30 1
+dbfe 30 1
+dbfe 30 0
+dbfe 61 0
+cfc2 80 60 e5 85 64
+5
+cfbf 3f
+cfc0 19
+cfc1 db
+cfc2 1d
+dbfe 61
+f48a 9a 94 18 d5 e7
+6
+f48a 3f
+f48b f2
+f48c 50
+500a ff
+510a 42
+f48d bb
+7
+f48a 3f 1
+f48b f2 1
+f48c 50 1
+500a ff 1
+510a 42 1
+510a 42 0
+510a 85 0
+f48d 9a 84 18 d5 e4
+6
+500a ff
+510a 85
+f48a 3f
+f48b f2
+f48c 50
+f48d bb
+e602 fb c3 5f aa e1
+6
+e602 3f
+e603 e5
+e604 16
+1644 77
+1744 b4
+e605 b1
+7
+e602 3f 1
+e603 e5 1
+e604 16 1
+1644 77 1
+1744 b4 1
+1744 b4 0
+1744 69 0
+e605 fb 41 5f aa 61
+6
+1644 77
+1744 69
+e602 3f
+e603 e5
+e604 16
+e605 b1
+67be ae 0e e3 dd a7
+6
+67be 3f
+67bf 4b
+67c0 06
+062e d1
+072e 0d
+67c1 3a
+7
+67be 3f 1
+67bf 4b 1
+67c0 06 1
+062e d1 1
+072e 0d 1
+072e 0d 0
+072e 1b 0
+67c1 ae 0a e3 dd 24
+6
+062e d1
+072e 1b
+67be 3f
+67bf 4b
+67c0 06
+67c1 3a
+7d4c 8a 9c f1 da 67
+6
+7d4c 3f
+7d4d 69
+7d4e 76
+765a 6a
+775a 8a
+7d4f 33
+7
+7d4c 3f 1
+7d4d 69 1
+7d4e 76 1
+765a 6a 1
+775a 8a 1
+775a 8a 0
+775a 15 0
+7d4f 8a 14 f1 da 65
+6
+765a 6a
+775a 15
+7d4c 3f
+7d4d 69
+7d4e 76
+7d4f 33
+5b06 3f 55 d1 a2 a3
+6
+5b06 3f
+5b07 f5
+5b08 10
+10c6 6e
+11c6 ab
+5b09 fa
+7
+5b06 3f 1
+5b07 f5 1
+5b08 10 1
+10c6 6e 1
+11c6 ab 1
+11c6 ab 0
+11c6 57 0
+5b09 3f 55 d1 a2 21
+6
+10c6 6e
+11c6 57
+5b06 3f
+5b07 f5
+5b08 10
+5b09 fa
+f28a f6 5e 5a 61 6e
+6
+f28a 3f
+f28b f9
+f28c 98
+9853 b4
+9953 8a
+f28d 84
+7
+f28a 3f 1
+f28b f9 1
+f28c 98 1
+9853 b4 1
+9953 8a 1
+9953 8a 0
+9953 14 0
+f28d f6 14 5a 61 6d
+6
+9853 b4
+9953 14
+f28a 3f
+f28b f9
+f28c 98
+f28d 84
+d84a 49 8d 0d c3 6e
+5
+d84a 3f
+d84b a7
+d84c 70
+70b4 8a
+d84d b2
+7
+d84a 3f 1
+d84b a7 1
+d84c 70 1
+70b4 8a 1
+70b4 8a 1
+70b4 8a 0
+70b4 14 0
+d84d 49 04 0d c3 6d
+5
+70b4 14
+d84a 3f
+d84b a7
+d84c 70
+d84d b2
+6fec fc b7 ab 59 a8
+6
+6fec 3f
+6fed ba
+6fee 42
+4265 e9
+4365 2c
+6fef 88
+7
+6fec 3f 1
+6fed ba 1
+6fee 42 1
+4265 e9 1
+4365 2c 1
+4365 2c 0
+4365 58 0
+6fef fc 10 ab 59 28
+6
+4265 e9
+4365 58
+6fec 3f
+6fed ba
+6fee 42
+6fef 88
+f9fe b8 57 d6 bd e6
+6
+f9fe 3f
+f9ff f9
+fa00 79
+79cf f7
+7acf 8a
+fa01 81
+7
+f9fe 3f 1
+f9ff f9 1
+fa00 79 1
+79cf f7 1
+7acf 8a 1
+7acf 8a 0
+7acf 14 0
+fa01 b8 14 d6 bd 65
+6
+79cf f7
+7acf 14
+f9fe 3f
+f9ff f9
+fa00 79
+fa01 81
+84d1 c4 07 4b 19 eb
+6
+84d1 3f
+84d2 b9
+84d3 fa
+fa04 53
+fb04 0a
+84d4 7b
+7
+84d1 3f 1
+84d2 b9 1
+84d3 fa 1
+fa04 53 1
+fb04 0a 1
+fb04 0a 0
+fb04 15 0
+84d4 c4 05 4b 19 68
+6
+84d1 3f
+84d2 b9
+84d3 fa
+84d4 7b
+fa04 53
+fb04 15
+e49b a9 b5 48 36 27
+6
+e49b 3f
+e49c cb
+e49d 30
+3013 2d
+3113 31
+e49e 46
+7
+e49b 3f 1
+e49c cb 1
+e49d 30 1
+3013 2d 1
+3113 31 1
+3113 31 0
+3113 63 0
+e49e a9 21 48 36 24
+6
+3013 2d
+3113 63
+e49b 3f
+e49c cb
+e49d 30
+e49e 46
+befd f1 e6 3b 20 ea
+5
+befd 3f
+befe 85
+beff fe
+fec0 6a
+bf00 00
+7
+befd 3f 1
+befe 85 1
+beff fe 1
+fec0 6a 1
+fec0 6a 1
+fec0 6a 0
+fec0 d4 0
+bf00 f1 c4 3b 20 e8
+5
+befd 3f
+befe 85
+beff fe
+bf00 00
+fec0 d4
+6037 bc 05 56 72 27
+6
+6037 3f
+6038 b8
+6039 11
+110e 4b
+120e 06
+603a d5
+7
+6037 3f 1
+6038 b8 1
+6039 11 1
+110e 4b 1
+120e 06 1
+120e 06 0
+120e 0d 0
+603a bc 05 56 72 24
+6
+110e 4b
+120e 0d
+6037 3f
+6038 b8
+6039 11
+603a d5
+33ef eb b4 c9 39 e1
+6
+33ef 3f
+33f0 73
+33f1 54
+543c 6b
+553c 57
+33f2 35
+7
+33ef 3f 1
+33f0 73 1
+33f1 54 1
+543c 6b 1
+553c 57 1
+553c 57 0
+553c af 0
+33f2 eb a4 c9 39 e0
+6
+33ef 3f
+33f0 73
+33f1 54
+33f2 35
+543c 6b
+553c af
+9d7e c5 13 5a 37 2d
+6
+9d7e 3f
+9d7f d9
+9d80 66
+6633 6c
+6733 0e
+9d81 af
+7
+9d7e 3f 1
+9d7f d9 1
+9d80 66 1
+6633 6c 1
+6733 0e 1
+6733 0e 0
+6733 1d 0
+9d81 c5 11 5a 37 2c
+6
+6633 6c
+6733 1d
+9d7e 3f
+9d7f d9
+9d80 66
+9d81 af
+d171 50 8b b8 8d 2c
+6
+d171 3f
+d172 ed
+d173 1b
+1ba5 b9
+1ca5 2b
+d174 ea
+7
+d171 3f 1
+d172 ed 1
+d173 1b 1
+1ba5 b9 1
+1ca5 2b 1
+1ca5 2b 0
+1ca5 56 0
+d174 50 02 b8 8d 2c
+6
+1ba5 b9
+1ca5 56
+d171 3f
+d172 ed
+d173 1b
+d174 ea
+3a70 69 1f 24 b3 e9
+5
+3a70 3f
+3a71 20
+3a72 4f
+4f44 97
+3a73 23
+7
+3a70 3f 1
+3a71 20 1
+3a72 4f 1
+4f44 97 1
+4f44 97 1
+4f44 97 0
+4f44 2f 0
+3a73 69 0f 24 b3 69
+5
+3a70 3f
+3a71 20
+3a72 4f
+3a73 23
+4f44 2f
+fe17 50 cd 5f f2 2e
+5
+fe17 3f
+fe18 44
+fe19 2a
+2aa3 71
+fe1a d8
+7
+fe17 3f 1
+fe18 44 1
+fe19 2a 1
+2aa3 71 1
+2aa3 71 1
+2aa3 71 0
+2aa3 e2 0
+fe1a 50 c0 5f f2 ac
+5
+2aa3 e2
+fe17 3f
+fe18 44
+fe19 2a
+fe1a d8
+c14a 54 d4 8a 70 21
+5
+c14a 3f
+c14b 26
+c14c 40
+40b0 71
+c14d 8a
+7
+c14a 3f 1
+c14b 26 1
+c14c 40 1
+40b0 71 1
+40b0 71 1
+40b0 71 0
+40b0 e3 0
+c14d 54 c0 8a 70 a0
+5
+40b0 e3
+c14a 3f
+c14b 26
+c14c 40
+c14d 8a
+2609 a2 56 38 ad ea
+5
+2609 3f
+260a aa
+260b 42
+42e2 be
+260c ec
+7
+2609 3f 1
+260a aa 1
+260b 42 1
+42e2 be 1
+42e2 be 1
+42e2 be 0
+42e2 7c 0
+260c a2 54 38 ad 69
+5
+2609 3f
+260a aa
+260b 42
+260c ec
+42e2 7c
+c302 6a 6c 8e 42 a6
+6
+c302 3f
+c303 cc
+c304 7a
+7a5a 16
+7b5a f8
+c305 25
+7
+c302 3f 1
+c303 cc 1
+c304 7a 1
+7a5a 16 1
+7b5a f8 1
+7b5a f8 0
+7b5a f0 0
+c305 6a 60 8e 42 25
+6
+7a5a 16
+7b5a f0
+c302 3f
+c303 cc
+c304 7a
+c305 25
+0be9 19 d2 ee 05 60
+6
+0be9 3f
+0bea 54
+0beb 9a
+9a42 f7
+9b42 cf
+0bec 26
+7
+0be9 3f 1
+0bea 54 1
+0beb 9a 1
+9a42 f7 1
+9b42 cf 1
+9b42 cf 0
+9b42 9e 0
+0bec 19 92 ee 05 e1
+6
+0be9 3f
+0bea 54
+0beb 9a
+0bec 26
+9a42 f7
+9b42 9e
+338a 2e c9 91 d9 63
+6
+338a 3f
+338b fd
+338c 7b
+7b8e f8
+7c8e 02
+338d e8
+7
+338a 3f 1
+338b fd 1
+338c 7b 1
+7b8e f8 1
+7c8e 02 1
+7c8e 02 0
+7c8e 05 0
+338d 2e 01 91 d9 60
+6
+338a 3f
+338b fd
+338c 7b
+338d e8
+7b8e f8
+7c8e 05
+ebf4 e8 04 6e 52 2d
+5
+ebf4 3f
+ebf5 35
+ebf6 db
+dba3 9f
+ebf7 90
+7
+ebf4 3f 1
+ebf5 35 1
+ebf6 db 1
+dba3 9f 1
+dba3 9f 1
+dba3 9f 0
+dba3 3f 0
+ebf7 e8 04 6e 52 2d
+5
+dba3 3f
+ebf4 3f
+ebf5 35
+ebf6 db
+ebf7 90
+0701 96 cc 39 39 2c
+5
+0701 3f
+0702 98
+0703 47
+47d1 6b
+0704 68
+7
+0701 3f 1
+0702 98 1
+0703 47 1
+47d1 6b 1
+47d1 6b 1
+47d1 6b 0
+47d1 d6 0
+0704 96 c4 39 39 ac
+5
+0701 3f
+0702 98
+0703 47
+0704 68
+47d1 d6
+2970 f3 56 01 3c 66
+5
+2970 3f
+2971 96
+2972 a2
+a297 ee
+2973 29
+7
+2970 3f 1
+2971 96 1
+2972 a2 1
+a297 ee 1
+a297 ee 1
+a297 ee 0
+a297 dc 0
+2973 f3 54 01 3c 65
+5
+2970 3f
+2971 96
+2972 a2
+2973 29
+a297 dc
+d5f4 c5 5d c6 54 2e
+6
+d5f4 3f
+d5f5 b5
+d5f6 46
+467b 1d
+477b 8f
+d5f7 bb
+7
+d5f4 3f 1
+d5f5 b5 1
+d5f6 46 1
+467b 1d 1
+477b 8f 1
+477b 8f 0
+477b 1e 0
+d5f7 c5 1c c6 54 2d
+6
+467b 1d
+477b 1e
+d5f4 3f
+d5f5 b5
+d5f6 46
+d5f7 bb
+b0f4 7f 54 d3 99 62
+5
+b0f4 3f
+b0f5 28
+b0f6 79
+79fb ce
+b0f7 b4
+7
+b0f4 3f 1
+b0f5 28 1
+b0f6 79 1
+79fb ce 1
+79fb ce 1
+79fb ce 0
+79fb 9c 0
+b0f7 7f 14 d3 99 61
+5
+79fb 9c
+b0f4 3f
+b0f5 28
+b0f6 79
+b0f7 b4
+be3c b1 37 cd ec 61
+6
+be3c 3f
+be3d 42
+be3e 1a
+1a0f ac
+1b0f 00
+be3f 39
+7
+be3c 3f 1
+be3d 42 1
+be3e 1a 1
+1a0f ac 1
+1b0f 00 1
+1b0f 00 0
+1b0f 01 0
+be3f b1 01 cd ec 60
+6
+1a0f ac
+1b0f 01
+be3c 3f
+be3d 42
+be3e 1a
+be3f 39
+3f0d 15 48 6f b9 e8
+5
+3f0d 3f
+3f0e 60
+3f0f 86
+86cf 9d
+3f10 2a
+7
+3f0d 3f 1
+3f0e 60 1
+3f0f 86 1
+86cf 9d 1
+86cf 9d 1
+86cf 9d 0
+86cf 3a 0
+3f10 15 08 6f b9 69
+5
+3f0d 3f
+3f0e 60
+3f0f 86
+3f10 2a
+86cf 3a
+d92a f1 bc ea d0 66
+6
+d92a 3f
+d92b 5b
+d92c b0
+b045 c2
+b145 f0
+d92d b1
+7
+d92a 3f 1
+d92b 5b 1
+d92c b0 1
+b045 c2 1
+b145 f0 1
+b145 f0 0
+b145 e0 0
+d92d f1 a0 ea d0 e5
+6
+b045 c2
+b145 e0
+d92a 3f
+d92b 5b
+d92c b0
+d92d b1
+3039 6f 85 1a bc ee
+5
+3039 3f
+303a 74
+303b 21
+218e e1
+303c 2a
+7
+3039 3f 1
+303a 74 1
+303b 21 1
+218e e1 1
+218e e1 1
+218e e1 0
+218e c2 0
+303c 6f 80 1a bc ed
+5
+218e c2
+3039 3f
+303a 74
+303b 21
+303c 2a
+b015 71 77 89 a0 2e
+6
+b015 3f
+b016 a9
+b017 cb
+cb32 19
+cc32 36
+b018 76
+7
+b015 3f 1
+b016 a9 1
+b017 cb 1
+cb32 19 1
+cc32 36 1
+cc32 36 0
+cc32 6c 0
+b018 71 64 89 a0 2c
+6
+b015 3f
+b016 a9
+b017 cb
+b018 76
+cb32 19
+cc32 6c
+9823 98 72 69 40 20
+5
+9823 3f
+9824 63
+9825 5c
+5ccc 41
+9826 81
+7
+9823 3f 1
+9824 63 1
+9825 5c 1
+5ccc 41 1
+5ccc 41 1
+5ccc 41 0
+5ccc 82 0
+9826 98 02 69 40 20
+5
+5ccc 82
+9823 3f
+9824 63
+9825 5c
+9826 81
+3f26 fc 3e 6a 47 6d
+5
+3f26 3f
+3f27 4b
+3f28 d2
+d2b5 08
+3f29 ff
+7
+3f26 3f 1
+3f27 4b 1
+3f28 d2 1
+d2b5 08 1
+d2b5 08 1
+d2b5 08 0
+d2b5 11 0
+3f29 fc 10 6a 47 6c
+5
+3f26 3f
+3f27 4b
+3f28 d2
+3f29 ff
+d2b5 11
+cb8a d6 87 b5 f4 2e
+6
+cb8a 3f
+cb8b a5
+cb8c 17
+175a 27
+185a b2
+cb8d ce
+7
+cb8a 3f 1
+cb8b a5 1
+cb8c 17 1
+175a 27 1
+185a b2 1
+185a b2 0
+185a 64 0
+cb8d d6 04 b5 f4 2d
+6
+175a 27
+185a 64
+cb8a 3f
+cb8b a5
+cb8c 17
+cb8d ce
+20eb 1a 5f 5f 0b 20
+5
+20eb 3f
+20ec 70
+20ed 8b
+8bcf 69
+20ee 37
+7
+20eb 3f 1
+20ec 70 1
+20ed 8b 1
+8bcf 69 1
+8bcf 69 1
+8bcf 69 0
+8bcf d2 0
+20ee 1a 52 5f 0b 20
+5
+20eb 3f
+20ec 70
+20ed 8b
+20ee 37
+8bcf d2
+ef38 55 4e b7 37 29
+6
+ef38 3f
+ef39 4e
+ef3a fd
+fd05 1f
+fe05 ce
+ef3b f4
+7
+ef38 3f 1
+ef39 4e 1
+ef3a fd 1
+fd05 1f 1
+fe05 ce 1
+fe05 ce 0
+fe05 9d 0
+ef3b 55 0c b7 37 29
+6
+ef38 3f
+ef39 4e
+ef3a fd
+ef3b f4
+fd05 1f
+fe05 9d
+695b 85 1a 66 73 e7
+5
+695b 3f
+695c 1c
+695d 0c
+0c82 91
+695e 88
+7
+695b 3f 1
+695c 1c 1
+695d 0c 1
+0c82 91 1
+0c82 91 1
+0c82 91 0
+0c82 23 0
+695e 85 02 66 73 65
+5
+0c82 23
+695b 3f
+695c 1c
+695d 0c
+695e 88
+9e36 cc 6e 7b d9 25
+5
+9e36 3f
+9e37 2d
+9e38 eb
+eba8 15
+9e39 7b
+7
+9e36 3f 1
+9e37 2d 1
+9e38 eb 1
+eba8 15 1
+eba8 15 1
+eba8 15 0
+eba8 2b 0
+9e39 cc 2a 7b d9 24
+5
+9e36 3f
+9e37 2d
+9e38 eb
+9e39 7b
+eba8 2b
+0faf 9d 47 ca 0f 29
+6
+0faf 3f
+0fb0 6f
+0fb1 a0
+a039 47
+a139 2b
+0fb2 93
+7
+0faf 3f 1
+0fb0 6f 1
+0fb1 a0 1
+a039 47 1
+a139 2b 1
+a139 2b 0
+a139 57 0
+0fb2 9d 47 ca 0f 28
+6
+0faf 3f
+0fb0 6f
+0fb1 a0
+0fb2 93
+a039 47
+a139 57
+8925 e7 67 f8 6f 62
+6
+8925 3f
+8926 88
+8927 df
+df80 8d
+e080 b6
+8928 93
+7
+8925 3f 1
+8926 88 1
+8927 df 1
+df80 8d 1
+e080 b6 1
+e080 b6 0
+e080 6c 0
+8928 e7 64 f8 6f 61
+6
+8925 3f
+8926 88
+8927 df
+8928 93
+df80 8d
+e080 6c
+b5b6 bf 38 df 3a ab
+6
+b5b6 3f
+b5b7 fa
+b5b8 e2
+e2d9 58
+e3d9 48
+b5b9 2f
+7
+b5b6 3f 1
+b5b7 fa 1
+b5b8 e2 1
+e2d9 58 1
+e3d9 48 1
+e3d9 48 0
+e3d9 91 0
+b5b9 bf 10 df 3a 28
+6
+b5b6 3f
+b5b7 fa
+b5b8 e2
+b5b9 2f
+e2d9 58
+e3d9 91
+5b71 84 cd c3 a9 67
+6
+5b71 3f
+5b72 61
+5b73 c7
+c724 eb
+c824 7c
+5b74 8a
+7
+5b71 3f 1
+5b72 61 1
+5b73 c7 1
+c724 eb 1
+c824 7c 1
+c824 7c 0
+c824 f9 0
+5b74 84 c9 c3 a9 e4
+6
+5b71 3f
+5b72 61
+5b73 c7
+5b74 8a
+c724 eb
+c824 f9
+0185 99 85 4e 57 6a
+5
+0185 3f
+0186 7b
+0187 b1
+b1c9 ec
+0188 54
+7
+0185 3f 1
+0186 7b 1
+0187 b1 1
+b1c9 ec 1
+b1c9 ec 1
+b1c9 ec 0
+b1c9 d8 0
+0188 99 80 4e 57 e9
+5
+0185 3f
+0186 7b
+0187 b1
+0188 54
+b1c9 d8
+11ed 11 5b e3 45 24
+6
+11ed 3f
+11ee 8f
+11ef 56
+5672 ac
+5772 40
+11f0 9c
+7
+11ed 3f 1
+11ee 8f 1
+11ef 56 1
+5672 ac 1
+5772 40 1
+5772 40 0
+5772 80 0
+11f0 11 00 e3 45 26
+6
+11ed 3f
+11ee 8f
+11ef 56
+11f0 9c
+5672 ac
+5772 80
+878e c0 1e c6 df eb
+6
+878e 3f
+878f f9
+8790 82
+82bf be
+83bf 35
+8791 d9
+7
+878e 3f 1
+878f f9 1
+8790 82 1
+82bf be 1
+83bf 35 1
+83bf 35 0
+83bf 6b 0
+8791 c0 0a c6 df 68
+6
+82bf be
+83bf 6b
+878e 3f
+878f f9
+8790 82
+8791 d9
+0974 6d 5b b7 26 e4
+5
+0974 3f
+0975 42
+0976 6a
+6af9 0c
+0977 a9
+7
+0974 3f 1
+0975 42 1
+0976 6a 1
+6af9 0c 1
+6af9 0c 1
+6af9 0c 0
+6af9 18 0
+0977 6d 18 b7 26 64
+5
+0974 3f
+0975 42
+0976 6a
+0977 a9
+6af9 18
+b8c2 cd a2 73 5b 2c
+6
+b8c2 3f
+b8c3 f4
+b8c4 82
+8267 ba
+8367 c7
+b8c5 49
+7
+b8c2 3f 1
+b8c3 f4 1
+b8c4 82 1
+8267 ba 1
+8367 c7 1
+8367 c7 0
+8367 8e 0
+b8c5 cd 82 73 5b ad
+6
+8267 ba
+8367 8e
+b8c2 3f
+b8c3 f4
+b8c4 82
+b8c5 49
+d900 06 9e 2a 79 a3
+5
+d900 3f
+d901 6c
+d902 ec
+ec96 04
+d903 3b
+7
+d900 3f 1
+d901 6c 1
+d902 ec 1
+ec96 04 1
+ec96 04 1
+ec96 04 0
+ec96 09 0
+d903 06 08 2a 79 20
+5
+d900 3f
+d901 6c
+d902 ec
+d903 3b
+ec96 09
+1e62 9c 69 a6 82 6d
+6
+1e62 3f
+1e63 a4
+1e64 0e
+0e4a 5d
+0f4a 82
+1e65 4c
+7
+1e62 3f 1
+1e63 a4 1
+1e64 0e 1
+0e4a 5d 1
+0f4a 82 1
+0f4a 82 0
+0f4a 05 0
+1e65 9c 01 a6 82 6d
+6
+0e4a 5d
+0f4a 05
+1e62 3f
+1e63 a4
+1e64 0e
+1e65 4c
+2508 12 3b a6 20 25
+6
+2508 3f
+2509 b7
+250a d0
+d05d 4c
+d15d 8f
+250b 2d
+7
+2508 3f 1
+2509 b7 1
+250a d0 1
+d05d 4c 1
+d15d 8f 1
+d15d 8f 0
+d15d 1f 0
+250b 12 1b a6 20 25
+6
+2508 3f
+2509 b7
+250a d0
+250b 2d
+d05d 4c
+d15d 1f
+aa49 43 44 8b 7f 68
+6
+aa49 3f
+aa4a 7f
+aa4b 69
+690a 86
+6a0a bb
+aa4c 94
+7
+aa49 3f 1
+aa4a 7f 1
+aa4b 69 1
+690a 86 1
+6a0a bb 1
+6a0a bb 0
+6a0a 76 0
+aa4c 43 44 8b 7f 69
+6
+690a 86
+6a0a 76
+aa49 3f
+aa4a 7f
+aa4b 69
+aa4c 94
+d500 ae 88 7f 4c 22
+6
+d500 3f
+d501 a8
+d502 f4
+f427 39
+f527 d8
+d503 a4
+7
+d500 3f 1
+d501 a8 1
+d502 f4 1
+f427 39 1
+f527 d8 1
+f527 d8 0
+f527 b0 0
+d503 ae 80 7f 4c a1
+6
+d500 3f
+d501 a8
+d502 f4
+d503 a4
+f427 39
+f527 b0
+ed21 5f 5f 8c 96 62
+5
+ed21 3f
+ed22 42
+ed23 00
+00ce 47
+ed24 64
+7
+ed21 3f 1
+ed22 42 1
+ed23 00 1
+00ce 47 1
+00ce 47 1
+00ce 47 0
+00ce 8e 0
+ed24 5f 0e 8c 96 60
+5
+00ce 8e
+ed21 3f
+ed22 42
+ed23 00
+ed24 64
+ad12 f3 4f 8c 93 69
+6
+ad12 3f
+ad13 ce
+ad14 28
+285a 30
+295a 6d
+ad15 9b
+7
+ad12 3f 1
+ad13 ce 1
+ad14 28 1
+285a 30 1
+295a 6d 1
+295a 6d 0
+295a db 0
+ad15 f3 4b 8c 93 68
+6
+285a 30
+295a db
+ad12 3f
+ad13 ce
+ad14 28
+ad15 9b
+8f83 b9 48 3c d8 64
+5
+8f83 3f
+8f84 0e
+8f85 09
+094a cb
+8f86 45
+7
+8f83 3f 1
+8f84 0e 1
+8f85 09 1
+094a cb 1
+094a cb 1
+094a cb 0
+094a 96 0
+8f86 b9 00 3c d8 67
+5
+094a 96
+8f83 3f
+8f84 0e
+8f85 09
+8f86 45
+61eb 85 52 e4 c7 6d
+6
+61eb 3f
+61ec 84
+61ed d3
+d368 8f
+d468 0e
+61ee 52
+7
+61eb 3f 1
+61ec 84 1
+61ed d3 1
+d368 8f 1
+d468 0e 1
+d468 0e 0
+d468 1d 0
+61ee 85 10 e4 c7 6c
+6
+61eb 3f
+61ec 84
+61ed d3
+61ee 52
+d368 8f
+d468 1d
+8a48 5e 4f cc 43 67
+6
+8a48 3f
+8a49 76
+8a4a f1
+f142 8f
+f242 2c
+8a4b d0
+7
+8a48 3f 1
+8a49 76 1
+8a4a f1 1
+f142 8f 1
+f242 2c 1
+f242 2c 0
+f242 59 0
+8a4b 5e 49 cc 43 64
+6
+8a48 3f
+8a49 76
+8a4a f1
+8a4b d0
+f142 8f
+f242 59
+6a7a 51 95 d3 7c a1
+6
+6a7a 3f
+6a7b 9d
+6a7c 02
+0270 fd
+0370 c2
+6a7d c3
+7
+6a7a 3f 1
+6a7b 9d 1
+6a7c 02 1
+0270 fd 1
+0370 c2 1
+0370 c2 0
+0370 85 0
+6a7d 51 85 d3 7c a1
+6
+0270 fd
+0370 85
+6a7a 3f
+6a7b 9d
+6a7c 02
+6a7d c3
+f0eb f5 ab 4b 0e ed
+6
+f0eb 3f
+f0ec b9
+f0ed bb
+bb04 d2
+bc04 b4
+f0ee 8e
+7
+f0eb 3f 1
+f0ec b9 1
+f0ed bb 1
+bb04 d2 1
+bc04 b4 1
+bc04 b4 0
+bc04 69 0
+f0ee f5 29 4b 0e 6d
+6
+bb04 d2
+bc04 69
+f0eb 3f
+f0ec b9
+f0ed bb
+f0ee 8e
+91f1 4c 2f c6 38 24
+6
+91f1 3f
+91f2 53
+91f3 eb
+eb19 32
+ec19 48
+91f4 f6
+7
+91f1 3f 1
+91f2 53 1
+91f3 eb 1
+eb19 32 1
+ec19 48 1
+ec19 48 0
+ec19 90 0
+91f4 4c 00 c6 38 26
+6
+91f1 3f
+91f2 53
+91f3 eb
+91f4 f6
+eb19 32
+ec19 90
+3d32 1c 44 8b f3 ef
+5
+3d32 3f
+3d33 29
+3d34 40
+40b4 df
+3d35 25
+7
+3d32 3f 1
+3d33 29 1
+3d34 40 1
+40b4 df 1
+40b4 df 1
+40b4 df 0
+40b4 bf 0
+3d35 1c 04 8b f3 6d
+5
+3d32 3f
+3d33 29
+3d34 40
+3d35 25
+40b4 bf
+a484 34 09 88 12 ae
+5
+a484 3f
+a485 34
+a486 e9
+e9bc fd
+a487 6e
+7
+a484 3f 1
+a485 34 1
+a486 e9 1
+e9bc fd 1
+e9bc fd 1
+e9bc fd 0
+e9bc fa 0
+a487 34 08 88 12 2d
+5
+a484 3f
+a485 34
+a486 e9
+a487 6e
+e9bc fa
+2375 3a 5e e4 48 65
+6
+2375 3f
+2376 a2
+2377 c7
+c786 e5
+c886 20
+2378 55
+7
+2375 3f 1
+2376 a2 1
+2377 c7 1
+c786 e5 1
+c886 20 1
+c886 20 0
+c886 41 0
+2378 3a 40 e4 48 64
+6
+2375 3f
+2376 a2
+2377 c7
+2378 55
+c786 e5
+c886 41
+08b0 6b b9 50 00 e7
+5
+08b0 3f
+08b1 78
+08b2 47
+47c8 5f
+08b3 a9
+7
+08b0 3f 1
+08b1 78 1
+08b2 47 1
+47c8 5f 1
+47c8 5f 1
+47c8 5f 0
+47c8 bf 0
+08b3 6b b9 50 00 e4
+5
+08b0 3f
+08b1 78
+08b2 47
+08b3 a9
+47c8 bf
+0dc0 73 14 62 99 24
+5
+0dc0 3f
+0dc1 79
+0dc2 07
+07db 9d
+0dc3 71
+7
+0dc0 3f 1
+0dc1 79 1
+0dc2 07 1
+07db 9d 1
+07db 9d 1
+07db 9d 0
+07db 3a 0
+0dc3 73 10 62 99 25
+5
+07db 3a
+0dc0 3f
+0dc1 79
+0dc2 07
+0dc3 71
+e7c1 e6 6a 7c 77 6c
+6
+e7c1 3f
+e7c2 89
+e7c3 e5
+e505 df
+e605 cc
+e7c4 3a
+7
+e7c1 3f 1
+e7c2 89 1
+e7c3 e5 1
+e505 df 1
+e605 cc 1
+e605 cc 0
+e605 98 0
+e7c4 e6 08 7c 77 6d
+6
+e505 df
+e605 98
+e7c1 3f
+e7c2 89
+e7c3 e5
+e7c4 3a
+04d4 ed c7 5c 5d 25
+6
+04d4 3f
+04d5 a5
+04d6 91
+9101 1f
+9201 73
+04d7 ec
+7
+04d4 3f 1
+04d5 a5 1
+04d6 91 1
+9101 1f 1
+9201 73 1
+9201 73 0
+9201 e7 0
+04d7 ed c7 5c 5d a4
+6
+04d4 3f
+04d5 a5
+04d6 91
+04d7 ec
+9101 1f
+9201 e7
+bd97 03 72 a8 0c a4
+6
+bd97 3f
+bd98 b5
+bd99 55
+555d 1e
+565d c1
+bd9a 04
+7
+bd97 3f 1
+bd98 b5 1
+bd99 55 1
+555d 1e 1
+565d c1 1
+565d c1 0
+565d 82 0
+bd9a 03 02 a8 0c 25
+6
+555d 1e
+565d 82
+bd97 3f
+bd98 b5
+bd99 55
+bd9a 04
+d995 c1 97 ad 38 ab
+6
+d995 3f
+d996 b6
+d997 13
+1363 b2
+1463 b8
+d998 43
+7
+d995 3f 1
+d996 b6 1
+d997 13 1
+1363 b2 1
+1463 b8 1
+1463 b8 0
+1463 71 0
+d998 c1 11 ad 38 29
+6
+1363 b2
+1463 71
+d995 3f
+d996 b6
+d997 13
+d998 43
+a167 d7 0d 70 5d 60
+6
+a167 3f
+a168 ad
+a169 18
+181d eb
+191d 41
+a16a 34
+7
+a167 3f 1
+a168 ad 1
+a169 18 1
+181d eb 1
+191d 41 1
+191d 41 0
+191d 82 0
+a16a d7 00 70 5d 62
+6
+181d eb
+191d 82
+a167 3f
+a168 ad
+a169 18
+a16a 34
+46bf 7b bc 66 f9 ad
+5
+46bf 3f
+46c0 10
+46c1 60
+6076 11
+46c2 34
+7
+46bf 3f 1
+46c0 10 1
+46c1 60 1
+6076 11 1
+6076 11 1
+6076 11 0
+6076 23 0
+46c2 7b 20 66 f9 2c
+5
+46bf 3f
+46c0 10
+46c1 60
+46c2 34
+6076 23
+8fb3 46 43 9c f4 67
+5
+8fb3 3f
+8fb4 09
+8fb5 b2
+b2a5 1a
+8fb6 8c
+7
+8fb3 3f 1
+8fb4 09 1
+8fb5 b2 1
+b2a5 1a 1
+b2a5 1a 1
+b2a5 1a 0
+b2a5 35 0
+8fb6 46 01 9c f4 64
+5
+8fb3 3f
+8fb4 09
+8fb5 b2
+8fb6 8c
+b2a5 35
+0e08 22 76 5b 1d e5
+6
+0e08 3f
+0e09 b4
+0e0a 9b
+9b0f ca
+9c0f 23
+0e0b 0f
+7
+0e08 3f 1
+0e09 b4 1
+0e0a 9b 1
+9b0f ca 1
+9c0f 23 1
+9c0f 23 0
+9c0f 47 0
+0e0b 22 46 5b 1d 64
+6
+0e08 3f
+0e09 b4
+0e0a 9b
+0e0b 0f
+9b0f ca
+9c0f 47
+e064 a6 e2 d0 53 ad
+5
+e064 3f
+e065 08
+e066 1b
+1bd8 eb
+e067 d3
+7
+e064 3f 1
+e065 08 1
+e066 1b 1
+1bd8 eb 1
+1bd8 eb 1
+1bd8 eb 0
+1bd8 d7 0
+e067 a6 c2 d0 53 ad
+5
+1bd8 d7
+e064 3f
+e065 08
+e066 1b
+e067 d3
+09b6 f8 f6 2d e2 ee
+5
+09b6 3f
+09b7 08
+09b8 d8
+d835 1e
+09b9 b5
+7
+09b6 3f 1
+09b7 08 1
+09b8 d8 1
+d835 1e 1
+d835 1e 1
+d835 1e 0
+d835 3c 0
+09b9 f8 34 2d e2 6c
+5
+09b6 3f
+09b7 08
+09b8 d8
+09b9 b5
+d835 3c
+0095 58 8b 10 fd e7
+5
+0095 3f
+0096 51
+0097 99
+9961 6a
+0098 f1
+7
+0095 3f 1
+0096 51 1
+0097 99 1
+9961 6a 1
+9961 6a 1
+9961 6a 0
+9961 d5 0
+0098 58 81 10 fd e4
+5
+0095 3f
+0096 51
+0097 99
+0098 f1
+9961 d5
+426e 6f 45 00 39 23
+5
+426e 3f
+426f d3
+4270 a5
+a5d3 44
+4271 eb
+7
+426e 3f 1
+426f d3 1
+4270 a5 1
+a5d3 44 1
+a5d3 44 1
+a5d3 44 0
+a5d3 89 0
+4271 6f 01 00 39 20
+5
+426e 3f
+426f d3
+4270 a5
+4271 eb
+a5d3 89
+5233 cc 6d ab 9c e9
+6
+5233 3f
+5234 8e
+5235 e5
+e539 59
+e639 ad
+5236 87
+7
+5233 3f 1
+5234 8e 1
+5235 e5 1
+e539 59 1
+e639 ad 1
+e639 ad 0
+e639 5b 0
+5236 cc 49 ab 9c 69
+6
+5233 3f
+5234 8e
+5235 e5
+5236 87
+e539 59
+e639 5b
+1ca2 7c 06 02 15 e5
+5
+1ca2 3f
+1ca3 66
+1ca4 ce
+ce68 f8
+1ca5 d9
+7
+1ca2 3f 1
+1ca3 66 1
+1ca4 ce 1
+ce68 f8 1
+ce68 f8 1
+ce68 f8 0
+ce68 f1 0
+1ca5 7c 00 02 15 67
+5
+1ca2 3f
+1ca3 66
+1ca4 ce
+1ca5 d9
+ce68 f1
+824f 81 2a 17 80 aa
+5
+824f 3f
+8250 c4
+8251 62
+62db f3
+8252 ca
+7
+824f 3f 1
+8250 c4 1
+8251 62 1
+62db f3 1
+62db f3 1
+62db f3 0
+62db e6 0
+8252 81 22 17 80 29
+5
+62db e6
+824f 3f
+8250 c4
+8251 62
+8252 ca
+bc7e 69 4b 1b 76 a6
+5
+bc7e 3f
+bc7f df
+bc80 31
+31fa 52
+bc81 2c
+7
+bc7e 3f 1
+bc7f df 1
+bc80 31 1
+31fa 52 1
+31fa 52 1
+31fa 52 0
+31fa a4 0
+bc81 69 00 1b 76 26
+5
+31fa a4
+bc7e 3f
+bc7f df
+bc80 31
+bc81 2c
+f5ee 16 d7 5e 49 ef
+5
+f5ee 3f
+f5ef 80
+f5f0 39
+39de 97
+f5f1 94
+7
+f5ee 3f 1
+f5ef 80 1
+f5f0 39 1
+39de 97 1
+39de 97 1
+39de 97 0
+39de 2f 0
+f5f1 16 07 5e 49 6d
+5
+39de 2f
+f5ee 3f
+f5ef 80
+f5f0 39
+f5f1 94
+0b12 d9 04 b5 20 e7
+6
+0b12 3f
+0b13 80
+0b14 87
+8735 7e
+8835 5e
+0b15 b3
+7
+0b12 3f 1
+0b13 80 1
+0b14 87 1
+8735 7e 1
+8835 5e 1
+8835 5e 0
+8835 bd 0
+0b15 d9 04 b5 20 64
+6
+0b12 3f
+0b13 80
+0b14 87
+0b15 b3
+8735 7e
+8835 bd
+db71 88 89 e4 6d ad
+6
+db71 3f
+db72 df
+db73 98
+98c3 8a
+99c3 9f
+db74 40
+7
+db71 3f 1
+db72 df 1
+db73 98 1
+98c3 8a 1
+99c3 9f 1
+99c3 9f 0
+99c3 3f 0
+db74 88 09 e4 6d 2d
+6
+98c3 8a
+99c3 3f
+db71 3f
+db72 df
+db73 98
+db74 40
+46a9 46 d9 11 16 ac
+5
+46a9 3f
+46aa 54
+46ab 28
+2865 db
+46ac c1
+7
+46a9 3f 1
+46aa 54 1
+46ab 28 1
+2865 db 1
+2865 db 1
+2865 db 0
+2865 b6 0
+46ac 46 90 11 16 ad
+5
+2865 b6
+46a9 3f
+46aa 54
+46ab 28
+46ac c1
+6ad9 41 4c 72 db 69
+6
+6ad9 3f
+6ada fe
+6adb 84
+8470 d7
+8570 69
+6adc 89
+7
+6ad9 3f 1
+6ada fe 1
+6adb 84 1
+8470 d7 1
+8570 69 1
+8570 69 0
+8570 d3 0
+6adc 41 40 72 db 68
+6
+6ad9 3f
+6ada fe
+6adb 84
+6adc 89
+8470 d7
+8570 d3
+ac19 46 77 3e 3d e8
+6
+ac19 3f
+ac1a d8
+ac1b a8
+a816 f5
+a916 fc
+ac1c 12
+7
+ac19 3f 1
+ac1a d8 1
+ac1b a8 1
+a816 f5 1
+a916 fc 1
+a916 fc 0
+a916 f8 0
+ac1c 46 70 3e 3d 69
+6
+a816 f5
+a916 f8
+ac19 3f
+ac1a d8
+ac1b a8
+ac1c 12
+a033 0b 24 96 ad e6
+5
+a033 3f
+a034 19
+a035 a1
+a1af b6
+a036 f2
+7
+a033 3f 1
+a034 19 1
+a035 a1 1
+a1af b6 1
+a1af b6 1
+a1af b6 0
+a1af 6c 0
+a036 0b 24 96 ad 65
+5
+a033 3f
+a034 19
+a035 a1
+a036 f2
+a1af 6c
+86f9 53 d8 b2 72 e5
+6
+86f9 3f
+86fa 59
+86fb 36
+360b b9
+370b 80
+86fc f2
+7
+86f9 3f 1
+86fa 59 1
+86fb 36 1
+360b b9 1
+370b 80 1
+370b 80 0
+370b 01 0
+86fc 53 00 b2 72 67
+6
+360b b9
+370b 01
+86f9 3f
+86fa 59
+86fb 36
+86fc f2
+466a bc a2 cf d4 6c
+5
+466a 3f
+466b 28
+466c 4b
+4bf7 1d
+466d 74
+7
+466a 3f 1
+466b 28 1
+466c 4b 1
+4bf7 1d 1
+4bf7 1d 1
+4bf7 1d 0
+4bf7 3a 0
+466d bc 22 cf d4 6c
+5
+466a 3f
+466b 28
+466c 4b
+466d 74
+4bf7 3a
+fa5c 2d 35 47 36 64
+5
+fa5c 3f
+fa5d 67
+fa5e 00
+00ae b1
+fa5f 50
+7
+fa5c 3f 1
+fa5d 67 1
+fa5e 00 1
+00ae b1 1
+00ae b1 1
+00ae b1 0
+00ae 62 0
+fa5f 2d 20 47 36 65
+5
+00ae 62
+fa5c 3f
+fa5d 67
+fa5e 00
+fa5f 50
+0f05 d7 b5 8c 4b 60
+5
+0f05 3f
+0f06 3c
+0f07 4f
+4fc8 ba
+0f08 e1
+7
+0f05 3f 1
+0f06 3c 1
+0f07 4f 1
+4fc8 ba 1
+4fc8 ba 1
+4fc8 ba 0
+4fc8 74 0
+0f08 d7 34 8c 4b 61
+5
+0f05 3f
+0f06 3c
+0f07 4f
+0f08 e1
+4fc8 74
+b071 e8 d0 91 37 26
+5
+b071 3f
+b072 13
+b073 cd
+cda4 7c
+b074 e0
+7
+b071 3f 1
+b072 13 1
+b073 cd 1
+cda4 7c 1
+cda4 7c 1
+cda4 7c 0
+cda4 f8 0
+b074 e8 d0 91 37 a4
+5
+b071 3f
+b072 13
+b073 cd
+b074 e0
+cda4 f8
+8f02 b7 17 01 ff e1
+5
+8f02 3f
+8f03 59
+8f04 5f
+5f5a be
+8f05 21
+7
+8f02 3f 1
+8f03 59 1
+8f04 5f 1
+5f5a be 1
+5f5a be 1
+5f5a be 0
+5f5a 7d 0
+8f05 b7 15 01 ff 61
+5
+5f5a 7d
+8f02 3f
+8f03 59
+8f04 5f
+8f05 21
+2e87 6a ff 10 91 29
+5
+2e87 3f
+2e88 ab
+2e89 cd
+cdbb 02
+2e8a 74
+7
+2e87 3f 1
+2e88 ab 1
+2e89 cd 1
+cdbb 02 1
+cdbb 02 1
+cdbb 02 0
+cdbb 05 0
+2e8a 6a 05 10 91 28
+5
+2e87 3f
+2e88 ab
+2e89 cd
+2e8a 74
+cdbb 05
+b103 49 d6 4f f9 65
+5
+b103 3f
+b104 a8
+b105 ae
+aef7 03
+b106 77
+7
+b103 3f 1
+b104 a8 1
+b105 ae 1
+aef7 03 1
+aef7 03 1
+aef7 03 0
+aef7 07 0
+b106 49 06 4f f9 64
+5
+aef7 07
+b103 3f
+b104 a8
+b105 ae
+b106 77
+f9f8 90 68 0c 6d 6e
+5
+f9f8 3f
+f9f9 ee
+f9fa 3f
+3ffa d5
+f9fb a7
+7
+f9f8 3f 1
+f9f9 ee 1
+f9fa 3f 1
+3ffa d5 1
+3ffa d5 1
+3ffa d5 0
+3ffa aa 0
+f9fb 90 28 0c 6d 6d
+5
+3ffa aa
+f9f8 3f
+f9f9 ee
+f9fa 3f
+f9fb a7
+40be 05 cb 1d d6 ec
+5
+40be 3f
+40bf 7c
+40c0 77
+7799 89
+40c1 85
+7
+40be 3f 1
+40bf 7c 1
+40c0 77 1
+7799 89 1
+7799 89 1
+7799 89 0
+7799 12 0
+40c1 05 02 1d d6 6d
+5
+40be 3f
+40bf 7c
+40c0 77
+40c1 85
+7799 12
+03f9 d5 fe 31 f1 61
+6
+03f9 3f
+03fa e8
+03fb f0
+f019 54
+f119 74
+03fc a0
+7
+03f9 3f 1
+03fa e8 1
+03fb f0 1
+f019 54 1
+f119 74 1
+f119 74 0
+f119 e9 0
+03fc d5 e8 31 f1 e0
+6
+03f9 3f
+03fa e8
+03fb f0
+03fc a0
+f019 54
+f119 e9
+ca1b 27 b3 41 03 6e
+5
+ca1b 3f
+ca1c a5
+ca1d 0f
+0fe6 34
+ca1e 38
+7
+ca1b 3f 1
+ca1c a5 1
+ca1d 0f 1
+0fe6 34 1
+0fe6 34 1
+0fe6 34 0
+0fe6 68 0
+ca1e 27 20 41 03 6c
+5
+0fe6 68
+ca1b 3f
+ca1c a5
+ca1d 0f
+ca1e 38
+8266 29 7c 81 b4 61
+6
+8266 3f
+8267 fd
+8268 de
+de7e 05
+df7e 08
+8269 40
+7
+8266 3f 1
+8267 fd 1
+8268 de 1
+de7e 05 1
+df7e 08 1
+df7e 08 0
+df7e 11 0
+8269 29 10 81 b4 60
+6
+8266 3f
+8267 fd
+8268 de
+8269 40
+de7e 05
+df7e 11
+a2e7 96 a4 85 c1 66
+5
+a2e7 3f
+a2e8 33
+a2e9 8f
+8fb8 a2
+a2ea ea
+7
+a2e7 3f 1
+a2e8 33 1
+a2e9 8f 1
+8fb8 a2 1
+8fb8 a2 1
+8fb8 a2 0
+8fb8 44 0
+a2ea 96 04 85 c1 65
+5
+8fb8 44
+a2e7 3f
+a2e8 33
+a2e9 8f
+a2ea ea
+ece0 32 63 3f bf ac
+5
+ece0 3f
+ece1 6b
+ece2 7a
+7aaa db
+ece3 7e
+7
+ece0 3f 1
+ece1 6b 1
+ece2 7a 1
+7aaa db 1
+7aaa db 1
+7aaa db 0
+7aaa b6 0
+ece3 32 22 3f bf 2d
+5
+7aaa b6
+ece0 3f
+ece1 6b
+ece2 7a
+ece3 7e
+0e23 27 b8 34 1b e1
+5
+0e23 3f
+0e24 6d
+0e25 8a
+8aa1 38
+0e26 1f
+7
+0e23 3f 1
+0e24 6d 1
+0e25 8a 1
+8aa1 38 1
+8aa1 38 1
+8aa1 38 0
+8aa1 71 0
+0e26 27 30 34 1b 60
+5
+0e23 3f
+0e24 6d
+0e25 8a
+0e26 1f
+8aa1 71
+5d3e e7 c1 bb 9f a9
+6
+5d3e 3f
+5d3f 6c
+5d40 a8
+a827 81
+a927 89
+5d41 b4
+7
+5d3e 3f 1
+5d3f 6c 1
+5d40 a8 1
+a827 81 1
+a927 89 1
+a927 89 0
+a927 13 0
+5d41 e7 01 bb 9f 29
+6
+5d3e 3f
+5d3f 6c
+5d40 a8
+5d41 b4
+a827 81
+a927 13
+15f3 8b e8 df fd 28
+6
+15f3 3f
+15f4 9e
+15f5 1b
+1b7d 26
+1c7d c5
+15f6 45
+7
+15f3 3f 1
+15f4 9e 1
+15f5 1b 1
+1b7d 26 1
+1c7d c5 1
+1c7d c5 0
+1c7d 8a 0
+15f6 8b 88 df fd a9
+6
+15f3 3f
+15f4 9e
+15f5 1b
+15f6 45
+1b7d 26
+1c7d 8a
+cfa8 ec 11 c4 2f e7
+5
+cfa8 3f
+cfa9 0d
+cfaa 55
+55d1 17
+cfab b9
+7
+cfa8 3f 1
+cfa9 0d 1
+cfaa 55 1
+55d1 17 1
+55d1 17 1
+55d1 17 0
+55d1 2f 0
+cfab ec 01 c4 2f 64
+5
+55d1 2f
+cfa8 3f
+cfa9 0d
+cfaa 55
+cfab b9
+d654 cb cc 8d b3 65
+6
+d654 3f
+d655 f1
+d656 25
+257e 38
+267e 73
+d657 21
+7
+d654 3f 1
+d655 f1 1
+d656 25 1
+257e 38 1
+267e 73 1
+267e 73 0
+267e e7 0
+d657 cb c4 8d b3 e4
+6
+257e 38
+267e e7
+d654 3f
+d655 f1
+d656 25
+d657 21
+0e2a 18 4c be d7 a9
+6
+0e2a 3f
+0e2b c6
+0e2c eb
+eb84 2a
+ec84 4c
+0e2d a1
+7
+0e2a 3f 1
+0e2b c6 1
+0e2c eb 1
+eb84 2a 1
+ec84 4c 1
+ec84 4c 0
+ec84 99 0
+0e2d 18 08 be d7 28
+6
+0e2a 3f
+0e2b c6
+0e2c eb
+0e2d a1
+eb84 2a
+ec84 99
+d64f b4 13 87 55 25
+5
+d64f 3f
+d650 1b
+d651 2b
+2ba2 2e
+d652 cf
+7
+d64f 3f 1
+d650 1b 1
+d651 2b 1
+2ba2 2e 1
+2ba2 2e 1
+2ba2 2e 0
+2ba2 5d 0
+d652 b4 11 87 55 24
+5
+2ba2 5d
+d64f 3f
+d650 1b
+d651 2b
+d652 cf
+cad8 91 f5 2d 5e e6
+5
+cad8 3f
+cad9 c4
+cada b9
+b9f1 7e
+cadb 8f
+7
+cad8 3f 1
+cad9 c4 1
+cada b9 1
+b9f1 7e 1
+b9f1 7e 1
+b9f1 7e 0
+b9f1 fc 0
+cadb 91 f4 2d 5e e4
+5
+b9f1 fc
+cad8 3f
+cad9 c4
+cada b9
+cadb 8f
+68dd 8a 66 69 bc a7
+5
+68dd 3f
+68de 71
+68df 74
+74da 30
+68e0 09
+7
+68dd 3f 1
+68de 71 1
+68df 74 1
+74da 30 1
+74da 30 1
+74da 30 0
+74da 61 0
+68e0 8a 60 69 bc 24
+5
+68dd 3f
+68de 71
+68df 74
+68e0 09
+74da 61
+aafb 8e f7 81 8a 25
+6
+aafb 3f
+aafc 8e
+aafd 51
+510f e8
+520f 44
+aafe 74
+7
+aafb 3f 1
+aafc 8e 1
+aafd 51 1
+510f e8 1
+520f 44 1
+520f 44 0
+520f 89 0
+aafe 8e 81 81 8a a4
+6
+510f e8
+520f 89
+aafb 3f
+aafc 8e
+aafd 51
+aafe 74
+779e 15 52 a6 94 27
+6
+779e 3f
+779f ce
+77a0 d3
+d374 05
+d474 1d
+77a1 44
+7
+779e 3f 1
+779f ce 1
+77a0 d3 1
+d374 05 1
+d474 1d 1
+d474 1d 0
+d474 3b 0
+77a1 15 12 a6 94 24
+6
+779e 3f
+779f ce
+77a0 d3
+77a1 44
+d374 05
+d474 3b
+ce07 99 be e2 c9 ac
+6
+ce07 3f
+ce08 48
+ce09 f2
+f22a a0
+f32a 79
+ce0a 61
+7
+ce07 3f 1
+ce08 48 1
+ce09 f2 1
+f22a a0 1
+f32a 79 1
+f32a 79 0
+f32a f2 0
+ce0a 99 b2 e2 c9 ac
+6
+ce07 3f
+ce08 48
+ce09 f2
+ce0a 61
+f22a a0
+f32a f2
+f81d 02 97 1a 1d 2d
+5
+f81d 3f
+f81e 51
+f81f 37
+376b 66
+f820 7c
+7
+f81d 3f 1
+f81e 51 1
+f81f 37 1
+376b 66 1
+376b 66 1
+376b 66 0
+376b cd 0
+f820 02 85 1a 1d ac
+5
+376b cd
+f81d 3f
+f81e 51
+f81f 37
+f820 7c
+ffb2 24 ad d7 2c 62
+5
+ffb2 3f
+ffb3 23
+ffb4 66
+66fa 25
+ffb5 90
+7
+ffb2 3f 1
+ffb3 23 1
+ffb4 66 1
+66fa 25 1
+66fa 25 1
+66fa 25 0
+66fa 4a 0
+ffb5 24 08 d7 2c 60
+5
+66fa 4a
+ffb2 3f
+ffb3 23
+ffb4 66
+ffb5 90
+5cf8 2b fa 18 80 e5
+5
+5cf8 3f
+5cf9 3c
+5cfa da
+da54 c8
+5cfb 0c
+7
+5cf8 3f 1
+5cf9 3c 1
+5cfa da 1
+da54 c8 1
+da54 c8 1
+da54 c8 0
+da54 91 0
+5cfb 2b 90 18 80 e5
+5
+5cf8 3f
+5cf9 3c
+5cfa da
+5cfb 0c
+da54 91

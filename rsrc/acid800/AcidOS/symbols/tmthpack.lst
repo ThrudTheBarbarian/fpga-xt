@@ -1,0 +1,4853 @@
+mads 2.1.0 build 8 (23 Dec 19)
+Source: tmthpack.s
+     1 						icl		'library.s'
+Source: library.s
+     1 				; Altirra AcidOS test suite
+     2 				; Copyright (C) 2013 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				;==========================================================================
+    23 				; MEMORY MAP
+    24 				;
+    25 				; 0480-04FF		Line buffer
+    26 				; 0500-21FF		Reserved for DOS
+    27 				; 2200-25FF		Test display
+    28 				; 2600-2BFF		Library code
+    29 				;
+    30 				;==========================================================================
+    31
+    32 						icl		'hardware.inc'
+Source: hardware.inc
+     1 				; Altirra AcidOS test suite
+     2 				; Copyright (C) 2013 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				.ifndef f_HARDWARE_INC
+    23 				.def f_HARDWARE_INC
+    24
+    25 				;==========================================================================
+    26 				; GTIA
+    27 				;
+    28 				hposp0	equ	$d000
+    29 				hposp1	equ	$d001
+    30 				hposp2	equ	$d002
+    31 				hposp3	equ	$d003
+    32 				hposm0	equ	$d004
+    33 				hposm1	equ	$d005
+    34 				hposm2	equ	$d006
+    35 				hposm3	equ	$d007
+    36 				sizep0	equ	$d008
+    37 				sizep1	equ	$d009
+    38 				sizep2	equ	$d00a
+    39 				sizep3	equ	$d00b
+    40 				sizem	equ	$d00c
+    41 				trig0	equ	$d010
+    42 				trig1	equ	$d011
+    43 				trig2	equ	$d012
+    44 				colpm0	equ	$d012
+    45 				trig3	equ	$d013
+    46 				colpm1	equ	$d013
+    47 				pal		equ	$d014
+    48 				colpm2	equ	$d014
+    49 				colpm3	equ	$d015
+    50 				colpf0	equ	$d016
+    51 				colpf1	equ	$d017
+    52 				colpf2	equ	$d018
+    53 				colpf3	equ	$d019
+    54 				colbk	equ	$d01a
+    55 				prior	equ	$d01b
+    56 				gractl	equ	$d01d
+    57 				consol	equ	$d01f
+    58
+    59 				;==========================================================================
+    60 				; POKEY
+    61 				;
+    62 				pot0	equ	$d200
+    63 				audf1	equ	$d200
+    64 				pot1	equ	$d201
+    65 				audc1	equ	$d201
+    66 				pot2	equ	$d202
+    67 				audf2	equ	$d202
+    68 				pot3	equ	$d203
+    69 				audc2	equ	$d203
+    70 				pot4	equ	$d204
+    71 				audf3	equ	$d204
+    72 				pot5	equ	$d205
+    73 				audc3	equ	$d205
+    74 				pot6	equ	$d206
+    75 				audf4	equ	$d206
+    76 				pot7	equ	$d207
+    77 				audc4	equ	$d207
+    78 				audctl	equ	$d208
+    79 				kbcode	equ	$d209
+    80 				stimer	equ	$d209
+    81 				skres	equ	$d20a
+    82 				potgo	equ	$d20b
+    83 				serin	equ	$d20d
+    84 				serout	equ	$d20d
+    85 				irqen	equ	$d20e
+    86 				irqst	equ	$d20e
+    87 				skctl	equ	$d20f
+    88 				skstat	equ	$d20f
+    89
+    90 				;==========================================================================
+    91 				; PIA
+    92 				;
+    93 				porta	equ	$d300
+    94 				portb	equ	$d301
+    95 				pactl	equ	$d302
+    96 				pbctl	equ	$d303
+    97
+    98 				;==========================================================================
+    99 				; ANTIC
+   100 				;
+   101 				dmactl	equ	$d400
+   102 				chactl	equ	$d401
+   103 				dlistl	equ	$d402
+   104 				dlisth	equ	$d403
+   105 				hscrol	equ	$d404
+   106 				vscrol	equ	$d405
+   107 				pmbase	equ	$d407
+   108 				chbase	equ	$d409
+   109 				wsync	equ	$d40a
+   110 				vcount	equ	$d40b
+   111 				penh	equ	$d40c
+   112 				penv	equ	$d40d
+   113 				nmien	equ	$d40e
+   114 				nmist	equ	$d40f
+   115 				nmires	equ	$d40f
+   116
+   117 				;==========================================================================
+   118 				; 6502
+   119 				;
+   120 				nmivec	equ	$fffa
+   121 				resvec	equ	$fffc
+   122 				irqvec	equ	$fffe
+   123
+   124 				.endif
+    33 						icl		'kerneldb.inc'
+Source: kerneldb.inc
+     1 				; Altirra AcidOS test suite
+     2 				; Copyright (C) 2013 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				.ifndef f_KERNELDB_INC
+    23 				.def f_KERNELDB_INC
+    24
+    25 				casini	= $0002			;cassette initialization vector
+    26 				ramlo	= $0004			;
+    27 				tramsz	= $0006			;temporary ram size / cart A flag
+    28 				tstdat	= $0007			;RAM test data register / cart B flag
+    29 				warmst	= $0008			;warmstart flag
+    30 				boot?	= $0009			;boot flag; 0 if none, 1 for disk, 2 for cassette
+    31 				dosvec	= $000a
+    32 				dosini	= $000c
+    33 				appmhi	= $000e
+    34 				pokmsk	= $0010
+    35 				brkkey	= $0011			;set on [BREAK]
+    36 				rtclok	= $0012
+    37 				bufadr	= $0015			;indirect buffer address pointer (temp for disk buffer)
+    38 						; $0016
+    39 				iccomt	= $0017			;CIO: command byte
+    40 				ziocb	= $0020			;zero-page IOCB
+    41 				ichidz	= $0020			;Zero page IOCB: device index ($FF = not open)
+    42 				icdnoz	= $0021			;Zero page IOCB: device number
+    43 				iccomz	= $0022			;Zero page IOCB: command byte
+    44 				icstaz	= $0023			;Zero page IOCB: status byte
+    45 				icbalz	= $0024			;Zero page IOCB: address of device/filename spec lo
+    46 				icbahz	= $0025			;Zero page IOCB: address of device/filename spec hi
+    47 				icptlz	= $0026			;Zero page IOCB: put byte address lo (-1)
+    48 				icpthz	= $0027			;Zero page IOCB: put byte address hi (-1)
+    49 				icbllz	= $0028			;Zero page IOCB: buffer length/byte count lo (-1)
+    50 				icblhz	= $0029			;Zero page IOCB: buffer length/byte count hi (-1)
+    51 				icax1z	= $002a			;Zero page IOCB: device-specific information 1
+    52 				icax2z	= $002b			;Zero page IOCB: device-specific information 2
+    53 				icax3z	= $002c			;Zero page IOCB: device-specific information 3
+    54 				icax4z	= $002d			;Zero page IOCB: device-specific information 4
+    55 				icax5z	= $002e			;Zero page IOCB: device-specific information 5
+    56 				icidno	= $002e			;CIO: call X register save/restore
+    57 				icax6z	= $002f			;Zero page IOCB: device-specific information 6
+    58 				ciochr	= $002f			;CIO: call A register save/restore
+    59 				status  = $0030			;SIO: temporay status byte
+    60 				chksum	= $0031			;SIO: temporary checksum byte (used by IRQ routines)
+    61 				bufrlo	= $0032			;SIO: buffer pointer lo (incremented by IRQ routines)
+    62 				bufrhi	= $0033			;SIO: buffer pointer hi (incremented by IRQ routines)
+    63 				bfenlo	= $0034			;SIO: buffer end lo
+    64 				bfenhi	= $0035			;SIO: buffer end hi
+    65 				ltemp	= $0036			;Relocating loader: loader temp address (XL/XE)
+    66 						; $0037
+    67 				bufrfl	= $0038			;SIO: buffer full flag
+    68 				recvdn	= $0039			;SIO: receive completed flag
+    69 				xmtdon	= $003a			;SIO: transmit completed flag
+    70 				chksnt	= $003b			;SIO: checksum sent flag
+    71 				nocksm	= $003c			;SIO: no-checksum flag
+    72 				bptr	= $003d			;Cassette: Buffer pointer
+    73 				ftype	= $003e			;Cassette: Interrecord gap (IRG) type; bit7=1 means continuous mode
+    74 				feof	= $003f			;Cassette: EOF flag
+    75 				soundr	= $0041			;SIO: noisy audio flag
+    76 				critic	= $0042			;critical flag for vbi
+    77 				zchain	= $004a			;Peripheral Handler: zero-page chain address
+    78 						; $004b
+    79 				atract	= $004d			;screen attract counter
+    80 				drkmsk	= $004e			;screen attract mask
+    81 				colrsh	= $004f			;screen attract color shift
+    82 				tmpchr	= $0050			;Screen Editor
+    83 				hold1	= $0051			;Display/Editor: temporary storage
+    84 				lmargn	= $0052			;left margin column
+    85 				rmargn	= $0053			;right margin column
+    86 				rowcrs	= $0054			;cursor row
+    87 				colcrs	= $0055			;cursor column
+    88 						; $0056
+    89 				dindex	= $0057			;display mode index
+    90 				savmsc	= $0058			;lowest address of screen region
+    91 				oldrow	= $005a			;
+    92 				oldcol	= $005b			;
+    93 				oldchr	= $005d			;cursor character save/restore
+    94 				oldadr	= $005e			;cursor memory address
+    95 						; $005f
+    96 				palnts	= $0062			;PAL/NTSC flag
+    97 				logcol	= $0063			;Display/Editor: Logical column (0-119)
+    98 				adress	= $0064			;temporary storage (display code)
+    99 						; $0065
+   100 				toadr	= $0066			;temporary storage (display code)
+   101 						; $0067
+   102 				frmadr	= $0068			;temporary storage (display code)
+   103 						; $0069
+   104 				ramtop	= $006a			;ram size
+   105 				bufcnt	= $006b
+   106 				bufstr	= $006c			;row/column of start of logical line
+   107 				bitmsk	= $006e			;Screen Editor
+   108 				shfamt	= $006f			;Screen Editor
+   109 				rowac	= $0070			;Screen Editor: line drawing
+   110 						; $0071			;
+   111 				colac	= $0072			;Screen Editor: line drawing
+   112 						; $0073			;
+   113 				endpt	= $0074			;Screen Editor: line drawing
+   114 						; $0075			;
+   115 				deltar	= $0076			;Screen Editor: delta row (line drawing)
+   116 				deltac	= $0077			;Screen Editor: delta column (line drawing)
+   117 						; $0078			;
+   118 				keydef	= $0079			;XL/XE: Keyboard definition table
+   119 						; $007a
+   120 				swpflg	= $007b			;current display var state ($00 = main, $FF = split screen)
+   121 				holdch	= $007c			;temporary key hold area prior to shift/control lock logic
+   122 				countr	= $007e			;Screen Editor: line length
+   123 						; $007f
+   124 				fr0		= $00d4			;FP: Accumulator 0
+   125 				_fr3	= $00da			;FP: Accumulator 4
+   126 				fr1		= $00e0			;FP: Accumulator 1
+   127 				_fr2	= $00e6			;FP: Accumulator 2
+   128 				_fpres2	= $00ef			;BASIC: Used in sqr() routine -- must not be touched by FP code
+   129 				_fpres	= $00f0			;BASIC: Used in sin() routine -- must not be touched by FP code
+   130 				cix		= $00f2			;FP: Character index
+   131 				inbuff	= $00f3			;FP: ASCII conversion buffer
+   132 						; $00f4
+   133 				_fpcount= $00f5
+   134 				_fptemp0= $00f6
+   135 				_fptemp1= $00f7
+   136 				flptr	= $00fc			;FP: pointer for floating-point loads and stores
+   137 				_flptr2	= $00fe
+   138
+   139 				vdslst	= $0200			;display list interrupt vector
+   140 				vprced	= $0202			;serial bus proceed interrupt vector
+   141 				vinter	= $0204			;serial bus interrupt vector
+   142 				vbreak	= $0206			;BRK instruction vector
+   143 				vkeybd	= $0208			;keyboard interrupt vector
+   144 				vserin	= $020a			;serial input ready interrupt vector
+   145 				vseror	= $020c			;serial output ready interrupt vector
+   146 				vseroc	= $020e			;serial output completed interrupt vector
+   147 				vtimr1	= $0210			;pokey timer 1 interrupt vector
+   148 				vtimr2	= $0212			;pokey timer 2 interrupt vector
+   149 				vtimr4	= $0214			;pokey timer 4 interrupt vector
+   150 				vimirq	= $0216			;immediate IRQ vector
+   151 				cdtmv1	= $0218			;countdown timer 1
+   152 				cdtmv2	= $021a			;countdown timer 2
+   153 				cdtmv3	= $021c			;countdown timer 3
+   154 				cdtmv4	= $021e			;countdown timer 4
+   155 				cdtmv5	= $0220			;countdown timer 5
+   156 				vvblki	= $0222			;vertical blank immediate vector
+   157 				vvblkd	= $0224			;vertical blank deferred vector
+   158 				cdtma1	= $0226			;timer 1 vector
+   159 				cdtma2	= $0228			;timer 2 vector
+   160 				cdtmf3	= $022a			;timer 3 flag
+   161 				srtimr	= $022b			;autorepeat timer
+   162 				cdtmf4	= $022c			;timer 4 flag
+   163 				intemp	= $022d			;temp value used by SETVBV
+   164 				cdtmf5	= $022e			;timer 5 flag
+   165 				sdmctl	= $022f			;shadow for DMACTL ($D400)
+   166 				sdlstl	= $0230			;shadow for DLISTL ($D402)
+   167 				sdlsth	= $0231			;shadow for DLISTH ($D403)
+   168 				sskctl	= $0232			;shadow for SKCTL ($D20F)
+   169 				lcount	= $0233			;Relocating loader: (XL/XE)
+   170 				lpenh	= $0234			;light pen horizontal pos
+   171 				lpenv	= $0235			;light pen vertical pos
+   172 				brkky	= $0236			;break key interrupt vector (OS B+ only)
+   173 				reladr	= $0238			;Relocating loader: temp address (XL/XE)
+   174 						; $0239
+   175 				cdevic	= $023a			;SIO: command frame device ID
+   176 				ccomnd	= $023b			;SIO: command frame command ID
+   177 				caux1	= $023c			;SIO: command aux byte 1
+   178 				caux2	= $023d			;SIO: command aux byte 2
+   179 				temp	= $023e			;SIO: temp space
+   180 				errflg	= $023f			;SIO: error flag
+   181 				dflags	= $0240			;disk boot flags
+   182 				dbsect	= $0241			;disk boot sector count
+   183 				bootad	= $0242			;disk boot address
+   184 				coldst	= $0244			;cold start flag
+   185 				reclen	= $0245			;Relocating loader: record length (XL/XE)
+   186 				dsktim	= $0246			;Disk Handler: Disk operation timeout
+   187 				pdvmsk	= $0247			;PBI device mask (XL/XE)
+   188 				shpdvs	= $0248			;PBI device selection register shadow ($D1FF) (XL/XE)
+   189 				fine	= $026e			;fine scrolling flag (XL/XE)
+   190 				gprior	= $026f			;shadow for PRIOR ($D01B)
+   191 				paddl0	= $0270			;shadow for POT0 ($D200)
+   192 				paddl1	= $0271			;shadow for POT1 ($D201)
+   193 				paddl2	= $0272			;shadow for POT2 ($D202)
+   194 				paddl3	= $0273			;shadow for POT3 ($D203)
+   195 				paddl4	= $0274			;shadow for POT4 ($D204)
+   196 				paddl5	= $0275			;shadow for POT5 ($D205)
+   197 				paddl6	= $0276			;shadow for POT6 ($D206)
+   198 				paddl7	= $0277			;shadow for POT7 ($D207)
+   199 				stick0	= $0278			;shadow for PORTA lo ($D300)
+   200 				stick1	= $0279			;shadow for PORTA hi ($D300)
+   201 				stick2	= $027A			;shadow for PORTB lo ($D302)
+   202 				stick3	= $027B			;shadow for PORTB hih ($D302)
+   203 				ptrig0	= $027c			;paddle trigger 0
+   204 				ptrig1	= $027d			;paddle trigger 1
+   205 				ptrig2	= $027e			;paddle trigger 2
+   206 				ptrig3	= $027f			;paddle trigger 3
+   207 				ptrig4	= $0280			;paddle trigger 4
+   208 				ptrig5	= $0281			;paddle trigger 5
+   209 				ptrig6	= $0282			;paddle trigger 6
+   210 				ptrig7	= $0283			;paddle trigger 7
+   211 				strig0	= $0284			;shadow for TRIG0 ($D001)
+   212 				strig1	= $0285			;shadow for TRIG1 ($D002)
+   213 				strig2	= $0286			;shadow for TRIG2 ($D003)
+   214 				strig3	= $0287			;shadow for TRIG3 ($D004)
+   215 				hibyte	= $0288			;Relocating loader (XL/XE)
+   216 				wmode	= $0289			;Cassette: Write mode (00 = read, 80 = write)
+   217 				blim	= $028a			;Cassette: Buffer limit
+   218 				jveck	= $028c			;XL/XE: IRQ jump vector
+   219 				newadr	= $028e			;Relocating loader (XL/XE)
+   220 				txtrow	= $0290
+   221 				txtcol	= $0291
+   222 						; $0292
+   223 				tindex	= $0293			;text mode index
+   224 				txtmsc	= $0294			;text window pointer
+   225 						; $0295
+   226 				cretry	= $029c			;SIO: command retries (XL/XE)
+   227 				hold3	= $029d			;Screen Editor
+   228 				hold2	= $029f			;Screen Editor
+   229 				dmask	= $02a0			;Display/Editor: Graphics merge mask
+   230 				tmplbt	= $02a1			
+   231 				escflg	= $02a2			;Display/Editor: Escape next character
+   232 				tabmap	= $02a3			;Display/Editor: Bitfield indicating tabs (note reversed bit positions)
+   233 				logmap	= $02b2			;Display/Editor: Logical line start map (4 bytes)
+   234 				tmprow	= $02b8			;Screen Editor
+   235 				tmpcol	= $02b9			;Screen Editor
+   236 						; $02ba
+   237 				scrflg	= $02bb			;Display/Editor: Scroll counter
+   238 				hold4	= $02bc			;Screen Editor
+   239 				dretry	= $02bd			;SIO: device retries (XL/XE)
+   240 				shflok	= $02be			;shift/control lock flags
+   241 				botscr	= $02bf			;number of text rows in text window
+   242 				pcolr0	= $02c0			;shadow for COLPM0 ($D012)
+   243 				pcolr1	= $02c1			;shadow for COLPM1 ($D013)
+   244 				pcolr2	= $02c2			;shadow for COLPM2 ($D014)
+   245 				pcolr3	= $02c3			;shadow for COLPM3 ($D015)
+   246 				color0	= $02c4			;shadow for COLPF0 ($D016)
+   247 				color1	= $02c5			;shadow for COLPF1 ($D017)
+   248 				color2	= $02c6			;shadow for COLPF2 ($D018)
+   249 				color3	= $02c7			;shadow for COLPF3 ($D019)
+   250 				color4	= $02c8			;shadow for COLBK ($D01A)
+   251 				runadr	= $02c9			;Relocating loader: run address (XL/XE)
+   252 						; $02ca
+   253 				hiused	= $02cb			;Relocating loader: Next available memory location (out) (XL/XE)
+   254 						; $02cc
+   255 				zhiuse	= $02cd			;Relocating loader: Next available zero-page address (out) (XL/XE)
+   256 						; $02ce
+   257 				gbytea	= $02cf			;Relocating loader: GET BYTE address (XL/XE)
+   258 						; $02d0
+   259 				loadad	= $02d1			;Relocating loader: Load address (XL/XE)
+   260 						; $02d2
+   261 				zloada	= $02d3			;Relocating loader: Zero-page load address (XL/XE)
+   262 						; $02d4
+   263 				dsctln	= $02d5			;Disk sector size (XL/XE)
+   264 				pbpnt	= $02de			;Printer: Buffer index (XL/XE location)
+   265 				pbufsz	= $02df			;Printer: Record size (XL/XE location)
+   266 				runad	= $02e0
+   267 				initad	= $02e2
+   268 				ramsiz	= $02e4			;ram size in pages
+   269 				memtop	= $02e5			;highest location for programs and data
+   270 				memlo	= $02e7			;base of application memory
+   271 				hndlod	= $02e9			;CIO: Handler load flag (XL/XE)
+   272 				dvstat	= $02ea			;DISK: Status request buffer area (4 bytes)
+   273 						; $02eb
+   274 						; $02ec
+   275 						; $02ed
+   276 				crsinh	= $02f0			;Display/Editor: cursor inhibit flag
+   277 				keydel	= $02f1			;keyboard debounce delay (set to 3 vblanks per key)
+   278 				ch1		= $02f2			;last keyboard code read
+   279 				chact	= $02f3			;shadow for CHACTL ($D401)
+   280 				chbas	= $02f4			;shadow for CHBASE ($D409)
+   281 				rowinc	= $02f8			;Screen Editor: row direction (XL/XE location)
+   282 				colinc	= $02f9			;Screen Editor: col direction (XL/XE location)
+   283 				atachr	= $02fb			;Screen Editor
+   284 				ch		= $02fc			;keyboard FIFO byte
+   285 				fildat	= $02fd			;Screen Editor: fill color
+   286 				dspflg	= $02fe			;enable/disable of control codes by screen editor (E:)
+   287 				ssflag	= $02ff			;display/screen editor suspend flag
+   288 				ddevic	= $0300			;serial bus ID
+   289 				dunit	= $0301			;device number
+   290 				dcomnd	= $0302			;command byte
+   291 				dstats	= $0303			;status byte
+   292 				dbuflo	= $0304			;buffer address lo
+   293 				dbufhi	= $0305			;buffer address hi
+   294 				dtimlo	= $0306			;disk timeout value
+   295 				dbytlo	= $0308			;byte count lo
+   296 				dbythi	= $0309			;byte count hi
+   297 				daux1	= $030a			;sector number lo
+   298 				daux2	= $030b			;sector number hi
+   299 				timer1	= $030c			;SIO: baud rate determination - first timer value
+   300 				addcor	= $030e			;SIO: baud rate determination - correction value
+   301 				casflg	= $030f			;SIO: cassette I/O flag (0=normal, nonzero=cassette)
+   302 				timer2	= $0310			;SIO: baud rate determination - second timer value
+   303 				temp1	= $0312			;SIO: baud rate determination - temp
+   304 						; $0313
+   305 				ptimot	= $0314			;Printer: Timeout (XL/XE location)
+   306 				temp3	= $0315			;SIO: baud rate determination - temp
+   307 				timflg	= $0317			;SIO: operation timeout flag (set by countdown timer 1 IRQ)
+   308 				stackp	= $0318			;SIO: stack pointer save
+   309 				hatabs	= $031a			;handler table
+   310 				pupbt1	= $033d			;(XL/XE) Power-up boot flag #1 - $5C
+   311 				pupbt2	= $033e			;(XL/XE) Power-up boot flag #2 - $93
+   312 				pupbt3	= $033f			;(XL/XE) Power-up boot flag #3 - $25
+   313 				ichid	= $0340			;IOCB #0 handler ID
+   314 				icdno	= $0341			;IOCB #0 device number
+   315 				iccmd	= $0342			;IOCB #0 command byte
+   316 				icsta	= $0343			;IOCB #0 status
+   317 				icbal	= $0344			;IOCB #0 buffer address lo
+   318 				icbah	= $0345			;IOCB #0 buffer address hi
+   319 				icptl	= $0346			;IOCB #0 PUT address lo
+   320 				icpth	= $0347			;IOCB #0 PUT address hi
+   321 				icbll	= $0348			;IOCB #0 buffer length/byte count lo
+   322 				icblh	= $0349			;IOCB #0 buffer length/byte count hi
+   323 				icax1	= $034a			;IOCB #0 auxiliary information lo
+   324 				icax2	= $034b			;IOCB #0 auxiliary information hi
+   325 				icax3	= $034c			;
+   326 				icax4	= $034d			;
+   327 				icax5	= $034e			;
+   328 				icax6	= $034f			;
+   329 				prnbuf	= $03c0			;printer buffer
+   330 				ckey	= $03e9			;cassette boot key
+   331 				basicf	= $03f8			;XL/XE: ROM BASIC flag. 0 = enabled
+   332 				gintlk	= $03fa			;XL/XE: Cartridge interlock (clone of TRIG3). 
+   333 				chlink	= $03fb			;XL/XE: Relocated loader chain
+   334 				casbuf	= $03fd			;Cassette buffer (03FD-047F)
+   335 				lbuff	= $0580			;
+   336 				plyarg	= $05e0			;FP: Polynomial evaluation temp register
+   337
+   338 				afp		equ		$d800
+   339 				fasc	equ		$d8e6
+   340 				ipf		equ		$d9aa
+   341 				fpi		equ		$d9d2
+   342 				zfr0	equ		$da44
+   343 				zf1		equ		$da46
+   344 				fsub	equ		$da60
+   345 				fadd	equ		$da66
+   346 				fmul	equ		$dadb
+   347 				fdiv	equ		$db28
+   348 				plyevl	equ		$dd40
+   349 				fld0r	equ		$dd89
+   350 				fld0p	equ		$dd8d
+   351 				fld1r	equ		$dd98
+   352 				fld1p	equ		$dd9c
+   353 				fst0r	equ		$dda7
+   354 				fst0p	equ		$ddab
+   355 				fmove	equ		$ddb6
+   356 				exp		equ		$ddc0
+   357 				exp10	equ		$ddcc
+   358 				log		equ		$decd
+   359 				log10	equ		$ded1
+   360
+   361 				dskinv	= $e453
+   362 				ciov	= $e456
+   363 				setvbv	= $e45c
+   364 				sysvbv	= $e45f
+   365 				xitvbv	= $e462
+   366
+   367 				.endif
+    34
+    35 						opt		o-
+    36
+    37 						org		$b0
+    38 				d0		dta		0
+    39 				d1		dta		0
+    40 				d2		dta		0
+    41 				d3		dta		0
+    42 				d4		dta		0
+    43 				d5		dta		0
+    44 				d6		dta		0
+    45 				d7		dta		0
+    46 				a0		dta		a(0)
+    47 				a1		dta		a(0)
+    48 				a2		dta		a(0)
+    49 				a3		dta		a(0)
+    50
+    51 						org		$c0
+    52 						
+    53 				_log_curx	dta		0
+    54 				_log_curln	dta		a(0)
+    55 				_log_srcptr	dta		a(0)
+    56 				_log_lncnt	dta		0
+    57
+    58 = 0080			LOGF_PAGING = $80
+    59 				_log_flags	dta		0
+    60
+    61 				_test_sp		dta		0
+    62 				_test_exit		dta		0
+    63
+    64 						.if *>$d4
+    65 						.error	'Library zero-page intrudes upon FP region: ',*
+    66 						.endif
+    67
+    68 				;=======================================================================
+    69
+    70 				.macro _TEST_ENTRY
+    71 				.ifdef STANDALONE
+    72 						icl		'init.s'
+    73 						run		__init
+    74 				.else
+    75 						run		main
+    76 				.endif		
+    77 				.endm
+    78
+    79 				;=======================================================================
+    80
+    81 						org		$2200
+    82 						
+    83 				.ifdef GENLIBRARY
+    84 						opt		o+
+    85 				.else
+    86 						opt		o-
+    87 				.endif
+    88 						
+    89 				_log_dlist:
+    90 						:3 dta	$70
+    91 						dta		$42,a(_log_display_start)
+    92 						dta		$00
+    93 						:23 dta	$02
+    94 						dta		$41,a(_log_dlist)
+    95 						
+    96 						org		$2240
+    97 				_log_display_start:
+    98 						dta		"  AcidOS output - Ctrl+A to toggle      "*
+    99 				_log_display:
+   100 						;$2258-25FF
+   101 = 2600			_log_displayend equ $2600
+   102
+   103 						org		$2600
+   104
+   105 				;=======================================================================
+   106 				_cpu_mode		dta		0
+   107 				_opt_wait		dta		0
+   108 				_opt_waitfail	dta		0
+   109 				_test_exitfn	dta		a(0)
+   110 				_test_passed	dta		0
+   111 				_test_failed	dta		0
+   112 				_test_skipped	dta		0
+   113 				_test_testidx	dta		0
+   114 				_menu_2ndtime	dta		0
+   115 				_log_visible	dta		$ff
+   116 				_log_dlsave		dta		a(0)
+   117
+   118 				;=======================================================================
+   119 				_hexdig	dta		'0123456789ABCDEF'
+   120
+   121 				;=======================================================================
+   122 				.nowarn .proc _log_keyboardirq
+   123 						lda		#>next
+   124 						pha
+   125 						lda		#<next
+   126 						pha
+   127 						php
+   128 						pha
+   129 						jmp		$ffff
+   130 = 2626			chainaddr = *-2
+   131
+   132 				next:
+   133 						lda		ch
+   134 						cmp		#$bf		;CTRL+A
+   135 						bne		not_ctrla
+   136 						
+   137 						;eat the key
+   138 						lda		#$ff
+   139 						sta		ch
+   140 						
+   141 						;toggle display flag
+   142 						eor		_log_visible
+   143 						sta		_log_visible
+   144 						bmi		is_visible
+   145 						mwa		_log_dlsave sdlstl
+   146 				is_visible:
+   147 				not_ctrla:
+   148 						pla
+   149 						rti
+   150 				.endp
+   151
+   152 				;=======================================================================
+   153 				.nowarn .proc _log_deferred_vbi
+   154 						bit		_log_visible
+   155 						bpl		dl_ok
+   156 						
+   157 						lda		sdlstl
+   158 						ldx		sdlsth
+   159 						cmp		#<_log_dlist
+   160 						bne		dl_replaced
+   161 						cpx		#>_log_dlist
+   162 						beq		dl_ok
+   163 				dl_replaced:
+   164 						sta		_log_dlsave
+   165 						stx		_log_dlsave+1
+   166 						php
+   167 						sei
+   168 						lda		#<_log_dlist
+   169 						sta		sdlstl
+   170 						lda		#>_log_dlist
+   171 						sta		sdlsth
+   172 						plp
+   173 				dl_ok:
+   174 						jmp		xitvbv
+   175 				.endp
+   176
+   177 				;=======================================================================
+   178 				;	A = column
+   179 				;	X = row
+   180 				.nowarn .proc _log_gotoxy
+   181 						;save new X
+   182 						pha
+   183 						
+   184 						;erase existing cursor
+   185 						ldy		_log_curx
+   186 						lda		(_log_curln),y
+   187 						eor		#$80
+   188 						sta		(_log_curln),y
+   189 						
+   190 						;recompute line addr
+   191 						mva		#>[_log_display/2] _log_curln+1
+   192 						lda		pos_table,x
+   193 						asl
+   194 						rol		_log_curln+1
+   195 						asl
+   196 						rol		_log_curln+1
+   197 						sta		_log_curln
+   198 						
+   199 						;update X and redraw cursor
+   200 						pla
+   201 						tay
+   202 						sty		_log_curx
+   203 						lda		(_log_curln),y
+   204 						eor		#$80
+   205 						sta		(_log_curln),y
+   206 						rts
+   207 						
+   208 				pos_table:
+   209 						:22 dta [#*40+(<_log_display)]/4
+   210 				.endp
+   211
+   212 				;=======================================================================
+   213 				.nowarn .proc _log_cls
+   214 						ldy		#0
+   215 						sty		_log_lncnt
+   216 						tya
+   217 				clearloop:
+   218 						sta		_log_display,y
+   219 						sta		_log_displayend-$300,y
+   220 						sta		_log_displayend-$200,y
+   221 						sta		_log_displayend-$100,y
+   222 						iny
+   223 						bne		clearloop
+   224 						mwa		#_log_display _log_curln
+   225 						bne		_log_clearline.xit
+   226 				.endp
+   227
+   228 				;=======================================================================
+   229 				.nowarn .proc _log_clearline
+   230 						ldy		#39
+   231 						lda		#0
+   232 						sta:rpl	(_log_curln),y-
+   233 				xit:
+   234 						ldy		#2
+   235 						sty		_log_curx
+   236 						lda		#$80
+   237 						sta		(_log_curln),y
+   238 						rts
+   239 				.endp
+   240
+   241 				;=======================================================================
+   242 				; Modified:
+   243 				;	A, Y
+   244 				;
+   245 				; Preserved:
+   246 				;	X
+   247 				;
+   248 				; Control codes handled:
+   249 				;	$7D		clear
+   250 				;	$9B		end of line
+   251 				;	$9C		clear line
+   252 				;
+   253 				.nowarn .proc _log_putchar
+   254 						;check for EOL
+   255 						cmp		#$9b
+   256 						bne		not_eol
+   257 						ldy		_log_curx
+   258 						lda		#0
+   259 						sta		(_log_curln),y
+   260 						beq		wrap
+   261 				not_eol:
+   262 						;check for clear
+   263 						cmp		#$7d
+   264 						beq		_log_cls
+   265 						
+   266 						;check for clear line
+   267 						cmp		#$9c
+   268 						beq		_log_clearline
+   269 						
+   270 						;convert ATASCII to INTERNAL
+   271 						pha
+   272 						rol
+   273 						rol
+   274 						rol
+   275 						rol
+   276 						and		#$03
+   277 						tay
+   278 						pla
+   279 						eor		conv_tab,y
+   280
+   281 						ldy		_log_curx
+   282 						sta		(_log_curln),y
+   283 						iny
+   284 						cpy		#40
+   285 						bcs		wrap
+   286 						sty		_log_curx
+   287 				done:
+   288 						lda		#$80
+   289 						sta		(_log_curln),y
+   290 						rts
+   291 				wrap:
+   292 						ldy		#2
+   293 						sty		_log_curx
+   294 						lda		_log_curln
+   295 						adc		#39
+   296 						sta		_log_curln
+   297 						scc:inc	_log_curln+1
+   298 						
+   299 						lda		_log_curln+1
+   300 						cmp		#>_log_displayend
+   301 						bne		no_scroll
+   302 				scroll:
+   303 						ldy		#<(_log_display+40)
+   304 						mva:rne	_log_display&$ff00,y +(_log_display&$ff00)-40,y+
+   305 						mva:rne	$100+(_log_display&$ff00),y $100+(_log_display&$ff00)-40,y+
+   306 						mva:rne	$200+(_log_display&$ff00),y $200+(_log_display&$ff00)-40,y+
+   307 						mva:rne	$300+(_log_display&$ff00),y $300+(_log_display&$ff00)-40,y+
+   308
+   309 						mva		#$d8 _log_curln
+   310 						dec		_log_curln+1
+   311
+   312 						jsr		_log_clearline
+   313 				no_scroll:
+   314 						;check if paging is enabled
+   315 						bit		_log_flags
+   316 						bpl		done
+   317 						
+   318 						;check if we've done a page
+   319 						inc		_log_lncnt
+   320 						lda		_log_lncnt
+   321 						cmp		#21
+   322 						bcc		done
+   323 						mva		#0 _log_lncnt
+   324 						
+   325 						ldy		#9
+   326 				more_loop:
+   327 						lda		more_msg-2,y
+   328 						sta		(_log_curln),y
+   329 						dey
+   330 						cpy		#1
+   331 						bne		more_loop
+   332 						
+   333 						jsr		_waitKey
+   334 						jsr		_log_clearline
+   335 						jmp		done
+   336 						
+   337 				more_msg:
+   338 						dta		"--More--"
+   339
+   340 				conv_tab:
+   341 						dta		$40
+   342 						dta		$20
+   343 						dta		$60
+   344 						dta		$00
+   345 				.endp
+   346
+   347 				;=======================================================================
+   348 				.nowarn .proc _log_imprint
+   349 						pla
+   350 						sta		_log_srcptr
+   351 						pla
+   352 						sta		_log_srcptr+1
+   353 				print_entry:
+   354 						jsr		_log_printm1
+   355 						lda		_log_srcptr+1
+   356 						pha
+   357 						lda		_log_srcptr
+   358 						pha
+   359 						rts
+   360 				.endp
+   361
+   362 				;=======================================================================
+   363 = 27A2			_log_print = _log_printm1.alt_entry
+   364
+   365 				.nowarn .proc _log_printm1
+   366 						ldx		#0
+   367 				prloop:
+   368 						inw		_log_srcptr
+   369 				prloop1:
+   370 						lda		(_log_srcptr,x)
+   371 						beq		done
+   372 						jsr		_log_putchar
+   373 						jmp		prloop
+   374 				alt_entry:
+   375 						ldx		#0
+   376 						beq		prloop1
+   377 				done:
+   378 						rts
+   379 				.endp
+   380
+   381 				;=======================================================================
+   382 				.nowarn .proc _log_imprintf
+   383 						pla
+   384 						tax
+   385 						pla
+   386 						tay
+   387 						inx
+   388 						sne:iny
+   389 						txa
+   390 						jsr		_log_printf
+   391 						lda		a0+1
+   392 						pha
+   393 						lda		a0
+   394 						pha
+   395 						rts	
+   396 				.endp
+   397
+   398 				;=======================================================================
+   399 				.nowarn .proc _log_printf
+   400 						sta		a0
+   401 						sty		a0+1
+   402 						ldy		#0
+   403 						sty		d0
+   404 						
+   405 				charloop:
+   406 						lda		(a0),y
+   407 						beq		done
+   408 						inw		a0
+   409 						cmp		#'%'
+   410 						beq		special
+   411 				escaped:
+   412 						jsr		_log_putchar
+   413 				nextchar:
+   414 						ldy		#0
+   415 						beq		charloop
+   416
+   417 				done:
+   418 						rts
+   419
+   420 				special:
+   421 						inc		d0
+   422 						ldx		d0
+   423 						lda		(a0),y
+   424 						inw		a0
+   425 						cmp		 #'d'
+   426 						bne		notdec
+   427 						tya
+   428 						sty		a1
+   429 						ldy		#6
+   430 						sei
+   431 						sed
+   432 				decloop1:
+   433 						rol		d0,x
+   434 						adc		a1
+   435 						sta		a1
+   436 						dey
+   437 						bne		decloop1
+   438 						sty		a1+1
+   439 						ldy		#2
+   440 				decloop2:
+   441 						rol		d0,x
+   442 						adc		a1
+   443 						sta		a1
+   444 						rol		a1+1
+   445 						dey
+   446 						bne		decloop2
+   447 						cld
+   448 						cli
+   449 						lda		a1+1
+   450 						beq		decdigit2
+   451 						tax
+   452 						lda		_hexdig,x
+   453 						jsr		putbyte
+   454 						lda		a1
+   455 						jmp		puthex_nextchar
+   456 						
+   457 				decdigit2:
+   458 						lda		a1
+   459 						cmp		#$10
+   460 						bcc		decdigit1
+   461 						jmp		puthex_nextchar
+   462 						
+   463 				decdigit1:
+   464 						tax
+   465 						lda		_hexdig,x
+   466 						jmp		escaped
+   467
+   468 				notdec:
+   469 						cmp		#'x'
+   470 						bne		nothex
+   471 						lda		d0,x
+   472 						jmp		puthex_nextchar
+   473
+   474 				nothex:
+   475 						cmp		#'X'
+   476 						bne		nothexword
+   477 						inc		d0
+   478 						lda		d1,x
+   479 						jsr		puthex
+   480 						ldx		d0
+   481 						lda		d0-1,x
+   482 						jmp		puthex_nextchar
+   483
+   484 				nothexword:
+   485 						cmp		 #'D'
+   486 						bne		notdecword
+   487
+   488 						ldy		#8
+   489 						lda		#0
+   490 						sta		a1
+   491 						sta		a1+1
+   492 						sta		a2
+   493 						sei
+   494 						sed
+   495 				decword1:
+   496 						rol		d1,x
+   497 						lda		a1
+   498 						adc		a1
+   499 						sta		a1
+   500 						lda		a1+1
+   501 						adc		a1+1
+   502 						sta		a1+1
+   503 						dey
+   504 						bne		decword1
+   505 					
+   506 						ldy		#8
+   507 				decword2:
+   508 						rol		d0,x
+   509 						lda		a1
+   510 						adc		a1
+   511 						sta		a1
+   512 						lda		a1+1
+   513 						adc		a1+1
+   514 						sta		a1+1
+   515 						lda		a2
+   516 						adc		a2
+   517 						sta		a2
+   518 						dey
+   519 						bne		decword2
+   520 						cld
+   521 						cli
+   522 					
+   523 						tax
+   524 						beq		decword3
+   525 						jsr		puthexcond
+   526 						
+   527 						lda		a1+1
+   528 						jsr		puthex
+   529 						lda		a1
+   530 						jmp		puthex_nextchar
+   531
+   532 				decword3:
+   533 						lda		a1+1
+   534 						beq		decword4
+   535 						jsr		puthexcond
+   536 						lda		a1
+   537 				puthex_nextchar:
+   538 						jsr		puthex
+   539 						jmp		nextchar
+   540 					
+   541 				decword4:
+   542 						lda		a1
+   543 						jsr		puthexcond
+   544 						jmp		nextchar
+   545
+   546 				notdecword:
+   547 						cmp		 #'c'
+   548 						bne		notchar
+   549 						lda		d0,x
+   550 						jsr		putbyte
+   551 				strdone:
+   552 						jmp		nextchar
+   553 					
+   554 				notchar:
+   555 						cmp		 #'s'
+   556 						bne		notstr
+   557 					
+   558 						inc		d0
+   559 						lda		d0,x
+   560 						sta		a1
+   561 						lda		d0+1,x
+   562 						sta		a1+1
+   563
+   564 				strloop:
+   565 						ldy		#0
+   566 						lda		(a1),y
+   567 						beq		strdone
+   568 						jsr		_log_putchar
+   569 						inw		a1
+   570 						jmp		strloop
+   571 					
+   572 				notstr:
+   573 						cmp		#'f'
+   574 						bne		notfloat
+   575
+   576 						inc		d0
+   577 						lda		d0+1,x
+   578 						tay
+   579 						lda		d0,x
+   580 						tax
+   581 						jsr		fld0r
+   582 						jsr		fasc
+   583 						ldx		inbuff
+   584 				nextfloatchar:
+   585 						lda		+(lbuff&$ff00),x
+   586 						inx
+   587 						pha
+   588 						and		#$7f
+   589 						jsr		_log_putchar
+   590 						pla
+   591 						bpl		nextfloatchar
+   592 						jmp		nextchar
+   593
+   594 				notfloat:
+   595 						dec		d0
+   596 						jmp		escaped
+   597 					
+   598 				puthexcond:
+   599 						cmp		#$10
+   600 						bcs		puthex
+   601 						tax
+   602 						lda		_hexdig,x
+   603 						jmp		putbyte
+   604
+   605 				puthex:	
+   606 						pha
+   607 						lsr
+   608 						lsr
+   609 						lsr
+   610 						lsr
+   611 						tax
+   612 						lda		_hexdig,x
+   613 						jsr		putbyte
+   614 						pla
+   615 						and		#$0f
+   616 						tax
+   617 						lda		_hexdig,x
+   618 				putbyte:
+   619 						tax
+   620 						jsr		_log_putchar
+   621 						txa
+   622 						rts
+   623 				.endp
+   624
+   625 				;==========================================================================
+   626 				.nowarn .proc _waitKey
+   627 						lda		#$ff
+   628 						sta		ch
+   629 						sta		ch1
+   630 						cmp:req	ch
+   631 						rts
+   632 				.endp
+   633
+   634 				;==========================================================================
+   635 				.nowarn .proc _waitKeyPrompt
+   636 						jsr		_log_imprint
+   637 						dta		c"Press a key...",0
+   638 						jsr		_waitKey
+   639 						jsr		_log_imprint
+   640 						dta		$9c,0
+   641 						rts
+   642 				.endp
+   643
+   644 				;==========================================================================
+   645 				; _load_seg
+   646 				;
+   647 				; Module loader.
+   648 				;
+   649 				;	X:A = address of filename to load
+   650 				;
+   651 				.nowarn .proc	_load_seg
+   652 						;open IOCB #1
+   653 						sta		icbal+$10
+   654 						stx		icbah+$10
+   655 						lda		#$04
+   656 						sta		icax1+$10
+   657 						lda		#CIOCmdOpen
+   658 						jsr		do_io
+   659 						bmi		other_fail
+   660
+   661 						;begin relocation
+   662 						mwa		#definit runad
+   663
+   664 				relocloop:
+   665 						;load starting address
+   666 						mwa		#a0 icbal+$10
+   667 						jsr		load_two
+   668 						bmi		startaddr_fail
+   669 						
+   670 						;check for $FFFF signature
+   671 						lda		a0
+   672 						and		a0+1
+   673 						cmp		#$ff
+   674 						beq		relocloop
+   675 						
+   676 						;load ending address
+   677 						mwa		#a1 icbal+$10
+   678 						jsr		load_two
+   679 						bmi		other_fail
+   680 						
+   681 						;compute length and load
+   682 						sbw		a1 a0 icbll+$10
+   683 						inw		icbll+$10
+   684 						mwa		a0 icbal+$10
+   685 						jsr		load_bytes
+   686 						bmi		other_fail
+   687 						
+   688 						;init a segment
+   689 						mwa		#definit initad
+   690 						jsr		doinit
+   691 						jmp		relocloop
+   692
+   693 				startaddr_fail:
+   694 						cpy		#CIOStatEndOfFile
+   695 						bne		other_fail
+   696 						ldy		#1
+   697 				other_fail:
+   698 						;save status
+   699 						sty		a0
+   700 						
+   701 						;close IOCB #1
+   702 						lda		#CIOCmdClose
+   703 						jsr		do_io
+   704 						
+   705 						;restore status and exit
+   706 						ldy		a0
+   707 						rts
+   708 						
+   709 				load_two:
+   710 						mwa		#2 icbll+$10
+   711 				load_bytes:
+   712 						lda		#CIOCmdGetChars
+   713 				do_io:
+   714 						sta		iccmd+$10
+   715 						ldx		#$10
+   716 						jmp		ciov
+   717
+   718 				doinit:
+   719 						jmp		(initad)
+   720 					
+   721 				definit:
+   722 						rts
+   723
+   724 				.endp
+   725
+   726 				;==========================================================================
+   727 				; _run_seg
+   728 				;
+   729 				; Module relocator and executor.
+   730 				;
+   731 				; The last segment loaded by _load_seg is relocated and executed.
+   732 				;
+   733 				.nowarn .proc _run_seg
+   734 						jmp		(runad)
+   735 				.endp
+   736
+   737 				;=======================================================================
+   738 				.nowarn .proc _Exec
+   739 						jsr		_load_seg
+   740 						jmp		_run_seg
+   741 				.endp
+   742
+   743 				;=======================================================================
+   744 				.nowarn .proc _ExecMenu
+   745 						ldx		#>menu_exe
+   746 						lda		#<menu_exe
+   747 						jmp		_Exec
+   748
+   749 				menu_exe:
+   750 						dta		'D:MENU.EXE',$9B		
+   751 				.endp
+   752
+   753 				;=======================================================================
+   754 				.nowarn .proc _RunTests
+   755 				test_loop:
+   756 						;read next test line
+   757 						mva		#$80 icbll+$20
+   758 						mva		#$00 icblh+$20
+   759 						ldx		#$20
+   760 						jsr		ciov
+   761 						bpl		testOK
+   762 						jmp		_ExecMenu
+   763 				testOK:
+   764 						;replace EOL with 0
+   765 						ldx		#$ff
+   766 						lda		#$9b
+   767 				eol_loop:
+   768 						inx
+   769 						cmp		$0480,x
+   770 						bne		eol_loop
+   771 						lda		#0
+   772 						sta		$0480,x
+   773
+   774 						mwa		#$0482 d1
+   775 						jsr		_log_imprintf
+   776 						dta		'--- Test %s ---',$9B,'Loading...',0
+   777 								
+   778 						;store return stack ptr
+   779 						tsx
+   780 						inx
+   781 						inx
+   782 						sta		_test_sp
+   783 						
+   784 						;load segment
+   785 						mva		#'D' $0480
+   786 						mva		#':' $0481
+   787 						ldx		#$04
+   788 						lda		#$80
+   789 						jsr		_load_seg
+   790 						bmi		fail
+   791 						
+   792 						;clear loading message
+   793 						jsr		_log_imprint
+   794 						dta		$9c,0
+   795 						
+   796 						;run segment
+   797 						jsr		_run_seg
+   798 						jmp		test_loop
+   799 						
+   800 				fail:
+   801 						sty		d1
+   802 						jsr		_log_imprintf
+   803 						dta		'FAILED to load: %x',$9b,0
+   804 						jsr		_waitKeyPrompt
+   805 						jmp		test_loop
+   806 				.endp
+   807
+   808 				;=======================================================================
+   809 						.if *>$2c00
+   810 						.error	'Library too long: ',*,' > $2C00'
+   811 						.endif
+   812
+   813 						opt		o+
+     2 						icl		'cio.inc'
+Source: cio.inc
+     1 				;	Altirra - Atari 800/800XL/5200 emulator
+     2 				;	Modular Kernel ROM - Character Input/Output Definitions
+     3 				;	Copyright (C) 2008-2012 Avery Lee
+     4 				;
+     5 				;	This program is free software; you can redistribute it and/or modify
+     6 				;	it under the terms of the GNU General Public License as published by
+     7 				;	the Free Software Foundation; either version 2 of the License, or
+     8 				;	(at your option) any later version.
+     9 				;
+    10 				;	This program is distributed in the hope that it will be useful,
+    11 				;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+    12 				;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    13 				;	GNU General Public License for more details.
+    14 				;
+    15 				;	You should have received a copy of the GNU General Public License
+    16 				;	along with this program; if not, write to the Free Software
+    17 				;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+    18
+    19 				.ifndef f_CIO_INC
+    20 				.def f_CIO_INC
+    21
+    22 				CIOStatBreak		= $80	;break key abort
+    23 				CIOStatIOCBInUse	= $81	;IOCB in use
+    24 				CIOStatUnkDevice	= $82	;unknown device
+    25 				CIOStatWriteOnly	= $83	;opened for write only
+    26 				CIOStatInvalidCmd	= $84	;invalid command
+    27 				CIOStatNotOpen		= $85	;device or file not open
+    28 				CIOStatInvalidIOCB	= $86	;invalid IOCB number
+    29 				CIOStatReadOnly		= $87	;opened for read only
+    30 				CIOStatEndOfFile	= $88	;end of file reached
+    31 				CIOStatTruncRecord	= $89	;record truncated
+    32 				CIOStatTimeout		= $8A	;device timeout
+    33 				CIOStatNAK			= $8B	;device NAK
+    34 				CIOStatSerFrameErr	= $8C	;serial bus framing error
+    35 				CIOStatCursorRange	= $8D	;cursor out of range
+    36 				CIOStatSerOverrun	= $8E	;serial frame overrun error
+    37 				CIOStatSerChecksum	= $8F	;serial checksum error
+    38 				CIOStatDeviceDone	= $90	;device done error
+    39 				CIOStatBadScrnMode	= $91	;bad screen mode
+    40 				CIOStatNotSupported	= $92	;function not supported by handler
+    41 				CIOStatOutOfMemory	= $93	;not enough memory
+    42 				CIOStatDriveNumErr	= $A0	;disk drive # error
+    43 				CIOStatTooManyFiles	= $A1	;too many open disk files
+    44 				CIOStatDiskFull		= $A2	;disk full
+    45 				CIOStatFatalDiskIO	= $A3	;fatal disk I/O error
+    46 				CIOStatFileNumDiff	= $A4	;internal file # mismatch
+    47 				CIOStatFileNameErr	= $A5	;filename error
+    48 				CIOStatPointDLen	= $A6	;point data length error
+    49 				CIOStatFileLocked	= $A7	;file locked
+    50 				CIOStatInvDiskCmd	= $A8	;invalid command for disk
+    51 				CIOStatDirFull		= $A9	;directory full (64 files)
+    52 				CIOStatFileNotFound	= $AA	;file not found
+    53 				CIOStatInvPoint		= $AB	;invalid point
+    54
+    55 				CIOCmdOpen			= $03
+    56 				CIOCmdGetRecord		= $05
+    57 				CIOCmdGetChars		= $07
+    58 				CIOCmdPutRecord		= $09
+    59 									; $0A	;PUT CHARS alias (required by K-Razy Shoot Out)
+    60 				CIOCmdPutChars		= $0B
+    61 				CIOCmdClose			= $0C
+    62 				CIOCmdGetStatus		= $0D
+    63 				CIOCmdSpecial		= $0E	;$0E and up is escape
+    64
+    65 				.endif
+     3
+     4 2A8F					_TEST_ENTRY
+Macro: _TEST_ENTRY [Source: library.s]
+     5 FFFF> 02E0-02E1> 00 2C			run		main
+Source: tmthpack.s
+     5 						
+     6 2A8F					org		$80
+     7 						opt		o-
+     8 						
+     9 0080					org		$2c00
+    10 						opt		o-
+    11
+    12 						;The .fl directive has serious bugs in various versions of MADS, including rounding off
+    13 						;values in 2.1.0 and corrupting zero in 2.1.5. Thus, we have to avoid it as we simply
+    14 						;can't trust it.
+    15
+    16 				_LDFR0X	.macro
+    17 						jsr		LoadFR0
+    18 						dta		:1,:2,:3,:4,:5,:6
+    19 						.endm
+    20
+    21 				_LDFR1X	.macro
+    22 						jsr		LoadFR1
+    23 						dta		:1,:2,:3,:4,:5,:6
+    24 						.endm
+    25
+    26 				_LDSTR	.macro
+    27 						jsr		LoadString
+    28 						dta		:1,$80
+    29 						.endm
+    30
+    31 				_ZFR0	.macro
+    32 						jsr		zfr0
+    33 						.endm
+    34 						
+    35 				_ZFR1	.macro
+    36 						jsr		ZeroFR1
+    37 						.endm
+    38
+    39 				_ASFR0X	.macro
+    40 						jsr		AssertFR0
+    41 						dta		:1,:2,:3,:4,:5,:6
+    42 						dta		:7,0
+    43 						.endm
+    44
+    45 				_ASFR0RX	.macro
+    46 						jsr		AssertFR0Range
+    47 						dta		:1,:2,:3,:4,:5,:6
+    48 						dta		:7,:8,:9,:10,:11,:12
+    49 						dta		:13,0
+    50 						.endm
+    51
+    52 				_ASERR	.macro
+    53 						jsr		AssertERR
+    54 						dta		:1,0
+    55 						.endm
+    56 						
+    57 				_ASA	.macro
+    58 						ldx		#:1
+    59 						jsr		AssertA
+    60 						dta		:2,0
+    61 						.endm
+    62
+    63 				_TEST_FASCX	.macro
+    64 						jsr		TestFASC
+    65 						dta		:1,:2,:3,:4,:5,:6
+    66 						dta		:7,0
+    67 						.endm
+    68
+    69 				_FADD	.macro
+    70 						jsr		fadd_chk
+    71 						.endm
+    72 						
+    73 				_FADD2X	.macro
+    74 						_LDFR0X	:1,:2,:3,:4,:5,:6
+    75 						_LDFR1X	:7,:8,:9,:10,:11,:12
+    76 						_FADD
+    77 						.endm
+    78
+    79 				_FSUB	.macro
+    80 						jsr		fsub_chk
+    81 						.endm
+    82 						
+    83 				_FSUB2X	.macro
+    84 						_LDFR0X	:1,:2,:3,:4,:5,:6
+    85 						_LDFR1X	:7,:8,:9,:10,:11,:12
+    86 						_FSUB
+    87 						.endm
+    88 						
+    89 				_FMUL	.macro
+    90 						jsr		fmul_chk
+    91 						.endm
+    92 						
+    93 				_FMUL2X	.macro
+    94 						_LDFR0X	:1,:2,:3,:4,:5,:6
+    95 						_LDFR1X	:7,:8,:9,:10,:11,:12
+    96 						_FMUL
+    97 						.endm
+    98
+    99 				_FDIV	.macro
+   100 						jsr		fdiv_chk
+   101 						.endm
+   102 						
+   103 				_FDIV2X	.macro
+   104 						_LDFR0X	:1,:2,:3,:4,:5,:6
+   105 						_LDFR1X	:7,:8,:9,:10,:11,:12
+   106 						_FDIV
+   107 						.endm
+   108 						
+   109 				_FLOG	.macro
+   110 						jsr		log
+   111 						.endm
+   112 						
+   113 				_FLOG1X	.macro
+   114 						_LDFR0X	:1,:2,:3,:4,:5,:6
+   115 						_FLOG
+   116 						.endm
+   117
+   118 				_FLOG10	.macro
+   119 						jsr		log10
+   120 						.endm
+   121 						
+   122 				_FLOG101X	.macro
+   123 						_LDFR0X	:1,:2,:3,:4,:5,:6
+   124 						_FLOG10
+   125 						.endm
+   126
+   127 				_FEXP	.macro
+   128 						jsr		exp
+   129 						.endm
+   130
+   131 				_FEXP1X	.macro
+   132 						_LDFR0X	:1,:2,:3,:4,:5,:6
+   133 						_FEXP
+   134 						.endm
+   135
+   136 				_FEXP10	.macro
+   137 						jsr		exp10
+   138 						.endm
+   139 						
+   140 				_FEXP101X	.macro
+   141 						_LDFR0X	:1,:2,:3,:4,:5,:6
+   142 						_FEXP10
+   143 						.endm
+   144
+   145 				_FIFP	.macro
+   146 						jsr		ipf
+   147 						.endm
+   148 						
+   149 				_FIFP1	.macro
+   150 						mwa		#:1 fr0
+   151 						_FIFP
+   152 						.endm
+   153
+   154 				_FFPI	.macro
+   155 						jsr		fpi
+   156 						.endm
+   157 						
+   158 				_FFPI1X	.macro
+   159 						_LDFR0X	:1,:2,:3,:4,:5,:6
+   160 						_FFPI
+   161 						.endm
+   162 						
+   163 						opt		o+
+   164 						
+   165 2C00			.proc main
+   166 						;====================== fadd tests ======================
+   167 2C00					_FADD2X	$00,$00,$00,$00,$00,$00, $00,$00,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2C00-49D3> 20 01 47			jsr		LoadFR0
+     2 2C03 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2C09 20 16 47				jsr		LoadFR1
+     2 2C0C 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2C12 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   168 2C15					_ASFR0X	$00,$00,$00,$00,$00,$00, '0+0'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2C15 20 44 48				jsr		AssertFR0
+     2 2C18 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 2C1E 30 2B 30 00				dta		'0+0',0
+Source: tmthpack.s
+   169 						
+   170 2C22					_FADD2X	$00,$00,$00,$00,$00,$00, $40,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2C22 20 01 47				jsr		LoadFR0
+     2 2C25 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2C2B 20 16 47				jsr		LoadFR1
+     2 2C2E 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2C34 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   171 2C37					_ASFR0X	$40,$01,$00,$00,$00,$00, '0+1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2C37 20 44 48				jsr		AssertFR0
+     2 2C3A 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 2C40 30 2B 31 00				dta		'0+1',0
+Source: tmthpack.s
+   172
+   173 2C44					_FADD2X	$40,$01,$00,$00,$00,$00, $00,$00,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2C44 20 01 47				jsr		LoadFR0
+     2 2C47 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2C4D 20 16 47				jsr		LoadFR1
+     2 2C50 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2C56 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   174 2C59					_ASFR0X	$40,$01,$00,$00,$00,$00, '1+0'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2C59 20 44 48				jsr		AssertFR0
+     2 2C5C 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 2C62 31 2B 30 00				dta		'1+0',0
+Source: tmthpack.s
+   175 						
+   176 						;test difference in magnitudes that still matters
+   177 2C66					_FADD2X	$40,$01,$00,$00,$00,$00, $3C,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2C66 20 01 47				jsr		LoadFR0
+     2 2C69 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2C6F 20 16 47				jsr		LoadFR1
+     2 2C72 3C 01 00 00 00 00			dta		$3C,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2C78 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   178 2C7B					_ASFR0X	$40,$01,$00,$00,$00,$01, '1+0.00000001'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2C7B 20 44 48				jsr		AssertFR0
+     2 2C7E 40 01 00 00 00 01			dta		$40,$01,$00,$00,$00,$01
+     3 2C84 31 2B 30 2E 30 30 + 		dta		'1+0.00000001',0
+Source: tmthpack.s
+   179 						
+   180 						;test difference in magnitude that doesn't matter (and for which rounding
+   181 						;doesn't make a difference)
+   182 2C91					_FADD2X	$40,$01,$00,$00,$00,$00, $3B,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2C91 20 01 47				jsr		LoadFR0
+     2 2C94 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2C9A 20 16 47				jsr		LoadFR1
+     2 2C9D 3B 01 00 00 00 00			dta		$3B,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2CA3 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   183 2CA6					_ASFR0X	$40,$01,$00,$00,$00,$00, '1+1E-10'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2CA6 20 44 48				jsr		AssertFR0
+     2 2CA9 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 2CAF 31 2B 31 45 2D 31 + 		dta		'1+1E-10',0
+Source: tmthpack.s
+   184 										
+   185 						;test sign flip
+   186 2CB7					_FADD2X	$3F,$50,$00,$00,$00,$00, $C0,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2CB7 20 01 47				jsr		LoadFR0
+     2 2CBA 3F 50 00 00 00 00			dta		$3F,$50,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2CC0 20 16 47				jsr		LoadFR1
+     2 2CC3 C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2CC9 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   187 2CCC					_ASFR0X	$BF,$50,$00,$00,$00,$00, '0.5+-1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2CCC 20 44 48				jsr		AssertFR0
+     2 2CCF BF 50 00 00 00 00			dta		$BF,$50,$00,$00,$00,$00
+     3 2CD5 30 2E 35 2B 2D 31 + 		dta		'0.5+-1',0
+Source: tmthpack.s
+   188 						
+   189 						;test carry to higher exponent
+   190 2CDC					_FADD2X	$3F,$99,$87,$65,$43,$00, $3F,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2CDC 20 01 47				jsr		LoadFR0
+     2 2CDF 3F 99 87 65 43 00			dta		$3F,$99,$87,$65,$43,$00
+Source: tmthpack.s
+     1 2CE5 20 16 47				jsr		LoadFR1
+     2 2CE8 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2CEE 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   191 2CF1					_ASFR0X	$40,$01,$00,$87,$65,$43, '0.9987654300+0.01'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2CF1 20 44 48				jsr		AssertFR0
+     2 2CF4 40 01 00 87 65 43			dta		$40,$01,$00,$87,$65,$43
+     3 2CFA 30 2E 39 39 38 37 + 		dta		'0.9987654300+0.01',0
+Source: tmthpack.s
+   192
+   193 						;test borrow to lower exponent
+   194 2D0C					_FADD2X	$40,$01,$00,$00,$00,$00, $BC,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2D0C 20 01 47				jsr		LoadFR0
+     2 2D0F 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2D15 20 16 47				jsr		LoadFR1
+     2 2D18 BC 01 00 00 00 00			dta		$BC,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2D1E 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   195 2D21					_ASFR0X	$3F,$99,$99,$99,$99,$00, '1+-0.00000001'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2D21 20 44 48				jsr		AssertFR0
+     2 2D24 3F 99 99 99 99 00			dta		$3F,$99,$99,$99,$99,$00
+     3 2D2A 31 2B 2D 30 2E 30 + 		dta		'1+-0.00000001',0
+Source: tmthpack.s
+   196 						
+   197 						;test zero cancellation
+   198 2D38					_FADD2X	$40,$01,$00,$00,$00,$00, $C0,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2D38 20 01 47				jsr		LoadFR0
+     2 2D3B 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2D41 20 16 47				jsr		LoadFR1
+     2 2D44 C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2D4A 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   199 2D4D					_ASFR0X	$00,$00,$00,$00,$00,$00, '1+-1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2D4D 20 44 48				jsr		AssertFR0
+     2 2D50 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 2D56 31 2B 2D 31 00			dta		'1+-1',0
+Source: tmthpack.s
+   200 						
+   201 						;test destructive cancellation
+   202 2D5B					_FADD2X	$40,$01,$00,$00,$00,$00, $BF,$99,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2D5B 20 01 47				jsr		LoadFR0
+     2 2D5E 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2D64 20 16 47				jsr		LoadFR1
+     2 2D67 BF 99 00 00 00 00			dta		$BF,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2D6D 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   203 2D70					_ASFR0X	$3F,$01,$00,$00,$00,$00, '1+-0.99'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2D70 20 44 48				jsr		AssertFR0
+     2 2D73 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+     3 2D79 31 2B 2D 30 2E 39 + 		dta		'1+-0.99',0
+Source: tmthpack.s
+   204 						
+   205 2D81					_FADD2X	$40,$01,$00,$00,$00,$01, $C0,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2D81 20 01 47				jsr		LoadFR0
+     2 2D84 40 01 00 00 00 01			dta		$40,$01,$00,$00,$00,$01
+Source: tmthpack.s
+     1 2D8A 20 16 47				jsr		LoadFR1
+     2 2D8D C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2D93 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   206 2D96					_ASFR0X	$3C,$01,$00,$00,$00,$00, '1.00000001+-1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2D96 20 44 48				jsr		AssertFR0
+     2 2D99 3C 01 00 00 00 00			dta		$3C,$01,$00,$00,$00,$00
+     3 2D9F 31 2E 30 30 30 30 + 		dta		'1.00000001+-1',0
+Source: tmthpack.s
+   207
+   208 2DAD					_FADD2X	$C0,$01,$00,$00,$00,$00, $3F,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2DAD 20 01 47				jsr		LoadFR0
+     2 2DB0 C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2DB6 20 16 47				jsr		LoadFR1
+     2 2DB9 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2DBF 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   209 2DC2					_ASFR0X	$BF,$99,$00,$00,$00,$00, '-1+0.01'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2DC2 20 44 48				jsr		AssertFR0
+     2 2DC5 BF 99 00 00 00 00			dta		$BF,$99,$00,$00,$00,$00
+     3 2DCB 2D 31 2B 30 2E 30 + 		dta		'-1+0.01',0
+Source: tmthpack.s
+   210 						
+   211 						;test overflow (>=1E+98)
+   212 2DD3					_FADD2X	$70,$99,$00,$00,$00,$00, $6F,$99,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2DD3 20 01 47				jsr		LoadFR0
+     2 2DD6 70 99 00 00 00 00			dta		$70,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2DDC 20 16 47				jsr		LoadFR1
+     2 2DDF 6F 99 00 00 00 00			dta		$6F,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2DE5 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   213 2DE8					_ASFR0X	$70,$99,$99,$00,$00,$00, '9.9E+97 + 9.9E+95'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2DE8 20 44 48				jsr		AssertFR0
+     2 2DEB 70 99 99 00 00 00			dta		$70,$99,$99,$00,$00,$00
+     3 2DF1 39 2E 39 45 2B 39 + 		dta		'9.9E+97 + 9.9E+95',0
+Source: tmthpack.s
+   214 						
+   215 2E03					_FADD2X	$70,$99,$00,$00,$00,$00, $70,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2E03 20 01 47				jsr		LoadFR0
+     2 2E06 70 99 00 00 00 00			dta		$70,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2E0C 20 16 47				jsr		LoadFR1
+     2 2E0F 70 01 00 00 00 00			dta		$70,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2E15 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   216 2E18					_ASERR	'9.9E+97 + 1E+96'
+Macro: _ASERR [Source: tmthpack.s]
+     1 2E18 20 D0 48				jsr		AssertERR
+     2 2E1B 39 2E 39 45 2B 39 + 		dta		'9.9E+97 + 1E+96',0
+Source: tmthpack.s
+   217 						
+   218 						;test underflow
+   219 2E2B					_FADD2X	$10,$01,$00,$00,$01,$00, $90,$01,$00,$00,$00,$00
+Macro: _FADD2X [Source: tmthpack.s]
+     1 2E2B 20 01 47				jsr		LoadFR0
+     2 2E2E 10 01 00 00 01 00			dta		$10,$01,$00,$00,$01,$00
+Source: tmthpack.s
+     1 2E34 20 16 47				jsr		LoadFR1
+     2 2E37 90 01 00 00 00 00			dta		$90,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2E3D 20 7C 47				jsr		fadd_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   220 2E40					_ASFR0X	$00,$00,$00,$00,$00,$00, '1.000001E-96 + -1E-96'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2E40 20 44 48				jsr		AssertFR0
+     2 2E43 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 2E49 31 2E 30 30 30 30 + 		dta		'1.000001E-96 + -1E-96',0
+Source: tmthpack.s
+   221 						
+   222 						;====================== fsub tests ======================
+   223 2E5F					_FSUB2X	$00,$00,$00,$00,$00,$00, $00,$00,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2E5F 20 01 47				jsr		LoadFR0
+     2 2E62 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2E68 20 16 47				jsr		LoadFR1
+     2 2E6B 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2E71 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   224 2E74					_ASFR0X	$00,$00,$00,$00,$00,$00, '0-0'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2E74 20 44 48				jsr		AssertFR0
+     2 2E77 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 2E7D 30 2D 30 00				dta		'0-0',0
+Source: tmthpack.s
+   225 						
+   226 2E81					_FSUB2X	$00,$00,$00,$00,$00,$00, $C0,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2E81 20 01 47				jsr		LoadFR0
+     2 2E84 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2E8A 20 16 47				jsr		LoadFR1
+     2 2E8D C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2E93 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   227 2E96					_ASFR0X	$40,$01,$00,$00,$00,$00, '0-1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2E96 20 44 48				jsr		AssertFR0
+     2 2E99 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 2E9F 30 2D 31 00				dta		'0-1',0
+Source: tmthpack.s
+   228
+   229 2EA3					_FSUB2X	$40,$01,$00,$00,$00,$00, $00,$00,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2EA3 20 01 47				jsr		LoadFR0
+     2 2EA6 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2EAC 20 16 47				jsr		LoadFR1
+     2 2EAF 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2EB5 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   230 2EB8					_ASFR0X	$40,$01,$00,$00,$00,$00, '1-0'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2EB8 20 44 48				jsr		AssertFR0
+     2 2EBB 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 2EC1 31 2D 30 00				dta		'1-0',0
+Source: tmthpack.s
+   231 						
+   232 						;test difference in magnitudes that still matters
+   233 2EC5					_FSUB2X	$40,$01,$00,$00,$00,$00, $BC,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2EC5 20 01 47				jsr		LoadFR0
+     2 2EC8 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2ECE 20 16 47				jsr		LoadFR1
+     2 2ED1 BC 01 00 00 00 00			dta		$BC,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2ED7 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   234 2EDA					_ASFR0X	$40,$01,$00,$00,$00,$01, '1--0.00000001'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2EDA 20 44 48				jsr		AssertFR0
+     2 2EDD 40 01 00 00 00 01			dta		$40,$01,$00,$00,$00,$01
+     3 2EE3 31 2D 2D 30 2E 30 + 		dta		'1--0.00000001',0
+Source: tmthpack.s
+   235 						
+   236 						;test difference in magnitude that doesn't matter (and for which rounding
+   237 						;doesn't make a difference)
+   238 2EF1					_FSUB2X	$40,$01,$00,$00,$00,$00, $BB,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2EF1 20 01 47				jsr		LoadFR0
+     2 2EF4 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2EFA 20 16 47				jsr		LoadFR1
+     2 2EFD BB 01 00 00 00 00			dta		$BB,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2F03 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   239 2F06					_ASFR0X	$40,$01,$00,$00,$00,$00, '1+-1E-10'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2F06 20 44 48				jsr		AssertFR0
+     2 2F09 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 2F0F 31 2B 2D 31 45 2D + 		dta		'1+-1E-10',0
+Source: tmthpack.s
+   240 										
+   241 						;test sign flip
+   242 2F18					_FSUB2X	$3F,$50,$00,$00,$00,$00, $40,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2F18 20 01 47				jsr		LoadFR0
+     2 2F1B 3F 50 00 00 00 00			dta		$3F,$50,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2F21 20 16 47				jsr		LoadFR1
+     2 2F24 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2F2A 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   243 2F2D					_ASFR0X	$BF,$50,$00,$00,$00,$00, '0.5+1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2F2D 20 44 48				jsr		AssertFR0
+     2 2F30 BF 50 00 00 00 00			dta		$BF,$50,$00,$00,$00,$00
+     3 2F36 30 2E 35 2B 31 00			dta		'0.5+1',0
+Source: tmthpack.s
+   244 						
+   245 						;test carry to higher exponent
+   246 2F3C					_FSUB2X	$3F,$99,$00,$00,$00,$00, $BF,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2F3C 20 01 47				jsr		LoadFR0
+     2 2F3F 3F 99 00 00 00 00			dta		$3F,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2F45 20 16 47				jsr		LoadFR1
+     2 2F48 BF 01 00 00 00 00			dta		$BF,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2F4E 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   247 2F51					_ASFR0X	$40,$01,$00,$00,$00,$00, '0.99+-0.01'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2F51 20 44 48				jsr		AssertFR0
+     2 2F54 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 2F5A 30 2E 39 39 2B 2D + 		dta		'0.99+-0.01',0
+Source: tmthpack.s
+   248
+   249 						;test borrow to lower exponent
+   250 2F65					_FSUB2X	$40,$01,$00,$00,$00,$00, $3C,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2F65 20 01 47				jsr		LoadFR0
+     2 2F68 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2F6E 20 16 47				jsr		LoadFR1
+     2 2F71 3C 01 00 00 00 00			dta		$3C,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2F77 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   251 2F7A					_ASFR0X	$3F,$99,$99,$99,$99,$00, '1-0.00000001'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2F7A 20 44 48				jsr		AssertFR0
+     2 2F7D 3F 99 99 99 99 00			dta		$3F,$99,$99,$99,$99,$00
+     3 2F83 31 2D 30 2E 30 30 + 		dta		'1-0.00000001',0
+Source: tmthpack.s
+   252 						
+   253 						;test zero cancellation
+   254 2F90					_FSUB2X	$40,$01,$00,$00,$00,$00, $40,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2F90 20 01 47				jsr		LoadFR0
+     2 2F93 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2F99 20 16 47				jsr		LoadFR1
+     2 2F9C 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2FA2 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   255 2FA5					_ASFR0X	$00,$00,$00,$00,$00,$00, '1-1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2FA5 20 44 48				jsr		AssertFR0
+     2 2FA8 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 2FAE 31 2D 31 00				dta		'1-1',0
+Source: tmthpack.s
+   256 						
+   257 						;test destructive cancellation
+   258 2FB2					_FSUB2X	$40,$01,$00,$00,$00,$00, $3F,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2FB2 20 01 47				jsr		LoadFR0
+     2 2FB5 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2FBB 20 16 47				jsr		LoadFR1
+     2 2FBE 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2FC4 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   259 2FC7					_ASFR0X	$3F,$99,$00,$00,$00,$00, '1-0.01'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2FC7 20 44 48				jsr		AssertFR0
+     2 2FCA 3F 99 00 00 00 00			dta		$3F,$99,$00,$00,$00,$00
+     3 2FD0 31 2D 30 2E 30 31 + 		dta		'1-0.01',0
+Source: tmthpack.s
+   260 						
+   261 2FD7					_FSUB2X	$40,$01,$00,$00,$00,$00, $3F,$99,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2FD7 20 01 47				jsr		LoadFR0
+     2 2FDA 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2FE0 20 16 47				jsr		LoadFR1
+     2 2FE3 3F 99 00 00 00 00			dta		$3F,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 2FE9 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   262 2FEC					_ASFR0X	$3F,$01,$00,$00,$00,$00, '1-0.99'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 2FEC 20 44 48				jsr		AssertFR0
+     2 2FEF 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+     3 2FF5 31 2D 30 2E 39 39 + 		dta		'1-0.99',0
+Source: tmthpack.s
+   263 						
+   264 2FFC					_FSUB2X	$40,$02,$00,$00,$00,$00, $3F,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 2FFC 20 01 47				jsr		LoadFR0
+     2 2FFF 40 02 00 00 00 00			dta		$40,$02,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3005 20 16 47				jsr		LoadFR1
+     2 3008 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 300E 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   265 3011					_ASFR0X	$40,$01,$99,$00,$00,$00, '2-0.01'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3011 20 44 48				jsr		AssertFR0
+     2 3014 40 01 99 00 00 00			dta		$40,$01,$99,$00,$00,$00
+     3 301A 32 2D 30 2E 30 31 + 		dta		'2-0.01',0
+Source: tmthpack.s
+   266 						
+   267 3021					_FSUB2X	$40,$01,$00,$00,$00,$01, $40,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 3021 20 01 47				jsr		LoadFR0
+     2 3024 40 01 00 00 00 01			dta		$40,$01,$00,$00,$00,$01
+Source: tmthpack.s
+     1 302A 20 16 47				jsr		LoadFR1
+     2 302D 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3033 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   268 3036					_ASFR0X	$3C,$01,$00,$00,$00,$00, '1.00000001-1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3036 20 44 48				jsr		AssertFR0
+     2 3039 3C 01 00 00 00 00			dta		$3C,$01,$00,$00,$00,$00
+     3 303F 31 2E 30 30 30 30 + 		dta		'1.00000001-1',0
+Source: tmthpack.s
+   269 						
+   270 						;test overflow (>=1E+98)
+   271 304C					_FSUB2X	$70,$99,$00,$00,$00,$00, $EF,$99,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 304C 20 01 47				jsr		LoadFR0
+     2 304F 70 99 00 00 00 00			dta		$70,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3055 20 16 47				jsr		LoadFR1
+     2 3058 EF 99 00 00 00 00			dta		$EF,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 305E 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   272 3061					_ASFR0X	$70,$99,$99,$00,$00,$00, '9.9E+97 - -9.9E+95'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3061 20 44 48				jsr		AssertFR0
+     2 3064 70 99 99 00 00 00			dta		$70,$99,$99,$00,$00,$00
+     3 306A 39 2E 39 45 2B 39 + 		dta		'9.9E+97 - -9.9E+95',0
+Source: tmthpack.s
+   273 						
+   274 307D					_FSUB2X	$70,$99,$00,$00,$00,$00, $F0,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 307D 20 01 47				jsr		LoadFR0
+     2 3080 70 99 00 00 00 00			dta		$70,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3086 20 16 47				jsr		LoadFR1
+     2 3089 F0 01 00 00 00 00			dta		$F0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 308F 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   275 3092					_ASERR	'9.9E+97 + -1E+96'
+Macro: _ASERR [Source: tmthpack.s]
+     1 3092 20 D0 48				jsr		AssertERR
+     2 3095 39 2E 39 45 2B 39 + 		dta		'9.9E+97 + -1E+96',0
+Source: tmthpack.s
+   276 						
+   277 						;test underflow
+   278 30A6					_FSUB2X	$10,$01,$00,$00,$01,$00, $10,$01,$00,$00,$00,$00
+Macro: _FSUB2X [Source: tmthpack.s]
+     1 30A6 20 01 47				jsr		LoadFR0
+     2 30A9 10 01 00 00 01 00			dta		$10,$01,$00,$00,$01,$00
+Source: tmthpack.s
+     1 30AF 20 16 47				jsr		LoadFR1
+     2 30B2 10 01 00 00 00 00			dta		$10,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 30B8 20 82 47				jsr		fsub_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   279 30BB					_ASFR0X	$00,$00,$00,$00,$00,$00, '1.000001E-96 - 1E-96'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 30BB 20 44 48				jsr		AssertFR0
+     2 30BE 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 30C4 31 2E 30 30 30 30 + 		dta		'1.000001E-96 - 1E-96',0
+Source: tmthpack.s
+   280
+   281 						;====================== fmul tests ======================
+   282 30D9					_FMUL2X	$00,$00,$00,$00,$00,$00, $00,$00,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 30D9 20 01 47				jsr		LoadFR0
+     2 30DC 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 30E2 20 16 47				jsr		LoadFR1
+     2 30E5 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 30EB 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   283 30EE					_ASFR0X	$00,$00,$00,$00,$00,$00, '0x0'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 30EE 20 44 48				jsr		AssertFR0
+     2 30F1 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 30F7 30 78 30 00				dta		'0x0',0
+Source: tmthpack.s
+   284 						
+   285 30FB					_FMUL2X	$00,$00,$00,$00,$00,$00, $40,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 30FB 20 01 47				jsr		LoadFR0
+     2 30FE 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3104 20 16 47				jsr		LoadFR1
+     2 3107 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 310D 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   286 3110					_ASFR0X	$00,$00,$00,$00,$00,$00, '0x1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3110 20 44 48				jsr		AssertFR0
+     2 3113 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 3119 30 78 31 00				dta		'0x1',0
+Source: tmthpack.s
+   287 						
+   288 311D					_FMUL2X	$40,$01,$00,$00,$00,$00, $00,$00,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 311D 20 01 47				jsr		LoadFR0
+     2 3120 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3126 20 16 47				jsr		LoadFR1
+     2 3129 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 312F 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   289 3132					_ASFR0X	$00,$00,$00,$00,$00,$00, '1x0'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3132 20 44 48				jsr		AssertFR0
+     2 3135 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 313B 31 78 30 00				dta		'1x0',0
+Source: tmthpack.s
+   290 						
+   291 313F					_FMUL2X	$40,$01,$00,$00,$00,$00, $40,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 313F 20 01 47				jsr		LoadFR0
+     2 3142 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3148 20 16 47				jsr		LoadFR1
+     2 314B 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3151 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   292 3154					_ASFR0X	$40,$01,$00,$00,$00,$00, '1x1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3154 20 44 48				jsr		AssertFR0
+     2 3157 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 315D 31 78 31 00				dta		'1x1',0
+Source: tmthpack.s
+   293 						
+   294 3161					_FMUL2X	$40,$01,$00,$00,$00,$00, $C0,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 3161 20 01 47				jsr		LoadFR0
+     2 3164 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 316A 20 16 47				jsr		LoadFR1
+     2 316D C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3173 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   295 3176					_ASFR0X	$C0,$01,$00,$00,$00,$00, '1x-1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3176 20 44 48				jsr		AssertFR0
+     2 3179 C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+     3 317F 31 78 2D 31 00			dta		'1x-1',0
+Source: tmthpack.s
+   296 						
+   297 3184					_FMUL2X	$C0,$01,$00,$00,$00,$00, $40,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 3184 20 01 47				jsr		LoadFR0
+     2 3187 C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 318D 20 16 47				jsr		LoadFR1
+     2 3190 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3196 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   298 3199					_ASFR0X	$C0,$01,$00,$00,$00,$00, '-1x1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3199 20 44 48				jsr		AssertFR0
+     2 319C C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+     3 31A2 2D 31 78 31 00			dta		'-1x1',0
+Source: tmthpack.s
+   299 						
+   300 31A7					_FMUL2X	$C0,$01,$00,$00,$00,$00, $C0,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 31A7 20 01 47				jsr		LoadFR0
+     2 31AA C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 31B0 20 16 47				jsr		LoadFR1
+     2 31B3 C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 31B9 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   301 31BC					_ASFR0X	$40,$01,$00,$00,$00,$00, '-1x-1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 31BC 20 44 48				jsr		AssertFR0
+     2 31BF 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 31C5 2D 31 78 2D 31 00			dta		'-1x-1',0
+Source: tmthpack.s
+   302 						
+   303 31CB					_FMUL2X	$3F,$01,$00,$00,$00,$00, $3F,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 31CB 20 01 47				jsr		LoadFR0
+     2 31CE 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 31D4 20 16 47				jsr		LoadFR1
+     2 31D7 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 31DD 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   304 31E0					_ASFR0X	$3E,$01,$00,$00,$00,$00, '0.01x0.01'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 31E0 20 44 48				jsr		AssertFR0
+     2 31E3 3E 01 00 00 00 00			dta		$3E,$01,$00,$00,$00,$00
+     3 31E9 30 2E 30 31 78 30 + 		dta		'0.01x0.01',0
+Source: tmthpack.s
+   305
+   306 31F3					_FMUL2X	$40,$12,$34,$56,$78,$91, $40,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 31F3 20 01 47				jsr		LoadFR0
+     2 31F6 40 12 34 56 78 91			dta		$40,$12,$34,$56,$78,$91
+Source: tmthpack.s
+     1 31FC 20 16 47				jsr		LoadFR1
+     2 31FF 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3205 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   307 3208					_ASFR0X	$40,$12,$34,$56,$78,$91, '12.34567891x1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3208 20 44 48				jsr		AssertFR0
+     2 320B 40 12 34 56 78 91			dta		$40,$12,$34,$56,$78,$91
+     3 3211 31 32 2E 33 34 35 + 		dta		'12.34567891x1',0
+Source: tmthpack.s
+   308 						
+   309 321F					_FMUL2X	$40,$01,$23,$45,$00,$00, $40,$06,$78,$90,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 321F 20 01 47				jsr		LoadFR0
+     2 3222 40 01 23 45 00 00			dta		$40,$01,$23,$45,$00,$00
+Source: tmthpack.s
+     1 3228 20 16 47				jsr		LoadFR1
+     2 322B 40 06 78 90 00 00			dta		$40,$06,$78,$90,$00,$00
+Source: tmthpack.s
+     1 3231 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   310 3234					_ASFR0X	$40,$08,$38,$10,$20,$50, '1.2345x6.7890'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3234 20 44 48				jsr		AssertFR0
+     2 3237 40 08 38 10 20 50			dta		$40,$08,$38,$10,$20,$50
+     3 323D 31 2E 32 33 34 35 + 		dta		'1.2345x6.7890',0
+Source: tmthpack.s
+   311 						
+   312 324B					_FMUL2X	$3F,$99,$00,$00,$00,$00, $3F,$99,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 324B 20 01 47				jsr		LoadFR0
+     2 324E 3F 99 00 00 00 00			dta		$3F,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3254 20 16 47				jsr		LoadFR1
+     2 3257 3F 99 00 00 00 00			dta		$3F,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 325D 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   313 3260					_ASFR0X	$3F,$98,$01,$00,$00,$00, '0.99x0.99'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3260 20 44 48				jsr		AssertFR0
+     2 3263 3F 98 01 00 00 00			dta		$3F,$98,$01,$00,$00,$00
+     3 3269 30 2E 39 39 78 30 + 		dta		'0.99x0.99',0
+Source: tmthpack.s
+   314 						
+   315 						;test overflow
+   316 3273					_FMUL2X	$6D,$01,$00,$00,$00,$00, $6D,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 3273 20 01 47				jsr		LoadFR0
+     2 3276 6D 01 00 00 00 00			dta		$6D,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 327C 20 16 47				jsr		LoadFR1
+     2 327F 6D 01 00 00 00 00			dta		$6D,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3285 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   317 3288					_ASERR	'1e+90x1e+90'
+Macro: _ASERR [Source: tmthpack.s]
+     1 3288 20 D0 48				jsr		AssertERR
+     2 328B 31 65 2B 39 30 78 + 		dta		'1e+90x1e+90',0
+Source: tmthpack.s
+   318 						
+   319 3297					_FMUL2X	$6D,$01,$00,$00,$00,$00, $ED,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 3297 20 01 47				jsr		LoadFR0
+     2 329A 6D 01 00 00 00 00			dta		$6D,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 32A0 20 16 47				jsr		LoadFR1
+     2 32A3 ED 01 00 00 00 00			dta		$ED,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 32A9 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   320 32AC					_ASERR	'1e+90x-1e+90'
+Macro: _ASERR [Source: tmthpack.s]
+     1 32AC 20 D0 48				jsr		AssertERR
+     2 32AF 31 65 2B 39 30 78 + 		dta		'1e+90x-1e+90',0
+Source: tmthpack.s
+   321
+   322 32BC					_FMUL2X	$ED,$01,$00,$00,$00,$00, $6D,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 32BC 20 01 47				jsr		LoadFR0
+     2 32BF ED 01 00 00 00 00			dta		$ED,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 32C5 20 16 47				jsr		LoadFR1
+     2 32C8 6D 01 00 00 00 00			dta		$6D,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 32CE 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   323 32D1					_ASERR	'-1e+90x1e+90'
+Macro: _ASERR [Source: tmthpack.s]
+     1 32D1 20 D0 48				jsr		AssertERR
+     2 32D4 2D 31 65 2B 39 30 + 		dta		'-1e+90x1e+90',0
+Source: tmthpack.s
+   324
+   325 32E1					_FMUL2X	$ED,$01,$00,$00,$00,$00, $ED,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 32E1 20 01 47				jsr		LoadFR0
+     2 32E4 ED 01 00 00 00 00			dta		$ED,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 32EA 20 16 47				jsr		LoadFR1
+     2 32ED ED 01 00 00 00 00			dta		$ED,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 32F3 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   326 32F6					_ASERR	'-1e+90x-1e+90'
+Macro: _ASERR [Source: tmthpack.s]
+     1 32F6 20 D0 48				jsr		AssertERR
+     2 32F9 2D 31 65 2B 39 30 + 		dta		'-1e+90x-1e+90',0
+Source: tmthpack.s
+   327
+   328 						;Test underflow
+   329 						;
+   330 						;There is arguably a bug in the base OS where multiplying two numbers
+   331 						;where the composite byte exponent is below -65 results in an error
+   332 						;even though it is an underflow. For this reason, we avoid using such
+   333 						;tiny numbers and use ones big enough to cause underflow without an
+   334 						;error.
+   335 						
+   336 3307					_FMUL2X	$20,$01,$00,$00,$00,$00, $20,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 3307 20 01 47				jsr		LoadFR0
+     2 330A 20 01 00 00 00 00			dta		$20,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3310 20 16 47				jsr		LoadFR1
+     2 3313 20 01 00 00 00 00			dta		$20,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3319 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   337 331C					_ASFR0X	$00,$00,$00,$00,$00,$00, '1e-64x1e-64'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 331C 20 44 48				jsr		AssertFR0
+     2 331F 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 3325 31 65 2D 36 34 78 + 		dta		'1e-64x1e-64',0
+Source: tmthpack.s
+   338 						
+   339 3331					_FMUL2X	$20,$01,$00,$00,$00,$00, $A0,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 3331 20 01 47				jsr		LoadFR0
+     2 3334 20 01 00 00 00 00			dta		$20,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 333A 20 16 47				jsr		LoadFR1
+     2 333D A0 01 00 00 00 00			dta		$A0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3343 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   340 3346					_ASFR0X	$00,$00,$00,$00,$00,$00, '1e-64x-1e-64'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3346 20 44 48				jsr		AssertFR0
+     2 3349 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 334F 31 65 2D 36 34 78 + 		dta		'1e-64x-1e-64',0
+Source: tmthpack.s
+   341
+   342 335C					_FMUL2X	$A0,$01,$00,$00,$00,$00, $20,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 335C 20 01 47				jsr		LoadFR0
+     2 335F A0 01 00 00 00 00			dta		$A0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3365 20 16 47				jsr		LoadFR1
+     2 3368 20 01 00 00 00 00			dta		$20,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 336E 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   343 3371					_ASFR0X	$00,$00,$00,$00,$00,$00, '-1e-64x1e-64'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3371 20 44 48				jsr		AssertFR0
+     2 3374 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 337A 2D 31 65 2D 36 34 + 		dta		'-1e-64x1e-64',0
+Source: tmthpack.s
+   344
+   345 3387					_FMUL2X	$A0,$01,$00,$00,$00,$00, $A0,$01,$00,$00,$00,$00
+Macro: _FMUL2X [Source: tmthpack.s]
+     1 3387 20 01 47				jsr		LoadFR0
+     2 338A A0 01 00 00 00 00			dta		$A0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3390 20 16 47				jsr		LoadFR1
+     2 3393 A0 01 00 00 00 00			dta		$A0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3399 20 88 47				jsr		fmul_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   346 339C					_ASFR0X	$00,$00,$00,$00,$00,$00, '-1e-64x-1e-64'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 339C 20 44 48				jsr		AssertFR0
+     2 339F 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 33A5 2D 31 65 2D 36 34 + 		dta		'-1e-64x-1e-64',0
+Source: tmthpack.s
+   347
+   348 						;====================== fdiv tests ======================
+   349 33B3					_FDIV2X	$40,$01,$00,$00,$00,$00, $40,$01,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 33B3 20 01 47				jsr		LoadFR0
+     2 33B6 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 33BC 20 16 47				jsr		LoadFR1
+     2 33BF 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 33C5 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   350 33C8					_ASFR0X	$40,$01,$00,$00,$00,$00, '1/1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 33C8 20 44 48				jsr		AssertFR0
+     2 33CB 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 33D1 31 2F 31 00				dta		'1/1',0
+Source: tmthpack.s
+   351 						
+   352 33D5					_FDIV2X	$00,$00,$00,$00,$00,$00, $40,$01,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 33D5 20 01 47				jsr		LoadFR0
+     2 33D8 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 33DE 20 16 47				jsr		LoadFR1
+     2 33E1 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 33E7 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   353 33EA					_ASFR0X	$00,$00,$00,$00,$00,$00, '0/1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 33EA 20 44 48				jsr		AssertFR0
+     2 33ED 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 33F3 30 2F 31 00				dta		'0/1',0
+Source: tmthpack.s
+   354 								
+   355 33F7					_FDIV2X	$40,$01,$00,$00,$00,$00, $00,$00,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 33F7 20 01 47				jsr		LoadFR0
+     2 33FA 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3400 20 16 47				jsr		LoadFR1
+     2 3403 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3409 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   356 340C					_ASERR	'1/0'
+Macro: _ASERR [Source: tmthpack.s]
+     1 340C 20 D0 48				jsr		AssertERR
+     2 340F 31 2F 30 00				dta		'1/0',0
+Source: tmthpack.s
+   357
+   358 3413					_FDIV2X	$00,$00,$00,$00,$00,$00, $00,$00,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 3413 20 01 47				jsr		LoadFR0
+     2 3416 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 341C 20 16 47				jsr		LoadFR1
+     2 341F 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3425 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   359 3428					_ASERR	'0/0'
+Macro: _ASERR [Source: tmthpack.s]
+     1 3428 20 D0 48				jsr		AssertERR
+     2 342B 30 2F 30 00				dta		'0/0',0
+Source: tmthpack.s
+   360
+   361 342F					_FDIV2X	$40,$01,$00,$00,$00,$00, $C0,$01,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 342F 20 01 47				jsr		LoadFR0
+     2 3432 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3438 20 16 47				jsr		LoadFR1
+     2 343B C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3441 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   362 3444					_ASFR0X	$C0,$01,$00,$00,$00,$00, '1/-1'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3444 20 44 48				jsr		AssertFR0
+     2 3447 C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+     3 344D 31 2F 2D 31 00			dta		'1/-1',0
+Source: tmthpack.s
+   363
+   364 3452					_FDIV2X	$40,$01,$00,$00,$00,$00, $40,$02,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 3452 20 01 47				jsr		LoadFR0
+     2 3455 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 345B 20 16 47				jsr		LoadFR1
+     2 345E 40 02 00 00 00 00			dta		$40,$02,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3464 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   365 3467					_ASFR0X	$3F,$50,$00,$00,$00,$00, '1/2'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3467 20 44 48				jsr		AssertFR0
+     2 346A 3F 50 00 00 00 00			dta		$3F,$50,$00,$00,$00,$00
+     3 3470 31 2F 32 00				dta		'1/2',0
+Source: tmthpack.s
+   366 						
+   367 3474					_FDIV2X	$40,$02,$00,$00,$00,$00, $3F,$50,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 3474 20 01 47				jsr		LoadFR0
+     2 3477 40 02 00 00 00 00			dta		$40,$02,$00,$00,$00,$00
+Source: tmthpack.s
+     1 347D 20 16 47				jsr		LoadFR1
+     2 3480 3F 50 00 00 00 00			dta		$3F,$50,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3486 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   368 3489					_ASFR0X	$40,$04,$00,$00,$00,$00, '2/0.5'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3489 20 44 48				jsr		AssertFR0
+     2 348C 40 04 00 00 00 00			dta		$40,$04,$00,$00,$00,$00
+     3 3492 32 2F 30 2E 35 00			dta		'2/0.5',0
+Source: tmthpack.s
+   369 						
+   370 3498					_FDIV2X	$41,$01,$00,$00,$00,$00, $3F,$01,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 3498 20 01 47				jsr		LoadFR0
+     2 349B 41 01 00 00 00 00			dta		$41,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 34A1 20 16 47				jsr		LoadFR1
+     2 34A4 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 34AA 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   371 34AD					_ASFR0X	$42,$01,$00,$00,$00,$00, '100/0.01'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 34AD 20 44 48				jsr		AssertFR0
+     2 34B0 42 01 00 00 00 00			dta		$42,$01,$00,$00,$00,$00
+     3 34B6 31 30 30 2F 30 2E + 		dta		'100/0.01',0
+Source: tmthpack.s
+   372 						
+   373 						;test overflow
+   374 34BF					_FDIV2X	$6D,$01,$00,$00,$00,$00, $13,$01,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 34BF 20 01 47				jsr		LoadFR0
+     2 34C2 6D 01 00 00 00 00			dta		$6D,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 34C8 20 16 47				jsr		LoadFR1
+     2 34CB 13 01 00 00 00 00			dta		$13,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 34D1 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   375 34D4					_ASERR	'1e+90/1e-90'
+Macro: _ASERR [Source: tmthpack.s]
+     1 34D4 20 D0 48				jsr		AssertERR
+     2 34D7 31 65 2B 39 30 2F + 		dta		'1e+90/1e-90',0
+Source: tmthpack.s
+   376 						
+   377 						;Test underflow
+   378 						;
+   379 						;1E-64
+   380 34E3					_FDIV2X	$20,$01,$00,$00,$00,$00, $60,$01,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 34E3 20 01 47				jsr		LoadFR0
+     2 34E6 20 01 00 00 00 00			dta		$20,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 34EC 20 16 47				jsr		LoadFR1
+     2 34EF 60 01 00 00 00 00			dta		$60,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 34F5 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   381 34F8					_ASFR0X	$00,$00,$00,$00,$00,$00, '1e-64/1e+64'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 34F8 20 44 48				jsr		AssertFR0
+     2 34FB 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 3501 31 65 2D 36 34 2F + 		dta		'1e-64/1e+64',0
+Source: tmthpack.s
+   382
+   383 350D					_FDIV2X	$20,$01,$00,$00,$00,$00, $E0,$01,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 350D 20 01 47				jsr		LoadFR0
+     2 3510 20 01 00 00 00 00			dta		$20,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3516 20 16 47				jsr		LoadFR1
+     2 3519 E0 01 00 00 00 00			dta		$E0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 351F 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   384 3522					_ASFR0X	$00,$00,$00,$00,$00,$00, '1e-64/-1e+64'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3522 20 44 48				jsr		AssertFR0
+     2 3525 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 352B 31 65 2D 36 34 2F + 		dta		'1e-64/-1e+64',0
+Source: tmthpack.s
+   385
+   386 3538					_FDIV2X	$A0,$01,$00,$00,$00,$00, $60,$01,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 3538 20 01 47				jsr		LoadFR0
+     2 353B A0 01 00 00 00 00			dta		$A0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3541 20 16 47				jsr		LoadFR1
+     2 3544 60 01 00 00 00 00			dta		$60,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 354A 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   387 354D					_ASFR0X	$00,$00,$00,$00,$00,$00, '-1e-64/1e+64'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 354D 20 44 48				jsr		AssertFR0
+     2 3550 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 3556 2D 31 65 2D 36 34 + 		dta		'-1e-64/1e+64',0
+Source: tmthpack.s
+   388
+   389 3563					_FDIV2X	$A0,$01,$00,$00,$00,$00, $E0,$01,$00,$00,$00,$00
+Macro: _FDIV2X [Source: tmthpack.s]
+     1 3563 20 01 47				jsr		LoadFR0
+     2 3566 A0 01 00 00 00 00			dta		$A0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 356C 20 16 47				jsr		LoadFR1
+     2 356F E0 01 00 00 00 00			dta		$E0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3575 20 8E 47				jsr		fdiv_chk
+Source: tmthpack.s
+Source: tmthpack.s
+   390 3578					_ASFR0X	$00,$00,$00,$00,$00,$00, '-1e-64/-1e+64'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3578 20 44 48				jsr		AssertFR0
+     2 357B 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 3581 2D 31 65 2D 36 34 + 		dta		'-1e-64/-1e+64',0
+Source: tmthpack.s
+   391
+   392 						;====================== log tests ======================
+   393 358F					_FLOG1X		$40,$01,$00,$00,$00,$00
+Macro: _FLOG1X [Source: tmthpack.s]
+     1 358F 20 01 47				jsr		LoadFR0
+     2 3592 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3598 20 CD DE				jsr		log
+Source: tmthpack.s
+Source: tmthpack.s
+   394 359B					_ASFR0RX	$BF,$01,$00,$00,$00,$00, $3F,$01,$00,$00,$00,$00, 'log(1)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 359B 20 A0 47				jsr		AssertFR0Range
+     2 359E BF 01 00 00 00 00			dta		$BF,$01,$00,$00,$00,$00
+     3 35A4 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+     4 35AA 6C 6F 67 28 31 29 + 		dta		'log(1)',0
+Source: tmthpack.s
+   395
+   396 						;====================== log10 tests ======================
+   397 35B1					_FLOG101X	$40,$01,$00,$00,$00,$00
+Macro: _FLOG101X [Source: tmthpack.s]
+     1 35B1 20 01 47				jsr		LoadFR0
+     2 35B4 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 35BA 20 D1 DE				jsr		log10
+Source: tmthpack.s
+Source: tmthpack.s
+   398 35BD					_ASFR0RX	$BF,$01,$00,$00,$00,$00, $3F,$01,$00,$00,$00,$00, 'log10(1)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 35BD 20 A0 47				jsr		AssertFR0Range
+     2 35C0 BF 01 00 00 00 00			dta		$BF,$01,$00,$00,$00,$00
+     3 35C6 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+     4 35CC 6C 6F 67 31 30 28 + 		dta		'log10(1)',0
+Source: tmthpack.s
+   399
+   400 35D5					_FLOG101X	$40,$10,$00,$00,$00,$00
+Macro: _FLOG101X [Source: tmthpack.s]
+     1 35D5 20 01 47				jsr		LoadFR0
+     2 35D8 40 10 00 00 00 00			dta		$40,$10,$00,$00,$00,$00
+Source: tmthpack.s
+     1 35DE 20 D1 DE				jsr		log10
+Source: tmthpack.s
+Source: tmthpack.s
+   401 35E1					_ASFR0X		$40,$01,$00,$00,$00,$00, 'log10(10)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 35E1 20 44 48				jsr		AssertFR0
+     2 35E4 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 35EA 6C 6F 67 31 30 28 + 		dta		'log10(10)',0
+Source: tmthpack.s
+   402
+   403 35F4					_FLOG101X	$41,$01,$00,$00,$00,$00
+Macro: _FLOG101X [Source: tmthpack.s]
+     1 35F4 20 01 47				jsr		LoadFR0
+     2 35F7 41 01 00 00 00 00			dta		$41,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 35FD 20 D1 DE				jsr		log10
+Source: tmthpack.s
+Source: tmthpack.s
+   404 3600					_ASFR0X		$40,$02,$00,$00,$00,$00, 'log10(100)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3600 20 44 48				jsr		AssertFR0
+     2 3603 40 02 00 00 00 00			dta		$40,$02,$00,$00,$00,$00
+     3 3609 6C 6F 67 31 30 28 + 		dta		'log10(100)',0
+Source: tmthpack.s
+   405
+   406 						;====================== exp tests ======================
+   407 3614					_FEXP1X		$00,$00,$00,$00,$00,$00
+Macro: _FEXP1X [Source: tmthpack.s]
+     1 3614 20 01 47				jsr		LoadFR0
+     2 3617 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 361D 20 C0 DD				jsr		exp
+Source: tmthpack.s
+Source: tmthpack.s
+   408 3620					_ASFR0RX	$3F,$99,$00,$00,$00,$00, $40,$01,$01,$00,$00,$00, 'exp(0)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 3620 20 A0 47				jsr		AssertFR0Range
+     2 3623 3F 99 00 00 00 00			dta		$3F,$99,$00,$00,$00,$00
+     3 3629 40 01 01 00 00 00			dta		$40,$01,$01,$00,$00,$00
+     4 362F 65 78 70 28 30 29 + 		dta		'exp(0)',0
+Source: tmthpack.s
+   409
+   410 3636					_FEXP1X		$40,$01,$00,$00,$00,$00
+Macro: _FEXP1X [Source: tmthpack.s]
+     1 3636 20 01 47				jsr		LoadFR0
+     2 3639 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 363F 20 C0 DD				jsr		exp
+Source: tmthpack.s
+Source: tmthpack.s
+   411 3642					_ASFR0RX	$40,$02,$71,$70,$00,$00, $40,$02,$71,$90,$00,$00, 'exp(1)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 3642 20 A0 47				jsr		AssertFR0Range
+     2 3645 40 02 71 70 00 00			dta		$40,$02,$71,$70,$00,$00
+     3 364B 40 02 71 90 00 00			dta		$40,$02,$71,$90,$00,$00
+     4 3651 65 78 70 28 31 29 + 		dta		'exp(1)',0
+Source: tmthpack.s
+   412
+   413 3658					_FEXP1X		$40,$01,$00,$10,$00,$00
+Macro: _FEXP1X [Source: tmthpack.s]
+     1 3658 20 01 47				jsr		LoadFR0
+     2 365B 40 01 00 10 00 00			dta		$40,$01,$00,$10,$00,$00
+Source: tmthpack.s
+     1 3661 20 C0 DD				jsr		exp
+Source: tmthpack.s
+Source: tmthpack.s
+   414 3664					_ASFR0RX	$40,$02,$72,$00,$00,$00, $40,$02,$72,$20,$00,$00, 'exp(1.001)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 3664 20 A0 47				jsr		AssertFR0Range
+     2 3667 40 02 72 00 00 00			dta		$40,$02,$72,$00,$00,$00
+     3 366D 40 02 72 20 00 00			dta		$40,$02,$72,$20,$00,$00
+     4 3673 65 78 70 28 31 2E + 		dta		'exp(1.001)',0
+Source: tmthpack.s
+   415
+   416 367E					_FEXP1X		$40,$01,$50,$00,$00,$00
+Macro: _FEXP1X [Source: tmthpack.s]
+     1 367E 20 01 47				jsr		LoadFR0
+     2 3681 40 01 50 00 00 00			dta		$40,$01,$50,$00,$00,$00
+Source: tmthpack.s
+     1 3687 20 C0 DD				jsr		exp
+Source: tmthpack.s
+Source: tmthpack.s
+   417 368A					_ASFR0RX	$40,$04,$48,$00,$00,$00, $40,$04,$48,$20,$00,$00, 'exp(1.5)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 368A 20 A0 47				jsr		AssertFR0Range
+     2 368D 40 04 48 00 00 00			dta		$40,$04,$48,$00,$00,$00
+     3 3693 40 04 48 20 00 00			dta		$40,$04,$48,$20,$00,$00
+     4 3699 65 78 70 28 31 2E + 		dta		'exp(1.5)',0
+Source: tmthpack.s
+   418
+   419 36A2					_FEXP1X		$C0,$01,$00,$00,$00,$00
+Macro: _FEXP1X [Source: tmthpack.s]
+     1 36A2 20 01 47				jsr		LoadFR0
+     2 36A5 C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 36AB 20 C0 DD				jsr		exp
+Source: tmthpack.s
+Source: tmthpack.s
+   420 36AE					_ASFR0RX	$3F,$36,$70,$00,$00,$00, $3F,$36,$90,$00,$00,$00, 'exp(-1)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 36AE 20 A0 47				jsr		AssertFR0Range
+     2 36B1 3F 36 70 00 00 00			dta		$3F,$36,$70,$00,$00,$00
+     3 36B7 3F 36 90 00 00 00			dta		$3F,$36,$90,$00,$00,$00
+     4 36BD 65 78 70 28 2D 31 + 		dta		'exp(-1)',0
+Source: tmthpack.s
+   421
+   422 36C5					_FEXP1X		$41,$02,$31,$00,$00,$00
+Macro: _FEXP1X [Source: tmthpack.s]
+     1 36C5 20 01 47				jsr		LoadFR0
+     2 36C8 41 02 31 00 00 00			dta		$41,$02,$31,$00,$00,$00
+Source: tmthpack.s
+     1 36CE 20 C0 DD				jsr		exp
+Source: tmthpack.s
+Source: tmthpack.s
+   423 36D1					_ASERR		'exp(231)'
+Macro: _ASERR [Source: tmthpack.s]
+     1 36D1 20 D0 48				jsr		AssertERR
+     2 36D4 65 78 70 28 32 33 + 		dta		'exp(231)',0
+Source: tmthpack.s
+   424
+   425 36DD					_FEXP1X		$C1,$02,$31,$00,$00,$00
+Macro: _FEXP1X [Source: tmthpack.s]
+     1 36DD 20 01 47				jsr		LoadFR0
+     2 36E0 C1 02 31 00 00 00			dta		$C1,$02,$31,$00,$00,$00
+Source: tmthpack.s
+     1 36E6 20 C0 DD				jsr		exp
+Source: tmthpack.s
+Source: tmthpack.s
+   426 36E9					_ASFR0X		$00,$00,$00,$00,$00,$00, 'exp(-231)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 36E9 20 44 48				jsr		AssertFR0
+     2 36EC 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 36F2 65 78 70 28 2D 32 + 		dta		'exp(-231)',0
+Source: tmthpack.s
+   427
+   428 						;====================== exp10 tests ======================
+   429 36FC					_FEXP101X	$00,$00,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 36FC 20 01 47				jsr		LoadFR0
+     2 36FF 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3705 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   430 3708					_ASFR0RX	$3F,$99,$00,$00,$00,$00, $40,$01,$01,$00,$00,$00, 'exp10(0)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 3708 20 A0 47				jsr		AssertFR0Range
+     2 370B 3F 99 00 00 00 00			dta		$3F,$99,$00,$00,$00,$00
+     3 3711 40 01 01 00 00 00			dta		$40,$01,$01,$00,$00,$00
+     4 3717 65 78 70 31 30 28 + 		dta		'exp10(0)',0
+Source: tmthpack.s
+   431
+   432 3720					_FEXP101X	$40,$01,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 3720 20 01 47				jsr		LoadFR0
+     2 3723 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3729 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   433 372C					_ASFR0RX	$40,$09,$90,$00,$00,$00, $40,$10,$10,$00,$00,$00, 'exp10(1)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 372C 20 A0 47				jsr		AssertFR0Range
+     2 372F 40 09 90 00 00 00			dta		$40,$09,$90,$00,$00,$00
+     3 3735 40 10 10 00 00 00			dta		$40,$10,$10,$00,$00,$00
+     4 373B 65 78 70 31 30 28 + 		dta		'exp10(1)',0
+Source: tmthpack.s
+   434
+   435 3744					_FEXP101X	$40,$01,$00,$10,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 3744 20 01 47				jsr		LoadFR0
+     2 3747 40 01 00 10 00 00			dta		$40,$01,$00,$10,$00,$00
+Source: tmthpack.s
+     1 374D 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   436 3750					_ASFR0RX	$40,$10,$01,$00,$00,$00, $40,$10,$03,$00,$00,$00, 'exp10(1.001)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 3750 20 A0 47				jsr		AssertFR0Range
+     2 3753 40 10 01 00 00 00			dta		$40,$10,$01,$00,$00,$00
+     3 3759 40 10 03 00 00 00			dta		$40,$10,$03,$00,$00,$00
+     4 375F 65 78 70 31 30 28 + 		dta		'exp10(1.001)',0
+Source: tmthpack.s
+   437
+   438 376C					_FEXP101X	$40,$01,$50,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 376C 20 01 47				jsr		LoadFR0
+     2 376F 40 01 50 00 00 00			dta		$40,$01,$50,$00,$00,$00
+Source: tmthpack.s
+     1 3775 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   439 3778					_ASFR0RX	$40,$31,$50,$00,$00,$00, $40,$31,$70,$00,$00,$00, 'exp10(1.5)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 3778 20 A0 47				jsr		AssertFR0Range
+     2 377B 40 31 50 00 00 00			dta		$40,$31,$50,$00,$00,$00
+     3 3781 40 31 70 00 00 00			dta		$40,$31,$70,$00,$00,$00
+     4 3787 65 78 70 31 30 28 + 		dta		'exp10(1.5)',0
+Source: tmthpack.s
+   440
+   441 3792					_FEXP101X	$40,$02,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 3792 20 01 47				jsr		LoadFR0
+     2 3795 40 02 00 00 00 00			dta		$40,$02,$00,$00,$00,$00
+Source: tmthpack.s
+     1 379B 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   442 379E					_ASFR0RX	$40,$99,$00,$00,$00,$00, $41,$01,$01,$00,$00,$00, 'exp10(2)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 379E 20 A0 47				jsr		AssertFR0Range
+     2 37A1 40 99 00 00 00 00			dta		$40,$99,$00,$00,$00,$00
+     3 37A7 41 01 01 00 00 00			dta		$41,$01,$01,$00,$00,$00
+     4 37AD 65 78 70 31 30 28 + 		dta		'exp10(2)',0
+Source: tmthpack.s
+   443
+   444 37B6					_FEXP101X	$40,$03,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 37B6 20 01 47				jsr		LoadFR0
+     2 37B9 40 03 00 00 00 00			dta		$40,$03,$00,$00,$00,$00
+Source: tmthpack.s
+     1 37BF 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   445 37C2					_ASFR0RX	$41,$09,$90,$00,$00,$00, $41,$10,$10,$00,$00,$00, 'exp10(3)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 37C2 20 A0 47				jsr		AssertFR0Range
+     2 37C5 41 09 90 00 00 00			dta		$41,$09,$90,$00,$00,$00
+     3 37CB 41 10 10 00 00 00			dta		$41,$10,$10,$00,$00,$00
+     4 37D1 65 78 70 31 30 28 + 		dta		'exp10(3)',0
+Source: tmthpack.s
+   446
+   447 37DA					_FEXP101X	$C0,$01,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 37DA 20 01 47				jsr		LoadFR0
+     2 37DD C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 37E3 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   448 37E6					_ASFR0RX	$3F,$09,$00,$00,$00,$00, $3F,$11,$00,$00,$00,$00, 'exp10(-1)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 37E6 20 A0 47				jsr		AssertFR0Range
+     2 37E9 3F 09 00 00 00 00			dta		$3F,$09,$00,$00,$00,$00
+     3 37EF 3F 11 00 00 00 00			dta		$3F,$11,$00,$00,$00,$00
+     4 37F5 65 78 70 31 30 28 + 		dta		'exp10(-1)',0
+Source: tmthpack.s
+   449
+   450 37FF					_FEXP101X	$C0,$02,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 37FF 20 01 47				jsr		LoadFR0
+     2 3802 C0 02 00 00 00 00			dta		$C0,$02,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3808 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   451 380B					_ASFR0RX	$3E,$90,$00,$00,$00,$00, $3F,$01,$11,$00,$00,$00, 'exp10(-2)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 380B 20 A0 47				jsr		AssertFR0Range
+     2 380E 3E 90 00 00 00 00			dta		$3E,$90,$00,$00,$00,$00
+     3 3814 3F 01 11 00 00 00			dta		$3F,$01,$11,$00,$00,$00
+     4 381A 65 78 70 31 30 28 + 		dta		'exp10(-2)',0
+Source: tmthpack.s
+   452
+   453 3824					_FEXP101X	$C0,$03,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 3824 20 01 47				jsr		LoadFR0
+     2 3827 C0 03 00 00 00 00			dta		$C0,$03,$00,$00,$00,$00
+Source: tmthpack.s
+     1 382D 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   454 3830					_ASFR0RX	$3E,$09,$00,$00,$00,$00, $3E,$11,$00,$00,$00,$00, 'exp10(-3)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 3830 20 A0 47				jsr		AssertFR0Range
+     2 3833 3E 09 00 00 00 00			dta		$3E,$09,$00,$00,$00,$00
+     3 3839 3E 11 00 00 00 00			dta		$3E,$11,$00,$00,$00,$00
+     4 383F 65 78 70 31 30 28 + 		dta		'exp10(-3)',0
+Source: tmthpack.s
+   455
+   456 3849					_FEXP101X	$40,$97,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 3849 20 01 47				jsr		LoadFR0
+     2 384C 40 97 00 00 00 00			dta		$40,$97,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3852 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   457 3855					_ASFR0RX	$70,$09,$90,$00,$00,$00, $70,$10,$10,$00,$00,$00, 'exp10(97)'
+Macro: _ASFR0RX [Source: tmthpack.s]
+     1 3855 20 A0 47				jsr		AssertFR0Range
+     2 3858 70 09 90 00 00 00			dta		$70,$09,$90,$00,$00,$00
+     3 385E 70 10 10 00 00 00			dta		$70,$10,$10,$00,$00,$00
+     4 3864 65 78 70 31 30 28 + 		dta		'exp10(97)',0
+Source: tmthpack.s
+   458
+   459 						;Test disabled - math pack can produce 1e+98, just not parse it
+   460 						;_FEXP101	98
+   461 						;_ASERR		'exp10(98)'
+   462
+   463 386E					_FEXP101X	$41,$01,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 386E 20 01 47				jsr		LoadFR0
+     2 3871 41 01 00 00 00 00			dta		$41,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3877 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   464 387A					_ASERR		'exp10(100)'
+Macro: _ASERR [Source: tmthpack.s]
+     1 387A 20 D0 48				jsr		AssertERR
+     2 387D 65 78 70 31 30 28 + 		dta		'exp10(100)',0
+Source: tmthpack.s
+   465
+   466 3888					_FEXP101X	$C0,$96,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 3888 20 01 47				jsr		LoadFR0
+     2 388B C0 96 00 00 00 00			dta		$C0,$96,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3891 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   467 3894					_ASFR0X		$10,$01,$00,$00,$00,$00, 'exp10(-96)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3894 20 44 48				jsr		AssertFR0
+     2 3897 10 01 00 00 00 00			dta		$10,$01,$00,$00,$00,$00
+     3 389D 65 78 70 31 30 28 + 		dta		'exp10(-96)',0
+Source: tmthpack.s
+   468
+   469 38A8					_FEXP101X	$C0,$99,$00,$00,$00,$00
+Macro: _FEXP101X [Source: tmthpack.s]
+     1 38A8 20 01 47				jsr		LoadFR0
+     2 38AB C0 99 00 00 00 00			dta		$C0,$99,$00,$00,$00,$00
+Source: tmthpack.s
+     1 38B1 20 CC DD				jsr		exp10
+Source: tmthpack.s
+Source: tmthpack.s
+   470 38B4					_ASFR0X		$00,$00,$00,$00,$00,$00, 'exp10(-99)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 38B4 20 44 48				jsr		AssertFR0
+     2 38B7 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 38BD 65 78 70 31 30 28 + 		dta		'exp10(-99)',0
+Source: tmthpack.s
+   471
+   472 						;====================== ipf tests ======================
+   473 38C8					_FIFP1		0
+Macro: _FIFP1 [Source: tmthpack.s]
+     1 38C8 A9 00 85 D4 85 D5			mwa		#0 fr0
+     1 38CE 20 AA D9				jsr		ipf
+Source: tmthpack.s
+Source: tmthpack.s
+   474 38D1 18					clc
+   475 38D2					_ASFR0X		$00,$00,$00,$00,$00,$00, 'ipf(0)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 38D2 20 44 48				jsr		AssertFR0
+     2 38D5 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 38DB 69 70 66 28 30 29 + 		dta		'ipf(0)',0
+Source: tmthpack.s
+   476
+   477 38E2					_FIFP1		65535
+Macro: _FIFP1 [Source: tmthpack.s]
+     1 38E2 A9 FF 85 D4 85 D5			mwa		#65535 fr0
+     1 38E8 20 AA D9				jsr		ipf
+Source: tmthpack.s
+Source: tmthpack.s
+   478 38EB 18					clc
+   479 38EC					_ASFR0X		$42,$06,$55,$35,$00,$00, 'ipf(65535)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 38EC 20 44 48				jsr		AssertFR0
+     2 38EF 42 06 55 35 00 00			dta		$42,$06,$55,$35,$00,$00
+     3 38F5 69 70 66 28 36 35 + 		dta		'ipf(65535)',0
+Source: tmthpack.s
+   480 						
+   481 						;====================== fpi tests ======================
+   482 3900					_FFPI1X		$00,$00,$00,$00,$00,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 3900 20 01 47				jsr		LoadFR0
+     2 3903 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3909 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   483 390C					_FIFP
+Macro: _FIFP [Source: tmthpack.s]
+     1 390C 20 AA D9				jsr		ipf
+Source: tmthpack.s
+   484 390F					_ASFR0X		$00,$00,$00,$00,$00,$00, 'fpi(0)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 390F 20 44 48				jsr		AssertFR0
+     2 3912 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 3918 66 70 69 28 30 29 + 		dta		'fpi(0)',0
+Source: tmthpack.s
+   485
+   486 391F					_FFPI1X		$3F,$10,$00,$00,$00,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 391F 20 01 47				jsr		LoadFR0
+     2 3922 3F 10 00 00 00 00			dta		$3F,$10,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3928 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   487 392B					_FIFP
+Macro: _FIFP [Source: tmthpack.s]
+     1 392B 20 AA D9				jsr		ipf
+Source: tmthpack.s
+   488 392E					_ASFR0X		$00,$00,$00,$00,$00,$00, 'fpi(0.1)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 392E 20 44 48				jsr		AssertFR0
+     2 3931 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 3937 66 70 69 28 30 2E + 		dta		'fpi(0.1)',0
+Source: tmthpack.s
+   489
+   490 						; >= 0.5 causes rounding up		
+   491 3940					_FFPI1X		$3F,$50,$00,$00,$00,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 3940 20 01 47				jsr		LoadFR0
+     2 3943 3F 50 00 00 00 00			dta		$3F,$50,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3949 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   492 394C					_FIFP
+Macro: _FIFP [Source: tmthpack.s]
+     1 394C 20 AA D9				jsr		ipf
+Source: tmthpack.s
+   493 394F					_ASFR0X		$40,$01,$00,$00,$00,$00, 'fpi(0.5)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 394F 20 44 48				jsr		AssertFR0
+     2 3952 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 3958 66 70 69 28 30 2E + 		dta		'fpi(0.5)',0
+Source: tmthpack.s
+   494 						
+   495 3961					_FFPI1X		$3F,$90,$00,$00,$00,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 3961 20 01 47				jsr		LoadFR0
+     2 3964 3F 90 00 00 00 00			dta		$3F,$90,$00,$00,$00,$00
+Source: tmthpack.s
+     1 396A 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   496 396D					_FIFP
+Macro: _FIFP [Source: tmthpack.s]
+     1 396D 20 AA D9				jsr		ipf
+Source: tmthpack.s
+   497 3970					_ASFR0X		$40,$01,$00,$00,$00,$00, 'fpi(0.9)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3970 20 44 48				jsr		AssertFR0
+     2 3973 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 3979 66 70 69 28 30 2E + 		dta		'fpi(0.9)',0
+Source: tmthpack.s
+   498
+   499 3982					_FFPI1X		$40,$76,$00,$00,$00,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 3982 20 01 47				jsr		LoadFR0
+     2 3985 40 76 00 00 00 00			dta		$40,$76,$00,$00,$00,$00
+Source: tmthpack.s
+     1 398B 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   500 398E					_FIFP
+Macro: _FIFP [Source: tmthpack.s]
+     1 398E 20 AA D9				jsr		ipf
+Source: tmthpack.s
+   501 3991					_ASFR0X		$40,$76,$00,$00,$00,$00, 'fpi(76)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3991 20 44 48				jsr		AssertFR0
+     2 3994 40 76 00 00 00 00			dta		$40,$76,$00,$00,$00,$00
+     3 399A 66 70 69 28 37 36 + 		dta		'fpi(76)',0
+Source: tmthpack.s
+   502
+   503 39A2					_FFPI1X		$41,$12,$34,$00,$00,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 39A2 20 01 47				jsr		LoadFR0
+     2 39A5 41 12 34 00 00 00			dta		$41,$12,$34,$00,$00,$00
+Source: tmthpack.s
+     1 39AB 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   504 39AE					_FIFP
+Macro: _FIFP [Source: tmthpack.s]
+     1 39AE 20 AA D9				jsr		ipf
+Source: tmthpack.s
+   505 39B1					_ASFR0X		$41,$12,$34,$00,$00,$00, 'fpi(1234)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 39B1 20 44 48				jsr		AssertFR0
+     2 39B4 41 12 34 00 00 00			dta		$41,$12,$34,$00,$00,$00
+     3 39BA 66 70 69 28 31 32 + 		dta		'fpi(1234)',0
+Source: tmthpack.s
+   506 						
+   507 39C4					_FFPI1X		$42,$02,$14,$20,$00,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 39C4 20 01 47				jsr		LoadFR0
+     2 39C7 42 02 14 20 00 00			dta		$42,$02,$14,$20,$00,$00
+Source: tmthpack.s
+     1 39CD 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   508 39D0					_FIFP
+Macro: _FIFP [Source: tmthpack.s]
+     1 39D0 20 AA D9				jsr		ipf
+Source: tmthpack.s
+   509 39D3					_ASFR0X		$42,$02,$14,$20,$00,$00, 'fpi(21420)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 39D3 20 44 48				jsr		AssertFR0
+     2 39D6 42 02 14 20 00 00			dta		$42,$02,$14,$20,$00,$00
+     3 39DC 66 70 69 28 32 31 + 		dta		'fpi(21420)',0
+Source: tmthpack.s
+   510 						
+   511 39E7					_FFPI1X		$42,$06,$55,$35,$40,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 39E7 20 01 47				jsr		LoadFR0
+     2 39EA 42 06 55 35 40 00			dta		$42,$06,$55,$35,$40,$00
+Source: tmthpack.s
+     1 39F0 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   512 39F3					_FIFP
+Macro: _FIFP [Source: tmthpack.s]
+     1 39F3 20 AA D9				jsr		ipf
+Source: tmthpack.s
+   513 39F6					_ASFR0X		$42,$06,$55,$35,$00,$00, 'fpi(65535.4)'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 39F6 20 44 48				jsr		AssertFR0
+     2 39F9 42 06 55 35 00 00			dta		$42,$06,$55,$35,$00,$00
+     3 39FF 66 70 69 28 36 35 + 		dta		'fpi(65535.4)',0
+Source: tmthpack.s
+   514 								
+   515 						; negative number -- should fail
+   516 3A0C					_FFPI1X		$BF,$10,$00,$00,$00,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 3A0C 20 01 47				jsr		LoadFR0
+     2 3A0F BF 10 00 00 00 00			dta		$BF,$10,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3A15 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   517 3A18					_ASERR		'fpi(-0.1)'
+Macro: _ASERR [Source: tmthpack.s]
+     1 3A18 20 D0 48				jsr		AssertERR
+     2 3A1B 66 70 69 28 2D 30 + 		dta		'fpi(-0.1)',0
+Source: tmthpack.s
+   518 						
+   519 						; Atari precisely specified in its OS Manual that FPI is supposed to
+   520 						; give an error for FR0 >= 65535.5. That assumes their implementation
+   521 						; actually follows the spec, which it doesn't -- it gives 0 for values
+   522 						; between 65535.5 and 65536.
+   523 3A25					_FFPI1X		$42,$06,$55,$36,$00,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 3A25 20 01 47				jsr		LoadFR0
+     2 3A28 42 06 55 36 00 00			dta		$42,$06,$55,$36,$00,$00
+Source: tmthpack.s
+     1 3A2E 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   524 3A31					_ASERR		'fpi(65536)'
+Macro: _ASERR [Source: tmthpack.s]
+     1 3A31 20 D0 48				jsr		AssertERR
+     2 3A34 66 70 69 28 36 35 + 		dta		'fpi(65536)',0
+Source: tmthpack.s
+   525
+   526 3A3F					_FFPI1X		$43,$01,$00,$00,$00,$00
+Macro: _FFPI1X [Source: tmthpack.s]
+     1 3A3F 20 01 47				jsr		LoadFR0
+     2 3A42 43 01 00 00 00 00			dta		$43,$01,$00,$00,$00,$00
+Source: tmthpack.s
+     1 3A48 20 D2 D9				jsr		fpi
+Source: tmthpack.s
+Source: tmthpack.s
+   527 3A4B					_ASERR		'fpi(100000)'
+Macro: _ASERR [Source: tmthpack.s]
+     1 3A4B 20 D0 48				jsr		AssertERR
+     2 3A4E 66 70 69 28 31 30 + 		dta		'fpi(100000)',0
+Source: tmthpack.s
+   528 						
+   529 						;====================== fasc tests ======================
+   530 3A5A					_TEST_FASCX	$00,$00,$00,$00,$00,$00, '0'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3A5A 20 61 49				jsr		TestFASC
+     2 3A5D 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 3A63 30 00				dta		'0',0
+Source: tmthpack.s
+   531 3A65					_TEST_FASCX	$3F,$10,$00,$00,$00,$00, '0.1'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3A65 20 61 49				jsr		TestFASC
+     2 3A68 3F 10 00 00 00 00			dta		$3F,$10,$00,$00,$00,$00
+     3 3A6E 30 2E 31 00				dta		'0.1',0
+Source: tmthpack.s
+   532 3A72					_TEST_FASCX	$3F,$01,$00,$00,$00,$00, '0.01'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3A72 20 61 49				jsr		TestFASC
+     2 3A75 3F 01 00 00 00 00			dta		$3F,$01,$00,$00,$00,$00
+     3 3A7B 30 2E 30 31 00			dta		'0.01',0
+Source: tmthpack.s
+   533 3A80					_TEST_FASCX	$3E,$10,$00,$00,$00,$00, '1.0E-03'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3A80 20 61 49				jsr		TestFASC
+     2 3A83 3E 10 00 00 00 00			dta		$3E,$10,$00,$00,$00,$00
+     3 3A89 31 2E 30 45 2D 30 + 		dta		'1.0E-03',0
+Source: tmthpack.s
+   534 3A91					_TEST_FASCX	$3E,$01,$00,$00,$00,$00, '1E-04'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3A91 20 61 49				jsr		TestFASC
+     2 3A94 3E 01 00 00 00 00			dta		$3E,$01,$00,$00,$00,$00
+     3 3A9A 31 45 2D 30 34 00			dta		'1E-04',0
+Source: tmthpack.s
+   535 3AA0					_TEST_FASCX	$3D,$10,$00,$00,$00,$00, '1.0E-05'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3AA0 20 61 49				jsr		TestFASC
+     2 3AA3 3D 10 00 00 00 00			dta		$3D,$10,$00,$00,$00,$00
+     3 3AA9 31 2E 30 45 2D 30 + 		dta		'1.0E-05',0
+Source: tmthpack.s
+   536 3AB1					_TEST_FASCX	$3D,$01,$00,$00,$00,$00, '1E-06'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3AB1 20 61 49				jsr		TestFASC
+     2 3AB4 3D 01 00 00 00 00			dta		$3D,$01,$00,$00,$00,$00
+     3 3ABA 31 45 2D 30 36 00			dta		'1E-06',0
+Source: tmthpack.s
+   537
+   538 3AC0					_TEST_FASCX	$3F,$19,$00,$00,$00,$00, '0.19'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3AC0 20 61 49				jsr		TestFASC
+     2 3AC3 3F 19 00 00 00 00			dta		$3F,$19,$00,$00,$00,$00
+     3 3AC9 30 2E 31 39 00			dta		'0.19',0
+Source: tmthpack.s
+   539 3ACE					_TEST_FASCX	$3F,$01,$90,$00,$00,$00, '0.019'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3ACE 20 61 49				jsr		TestFASC
+     2 3AD1 3F 01 90 00 00 00			dta		$3F,$01,$90,$00,$00,$00
+     3 3AD7 30 2E 30 31 39 00			dta		'0.019',0
+Source: tmthpack.s
+   540 3ADD					_TEST_FASCX	$3E,$19,$00,$00,$00,$00, '1.9E-03'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3ADD 20 61 49				jsr		TestFASC
+     2 3AE0 3E 19 00 00 00 00			dta		$3E,$19,$00,$00,$00,$00
+     3 3AE6 31 2E 39 45 2D 30 + 		dta		'1.9E-03',0
+Source: tmthpack.s
+   541 3AEE					_TEST_FASCX	$3E,$01,$90,$00,$00,$00, '1.9E-04'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3AEE 20 61 49				jsr		TestFASC
+     2 3AF1 3E 01 90 00 00 00			dta		$3E,$01,$90,$00,$00,$00
+     3 3AF7 31 2E 39 45 2D 30 + 		dta		'1.9E-04',0
+Source: tmthpack.s
+   542 3AFF					_TEST_FASCX	$3D,$19,$00,$00,$00,$00, '1.9E-05'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3AFF 20 61 49				jsr		TestFASC
+     2 3B02 3D 19 00 00 00 00			dta		$3D,$19,$00,$00,$00,$00
+     3 3B08 31 2E 39 45 2D 30 + 		dta		'1.9E-05',0
+Source: tmthpack.s
+   543 3B10					_TEST_FASCX	$3D,$01,$90,$00,$00,$00, '1.9E-06'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3B10 20 61 49				jsr		TestFASC
+     2 3B13 3D 01 90 00 00 00			dta		$3D,$01,$90,$00,$00,$00
+     3 3B19 31 2E 39 45 2D 30 + 		dta		'1.9E-06',0
+Source: tmthpack.s
+   544
+   545 3B21					_TEST_FASCX	$40,$01,$00,$00,$00,$00, '1'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3B21 20 61 49				jsr		TestFASC
+     2 3B24 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 3B2A 31 00				dta		'1',0
+Source: tmthpack.s
+   546 3B2C					_TEST_FASCX	$40,$10,$00,$00,$00,$00, '10'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3B2C 20 61 49				jsr		TestFASC
+     2 3B2F 40 10 00 00 00 00			dta		$40,$10,$00,$00,$00,$00
+     3 3B35 31 30 00				dta		'10',0
+Source: tmthpack.s
+   547 3B38					_TEST_FASCX	$41,$01,$00,$00,$00,$00, '100'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3B38 20 61 49				jsr		TestFASC
+     2 3B3B 41 01 00 00 00 00			dta		$41,$01,$00,$00,$00,$00
+     3 3B41 31 30 30 00				dta		'100',0
+Source: tmthpack.s
+   548 3B45					_TEST_FASCX	$41,$10,$00,$00,$00,$00, '1000'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3B45 20 61 49				jsr		TestFASC
+     2 3B48 41 10 00 00 00 00			dta		$41,$10,$00,$00,$00,$00
+     3 3B4E 31 30 30 30 00			dta		'1000',0
+Source: tmthpack.s
+   549 3B53					_TEST_FASCX	$42,$01,$00,$00,$00,$00, '10000'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3B53 20 61 49				jsr		TestFASC
+     2 3B56 42 01 00 00 00 00			dta		$42,$01,$00,$00,$00,$00
+     3 3B5C 31 30 30 30 30 00			dta		'10000',0
+Source: tmthpack.s
+   550 3B62					_TEST_FASCX	$42,$10,$00,$00,$00,$00, '100000'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3B62 20 61 49				jsr		TestFASC
+     2 3B65 42 10 00 00 00 00			dta		$42,$10,$00,$00,$00,$00
+     3 3B6B 31 30 30 30 30 30 + 		dta		'100000',0
+Source: tmthpack.s
+   551 3B72					_TEST_FASCX	$43,$01,$00,$00,$00,$00, '1000000'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3B72 20 61 49				jsr		TestFASC
+     2 3B75 43 01 00 00 00 00			dta		$43,$01,$00,$00,$00,$00
+     3 3B7B 31 30 30 30 30 30 + 		dta		'1000000',0
+Source: tmthpack.s
+   552 3B83					_TEST_FASCX	$43,$10,$00,$00,$00,$00, '10000000'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3B83 20 61 49				jsr		TestFASC
+     2 3B86 43 10 00 00 00 00			dta		$43,$10,$00,$00,$00,$00
+     3 3B8C 31 30 30 30 30 30 + 		dta		'10000000',0
+Source: tmthpack.s
+   553 3B95					_TEST_FASCX	$44,$01,$00,$00,$00,$00, '100000000'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3B95 20 61 49				jsr		TestFASC
+     2 3B98 44 01 00 00 00 00			dta		$44,$01,$00,$00,$00,$00
+     3 3B9E 31 30 30 30 30 30 + 		dta		'100000000',0
+Source: tmthpack.s
+   554 3BA8					_TEST_FASCX	$44,$10,$00,$00,$00,$00, '1000000000'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3BA8 20 61 49				jsr		TestFASC
+     2 3BAB 44 10 00 00 00 00			dta		$44,$10,$00,$00,$00,$00
+     3 3BB1 31 30 30 30 30 30 + 		dta		'1000000000',0
+Source: tmthpack.s
+   555 3BBC					_TEST_FASCX	$45,$01,$00,$00,$00,$00, '1E+10'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3BBC 20 61 49				jsr		TestFASC
+     2 3BBF 45 01 00 00 00 00			dta		$45,$01,$00,$00,$00,$00
+     3 3BC5 31 45 2B 31 30 00			dta		'1E+10',0
+Source: tmthpack.s
+   556 						
+   557 						;test decimals
+   558 3BCB					_TEST_FASCX	$40,$01,$10,$00,$00,$00, '1.1'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3BCB 20 61 49				jsr		TestFASC
+     2 3BCE 40 01 10 00 00 00			dta		$40,$01,$10,$00,$00,$00
+     3 3BD4 31 2E 31 00				dta		'1.1',0
+Source: tmthpack.s
+   559 3BD8					_TEST_FASCX	$40,$01,$12,$00,$00,$00, '1.12'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3BD8 20 61 49				jsr		TestFASC
+     2 3BDB 40 01 12 00 00 00			dta		$40,$01,$12,$00,$00,$00
+     3 3BE1 31 2E 31 32 00			dta		'1.12',0
+Source: tmthpack.s
+   560 3BE6					_TEST_FASCX	$40,$01,$12,$30,$00,$00, '1.123'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3BE6 20 61 49				jsr		TestFASC
+     2 3BE9 40 01 12 30 00 00			dta		$40,$01,$12,$30,$00,$00
+     3 3BEF 31 2E 31 32 33 00			dta		'1.123',0
+Source: tmthpack.s
+   561 3BF5					_TEST_FASCX	$40,$01,$12,$34,$00,$00, '1.1234'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3BF5 20 61 49				jsr		TestFASC
+     2 3BF8 40 01 12 34 00 00			dta		$40,$01,$12,$34,$00,$00
+     3 3BFE 31 2E 31 32 33 34 + 		dta		'1.1234',0
+Source: tmthpack.s
+   562 						
+   563 						;test negatives
+   564 3C05					_TEST_FASCX	$C0,$01,$00,$00,$00,$00, '-1'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3C05 20 61 49				jsr		TestFASC
+     2 3C08 C0 01 00 00 00 00			dta		$C0,$01,$00,$00,$00,$00
+     3 3C0E 2D 31 00				dta		'-1',0
+Source: tmthpack.s
+   565 3C11					_TEST_FASCX	$BF,$10,$00,$00,$00,$00, '-0.1'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3C11 20 61 49				jsr		TestFASC
+     2 3C14 BF 10 00 00 00 00			dta		$BF,$10,$00,$00,$00,$00
+     3 3C1A 2D 30 2E 31 00			dta		'-0.1',0
+Source: tmthpack.s
+   566 3C1F					_TEST_FASCX	$BF,$01,$00,$00,$00,$00, '-0.01'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3C1F 20 61 49				jsr		TestFASC
+     2 3C22 BF 01 00 00 00 00			dta		$BF,$01,$00,$00,$00,$00
+     3 3C28 2D 30 2E 30 31 00			dta		'-0.01',0
+Source: tmthpack.s
+   567 3C2E					_TEST_FASCX	$BE,$10,$00,$00,$00,$00, '-1.0E-03'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3C2E 20 61 49				jsr		TestFASC
+     2 3C31 BE 10 00 00 00 00			dta		$BE,$10,$00,$00,$00,$00
+     3 3C37 2D 31 2E 30 45 2D + 		dta		'-1.0E-03',0
+Source: tmthpack.s
+   568 3C40					_TEST_FASCX	$BE,$01,$00,$00,$00,$00, '-1E-04'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3C40 20 61 49				jsr		TestFASC
+     2 3C43 BE 01 00 00 00 00			dta		$BE,$01,$00,$00,$00,$00
+     3 3C49 2D 31 45 2D 30 34 + 		dta		'-1E-04',0
+Source: tmthpack.s
+   569 3C50					_TEST_FASCX	$BD,$10,$00,$00,$00,$00, '-1.0E-05'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3C50 20 61 49				jsr		TestFASC
+     2 3C53 BD 10 00 00 00 00			dta		$BD,$10,$00,$00,$00,$00
+     3 3C59 2D 31 2E 30 45 2D + 		dta		'-1.0E-05',0
+Source: tmthpack.s
+   570 3C62					_TEST_FASCX	$BD,$01,$00,$00,$00,$00, '-1E-06'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3C62 20 61 49				jsr		TestFASC
+     2 3C65 BD 01 00 00 00 00			dta		$BD,$01,$00,$00,$00,$00
+     3 3C6B 2D 31 45 2D 30 36 + 		dta		'-1E-06',0
+Source: tmthpack.s
+   571
+   572 3C72					_TEST_FASCX	$BF,$19,$00,$00,$00,$00, '-0.19'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3C72 20 61 49				jsr		TestFASC
+     2 3C75 BF 19 00 00 00 00			dta		$BF,$19,$00,$00,$00,$00
+     3 3C7B 2D 30 2E 31 39 00			dta		'-0.19',0
+Source: tmthpack.s
+   573 3C81					_TEST_FASCX	$BF,$01,$90,$00,$00,$00, '-0.019'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3C81 20 61 49				jsr		TestFASC
+     2 3C84 BF 01 90 00 00 00			dta		$BF,$01,$90,$00,$00,$00
+     3 3C8A 2D 30 2E 30 31 39 + 		dta		'-0.019',0
+Source: tmthpack.s
+   574 3C91					_TEST_FASCX	$BE,$19,$00,$00,$00,$00, '-1.9E-03'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3C91 20 61 49				jsr		TestFASC
+     2 3C94 BE 19 00 00 00 00			dta		$BE,$19,$00,$00,$00,$00
+     3 3C9A 2D 31 2E 39 45 2D + 		dta		'-1.9E-03',0
+Source: tmthpack.s
+   575 3CA3					_TEST_FASCX	$BE,$01,$90,$00,$00,$00, '-1.9E-04'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3CA3 20 61 49				jsr		TestFASC
+     2 3CA6 BE 01 90 00 00 00			dta		$BE,$01,$90,$00,$00,$00
+     3 3CAC 2D 31 2E 39 45 2D + 		dta		'-1.9E-04',0
+Source: tmthpack.s
+   576 3CB5					_TEST_FASCX	$BD,$19,$00,$00,$00,$00, '-1.9E-05'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3CB5 20 61 49				jsr		TestFASC
+     2 3CB8 BD 19 00 00 00 00			dta		$BD,$19,$00,$00,$00,$00
+     3 3CBE 2D 31 2E 39 45 2D + 		dta		'-1.9E-05',0
+Source: tmthpack.s
+   577 3CC7					_TEST_FASCX	$BD,$01,$90,$00,$00,$00, '-1.9E-06'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3CC7 20 61 49				jsr		TestFASC
+     2 3CCA BD 01 90 00 00 00			dta		$BD,$01,$90,$00,$00,$00
+     3 3CD0 2D 31 2E 39 45 2D + 		dta		'-1.9E-06',0
+Source: tmthpack.s
+   578 						
+   579 						;test full conversion precision, non-exponential
+   580 3CD9					_TEST_FASCX	$40,$12,$34,$56,$78,$12, '12.34567812'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3CD9 20 61 49				jsr		TestFASC
+     2 3CDC 40 12 34 56 78 12			dta		$40,$12,$34,$56,$78,$12
+     3 3CE2 31 32 2E 33 34 35 + 		dta		'12.34567812',0
+Source: tmthpack.s
+   581 						
+   582 						;test full conversion precision, exponential
+   583 3CEE					_TEST_FASCX	$BE,$12,$34,$56,$78,$12, '-1.234567812E-03'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3CEE 20 61 49				jsr		TestFASC
+     2 3CF1 BE 12 34 56 78 12			dta		$BE,$12,$34,$56,$78,$12
+     3 3CF7 2D 31 2E 32 33 34 + 		dta		'-1.234567812E-03',0
+Source: tmthpack.s
+   584 3D08					_TEST_FASCX	$BE,$01,$23,$45,$67,$81, '-1.23456781E-04'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3D08 20 61 49				jsr		TestFASC
+     2 3D0B BE 01 23 45 67 81			dta		$BE,$01,$23,$45,$67,$81
+     3 3D11 2D 31 2E 32 33 34 + 		dta		'-1.23456781E-04',0
+Source: tmthpack.s
+   585 3D21					_TEST_FASCX	$BD,$12,$34,$56,$78,$12, '-1.234567812E-05'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3D21 20 61 49				jsr		TestFASC
+     2 3D24 BD 12 34 56 78 12			dta		$BD,$12,$34,$56,$78,$12
+     3 3D2A 2D 31 2E 32 33 34 + 		dta		'-1.234567812E-05',0
+Source: tmthpack.s
+   586 3D3B					_TEST_FASCX	$BD,$01,$23,$45,$67,$81, '-1.23456781E-06'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3D3B 20 61 49				jsr		TestFASC
+     2 3D3E BD 01 23 45 67 81			dta		$BD,$01,$23,$45,$67,$81
+     3 3D44 2D 31 2E 32 33 34 + 		dta		'-1.23456781E-06',0
+Source: tmthpack.s
+   587
+   588 3D54					_TEST_FASCX	$C5,$01,$23,$45,$67,$81, '-1.23456781E+10'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3D54 20 61 49				jsr		TestFASC
+     2 3D57 C5 01 23 45 67 81			dta		$C5,$01,$23,$45,$67,$81
+     3 3D5D 2D 31 2E 32 33 34 + 		dta		'-1.23456781E+10',0
+Source: tmthpack.s
+   589 3D6D					_TEST_FASCX	$C5,$12,$34,$56,$78,$12, '-1.234567812E+11'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3D6D 20 61 49				jsr		TestFASC
+     2 3D70 C5 12 34 56 78 12			dta		$C5,$12,$34,$56,$78,$12
+     3 3D76 2D 31 2E 32 33 34 + 		dta		'-1.234567812E+11',0
+Source: tmthpack.s
+   590 3D87					_TEST_FASCX	$C6,$01,$23,$45,$67,$81, '-1.23456781E+12'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3D87 20 61 49				jsr		TestFASC
+     2 3D8A C6 01 23 45 67 81			dta		$C6,$01,$23,$45,$67,$81
+     3 3D90 2D 31 2E 32 33 34 + 		dta		'-1.23456781E+12',0
+Source: tmthpack.s
+   591 3DA0					_TEST_FASCX	$C6,$12,$34,$56,$78,$12, '-1.234567812E+13'
+Macro: _TEST_FASCX [Source: tmthpack.s]
+     1 3DA0 20 61 49				jsr		TestFASC
+     2 3DA3 C6 12 34 56 78 12			dta		$C6,$12,$34,$56,$78,$12
+     3 3DA9 2D 31 2E 32 33 34 + 		dta		'-1.234567812E+13',0
+Source: tmthpack.s
+   592 						
+   593 						;====================== afp tests ======================
+   594 3DBA A9 B3 85 F3 A9 46 + 		mwa		#afp_test1 inbuff
+   595 3DC2 A9 00 85 F2				mva		#0 cix
+   596 3DC6					_ZFR0
+Macro: _ZFR0 [Source: tmthpack.s]
+     1 3DC6 20 44 DA				jsr		zfr0
+Source: tmthpack.s
+   597 3DC9 20 00 D8				jsr		afp
+   598 3DCC					_ASERR	'afp("")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 3DCC 20 D0 48				jsr		AssertERR
+     2 3DCF 61 66 70 28 22 22 + 		dta		'afp("")',0
+Source: tmthpack.s
+   599 						
+   600 3DD7					_LDSTR	'0'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 3DD7 20 32 47				jsr		LoadString
+     2 3DDA 30 80				dta		'0',$80
+Source: tmthpack.s
+   601 3DDC 20 00 D8				jsr		afp
+   602 3DDF					_ASFR0X	$00,$00,$00,$00,$00,$00, 'afp("0")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3DDF 20 44 48				jsr		AssertFR0
+     2 3DE2 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 3DE8 61 66 70 28 22 30 + 		dta		'afp("0")',0
+Source: tmthpack.s
+   603 3DF1 A5 F2				lda		cix
+   604 3DF3					_ASA	2, 'afp("0")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 3DF3 A2 02				ldx		#2
+     2 3DF5 20 2C 49				jsr		AssertA
+     3 3DF8 61 66 70 28 22 30 + 		dta		'afp("0")-CIX',0
+Source: tmthpack.s
+   605 						
+   606 3E05 A9 B0 85 F3 A9 46 + 		mwa		#afp_test2 inbuff
+   607 3E0D A9 00 85 F2				mva		#0 cix
+   608 3E11					_ZFR0
+Macro: _ZFR0 [Source: tmthpack.s]
+     1 3E11 20 44 DA				jsr		zfr0
+Source: tmthpack.s
+   609 3E14 20 00 D8				jsr		afp
+   610 3E17					_ASFR0X	$41,$01,$00,$00,$00,$00, 'afp("100")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3E17 20 44 48				jsr		AssertFR0
+     2 3E1A 41 01 00 00 00 00			dta		$41,$01,$00,$00,$00,$00
+     3 3E20 61 66 70 28 22 31 + 		dta		'afp("100")',0
+Source: tmthpack.s
+   611 3E2B A5 F2				lda		cix
+   612 3E2D					_ASA	3, 'afp("100")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 3E2D A2 03				ldx		#3
+     2 3E2F 20 2C 49				jsr		AssertA
+     3 3E32 61 66 70 28 22 31 + 		dta		'afp("100")-CIX',0
+Source: tmthpack.s
+   613
+   614 3E41 A9 AF 85 F3 A9 46 + 		mwa		#afp_test3 inbuff
+   615 3E49 A9 00 85 F2				mva		#0 cix
+   616 3E4D					_ZFR0
+Macro: _ZFR0 [Source: tmthpack.s]
+     1 3E4D 20 44 DA				jsr		zfr0
+Source: tmthpack.s
+   617 3E50 20 00 D8				jsr		afp
+   618 3E53					_ASFR0X	$41,$01,$00,$00,$00,$00, 'afp(" 100")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3E53 20 44 48				jsr		AssertFR0
+     2 3E56 41 01 00 00 00 00			dta		$41,$01,$00,$00,$00,$00
+     3 3E5C 61 66 70 28 22 20 + 		dta		'afp(" 100")',0
+Source: tmthpack.s
+   619 3E68 A5 F2				lda		cix
+   620 3E6A					_ASA	4, 'afp(" 100")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 3E6A A2 04				ldx		#4
+     2 3E6C 20 2C 49				jsr		AssertA
+     3 3E6F 61 66 70 28 22 20 + 		dta		'afp(" 100")-CIX',0
+Source: tmthpack.s
+   621
+   622 3E7F A9 AC 85 F3 A9 46 + 		mwa		#afp_test4 inbuff
+   623 3E87 A9 00 85 F2				mva		#0 cix
+   624 3E8B					_ZFR0
+Macro: _ZFR0 [Source: tmthpack.s]
+     1 3E8B 20 44 DA				jsr		zfr0
+Source: tmthpack.s
+   625 3E8E 20 00 D8				jsr		afp
+   626 3E91					_ASFR0X	$C0,$20,$00,$00,$00,$00, 'afp("-20 100")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3E91 20 44 48				jsr		AssertFR0
+     2 3E94 C0 20 00 00 00 00			dta		$C0,$20,$00,$00,$00,$00
+     3 3E9A 61 66 70 28 22 2D + 		dta		'afp("-20 100")',0
+Source: tmthpack.s
+   627 3EA9 A5 F2				lda		cix
+   628 3EAB					_ASA	3, 'afp("-20 100")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 3EAB A2 03				ldx		#3
+     2 3EAD 20 2C 49				jsr		AssertA
+     3 3EB0 61 66 70 28 22 2D + 		dta		'afp("-20 100")-CIX',0
+Source: tmthpack.s
+   629
+   630 3EC3 A9 AC 85 F3 A9 46 + 		mwa		#afp_test4 inbuff
+   631 3ECB A9 04 85 F2				mva		#4 cix
+   632 3ECF					_ZFR0
+Macro: _ZFR0 [Source: tmthpack.s]
+     1 3ECF 20 44 DA				jsr		zfr0
+Source: tmthpack.s
+   633 3ED2 20 00 D8				jsr		afp
+   634 3ED5					_ASFR0X	$41,$01,$00,$00,$00,$00, 'afp("-20 100") #2'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3ED5 20 44 48				jsr		AssertFR0
+     2 3ED8 41 01 00 00 00 00			dta		$41,$01,$00,$00,$00,$00
+     3 3EDE 61 66 70 28 22 2D + 		dta		'afp("-20 100") #2',0
+Source: tmthpack.s
+   635 3EF0 A5 F2				lda		cix
+   636 3EF2					_ASA	7, 'afp("-20 100")-CIX #2'
+Macro: _ASA [Source: tmthpack.s]
+     1 3EF2 A2 07				ldx		#7
+     2 3EF4 20 2C 49				jsr		AssertA
+     3 3EF7 61 66 70 28 22 2D + 		dta		'afp("-20 100")-CIX #2',0
+Source: tmthpack.s
+   637
+   638 3F0D A9 B4 85 F3 A9 46 + 		mwa		#afp_test5 inbuff
+   639 3F15 A9 00 85 F2				mva		#0 cix
+   640 3F19					_ZFR0
+Macro: _ZFR0 [Source: tmthpack.s]
+     1 3F19 20 44 DA				jsr		zfr0
+Source: tmthpack.s
+   641 3F1C 20 00 D8				jsr		afp
+   642 3F1F					_ASFR0X	$41,$01,$00,$00,$00,$00, 'afp("0100")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3F1F 20 44 48				jsr		AssertFR0
+     2 3F22 41 01 00 00 00 00			dta		$41,$01,$00,$00,$00,$00
+     3 3F28 61 66 70 28 22 30 + 		dta		'afp("0100")',0
+Source: tmthpack.s
+   643 3F34 A5 F2				lda		cix
+   644 3F36					_ASA	4, 'afp("0100")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 3F36 A2 04				ldx		#4
+     2 3F38 20 2C 49				jsr		AssertA
+     3 3F3B 61 66 70 28 22 30 + 		dta		'afp("0100")-CIX',0
+Source: tmthpack.s
+   645 						
+   646 						;leading spaces are allowed and consumed
+   647 3F4B					_LDSTR	'  945'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 3F4B 20 32 47				jsr		LoadString
+     2 3F4E 20 20 39 34 35 80			dta		'  945',$80
+Source: tmthpack.s
+   648 3F54 20 00 D8				jsr		afp
+   649 3F57					_ASFR0X	$41,$09,$45,$00,$00,$00, 'afp("  945")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3F57 20 44 48				jsr		AssertFR0
+     2 3F5A 41 09 45 00 00 00			dta		$41,$09,$45,$00,$00,$00
+     3 3F60 61 66 70 28 22 20 + 		dta		'afp("  945")',0
+Source: tmthpack.s
+   650 3F6D A5 F2				lda		cix
+   651 3F6F					_ASA	6, 'afp("  945")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 3F6F A2 06				ldx		#6
+     2 3F71 20 2C 49				jsr		AssertA
+     3 3F74 61 66 70 28 22 20 + 		dta		'afp("  945")-CIX',0
+Source: tmthpack.s
+   652 						
+   653 						;leading period is allowed and consumed
+   654 3F85					_LDSTR	'.130'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 3F85 20 32 47				jsr		LoadString
+     2 3F88 2E 31 33 30 80			dta		'.130',$80
+Source: tmthpack.s
+   655 3F8D 20 00 D8				jsr		afp
+   656 3F90					_ASFR0X	$3F,$13,$00,$00,$00,$00, 'afp(".130")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3F90 20 44 48				jsr		AssertFR0
+     2 3F93 3F 13 00 00 00 00			dta		$3F,$13,$00,$00,$00,$00
+     3 3F99 61 66 70 28 22 2E + 		dta		'afp(".130")',0
+Source: tmthpack.s
+   657 3FA5 A5 F2				lda		cix
+   658 3FA7					_ASA	5, 'afp(".130")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 3FA7 A2 05				ldx		#5
+     2 3FA9 20 2C 49				jsr		AssertA
+     3 3FAC 61 66 70 28 22 2E + 		dta		'afp(".130")-CIX',0
+Source: tmthpack.s
+   659 						
+   660 						;trailing period is allowed and consumed
+   661 3FBC					_LDSTR	'123.'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 3FBC 20 32 47				jsr		LoadString
+     2 3FBF 31 32 33 2E 80			dta		'123.',$80
+Source: tmthpack.s
+   662 3FC4 20 00 D8				jsr		afp
+   663 3FC7					_ASFR0X	$41,$01,$23,$00,$00,$00, 'afp("123.")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3FC7 20 44 48				jsr		AssertFR0
+     2 3FCA 41 01 23 00 00 00			dta		$41,$01,$23,$00,$00,$00
+     3 3FD0 61 66 70 28 22 31 + 		dta		'afp("123.")',0
+Source: tmthpack.s
+   664 3FDC A5 F2				lda		cix
+   665 3FDE					_ASA	5, 'afp("123.")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 3FDE A2 05				ldx		#5
+     2 3FE0 20 2C 49				jsr		AssertA
+     3 3FE3 61 66 70 28 22 31 + 		dta		'afp("123.")-CIX',0
+Source: tmthpack.s
+   666
+   667 						;a second trailing period is allowed but not consumed
+   668 3FF3					_LDSTR	'123..'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 3FF3 20 32 47				jsr		LoadString
+     2 3FF6 31 32 33 2E 2E 80			dta		'123..',$80
+Source: tmthpack.s
+   669 3FFC 20 00 D8				jsr		afp
+   670 3FFF					_ASFR0X	$41,$01,$23,$00,$00,$00, 'afp("123..")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 3FFF 20 44 48				jsr		AssertFR0
+     2 4002 41 01 23 00 00 00			dta		$41,$01,$23,$00,$00,$00
+     3 4008 61 66 70 28 22 31 + 		dta		'afp("123..")',0
+Source: tmthpack.s
+   671 4015 A5 F2				lda		cix
+   672 4017					_ASA	5, 'afp("123..")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 4017 A2 05				ldx		#5
+     2 4019 20 2C 49				jsr		AssertA
+     3 401C 61 66 70 28 22 31 + 		dta		'afp("123..")-CIX',0
+Source: tmthpack.s
+   673
+   674 						;leading plus is allowed and consumed
+   675 402D					_LDSTR	'+12'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 402D 20 32 47				jsr		LoadString
+     2 4030 2B 31 32 80				dta		'+12',$80
+Source: tmthpack.s
+   676 4034 20 00 D8				jsr		afp
+   677 4037					_ASFR0X	$40,$12,$00,$00,$00,$00, 'afp("+12")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 4037 20 44 48				jsr		AssertFR0
+     2 403A 40 12 00 00 00 00			dta		$40,$12,$00,$00,$00,$00
+     3 4040 61 66 70 28 22 2B + 		dta		'afp("+12")',0
+Source: tmthpack.s
+   678 404B A5 F2				lda		cix
+   679 404D					_ASA	4, 'afp("+12")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 404D A2 04				ldx		#4
+     2 404F 20 2C 49				jsr		AssertA
+     3 4052 61 66 70 28 22 2B + 		dta		'afp("+12")-CIX',0
+Source: tmthpack.s
+   680 						
+   681 						;0. and .0 are allowed
+   682 4061					_LDSTR	'0.'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4061 20 32 47				jsr		LoadString
+     2 4064 30 2E 80				dta		'0.',$80
+Source: tmthpack.s
+   683 4067 20 00 D8				jsr		afp
+   684 406A					_ASFR0X	$00,$00,$00,$00,$00,$00, 'afp("0.")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 406A 20 44 48				jsr		AssertFR0
+     2 406D 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 4073 61 66 70 28 22 30 + 		dta		'afp("0.")',0
+Source: tmthpack.s
+   685 407D A5 F2				lda		cix
+   686 407F					_ASA	3, 'afp("0.")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 407F A2 03				ldx		#3
+     2 4081 20 2C 49				jsr		AssertA
+     3 4084 61 66 70 28 22 30 + 		dta		'afp("0.")-CIX',0
+Source: tmthpack.s
+   687
+   688 4092					_LDSTR	'.0'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4092 20 32 47				jsr		LoadString
+     2 4095 2E 30 80				dta		'.0',$80
+Source: tmthpack.s
+   689 4098 20 00 D8				jsr		afp
+   690 409B					_ASFR0X	$00,$00,$00,$00,$00,$00, 'afp(".0")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 409B 20 44 48				jsr		AssertFR0
+     2 409E 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 40A4 61 66 70 28 22 2E + 		dta		'afp(".0")',0
+Source: tmthpack.s
+   691 40AE A5 F2				lda		cix
+   692 40B0					_ASA	3, 'afp(".0")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 40B0 A2 03				ldx		#3
+     2 40B2 20 2C 49				jsr		AssertA
+     3 40B5 61 66 70 28 22 2E + 		dta		'afp(".0")-CIX',0
+Source: tmthpack.s
+   693
+   694 						;a single period is not allowed and is an error
+   695 40C3					_LDSTR	'.'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 40C3 20 32 47				jsr		LoadString
+     2 40C6 2E 80				dta		'.',$80
+Source: tmthpack.s
+   696 40C8 20 00 D8				jsr		afp
+   697 40CB					_ASERR	'afp(".")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 40CB 20 D0 48				jsr		AssertERR
+     2 40CE 61 66 70 28 22 2E + 		dta		'afp(".")',0
+Source: tmthpack.s
+   698
+   699 						;a single period is not allowed and is an error
+   700 40D7					_LDSTR	'.E+01'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 40D7 20 32 47				jsr		LoadString
+     2 40DA 2E 45 2B 30 31 80			dta		'.E+01',$80
+Source: tmthpack.s
+   701 40E0 20 00 D8				jsr		afp
+   702 40E3					_ASERR	'afp(".E+01")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 40E3 20 D0 48				jsr		AssertERR
+     2 40E6 61 66 70 28 22 2E + 		dta		'afp(".E+01")',0
+Source: tmthpack.s
+   703
+   704 						;a single sign is not allowed and is an error
+   705 40F3					_LDSTR	'-'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 40F3 20 32 47				jsr		LoadString
+     2 40F6 2D 80				dta		'-',$80
+Source: tmthpack.s
+   706 40F8 20 00 D8				jsr		afp
+   707 40FB					_ASERR	'afp("-")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 40FB 20 D0 48				jsr		AssertERR
+     2 40FE 61 66 70 28 22 2D + 		dta		'afp("-")',0
+Source: tmthpack.s
+   708
+   709 4107					_LDSTR	'+'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4107 20 32 47				jsr		LoadString
+     2 410A 2B 80				dta		'+',$80
+Source: tmthpack.s
+   710 410C 20 00 D8				jsr		afp
+   711 410F					_ASERR	'afp("+")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 410F 20 D0 48				jsr		AssertERR
+     2 4112 61 66 70 28 22 2B + 		dta		'afp("+")',0
+Source: tmthpack.s
+   712 						
+   713 						;repeated signs are not allowed
+   714 411B					_LDSTR	'--'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 411B 20 32 47				jsr		LoadString
+     2 411E 2D 2D 80				dta		'--',$80
+Source: tmthpack.s
+   715 4121 20 00 D8				jsr		afp
+   716 4124					_ASERR	'afp("--")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 4124 20 D0 48				jsr		AssertERR
+     2 4127 61 66 70 28 22 2D + 		dta		'afp("--")',0
+Source: tmthpack.s
+   717
+   718 4131					_LDSTR	'++'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4131 20 32 47				jsr		LoadString
+     2 4134 2B 2B 80				dta		'++',$80
+Source: tmthpack.s
+   719 4137 20 00 D8				jsr		afp
+   720 413A					_ASERR	'afp("++")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 413A 20 D0 48				jsr		AssertERR
+     2 413D 61 66 70 28 22 2B + 		dta		'afp("++")',0
+Source: tmthpack.s
+   721 						
+   722 						;spaces are not allowed after a sign
+   723 4147					_LDSTR	'+ 1'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4147 20 32 47				jsr		LoadString
+     2 414A 2B 20 31 80				dta		'+ 1',$80
+Source: tmthpack.s
+   724 414E 20 00 D8				jsr		afp
+   725 4151					_ASERR	'afp("+ 1")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 4151 20 D0 48				jsr		AssertERR
+     2 4154 61 66 70 28 22 2B + 		dta		'afp("+ 1")',0
+Source: tmthpack.s
+   726
+   727 415F					_LDSTR	'0E+02'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 415F 20 32 47				jsr		LoadString
+     2 4162 30 45 2B 30 32 80			dta		'0E+02',$80
+Source: tmthpack.s
+   728 4168 20 00 D8				jsr		afp
+   729 416B					_ASFR0X	$00,$00,$00,$00,$00,$00, 'afp("0E+02")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 416B 20 44 48				jsr		AssertFR0
+     2 416E 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 4174 61 66 70 28 22 30 + 		dta		'afp("0E+02")',0
+Source: tmthpack.s
+   730 4181 A5 F2				lda		cix
+   731 4183					_ASA	6, 'afp("0E+02")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 4183 A2 06				ldx		#6
+     2 4185 20 2C 49				jsr		AssertA
+     3 4188 61 66 70 28 22 30 + 		dta		'afp("0E+02")-CIX',0
+Source: tmthpack.s
+   732 						
+   733 						;100.45E+02 should convert as 1.2345E+04
+   734 4199					_LDSTR	'123.45E+02'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4199 20 32 47				jsr		LoadString
+     2 419C 31 32 33 2E 34 35 + 		dta		'123.45E+02',$80
+Source: tmthpack.s
+   735 41A7 20 00 D8				jsr		afp
+   736 41AA					_ASFR0X	$42,$01,$23,$45,$00,$00, 'afp("123.45E+02")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 41AA 20 44 48				jsr		AssertFR0
+     2 41AD 42 01 23 45 00 00			dta		$42,$01,$23,$45,$00,$00
+     3 41B3 61 66 70 28 22 31 + 		dta		'afp("123.45E+02")',0
+Source: tmthpack.s
+   737 						
+   738 						;10^97 is not an overflow
+   739 41C5 A9 B9 85 F3 A9 46 + 		mwa		#afp_test6 inbuff
+   740 41CD A9 00 85 F2				mva		#0 cix
+   741 41D1 20 00 D8				jsr		afp
+   742 41D4					_ASFR0X	$70,$10,$00,$00,$00,$00, 'afp("1E+97")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 41D4 20 44 48				jsr		AssertFR0
+     2 41D7 70 10 00 00 00 00			dta		$70,$10,$00,$00,$00,$00
+     3 41DD 61 66 70 28 22 31 + 		dta		'afp("1E+97")',0
+Source: tmthpack.s
+   743 						
+   744 						;10^98 or higher is an overflow
+   745 41EA A9 BF 85 F3 A9 46 + 		mwa		#afp_test6a inbuff
+   746 41F2 A9 00 85 F2				mva		#0 cix
+   747 41F6 20 00 D8				jsr		afp
+   748 41F9					_ASERR	'afp("1E+98")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 41F9 20 D0 48				jsr		AssertERR
+     2 41FC 61 66 70 28 22 31 + 		dta		'afp("1E+98")',0
+Source: tmthpack.s
+   749 						
+   750 						;9.9999E+97 is not an overflow
+   751 4209					_LDSTR	'9.999E97'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4209 20 32 47				jsr		LoadString
+     2 420C 39 2E 39 39 39 45 + 		dta		'9.999E97',$80
+Source: tmthpack.s
+   752 4215 20 00 D8				jsr		afp
+   753 4218					_ASFR0X	$70,$99,$99,$00,$00,$00, 'afp("9.999E97")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 4218 20 44 48				jsr		AssertFR0
+     2 421B 70 99 99 00 00 00			dta		$70,$99,$99,$00,$00,$00
+     3 4221 61 66 70 28 22 39 + 		dta		'afp("9.999E97")',0
+Source: tmthpack.s
+   754 						
+   755 						;99.99E+97 is an overflow, however, because it renormalizes to >=10^98
+   756 4231					_LDSTR	'99.99E97'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4231 20 32 47				jsr		LoadString
+     2 4234 39 39 2E 39 39 45 + 		dta		'99.99E97',$80
+Source: tmthpack.s
+   757 423D 20 00 D8				jsr		afp
+   758 4240					_ASERR	'afp("99.99E97")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 4240 20 D0 48				jsr		AssertERR
+     2 4243 61 66 70 28 22 39 + 		dta		'afp("99.99E97")',0
+Source: tmthpack.s
+   759 						
+   760 						;100E+96 is also an overflow
+   761 4253					_LDSTR	'100E96'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4253 20 32 47				jsr		LoadString
+     2 4256 31 30 30 45 39 36 + 		dta		'100E96',$80
+Source: tmthpack.s
+   762 425D 20 00 D8				jsr		afp
+   763 4260					_ASERR	'afp("100E96")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 4260 20 D0 48				jsr		AssertERR
+     2 4263 61 66 70 28 22 31 + 		dta		'afp("100E96")',0
+Source: tmthpack.s
+   764 						
+   765 						;check if AFP can renormalize up
+   766 4271					_LDSTR	'0.0123456E+06'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4271 20 32 47				jsr		LoadString
+     2 4274 30 2E 30 31 32 33 + 		dta		'0.0123456E+06',$80
+Source: tmthpack.s
+   767 4282 20 00 D8				jsr		afp
+   768 4285					_ASFR0X	$42,$01,$23,$45,$60,$00, 'afp("0.0123456E+06")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 4285 20 44 48				jsr		AssertFR0
+     2 4288 42 01 23 45 60 00			dta		$42,$01,$23,$45,$60,$00
+     3 428E 61 66 70 28 22 30 + 		dta		'afp("0.0123456E+06")',0
+Source: tmthpack.s
+   769 						
+   770 						;check for silly levels of normalization (need to use RAW for this because of
+   771 						;.FL encoding bugs in MADS 1.9.8b5):
+   772 42A3					_LDSTR	'0.000000001234567890'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 42A3 20 32 47				jsr		LoadString
+     2 42A6 30 2E 30 30 30 30 + 		dta		'0.000000001234567890',$80
+Source: tmthpack.s
+   773 42BB 20 00 D8				jsr		afp
+   774 						;_ASFR0	1.23456789E-09, 'afp("0.000000001234567890")'
+   775 42BE					_ASFR0X	$3B,$12,$34,$56,$78,$90, 'afp("0.000000001234567890")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 42BE 20 44 48				jsr		AssertFR0
+     2 42C1 3B 12 34 56 78 90			dta		$3B,$12,$34,$56,$78,$90
+     3 42C7 61 66 70 28 22 30 + 		dta		'afp("0.000000001234567890")',0
+Source: tmthpack.s
+   776 						
+   777 42E3					_LDSTR	'0.0000000001234567890'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 42E3 20 32 47				jsr		LoadString
+     2 42E6 30 2E 30 30 30 30 + 		dta		'0.0000000001234567890',$80
+Source: tmthpack.s
+   778 42FC 20 00 D8				jsr		afp
+   779 						;_ASFR0	1.23456789E-10, 'afp("0.0000000001234567890")'
+   780 42FF					_ASFR0X	$3B,$01,$23,$45,$67,$89, 'afp("0.0000000001234567890")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 42FF 20 44 48				jsr		AssertFR0
+     2 4302 3B 01 23 45 67 89			dta		$3B,$01,$23,$45,$67,$89
+     3 4308 61 66 70 28 22 30 + 		dta		'afp("0.0000000001234567890")',0
+Source: tmthpack.s
+   781 						
+   782 4325					_LDSTR	'0.0000000012345678E-06'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4325 20 32 47				jsr		LoadString
+     2 4328 30 2E 30 30 30 30 + 		dta		'0.0000000012345678E-06',$80
+Source: tmthpack.s
+   783 433F 20 00 D8				jsr		afp
+   784 4342					_ASFR0X	$38,$12,$34,$56,$78,$00, 'afp("0.0000000012345678E-06")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 4342 20 44 48				jsr		AssertFR0
+     2 4345 38 12 34 56 78 00			dta		$38,$12,$34,$56,$78,$00
+     3 434B 61 66 70 28 22 30 + 		dta		'afp("0.0000000012345678E-06")',0
+Source: tmthpack.s
+   785 						
+   786 4369					_LDSTR	'000012345678900000000000E-19'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4369 20 32 47				jsr		LoadString
+     2 436C 30 30 30 30 31 32 + 		dta		'000012345678900000000000E-19',$80
+Source: tmthpack.s
+   787 4389 20 00 D8				jsr		afp
+   788 438C					_ASFR0X	$40,$01,$23,$45,$67,$89, 'afp("000012345678900000000000E-19")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 438C 20 44 48				jsr		AssertFR0
+     2 438F 40 01 23 45 67 89			dta		$40,$01,$23,$45,$67,$89
+     3 4395 61 66 70 28 22 30 + 		dta		'afp("000012345678900000000000E-19")',0
+Source: tmthpack.s
+   789
+   790 						;test precision -- note that only nine digits are converted even though in some
+   791 						;cases we could accommodate 10; we avoid testing the tenth digit because we don't
+   792 						;want to penalize a math pack that can preserve it
+   793 43B9					_LDSTR	'1234567890'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 43B9 20 32 47				jsr		LoadString
+     2 43BC 31 32 33 34 35 36 + 		dta		'1234567890',$80
+Source: tmthpack.s
+   794 43C7 20 00 D8				jsr		afp
+   795 43CA					_ASFR0X	$44,$12,$34,$56,$78,$90, 'afp("1234567890")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 43CA 20 44 48				jsr		AssertFR0
+     2 43CD 44 12 34 56 78 90			dta		$44,$12,$34,$56,$78,$90
+     3 43D3 61 66 70 28 22 31 + 		dta		'afp("1234567890")',0
+Source: tmthpack.s
+   796 						
+   797 43E5					_LDSTR	'1234567.890'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 43E5 20 32 47				jsr		LoadString
+     2 43E8 31 32 33 34 35 36 + 		dta		'1234567.890',$80
+Source: tmthpack.s
+   798 43F4 20 00 D8				jsr		afp
+   799 43F7					_ASFR0X	$43,$01,$23,$45,$67,$89, 'afp("1234567.890")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 43F7 20 44 48				jsr		AssertFR0
+     2 43FA 43 01 23 45 67 89			dta		$43,$01,$23,$45,$67,$89
+     3 4400 61 66 70 28 22 31 + 		dta		'afp("1234567.890")',0
+Source: tmthpack.s
+   800 						
+   801 						;two periods are not allowed, but are not an error
+   802 4413					_LDSTR	'1.234.567'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4413 20 32 47				jsr		LoadString
+     2 4416 31 2E 32 33 34 2E + 		dta		'1.234.567',$80
+Source: tmthpack.s
+   803 4420 20 00 D8				jsr		afp
+   804 4423					_ASFR0X	$40,$01,$23,$40,$00,$00, 'afp("1.234.567")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 4423 20 44 48				jsr		AssertFR0
+     2 4426 40 01 23 40 00 00			dta		$40,$01,$23,$40,$00,$00
+     3 442C 61 66 70 28 22 31 + 		dta		'afp("1.234.567")',0
+Source: tmthpack.s
+   805 443D A5 F2				lda		cix
+   806 443F					_ASA	6, 'afp("1.234.567")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 443F A2 06				ldx		#6
+     2 4441 20 2C 49				jsr		AssertA
+     3 4444 61 66 70 28 22 31 + 		dta		'afp("1.234.567")-CIX',0
+Source: tmthpack.s
+   807 						
+   808 						;AFP does *not* take a lowercase e!
+   809 4459 A9 C5 85 F3 A9 46 + 		mwa		#afp_test7 inbuff
+   810 4461 A9 00 85 F2				mva		#0 cix
+   811 4465 20 00 D8				jsr		afp
+   812 4468					_ASFR0X	$40,$01,$00,$00,$00,$00, 'afp("1e+97")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 4468 20 44 48				jsr		AssertFR0
+     2 446B 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 4471 61 66 70 28 22 31 + 		dta		'afp("1e+97")',0
+Source: tmthpack.s
+   813 						
+   814 						;'+' is optional
+   815 447E A9 CB 85 F3 A9 46 + 		mwa		#afp_test8 inbuff
+   816 4486 A9 00 85 F2				mva		#0 cix
+   817 448A 20 00 D8				jsr		afp
+   818 448D					_ASFR0X	$70,$10,$00,$00,$00,$00, 'afp("1E97")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 448D 20 44 48				jsr		AssertFR0
+     2 4490 70 10 00 00 00 00			dta		$70,$10,$00,$00,$00,$00
+     3 4496 61 66 70 28 22 31 + 		dta		'afp("1E97")',0
+Source: tmthpack.s
+   819 						
+   820 						;digit or sign is required after E -- if missing, conversion stops at the E
+   821 44A2					_LDSTR	'1E',$80
+Macro: _LDSTR [Source: tmthpack.s]
+     1 44A2 20 32 47				jsr		LoadString
+     2 44A5 31 45 80				dta		'1E',$80
+Source: tmthpack.s
+   822 44A8 20 00 D8				jsr		afp
+   823 44AB					_ASFR0X	$40,$01,$00,$00,$00,$00,'afp("1E")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 44AB 20 44 48				jsr		AssertFR0
+     2 44AE 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 44B4 61 66 70 28 22 31 + 		dta		'afp("1E")',0
+Source: tmthpack.s
+   824 44BE A5 F2				lda		cix
+   825 44C0					_ASA	2,'afp("1E")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 44C0 A2 02				ldx		#2
+     2 44C2 20 2C 49				jsr		AssertA
+     3 44C5 61 66 70 28 22 31 + 		dta		'afp("1E")-CIX',0
+Source: tmthpack.s
+   826 						
+   827 						;AFP can even back up two chars if there is a sign, too
+   828 44D3					_LDSTR	'5E-',$80
+Macro: _LDSTR [Source: tmthpack.s]
+     1 44D3 20 32 47				jsr		LoadString
+     2 44D6 35 45 2D 80				dta		'5E-',$80
+Source: tmthpack.s
+   829 44DA 20 00 D8				jsr		afp
+   830 44DD					_ASFR0X	$40,$05,$00,$00,$00,$00,'afp("5E-")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 44DD 20 44 48				jsr		AssertFR0
+     2 44E0 40 05 00 00 00 00			dta		$40,$05,$00,$00,$00,$00
+     3 44E6 61 66 70 28 22 35 + 		dta		'afp("5E-")',0
+Source: tmthpack.s
+   831 44F1 A5 F2				lda		cix
+   832 44F3					_ASA	2,'afp("5E-")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 44F3 A2 02				ldx		#2
+     2 44F5 20 2C 49				jsr		AssertA
+     3 44F8 61 66 70 28 22 35 + 		dta		'afp("5E-")-CIX',0
+Source: tmthpack.s
+   833 						
+   834 						;there needs to be at least one digit before exponent
+   835 4507					_LDSTR	'E+08',$80
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4507 20 32 47				jsr		LoadString
+     2 450A 45 2B 30 38 80			dta		'E+08',$80
+Source: tmthpack.s
+   836 450F 20 00 D8				jsr		afp
+   837 4512					_ASERR	'afp("E+08")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 4512 20 D0 48				jsr		AssertERR
+     2 4515 61 66 70 28 22 45 + 		dta		'afp("E+08")',0
+Source: tmthpack.s
+   838 						
+   839 4521					_LDSTR	'-E+08',$80
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4521 20 32 47				jsr		LoadString
+     2 4524 2D 45 2B 30 38 80			dta		'-E+08',$80
+Source: tmthpack.s
+   840 452A 20 00 D8				jsr		afp
+   841 452D					_ASERR	'afp("-E+08")'
+Macro: _ASERR [Source: tmthpack.s]
+     1 452D 20 D0 48				jsr		AssertERR
+     2 4530 61 66 70 28 22 2D + 		dta		'afp("-E+08")',0
+Source: tmthpack.s
+   842 						
+   843 						;check underflow cases
+   844 453D A9 D0 85 F3 A9 46 + 		mwa		#afp_test9 inbuff
+   845 4545 A9 00 85 F2				mva		#0 cix
+   846 4549 20 00 D8				jsr		afp
+   847 454C					_ASFR0X	$00,$00,$00,$00,$00,$00, 'afp("1E-99")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 454C 20 44 48				jsr		AssertFR0
+     2 454F 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 4555 61 66 70 28 22 31 + 		dta		'afp("1E-99")',0
+Source: tmthpack.s
+   848 					
+   849 4562					_LDSTR	'0.000001E-99'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4562 20 32 47				jsr		LoadString
+     2 4565 30 2E 30 30 30 30 + 		dta		'0.000001E-99',$80
+Source: tmthpack.s
+   850 4572 20 00 D8				jsr		afp
+   851 4575					_ASFR0X	$00,$00,$00,$00,$00,$00, 'afp("0.000001E-99")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 4575 20 44 48				jsr		AssertFR0
+     2 4578 00 00 00 00 00 00			dta		$00,$00,$00,$00,$00,$00
+     3 457E 61 66 70 28 22 30 + 		dta		'afp("0.000001E-99")',0
+Source: tmthpack.s
+   852 						
+   853 						;stock OS fails this test :P
+   854 						;_LDSTR	'0.0000000000000000000000000000001E-99'
+   855 						;jsr		afp
+   856 						;_ASFR0	0, 'afp("0.0000000000000000000000000000001E-99")'
+   857
+   858 						;AFP only takes two exponent digits max, which causes it to
+   859 						;miss underflow/overflow cases
+   860 4592 A9 D6 85 F3 A9 46 + 		mwa		#afp_test10 inbuff
+   861 459A A9 00 85 F2				mva		#0 cix
+   862 459E 20 00 D8				jsr		afp
+   863 45A1					_ASFR0X	$36,$01,$00,$00,$00,$00, 'afp("1E-205")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 45A1 20 44 48				jsr		AssertFR0
+     2 45A4 36 01 00 00 00 00			dta		$36,$01,$00,$00,$00,$00
+     3 45AA 61 66 70 28 22 31 + 		dta		'afp("1E-205")',0
+Source: tmthpack.s
+   864 45B8 A5 F2				lda		cix
+   865 45BA					_ASA	5, 'afp("1E-205")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 45BA A2 05				ldx		#5
+     2 45BC 20 2C 49				jsr		AssertA
+     3 45BF 61 66 70 28 22 31 + 		dta		'afp("1E-205")-CIX',0
+Source: tmthpack.s
+   866
+   867 45D1 A9 DD 85 F3 A9 46 + 		mwa		#afp_test11 inbuff
+   868 45D9 A9 00 85 F2				mva		#0 cix
+   869 45DD 20 00 D8				jsr		afp
+   870 45E0					_ASFR0X	$4A,$01,$00,$00,$00,$00, 'afp("1E+205")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 45E0 20 44 48				jsr		AssertFR0
+     2 45E3 4A 01 00 00 00 00			dta		$4A,$01,$00,$00,$00,$00
+     3 45E9 61 66 70 28 22 31 + 		dta		'afp("1E+205")',0
+Source: tmthpack.s
+   871 						
+   872 						;leading zeroes count as one of the two digits
+   873 45F7					_LDSTR	'1E+011'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 45F7 20 32 47				jsr		LoadString
+     2 45FA 31 45 2B 30 31 31 + 		dta		'1E+011',$80
+Source: tmthpack.s
+   874 4601 20 00 D8				jsr		afp
+   875 4604					_ASFR0X	$40,$10,$00,$00,$00,$00, 'afp("1E+011")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 4604 20 44 48				jsr		AssertFR0
+     2 4607 40 10 00 00 00 00			dta		$40,$10,$00,$00,$00,$00
+     3 460D 61 66 70 28 22 31 + 		dta		'afp("1E+011")',0
+Source: tmthpack.s
+   876 461B A5 F2				lda		cix
+   877 461D					_ASA	6, 'afp("1E+011")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 461D A2 06				ldx		#6
+     2 461F 20 2C 49				jsr		AssertA
+     3 4622 61 66 70 28 22 31 + 		dta		'afp("1E+011")-CIX',0
+Source: tmthpack.s
+   878 						
+   879 						;zero is not a valid exponent and is not consumed as one
+   880 4634					_LDSTR	'1E+001'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4634 20 32 47				jsr		LoadString
+     2 4637 31 45 2B 30 30 31 + 		dta		'1E+001',$80
+Source: tmthpack.s
+   881 463E 20 00 D8				jsr		afp
+   882 4641					_ASFR0X	$40,$01,$00,$00,$00,$00, 'afp("1E+001")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 4641 20 44 48				jsr		AssertFR0
+     2 4644 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 464A 61 66 70 28 22 31 + 		dta		'afp("1E+001")',0
+Source: tmthpack.s
+   883 4658 A5 F2				lda		cix
+   884 465A					_ASA	2, 'afp("1E+001")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 465A A2 02				ldx		#2
+     2 465C 20 2C 49				jsr		AssertA
+     3 465F 61 66 70 28 22 31 + 		dta		'afp("1E+001")-CIX',0
+Source: tmthpack.s
+   885
+   886 4671					_LDSTR	'1E+0x'
+Macro: _LDSTR [Source: tmthpack.s]
+     1 4671 20 32 47				jsr		LoadString
+     2 4674 31 45 2B 30 78 80			dta		'1E+0x',$80
+Source: tmthpack.s
+   887 467A 20 00 D8				jsr		afp
+   888 467D					_ASFR0X	$40,$01,$00,$00,$00,$00, 'afp("1E+0x")'
+Macro: _ASFR0X [Source: tmthpack.s]
+     1 467D 20 44 48				jsr		AssertFR0
+     2 4680 40 01 00 00 00 00			dta		$40,$01,$00,$00,$00,$00
+     3 4686 61 66 70 28 22 31 + 		dta		'afp("1E+0x")',0
+Source: tmthpack.s
+   889 4693 A5 F2				lda		cix
+   890 4695					_ASA	2, 'afp("1E+0x")-CIX'
+Macro: _ASA [Source: tmthpack.s]
+     1 4695 A2 02				ldx		#2
+     2 4697 20 2C 49				jsr		AssertA
+     3 469A 61 66 70 28 22 31 + 		dta		'afp("1E+0x")-CIX',0
+Source: tmthpack.s
+   891 						
+   892 						;all done!
+   893 46AB 60					rts
+   894 						
+   895 46AC			afp_test4:
+   896 46AC 2D 32 30				dta		'-20'
+   897 46AF			afp_test3:
+   898 46AF 20					dta		' '
+   899 46B0			afp_test2:
+   900 46B0 31 30 30				dta		'100'
+   901 46B3			afp_test1:
+   902 46B3 80					dta		$80
+   903 						
+   904 46B4			afp_test5:
+   905 46B4 30 31 30 30 80			dta		'0100',$80
+   906 						
+   907 46B9			afp_test6:
+   908 46B9 31 45 2B 39 37 80			dta		'1E+97',$80
+   909
+   910 46BF			afp_test6a:
+   911 46BF 31 45 2B 39 38 80			dta		'1E+98',$80
+   912 						
+   913 46C5			afp_test7:
+   914 46C5 31 65 2B 39 37 80			dta		'1e+97',$80
+   915
+   916 46CB			afp_test8:
+   917 46CB 31 45 39 37 80			dta		'1E97',$80
+   918
+   919 46D0			afp_test9:
+   920 46D0 31 45 2D 39 39 80			dta		'1E-99',$80
+   921
+   922 46D6			afp_test10:
+   923 46D6 31 45 2D 32 30 35 + 		dta		'1E-205',$80
+   924
+   925 46DD			afp_test11:
+   926 46DD 31 45 2B 32 30 35 + 		dta		'1E+205',$80
+   927 				.endp
+   928
+   929 				;==========================================================================
+   930 46E4			.proc LoadLR
+   931 46E4 BA					tsx
+   932 46E5 BD 03 01				lda		$0103,x
+   933 46E8 18					clc
+   934 46E9 69 01				adc		#1
+   935 46EB 85 FC				sta		flptr
+   936 46ED BD 04 01				lda		$0104,x
+   937 46F0 69 00				adc		#0
+   938 46F2 85 FD				sta		flptr+1
+   939 46F4 60					rts
+   940 				.endp
+   941
+   942 				;==========================================================================
+   943 46F5			.proc AddLR_6
+   944 46F5 A5 FC				lda		flptr
+   945 46F7 18					clc
+   946 46F8 69 06				adc		#6
+   947 46FA 85 FC				sta		flptr
+   948 46FC 90 02 E6 FD				scc:inc	flptr+1
+   949 4700 60					rts
+   950 				.endp
+   951
+   952 				;==========================================================================
+   953 4701			.proc LoadFR0
+   954 4701 20 E4 46				jsr		LoadLR
+   955 4704 20 8D DD				jsr		fld0p
+   956 						
+   957 						;workaround for MADS zero bug
+   958 4707 A5 D5				lda		fr0+1
+   959 4709 D0 03 20 44 DA			sne:jsr	zfr0
+   960 						
+   961 470E 20 F5 46				jsr		AddLR_6
+   962 4711 68					pla
+   963 4712 68					pla
+   964 4713 6C FC 00				jmp		(flptr)
+   965 				.endp
+   966
+   967 				;==========================================================================
+   968 4716			.proc LoadFR1
+   969 4716 20 E4 46				jsr		LoadLR
+   970 4719 20 9C DD				jsr		fld1p
+   971
+   972 						;workaround for MADS zero bug
+   973 471C A5 E1				lda		fr1+1
+   974 471E D0 05				bne		not_zero
+   975 4720 A2 E0				ldx		#fr1
+   976 4722 20 46 DA				jsr		zf1
+   977 4725			not_zero:
+   978
+   979 4725 20 F5 46				jsr		AddLR_6
+   980 4728 68					pla
+   981 4729 68					pla
+   982 472A 6C FC 00				jmp		(flptr)
+   983 				.endp
+   984
+   985 				;==========================================================================
+   986 472D			.proc ZeroFR1
+   987 472D A2 E0				ldx		#fr1
+   988 472F 4C 46 DA				jmp		zf1
+   989 				.endp
+   990
+   991 				;==========================================================================
+   992 4732			.proc LoadString
+   993 4732 68					pla
+   994 4733 85 F3				sta		inbuff
+   995 4735 68					pla
+   996 4736 85 F4				sta		inbuff+1
+   997 4738 A9 01 85 F2				mva		#1 cix
+   998 						
+   999 473C A0 00				ldy		#0
+  1000 473E			skip_loop:
+  1001 473E C8					iny
+  1002 473F B1 F3				lda		(inbuff),y
+  1003 4741 10 FB				bpl		skip_loop
+  1004 						
+  1005 4743 98					tya
+  1006 4744 18					clc
+  1007 4745 65 F3				adc		inbuff
+  1008 4747 A8					tay
+  1009 4748 A5 F4				lda		inbuff+1
+  1010 474A 69 00				adc		#0
+  1011 474C 48					pha
+  1012 474D 98					tya
+  1013 474E 48					pha
+  1014 474F 60					rts
+  1015 				.endp
+  1016
+  1017 				;==========================================================================
+  1018 4750			.proc fcomp
+  1019 						;fr0=fr1=0 is the only one we really need to worry about; otherwise
+  1020 						;exponents will mismatch or mantissas are safe to compare.
+  1021 4750 A5 D4				lda		fr0
+  1022 4752 05 E0				ora		fr1
+  1023 4754 D0 01				bne		nonzero
+  1024 4756 60					rts
+  1025 4757			nonzero:
+  1026
+  1027 						;compare exponents
+  1028 4757 A5 E0				lda		fr1
+  1029 4759 C5 D4				cmp		fr0
+  1030 475B F0 13				beq		exp_equal
+  1031 						
+  1032 						;check for sign difference
+  1033 475D 08					php
+  1034 475E A5 D4				lda		fr0
+  1035 4760 45 E0				eor		fr1
+  1036 4762 30 0A				bmi		exp_xit
+  1037 						
+  1038 						;check for negative sign
+  1039 4764 A5 D4				lda		fr0
+  1040 4766 30 06				bmi		exp_xit
+  1041 						
+  1042 						;invert comparison
+  1043 4768 28					plp
+  1044 4769 A5 D4				lda		fr0
+  1045 476B C5 E0				cmp		fr1
+  1046 476D 60					rts
+  1047 						
+  1048 476E			exp_xit:
+  1049 476E 28					plp
+  1050 476F 60					rts
+  1051
+  1052 4770			exp_equal:
+  1053 						;compare mantissas
+  1054 4770 A2 FB				ldx		#<-5
+  1055 4772			mant_loop:
+  1056 4772 B5 DA				lda		fr0+6,x
+  1057 4774 D5 E6				cmp		fr1+6,x
+  1058 4776 D0 03				bne		xit
+  1059 4778 E8					inx
+  1060 4779 D0 F7				bne		mant_loop
+  1061 477B			xit:
+  1062 477B 60					rts
+  1063 				.endp
+  1064
+  1065 				;==========================================================================
+  1066 477C			.proc fadd_chk
+  1067 477C 20 94 47				jsr		ScrambleFREFR2
+  1068 477F 4C 66 DA				jmp		fadd
+  1069 				.endp
+  1070
+  1071 				;==========================================================================
+  1072 4782			.proc fsub_chk
+  1073 4782 20 94 47				jsr		ScrambleFREFR2
+  1074 4785 4C 60 DA				jmp		fsub
+  1075 				.endp
+  1076
+  1077 				;==========================================================================
+  1078 4788			.proc fmul_chk
+  1079 4788 20 94 47				jsr		ScrambleFREFR2
+  1080 478B 4C DB DA				jmp		fmul
+  1081 				.endp
+  1082
+  1083 				;==========================================================================
+  1084 478E			.proc fdiv_chk
+  1085 478E 20 94 47				jsr		ScrambleFREFR2
+  1086 4791 4C 28 DB				jmp		fdiv
+  1087 				.endp
+  1088
+  1089 				;==========================================================================
+  1090 4794			.proc ScrambleFREFR2
+  1091 4794 A2 05				ldx		#5
+  1092 4796 A9 AA				lda		#$aa
+  1093 4798			sloop:
+  1094 4798 95 DA				sta		fr0+6,x
+  1095 479A 95 E6				sta		fr1+6,x
+  1096 479C CA					dex
+  1097 479D 10 F9				bpl		sloop
+  1098 479F 60					rts
+  1099 				.endp
+  1100
+  1101 				;==========================================================================
+  1102 47A0			.proc AssertFR0Range
+  1103 47A0 08					php
+  1104 47A1 68					pla
+  1105 47A2 85 B5				sta		d5
+  1106 47A4 D8					cld
+  1107 47A5 20 E4 46				jsr		LoadLR
+  1108 47A8 20 9C DD				jsr		fld1p
+  1109 47AB 20 F5 46				jsr		AddLR_6
+  1110
+  1111 47AE 18					clc
+  1112 47AF A9 06				lda		#6
+  1113 47B1 65 FC				adc		flptr
+  1114 47B3 85 B1				sta		d1
+  1115 47B5 A9 00				lda		#0
+  1116 47B7 65 FD				adc		flptr+1
+  1117 47B9 85 B2				sta		d1+1
+  1118 						
+  1119 47BB A5 B5				lda		d5
+  1120 47BD 29 08				and		#$08
+  1121 47BF F0 1D				beq		dec_ok
+  1122 						
+  1123 47C1 20 A7 27				jsr		_log_imprintf
+  1124 47C4 44 65 63 69 6D 61 + 		dta		'Decimal mode left on: %s',$9B,0
+  1125 						
+  1126 47DE			dec_ok:
+  1127 47DE 46 B5				lsr		d5
+  1128 47E0 90 19				bcc		no_err
+  1129 						
+  1130 47E2 20 A7 27				jsr		_log_imprintf
+  1131 47E5 25 73 20 66 61 69 + 		dta		'%s failed: val=%f',$9B,0
+  1132 47F8 4C 11 48				jmp		pass2
+  1133 						
+  1134 47FB			no_err:
+  1135 						;check if >= lower bound
+  1136 47FB 20 50 47				jsr		fcomp
+  1137 47FE B0 06				bcs		pass1
+  1138 4800			fail:
+  1139 4800 20 23 48				jsr		print_fail
+  1140 4803 4C 11 48				jmp		pass2
+  1141 						
+  1142 4806			pass1:
+  1143 						;check if <= upper bound
+  1144 4806 20 9C DD				jsr		fld1p
+  1145 4809 20 50 47				jsr		fcomp
+  1146 480C 90 03				bcc		pass2
+  1147 480E 20 23 48				jsr		print_fail
+  1148 4811			pass2:
+  1149 						;skip past message
+  1150 4811 A0 00				ldy		#0
+  1151 4813			skip_loop:
+  1152 4813 B1 B1				lda		(d1),y
+  1153 4815 E6 B1 D0 02 E6 B2			inw		d1
+  1154 481B AA					tax
+  1155 481C D0 F5				bne		skip_loop
+  1156 481E 68					pla
+  1157 481F 68					pla
+  1158 4820 6C B1 00				jmp		(d1)
+  1159
+  1160 4823			print_fail:
+  1161 4823 A9 D4 85 B3 A9 00 + 		mwa		#fr0 d3
+  1162 						
+  1163 482B 20 A7 27				jsr		_log_imprintf
+  1164 482E 25 73 20 6D 69 73 + 		dta		'%s mismatch: val=%f',$9B,0
+  1165 4843 60					rts
+  1166 				.endp
+  1167
+  1168 				;==========================================================================
+  1169 4844			.proc AssertFR0
+  1170 4844 08					php
+  1171 4845 68					pla
+  1172 4846 85 B5				sta		d5
+  1173 4848 D8					cld
+  1174 4849 20 E4 46				jsr		LoadLR
+  1175 484C 20 9C DD				jsr		fld1p
+  1176 484F 20 F5 46				jsr		AddLR_6
+  1177
+  1178 4852 A5 FC 85 B1 A5 FD + 		mwa		flptr d1
+  1179 						
+  1180 485A A5 B5				lda		d5
+  1181 485C 29 08				and		#$08
+  1182 485E F0 1D				beq		dec_ok
+  1183 						
+  1184 4860 20 A7 27				jsr		_log_imprintf
+  1185 4863 44 65 63 69 6D 61 + 		dta		'Decimal mode left on: %s',$9B,0
+  1186 						
+  1187 487D			dec_ok:
+  1188 487D 46 B5				lsr		d5
+  1189 487F 90 16				bcc		no_err
+  1190 						
+  1191 4881 20 A7 27				jsr		_log_imprintf
+  1192 4884 25 73 20 66 61 69 + 		dta		'%s failed: val=%f',$9B,0
+  1193 						
+  1194 4897			no_err:
+  1195 4897 20 50 47				jsr		fcomp
+  1196 489A F0 22				beq		pass
+  1197 489C			fail:
+  1198 489C A9 D4 85 B3 A9 00 + 		mwa		#fr0 d3
+  1199 48A4 A5 FC				lda		flptr
+  1200 						
+  1201 48A6 20 A7 27				jsr		_log_imprintf
+  1202 48A9 25 73 20 6D 69 73 + 		dta		'%s mismatch: val=%f',$9B,0
+  1203 						
+  1204 48BE			pass:
+  1205 						;skip past message
+  1206 48BE A0 00				ldy		#0
+  1207 48C0			skip_loop:
+  1208 48C0 B1 B1				lda		(d1),y
+  1209 48C2 E6 B1 D0 02 E6 B2			inw		d1
+  1210 48C8 AA					tax
+  1211 48C9 D0 F5				bne		skip_loop
+  1212 48CB 68					pla
+  1213 48CC 68					pla
+  1214 48CD 6C B1 00				jmp		(d1)
+  1215 				.endp
+  1216
+  1217 				;==========================================================================
+  1218 48D0			.proc AssertERR
+  1219 48D0 08					php
+  1220 48D1 68					pla
+  1221 48D2 85 B5				sta		d5
+  1222 48D4 20 E4 46				jsr		LoadLR
+  1223 48D7 A5 FC 85 B1 A5 FD + 		mwa		flptr d1
+  1224 						
+  1225 48DF A5 B5				lda		d5
+  1226 48E1 29 08				and		#$08
+  1227 48E3 F0 1D				beq		dec_ok
+  1228 						
+  1229 48E5 20 A7 27				jsr		_log_imprintf
+  1230 48E8 44 65 63 69 6D 61 + 		dta		'Decimal mode left on: %s',$9B,0
+  1231 						
+  1232 4902			dec_ok:
+  1233 4902 46 B5				lsr		d5
+  1234 4904 B0 B8				bcs		AssertFR0.pass
+  1235 						
+  1236 4906 A9 D4 85 B3 A9 00 + 		mwa		#fr0 d3
+  1237 						
+  1238 490E 20 A7 27				jsr		_log_imprintf
+  1239 4911 25 73 20 64 69 64 + 		dta		'%s didn''t fail: FR0=%f',$9B,0
+  1240 						
+  1241 4929 4C BE 48				jmp		AssertFR0.pass
+  1242 				.endp
+  1243
+  1244 				;==========================================================================
+  1245 492C			.proc AssertA
+  1246 492C 85 B3				sta		d3
+  1247 492E 86 B4				stx		d4
+  1248 4930 20 E4 46				jsr		LoadLR
+  1249 4933 A5 FC 85 B1 A5 FD + 		mwa		flptr d1
+  1250
+  1251 493B A5 B3				lda		d3
+  1252 493D C5 B4				cmp		d4		
+  1253 493F F0 1D				beq		pass
+  1254 						
+  1255 4941 20 A7 27				jsr		_log_imprintf
+  1256 4944 25 73 20 6D 69 73 + 		dta		'%s mismatch: A=%d, != %d',$9B,0
+  1257 						
+  1258 495E			pass:
+  1259 495E 4C BE 48				jmp		AssertFR0.pass
+  1260 				.endp
+  1261
+  1262 				;==========================================================================
+  1263 4961			.proc TestFASC
+  1264 4961 20 E4 46				jsr		LoadLR
+  1265 4964 20 8D DD				jsr		fld0p
+  1266 4967 20 E6 D8				jsr		fasc
+  1267 						
+  1268 496A 20 E4 46				jsr		LoadLR
+  1269 496D 20 F5 46				jsr		AddLR_6
+  1270 						
+  1271 4970 A5 F3 85 B1 A5 F4 + 		mwa		inbuff d1
+  1272 4978 A5 FC 85 B3 A5 FD + 		mwa		flptr d3
+  1273
+  1274 						;convert hibit-terminated output to zero-terminated		
+  1275 4980 A0 FF				ldy		#$ff
+  1276 4982			fix_loop:
+  1277 4982 C8					iny
+  1278 4983 B1 F3				lda		(inbuff),y
+  1279 4985 10 FB				bpl		fix_loop
+  1280 4987 29 7F				and		#$7f
+  1281 4989 91 F3				sta		(inbuff),y
+  1282 498B C8					iny
+  1283 498C A9 00				lda		#0
+  1284 498E 91 F3				sta		(inbuff),y
+  1285
+  1286 						;compare strings
+  1287 4990			strcmp_loop:
+  1288 4990 B1 FC				lda		(flptr),y
+  1289 4992 D1 F3				cmp		(inbuff),y
+  1290 4994 D0 1B				bne		fail
+  1291 4996 88					dey
+  1292 4997 C0 FF				cpy		#$ff
+  1293 4999 D0 F5				bne		strcmp_loop		
+  1294 499B			xit:
+  1295 499B A0 FF				ldy		#$ff
+  1296 499D			skip_loop:
+  1297 499D C8					iny
+  1298 499E B1 FC				lda		(flptr),y
+  1299 49A0 D0 FB				bne		skip_loop
+  1300 						
+  1301 49A2 98					tya
+  1302 49A3 38					sec
+  1303 49A4 65 FC				adc		flptr
+  1304 49A6 85 FC				sta		flptr
+  1305 49A8 90 02 E6 FD				scc:inc	flptr+1
+  1306 49AC 68					pla
+  1307 49AD 68					pla
+  1308 49AE 6C FC 00				jmp		(flptr)
+  1309
+  1310 49B1			fail:
+  1311 49B1 20 A7 27				jsr		_log_imprintf
+  1312 49B4 46 41 53 43 20 6D + 		dta		'FASC mismatch: [%s] != [%s]',$9b,0
+  1313 49D1 4C 9B 49				jmp		xit
+  1314 				.endp

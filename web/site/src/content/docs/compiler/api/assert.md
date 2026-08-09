@@ -6,10 +6,10 @@ description: Test-fixture assertion helpers; gated to no-ops by -DNDEBUG / -DREL
 `Assert` is a small set of test-assertion helpers used by xtc's own test fixtures and available to user code. Each assertion increments a test counter; failures increment a separate failure counter and print `FAIL T<n>` so the run-fixtures shell script can scan for them. `Assert.summary()` prints `DONE <count>` at the end of a run, plus a `FAIL <m> tests` line if anything failed.
 
 ```c
-#import <Assert.xt>          // generic — works on every platform
+#import <Assert.xc>          // generic — works on every platform
 ```
 
-`Assert.xt` lives under `support/generic/lib/`, not an architecture directory — it works the same on every target.
+`Assert.xc` lives under `support/generic/lib/`, not an architecture directory — it works the same on every target.
 
 ## Release-build gating
 
@@ -59,7 +59,7 @@ static void isNotNull(pointer p);
 ```
 
 ```c
-Foo@ f = lookup(name);
+Foo* f = lookup(name);
 Assert.isNotNull(f);
 ```
 

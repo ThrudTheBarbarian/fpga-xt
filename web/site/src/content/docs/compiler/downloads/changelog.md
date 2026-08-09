@@ -15,10 +15,10 @@ each passing the full fixture corpus:
 
 | `-A` | Target | Output |
 |---|---|---|
-| `6502` *(default)* | banked **xt6502** — 4 KB hidden hardware stack, SP-relative addressing | Atari `.xex`, run under `xts` |
+| `6502` *(default)* | banked **xt6502** — 4 KB hidden hardware stack, SP-relative addressing | Atari `.xex`, run under `xcc-sim-6502` |
 | `arm64` | native macOS / Linux host | Mach-O / ELF executable |
 | `arm9` | AArch32 / **XTOS** | ELF executable, or a `.so` |
-| `m68k` | Atari ST | GEMDOS `.tos`, run under `xst` |
+| `m68k` | Atari ST | GEMDOS `.tos`, run under `xcc-sim-68k` |
 | `x86_64` | Linux (musl) | ELF executable |
 
 Standard-library classes resolve by **architecture × platform**, so one source serves all of
@@ -32,8 +32,8 @@ The Atari `xl` / `xe` flat and PORTB memory models, and the Commodore `c64` targ
 On `arm9`, a program can be split into a library and its clients:
 
 ```bash
-xtc -A arm9 --emit-lib -o libXtg.so xtg.xt
-xtc -A arm9 -L . -o app.so app.xt
+xcc -A arm9 --emit-lib -o libXtg.so xtg.xc
+xcc -A arm9 -L . -o app.so app.xc
 ```
 
 The library carries its **own interface inside the `.so`**, so `#import <Xtg>` type-checks
@@ -113,13 +113,13 @@ The **bank-switch bracket optimiser** was widened across many more multi-byte fi
 
 Each one shaves a save/restore around bank-select registers when the cluster shares a bank. The cumulative effect is meaningfully fewer cycles per banked field touch on real programs.
 
-**Bank-register addresses are now layout-configurable.** Layouts may pin the bank-select hardware registers (previously hardcoded `$82`/`$83`/`$84`/`$85`) to any address — useful for cart-mapped designs that expose the bank latches outside zero page. The compiler, xta preload-stub generator, and xts simulator all honour the layout's choice.
+**Bank-register addresses are now layout-configurable.** Layouts may pin the bank-select hardware registers (previously hardcoded `$82`/`$83`/`$84`/`$85`) to any address — useful for cart-mapped designs that expose the bank latches outside zero page. The compiler, xcc-as preload-stub generator, and xcc-sim-6502 simulator all honour the layout's choice.
 
 **Graphics:**
 
 - `Gfx7` — GR.7 (160×96 4-colour) shipped with bulk-byte hline / vline fast paths
 - `Gfx15` — GR.15 (160×192 4-colour) shipped with the same bulk-byte path
-- `gfxCreate(mode, textRows)` factory in `GfxFactory.xt`, with `GFX_<w>_<h>_<b>` aliases (`GFX_320_192_1`, etc.) — picks the right subclass and returns a `Gfx@` for polymorphic use. Best called as `inline:gfxCreate(MODE, ROWS)` when the mode is a compile-time constant: the asm-level branch-elimination then drops the dead subclass arms (~5 KB savings on a typical factory call)
+- `gfxCreate(mode, textRows)` factory in `GfxFactory.xc`, with `GFX_<w>_<h>_<b>` aliases (`GFX_320_192_1`, etc.) — picks the right subclass and returns a `Gfx@` for polymorphic use. Best called as `inline:gfxCreate(MODE, ROWS)` when the mode is a compile-time constant: the asm-level branch-elimination then drops the dead subclass arms (~5 KB savings on a typical factory call)
 - `Gfx.clear()` hoisted to the base so it dispatches through `Gfx@`
 
 **Other:**
@@ -127,8 +127,8 @@ Each one shaves a save/restore around bank-select registers when the cluster sha
 - `inline:method()` on banked-heap (xe) now PORTB-brackets the inlined body
 - Vtable reachability now uses the call-site × instantiation cross product, so dead vtable slots get zeroed instead of dangling
 - Dead ARC retval stash/restore pairs are elided
-- `xta` warns on indirect-indexed addressing through a non-ZP operand
-- `xta` enforces split-bank size limits in `writeBankedXEX`
+- `xcc-as` warns on indirect-indexed addressing through a non-ZP operand
+- `xcc-as` enforces split-bank size limits in `writeBankedXEX`
 
 ### Bug fixes
 
@@ -187,9 +187,9 @@ The toolchain now ships with a `-v/--version` flag which can help determine why 
 - arc: set Y to heap_bank_first before stashing _arc_retval_bank
 - banked: nested method-call trampoline + Number cross-kind equals
 - xl-shadow: reserve screen RAM at $8000-$9FFF; ship Array.dealloc
-- xts: keep SAVMSC at $8000 for explicit banked targets
-- xta: keep longbr trio together when previous line has its `; longbr` comment
-- xta: bank-page overflow handling
+- xcc-sim-6502: keep SAVMSC at $8000 for explicit banked targets
+- xcc-as: keep longbr trio together when previous line has its `; longbr` comment
+- xcc-as: bank-page overflow handling
 - stdio: use BOTSCR (1-based row count), not BOTSCR-1
 - stdio: port scroll() into cloaked Stdio variant
 - optimiser: incorrect CMP #$00 elision in for-in range loops

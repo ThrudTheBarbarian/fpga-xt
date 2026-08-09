@@ -1,0 +1,204 @@
+{
+ "date": "2026-08-02",
+ "seq": 1,
+ "core": "emu",
+ "bitstream": "emu@ee3417f",
+ "note": "XL banking (PORTB ROM overlays) + RAMTOP: mmu_xlbanking passes",
+ "results": {
+  "antic_addresswrap": {
+   "s": "pass"
+  },
+  "antic_addrmirror": {
+   "s": "pass"
+  },
+  "antic_blockednmi": {
+   "s": "pass"
+  },
+  "antic_charcontrol": {
+   "s": "pass"
+  },
+  "antic_default": {
+   "s": "pass"
+  },
+  "antic_dlistwrap": {
+   "s": "pass"
+  },
+  "antic_dlitiming": {
+   "s": "pass"
+  },
+  "antic_dmapattern": {
+   "s": "pass"
+  },
+  "antic_hiresbug": {
+   "s": "pass"
+  },
+  "antic_hscrolbug": {
+   "s": "fail",
+   "d": "Unstopped PF DMA test #2 failed: cl=%x"
+  },
+  "antic_linebuffering": {
+   "s": "pass"
+  },
+  "antic_nmist": {
+   "s": "pass"
+  },
+  "antic_pfstarttiming": {
+   "s": "fail",
+   "d": "Character mode DMACTL late test failed: stride=%d"
+  },
+  "antic_pfstoptiming": {
+   "s": "fail",
+   "d": "Character mode DMACTL early test failed: stride=%d"
+  },
+  "antic_pmdma": {
+   "s": "pass"
+  },
+  "antic_vcount": {
+   "s": "pass"
+  },
+  "antic_virtdma": {
+   "s": "pass"
+  },
+  "antic_vscroldli": {
+   "s": "pass"
+  },
+  "antic_vscroll": {
+   "s": "pass"
+  },
+  "antic_wsync": {
+   "s": "pass"
+  },
+  "cpu_65c816": {
+   "s": "na"
+  },
+  "cpu_bugs": {
+   "s": "pass"
+  },
+  "cpu_clisei": {
+   "s": "pass"
+  },
+  "cpu_decimal": {
+   "s": "pass"
+  },
+  "cpu_flags": {
+   "s": "pass"
+  },
+  "cpu_illegal": {
+   "s": "pass"
+  },
+  "cpu_illtiming": {
+   "s": "pass"
+  },
+  "cpu_insn": {
+   "s": "pass"
+  },
+  "cpu_timing": {
+   "s": "pass"
+  },
+  "gtia_addrmirror": {
+   "s": "pass"
+  },
+  "gtia_collision": {
+   "s": "pass"
+  },
+  "gtia_collision2": {
+   "s": "pass"
+  },
+  "gtia_consol": {
+   "s": "pass"
+  },
+  "gtia_default": {
+   "s": "pass"
+  },
+  "gtia_phantomdma": {
+   "s": "pass"
+  },
+  "gtia_pmoverlap": {
+   "s": "fail",
+   "d": "Pass %d.%d: Pos=%x, Expected %x, Got %x"
+  },
+  "gtia_pmresize": {
+   "s": "fail",
+   "d": "4x-to-1x failed at index %d: expected $%x, got $%x"
+  },
+  "gtia_pmretrigger": {
+   "s": "pass"
+  },
+  "gtia_psuedomodee": {
+   "s": "pass"
+  },
+  "gtia_vdelay": {
+   "s": "pass"
+  },
+  "mmu_xlbanking": {
+   "s": "pass"
+  },
+  "mod_disp80": {
+   "s": "error"
+  },
+  "mod_dispmin": {
+   "s": "error"
+  },
+  "mod_options": {
+   "s": "error"
+  },
+  "mod_scroll40": {
+   "s": "error"
+  },
+  "mod_vbxe80": {
+   "s": "error"
+  },
+  "pia_basic": {
+   "s": "pass"
+  },
+  "pia_irq": {
+   "s": "pass"
+  },
+  "pokey_addrmirror": {
+   "s": "pass"
+  },
+  "pokey_asyncrecv": {
+   "s": "pass"
+  },
+  "pokey_default": {
+   "s": "pass"
+  },
+  "pokey_inittiming": {
+   "s": "pass"
+  },
+  "pokey_irqtiming": {
+   "s": "pass"
+  },
+  "pokey_noise": {
+   "s": "pass"
+  },
+  "pokey_serclock": {
+   "s": "pass"
+  },
+  "pokey_serdirect": {
+   "s": "error"
+  },
+  "pokey_seroc": {
+   "s": "pass"
+  },
+  "pokey_sertiming": {
+   "s": "pass"
+  },
+  "pokey_skstat": {
+   "s": "error"
+  },
+  "pokey_timergranularity": {
+   "s": "pass"
+  },
+  "pokey_timerirq": {
+   "s": "pass"
+  },
+  "pokey_timertiming": {
+   "s": "fail",
+   "d": "1.79MHz 16-bit lo timer fired too late after 23c change (>41c)."
+  },
+  "pokey_twotone": {
+   "s": "pass"
+  }
+ }
+}

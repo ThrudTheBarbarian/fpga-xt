@@ -53,6 +53,7 @@ module tb_pbi;
     antic_top u_dut (
         .clk_bus                  (clk_bus),
         .rst_n                    (rst_n),
+        .joy_ovr                  (32'd0),   // keypad->joystick override off (default)
         .bus_addr                 (bus_addr),
         .bus_data_in              (bus_data_in),
         .bus_rw                   (bus_rw),

@@ -1,0 +1,2107 @@
+mads 2.1.0 build 8 (23 Dec 19)
+Source: sacartridge.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 					opt		h-o+f+
+    23 					org		$a000
+    24
+    25 = 0001				GENLIBRARY = 1
+    26
+    27 					icl		'library.s'
+Source: library.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				;==========================================================================
+    23 				; MEMORY MAP (800)
+    24 				;
+    25 				;	$0000-007F		OS zero page
+    26 				;	$0080-00BF		Module zero page
+    27 				;	$00C0-00DF		Library zero page
+    28 				;	$00E0-00EF		80-column zero page
+    29 				;	$0100-01FF		6502 stack
+    30 				;	$0200-03FF		OS database
+    31 				;	$0400-09FF		Boot loader / unused
+    32 				;	$0A00-0AFF		Boot loader / Veronica support resident page
+    33 				;	$0B00-0BFF		Boot loader / sector load buffer
+    34 				;	$0C00-0FFF		Boot loader / 16K display
+    35 				;	$1000-18FF		Resident test driver (full suite only)
+    36 				;	$1900-19FF		Segment tables (full suite only)
+    37 				;	$1A00-1FFF		Library code
+    38 				;	$2000-3FFF		Module run area
+    39 				;	$4000-5FFF		Segment load area / Extended memory window
+    40 				;	$6000-7FFF		80-column screen A / Extended memory window
+    41 				;	$9000-9BFF		80-column driver
+    42 				;	$9C00-9FFF		Unused (display list if cart)
+    43 				;	$A000-BFFF		80-column screen B
+    44 				;
+    45 				; MEMORY MAP (5200)
+    46 				;
+    47 				;	$0000-001F		OS zero page
+    48 				;	$0020-003F		Display zero page
+    49 				;	$0080-00BF		Module zero page
+    50 				;	$00C0-00DF		Library zero page
+    51 				;	$0100-01FF		6502 stack
+    52 				;	$0200-021F		OS database
+    53 				;	$0220-027F		Unused
+    54 				;	$0280-02FF		Library database
+    55 				;	$0300-07FF		Display memory
+    56 				;	$0800-0FFF		Unused
+    57 				;	$1000-1FFF		LZ decompression history window
+    58 				;	$2000-3FFF		Module run area
+    59 				;	$4000-BFFF		Cartridge library code and module store
+    60 				;
+    61 				; MEMORY MAP (SAP)
+    62 				;
+    63 				;	$0080-00BF		Module zero page
+    64 				;	$00C0-00DF		Library zero page
+    65 				;	$0280-02FF		Library database
+    66 				;	$0300-07FF		Display memory
+    67 				;	$2000-3FFF		Module run area
+    68 				;	$4000-BFFF		Module store
+    69
+    70 				;==========================================================================
+    71 				; CONFIGURATION
+    72 				;
+    73 						.ifndef SYS800
+    74 = 0001					SEGS_IN_ROM = 1
+    75 						.else
+    76 						SEGS_MIN_MEM = 1
+    77 						.endif
+    78 						
+    79 						.ifdef SYS5200
+    80 = 0001					SEGS_LZPACK = 1
+    81 						.endif
+    82
+    83 				;==========================================================================
+    84 				; HARDWARE INCLUDES
+    85 				;
+    86 				.ifdef SYS5200
+    87 				;GTIA
+    88 = C000			gtia = $c000
+    89 = C000			m0pf	equ	$c000
+    90 = C001			m1pf	equ	$c001
+    91 = C002			m2pf	equ	$c002
+    92 = C003			m3pf	equ	$c003
+    93 = C004			p0pf	equ	$c004
+    94 = C005			p1pf	equ	$c005
+    95 = C006			p2pf	equ	$c006
+    96 = C007			p3pf	equ	$c007
+    97 = C008			m0pl	equ	$c008
+    98 = C009			m1pl	equ	$c009
+    99 = C00A			m2pl	equ	$c00a
+   100 = C00B			m3pl	equ	$c00b
+   101 = C00C			p0pl	equ	$c00c
+   102 = C00D			p1pl	equ	$c00d
+   103 = C00E			p2pl	equ	$c00e
+   104 = C00F			p3pl	equ	$c00f
+   105 = C000			hposp0	equ	$c000
+   106 = C001			hposp1	equ	$c001
+   107 = C002			hposp2	equ	$c002
+   108 = C003			hposp3	equ	$c003
+   109 = C004			hposm0	equ	$c004
+   110 = C005			hposm1	equ	$c005
+   111 = C006			hposm2	equ	$c006
+   112 = C007			hposm3	equ	$c007
+   113 = C008			sizep0	equ	$c008
+   114 = C009			sizep1	equ	$c009
+   115 = C00A			sizep2	equ	$c00a
+   116 = C00B			sizep3	equ	$c00b
+   117 = C00C			sizem	equ	$c00c
+   118 = C00D			grafp0	equ	$c00d
+   119 = C00E			grafp1	equ	$c00e
+   120 = C00F			grafp2	equ	$c00f
+   121 = C010			grafp3	equ	$c010
+   122 = C010			trig0	equ	$c010
+   123 = C011			grafm	equ	$c011
+   124 = C012			colpm0	equ	$c012
+   125 = C013			colpm1	equ	$c013
+   126 = C014			colpm2	equ	$c014
+   127 = C014			pal		equ	$c014
+   128 = C015			colpm3	equ	$c015
+   129 = C016			colpf0	equ	$c016
+   130 = C017			colpf1	equ	$c017
+   131 = C018			colpf2	equ	$c018
+   132 = C019			colpf3	equ	$c019
+   133 = C01A			colbk	equ	$c01a
+   134 = C01B			prior	equ	$c01b
+   135 = C01C			vdelay	equ	$c01c
+   136 = C01D			gractl	equ	$c01d
+   137 = C01E			hitclr	equ	$c01e
+   138 = C01F			consol	equ	$c01f
+   139
+   140 				;POKEY
+   141 = E800			pokey = $e800
+   142 = E800			audf1	equ	$e800
+   143 = E801			audc1	equ	$e801
+   144 = E802			audf2	equ	$e802
+   145 = E803			audc2	equ	$e803
+   146 = E804			audf3	equ	$e804
+   147 = E805			audc3	equ	$e805
+   148 = E806			audf4	equ	$e806
+   149 = E807			audc4	equ	$e807
+   150 = E808			audctl	equ	$e808
+   151 = E809			stimer	equ	$e809
+   152 = E80A			random	equ	$e80a
+   153 = E80A			skres	equ	$e80a
+   154 = E80D			serin	equ	$e80d
+   155 = E80D			serout	equ	$e80d
+   156 = E80E			irqen	equ	$e80e
+   157 = E80E			irqst	equ	$e80e
+   158 = E80F			skctl	equ	$e80f
+   159 = E80F			skstat	equ	$e80f
+   160 				.else
+   161 				;GTIA
+   162 				gtia = $d000
+   163 				m0pf	equ	$d000
+   164 				m1pf	equ	$d001
+   165 				m2pf	equ	$d002
+   166 				m3pf	equ	$d003
+   167 				p0pf	equ	$d004
+   168 				p1pf	equ	$d005
+   169 				p2pf	equ	$d006
+   170 				p3pf	equ	$d007
+   171 				m0pl	equ	$d008
+   172 				m1pl	equ	$d009
+   173 				m2pl	equ	$d00a
+   174 				m3pl	equ	$d00b
+   175 				p0pl	equ	$d00c
+   176 				p1pl	equ	$d00d
+   177 				p2pl	equ	$d00e
+   178 				p3pl	equ	$d00f
+   179 				hposp0	equ	$d000
+   180 				hposp1	equ	$d001
+   181 				hposp2	equ	$d002
+   182 				hposp3	equ	$d003
+   183 				hposm0	equ	$d004
+   184 				hposm1	equ	$d005
+   185 				hposm2	equ	$d006
+   186 				hposm3	equ	$d007
+   187 				sizep0	equ	$d008
+   188 				sizep1	equ	$d009
+   189 				sizep2	equ	$d00a
+   190 				sizep3	equ	$d00b
+   191 				sizem	equ	$d00c
+   192 				grafp0	equ	$d00d
+   193 				grafp1	equ	$d00e
+   194 				grafp2	equ	$d00f
+   195 				grafp3	equ	$d010
+   196 				trig0	equ	$d010
+   197 				grafm	equ	$d011
+   198 				colpm0	equ	$d012
+   199 				colpm1	equ	$d013
+   200 				colpm2	equ	$d014
+   201 				pal		equ	$d014
+   202 				colpm3	equ	$d015
+   203 				colpf0	equ	$d016
+   204 				colpf1	equ	$d017
+   205 				colpf2	equ	$d018
+   206 				colpf3	equ	$d019
+   207 				colbk	equ	$d01a
+   208 				prior	equ	$d01b
+   209 				vdelay	equ	$d01c
+   210 				gractl	equ	$d01d
+   211 				hitclr	equ	$d01e
+   212 				consol	equ	$d01f
+   213
+   214 				;POKEY
+   215 				pokey = $d200
+   216 				audf1	equ	$d200
+   217 				audc1	equ	$d201
+   218 				audf2	equ	$d202
+   219 				audc2	equ	$d203
+   220 				audf3	equ	$d204
+   221 				audc3	equ	$d205
+   222 				audf4	equ	$d206
+   223 				audc4	equ	$d207
+   224 				audctl	equ	$d208
+   225 				stimer	equ	$d209
+   226 				kbcode	equ	$d209
+   227 				random	equ	$d20a
+   228 				skres	equ	$d20a
+   229 				serin	equ	$d20d
+   230 				serout	equ	$d20d
+   231 				irqen	equ	$d20e
+   232 				irqst	equ	$d20e
+   233 				skctl	equ	$d20f
+   234 				skstat	equ	$d20f
+   235
+   236 				;PIA
+   237 				porta	equ	$d300
+   238 				portb	equ	$d301
+   239 				pactl	equ	$d302
+   240 				pbctl	equ	$d303
+   241 				.endif
+   242
+   243 				;ANTIC
+   244 = D400			dmactl	equ	$d400
+   245 = D401			chactl	equ	$d401
+   246 = D402			dlistl	equ	$d402
+   247 = D403			dlisth	equ	$d403
+   248 = D404			hscrol	equ	$d404
+   249 = D405			vscrol	equ	$d405
+   250 = D407			pmbase	equ	$d407
+   251 = D409			chbase	equ	$d409
+   252 = D40A			wsync	equ	$d40a
+   253 = D40B			vcount	equ	$d40b
+   254 = D40E			nmien	equ	$d40e
+   255 = D40F			nmires	equ	$d40f
+   256 = D40F			nmist	equ	$d40f
+   257
+   258 				;==========================================================================
+   259 				; OS INCLUDES (5200)
+   260 				;
+   261 				.ifdef SYS5200
+   262 = 0000			pokmsk	equ		$00
+   263 = 0001			rtclok	equ		$01
+   264 				;		equ		$02
+   265 = 0003			critic	equ		$03
+   266 = 0004			atract	equ		$04
+   267 = 0005			sdlstl	equ		$05
+   268 = 0006			sdlsth	equ		$06
+   269 = 0007			sdmctl	equ		$07
+   270 = 0008			pcolr0	equ		$08
+   271 = 0009			pcolr1	equ		$09
+   272 = 000A			pcolr2	equ		$0a
+   273 = 000B			pcolr3	equ		$0b
+   274 = 000C			color0	equ		$0c
+   275 = 000D			color1	equ		$0d
+   276 = 000E			color2	equ		$0e
+   277 = 000F			color3	equ		$0f
+   278 = 0010			color4	equ		$10
+   279
+   280 = 0200			vimirq	equ		$0200		;IRQ immediate vector
+   281 = 0202			vvblki	equ		$0202		;VBI immediate vector
+   282 = 0204			vvblkd	equ		$0204		;VBI deferred vector
+   283 = 0206			vdslst	equ		$0206		;display list vector
+   284 = 0208			vkybdi	equ		$0208		;keyboard immediate vector
+   285 = 020A			vkybdf	equ		$020a		;keyboard deferred vector
+   286 				.endif
+   287
+   288 				;==========================================================================
+   289 				; OS INCLUDES (800)
+   290 				;
+   291 				.ifndef SYS5200
+   292 				pokmsk	equ	$10
+   293 				rtclok	equ	$12
+   294 				savmsc	equ	$58
+   295 				ramtop	equ	$6a
+   296
+   297 				vdslst	equ	$0200
+   298 				vkeybd	equ	$0208
+   299 				vimirq	equ	$0216
+   300 				cdtmv1	equ	$0218
+   301 				vvblki	equ	$0222
+   302 				vvblkd	equ	$0224
+   303 				cdtma1	equ	$0226
+   304 				sdmctl	equ	$022f
+   305 				sdlstl	equ	$0230
+   306 				sdlsth	equ	$0231
+   307 				sskctl	equ	$0232
+   308 				runad	equ	$02e0
+   309 				initad	equ	$02e2
+   310 				memtop	equ	$02e5
+   311 				ch1		equ	$02f2
+   312 				ch		equ	$02fc
+   313
+   314 				ddevic	equ	$0300
+   315 				dunit	equ	$0301
+   316 				dcomnd	equ	$0302
+   317 				dstats	equ	$0303
+   318 				dbuflo	equ	$0304
+   319 				dbufhi	equ	$0305
+   320 				dtimlo	equ	$0306
+   321 				dbytlo	equ	$0308
+   322 				dbythi	equ	$0309
+   323 				daux1	equ	$030a
+   324 				daux2	equ	$030b
+   325
+   326 				ichid	equ	$0340
+   327 				iccmd	equ	$0342
+   328 				icbal	equ	$0344
+   329 				icbah	equ	$0345
+   330 				icptl	equ	$0346
+   331 				icpth	equ	$0347
+   332 				icbll	equ	$0348
+   333 				icblh	equ	$0349
+   334 				icax1	equ	$034a
+   335 				icax2	equ	$034b
+   336
+   337 				basicf	equ	$03f8
+   338
+   339 				dskinv	equ	$e453
+   340 				ciov	equ	$e456
+   341 				siov	equ	$e459
+   342 				xitvbv	equ	$e462
+   343 				.endif
+   344
+   345 				;==========================================================================
+   346 				; LIBRARY ZP
+   347 				;
+   348 = 00C0			a0		equ	$c0
+   349 = 00C2			a1		equ	$c2
+   350 = 00C4			a2		equ	$c4
+   351 = 00C6			a3		equ	$c6
+   352 = 00C8			d0		equ	$c8
+   353 = 00C9			d1		equ	$c9
+   354 = 00CA			d2		equ	$ca
+   355 = 00CB			d3		equ	$cb
+   356 = 00CC			d4		equ	$cc
+   357 = 00CD			d5		equ	$cd
+   358 = 00CE			d6		equ	$ce
+   359 = 00CF			d7		equ	$cf
+   360
+   361 				;==========================================================================
+   362 				; LIBRARY VARS
+   363 				;
+   364 						opt o-
+   365
+   366 				.ifdef SYS5200
+   367 						opt f-
+   368 				.else
+   369 				.ifdef STANDALONE
+   370 						opt o+
+   371 				.endif
+   372 				.ifdef GENLIBRARY
+   373 						opt o+
+   374 				.endif
+   375 				.endif
+   376
+   377 						.ifdef SYSSAP
+   378 						org	$0280
+   379 						.endif
+   380 						
+   381 						.ifdef SYS5200
+   382 						org	$0280
+   383 						.endif
+   384 						
+   385 						.ifdef SYS800
+   386 						org	$1a20
+   387 						.endif		
+   388 				_intsOff	dta		0
+   389 				_scrnOff	dta		0
+   390 				_prevIRQ	dta		a(0)
+   391 				_prevVBI	dta		a(0)
+   392 				_exitTest	dta		a(0)
+   393 				_exitTestS	dta		$ff
+   394 				_vputchar	dta		a(0)
+   395
+   396 						.ifdef SYS800
+   397 				_vputunhook	dta		a(0)
+   398 						.endif
+   399
+   400 = 0000				CPUMODE_6502 = 0
+   401 = 0001				CPUMODE_65C02 = 1
+   402 = 0080				CPUMODE_65C816_16 = 0x80
+   403 = 0081				CPUMODE_65C816_24 = 0x81
+   404 				_cpuMode	dta		0
+   405
+   406 				_veronica	dta		0
+   407
+   408 						.ifdef SYS5200
+   409 				sskctl		dta		0
+   410 				ch			dta		0
+   411 				keydel		dta		0
+   412
+   413 							org		$02e0
+   414 				runad		dta		a(0)
+   415 				initad		dta		a(0)
+   416 						.endif
+   417
+   418 						.ifdef SEGS_IN_ROM
+   419 				_lastMod	dta		0
+   420 						.endif
+   421 						.ifdef SEGS_MIN_MEM
+   422 				_lastMod	dta		0
+   423 						.endif
+   424
+   425 						.ifdef SYS5200
+   426 						.ifdef STANDALONE
+   427 						opt o+f+
+   428 						.endif
+   429 						.ifdef GENLIBRARY
+   430 						opt o+f+
+   431 						.endif
+   432
+   433 						.ifdef LIBBASE
+   434 						org	LIBBASE
+   435 						.else
+   436 						org	$4000
+   437 						.endif
+   438 						.endif
+   439 						
+   440 						.ifdef SYSSAP
+   441 						org		$4000
+   442 						.endif
+   443
+   444 				;==========================================================================
+   445 				; MACROS
+   446 				;
+   447 				.macro _INITTEST
+   448 					jsr		_imTestInit
+   449 					dta		:1,0
+   450 				.endm
+   451
+   452 				.macro _ASSERT1
+   453 					lda	:1
+   454 					cmp	#:2
+   455 					beq	pass
+   456 					
+   457 					sta	d1
+   458 					jsr	_testFailed
+   459 					dta	:3,0
+   460 				pass:
+   461 				.endm
+   462
+   463 				.macro _ASSERT1_DUAL
+   464 					lda	:1
+   465 					cmp	#:2
+   466 					beq	pass
+   467 					cmp	#:3
+   468 					beq	pass
+   469 					
+   470 					sta	d1
+   471 					jsr	_testFailed
+   472 					dta	:4,0
+   473 				pass:
+   474 				.endm
+   475
+   476 				.macro _ASSERTA
+   477 					cmp	#:1
+   478 					beq	pass
+   479 					
+   480 					sta	d1
+   481 					jsr	_testFailed
+   482 					dta	:2,0
+   483 				pass:
+   484 				.endm
+   485
+   486 				.macro _ASSERTX
+   487 					cpx	#:1
+   488 					beq	pass
+   489 					
+   490 					stx	d1
+   491 					jsr	_testFailed
+   492 					dta	:2,0
+   493 				pass:
+   494 				.endm
+   495
+   496 				.macro _ASSERTY
+   497 					cpy	#:1
+   498 					beq	pass
+   499 					
+   500 					sty	d1
+   501 					jsr	_testFailed
+   502 					dta	:2,0
+   503 				pass:
+   504 				.endm
+   505
+   506 				.macro _FAIL
+   507 					jsr		_testFailed
+   508 					dta		:1,0
+   509 				.endm
+   510
+   511 				.macro _SKIP
+   512 					jsr		_testSkipped
+   513 					dta		:1,0
+   514 				.endm
+   515
+   516 				.macro _SAP_HEADER
+   517 					.ifdef GENSAP
+   518 						opt		o+h-f-
+   519 						org		$0700
+   520 						dta		c"SAP",$0d,$0a
+   521 						dta		c"AUTHOR ",$22,c"Avery Lee",$22,$0d,$0a
+   522 						dta		c"NAME ",$22,c":1",$22,$0d,$0a
+   523 						dta		c"TYPE D",$0d,$0a
+   524 						dta		c"INIT 2000",$0d,$0a
+   525 						dta		c"TIME 00:",c"05",$0d,$0a
+   526 						dta		a($ffff)
+   527 					.endif
+   528 				.endm
+   529
+   530 				;==========================================================================
+   531 				.nowarn .proc	_crt0init
+   532 				.ifdef SYSSAP
+   533 					jsr		_crt0init_sap
+   534 				.endif
+   535
+   536 					;clear zero page and database
+   537 				.ifdef SYS5200
+   538 A000 A2 20			ldx		#$20
+   539 A002 A9 00			lda		#0
+   540 A004			zploop:
+   541 A004 95 00			sta		0,x
+   542 A006 E8				inx
+   543 A007 D0 FB			bne		zploop
+   544 A009 A2 80			ldx		#$80
+   545 A00B			dbloop:
+   546 A00B 9D 00 02			sta		$0200,x
+   547 A00E E8				inx
+   548 A00F D0 FA			bne		dbloop
+   549 				.endif
+   550
+   551 					;clear options (keep in sync with options.s)
+   552 A011 A2 06			ldx		#6
+   553 A013 A9 00			lda		#0
+   554 					.ifdef SYS5200
+   555 A015 9D F0 02 CA 10 FA		sta:rpl	$02f0,x-
+   556 					.else
+   557 					sta:rpl	$1a00,x-
+   558 					.endif
+   559 					
+   560 					;detect CPU
+   561 A01B A0 00			ldy		#CPUMODE_6502
+   562 A01D F8				sed
+   563 A01E A9 99			lda		#$99
+   564 A020 18				clc
+   565 A021 69 01			adc		#$01
+   566 A023 D8				cld
+   567 A024 D0 1E			bne		detdone
+   568 					
+   569 					;we have at least a 65C02... check for 65C816
+   570 A026 A0 01			ldy		#CPUMODE_65C02
+   571
+   572 A028 38				sec
+   573 					opt		c+
+   574 A029 C2 01			rep		#$01
+   575 A02B B0 17			bcs		detdone
+   576 A02D E2 01			sep		#$01
+   577 A02F 90 13			bcc		detdone
+   578 					
+   579 A031 A0 80			ldy		#CPUMODE_65C816_16
+   580 					
+   581 					;check for 24-bit addressing
+   582 A033 AF CB 00 01			lda		d3+$10000
+   583 A037 AA				tax
+   584 A038 49 F5			eor		#$f5
+   585 A03A 85 CB			sta		d3
+   586 A03C 8A				txa
+   587 A03D CF CB 00 01			cmp		d3+$10000
+   588 A041 D0 01			sne
+   589 A043 C8				iny
+   590 					
+   591 					opt		c-
+   592 					
+   593 A044			detdone:
+   594 A044 8C 8B 02			sty		_cpuMode
+   595
+   596 				.ifdef SYS5200
+   597 A047 20 E6 A4			jsr		_crt0init_5200
+   598 				.endif
+   599
+   600 				.ifdef SYS800
+   601 					;init putchar handler
+   602 					mwa		icptl _vputchar
+   603 					inw		_vputchar
+   604 				.endif
+   605
+   606 A04A 60				rts
+   607 				.endp
+   608
+   609 				;==========================================================================
+   610 A04B			.nowarn .proc	_interruptsOff
+   611 A04B AD 80 02			lda	_intsOff
+   612 A04E 30 12			bmi	xit
+   613 A050 78				sei
+   614 A051 AD 00 02 8D 82 02 + 	mwa	vimirq _prevIRQ
+   615 A05D A9 FF 8D 80 02		mva	#$ff _intsOff
+   616 A062			xit:
+   617 A062 60				rts
+   618 				.endp
+   619
+   620 				;==========================================================================
+   621 A063			.nowarn .proc	_interruptsOn
+   622 A063 AD 80 02			lda	_intsOff
+   623 A066 10 18			bpl	xit
+   624 A068 78				sei
+   625 A069 AD 82 02 8D 00 02 + 	mwa	_prevIRQ vimirq
+   626 A075 A5 00 8D 0E E8		mva	pokmsk irqen
+   627 A07A A9 00 8D 80 02		mva	#$00 _intsOff
+   628 A07F 58				cli
+   629 A080			xit:
+   630 A080 60				rts
+   631 				.endp
+   632
+   633 				;==========================================================================
+   634 A081			.nowarn .proc _screenOn
+   635 					.ifndef SYSSAP
+   636 A081 AD 81 02			lda	_scrnOff
+   637 A084 10 3E			bpl	xit
+   638 					
+   639 A086 20 ED A0			jsr	_waitVBL
+   640 					
+   641 A089 78				sei
+   642 A08A A9 00			lda	#0
+   643 A08C 8D 0A D4			sta	wsync
+   644 A08F 8D 0E D4			sta	nmien
+   645 A092 A9 22 8D 00 D4		mva	#$22 dmactl
+   646 A097 A5 05 8D 02 D4 A5 + 	mwa	sdlstl dlistl
+   647 A0A1 AD 84 02 8D 02 02 + 	mwa	_prevVBI vvblki
+   648 A0AD A9 40			lda	#$40
+   649 A0AF 8D 0E D4			sta	nmien
+   650 A0B2 58				cli
+   651 					
+   652 A0B3 20 ED A0			jsr	_waitVBL
+   653 A0B6 8D 0A D4			sta	wsync
+   654 A0B9 8D 0A D4			sta	wsync
+   655 A0BC 20 ED A0			jsr	_waitVBL
+   656 					.endif
+   657
+   658 A0BF A9 00 8D 81 02		mva	#$00 _scrnOff
+   659 A0C4			xit:
+   660 A0C4 60				rts
+   661 				.endp
+   662
+   663 				;==========================================================================
+   664 A0C5			.nowarn .proc _screenOff
+   665 					.ifndef SYSSAP
+   666 A0C5 AD 81 02			lda	_scrnOff
+   667 A0C8 30 22			bmi	xit
+   668 					
+   669 A0CA 20 ED A0			jsr	_waitVBL
+   670 						
+   671 A0CD 08				php
+   672 A0CE 78				sei
+   673 A0CF A9 00			lda	#0
+   674 A0D1 8D 0A D4			sta	wsync
+   675 A0D4 8D 0E D4			sta	nmien
+   676 A0D7 8D 00 D4			sta	dmactl
+   677 A0DA AD 02 02 8D 84 02 + 	mwa	vvblki _prevVBI
+   678 A0E6 28				plp
+   679 					.endif
+   680
+   681 A0E7 A9 FF 8D 81 02		mva	#$ff _scrnOff
+   682 A0EC			xit:
+   683 A0EC 60				rts
+   684 				.endp
+   685
+   686 				;==========================================================================
+   687 A0ED			.nowarn .proc _waitVBL
+   688 A0ED A9 7B			lda	#123
+   689 A0EF CD 0B D4 D0 FB		cmp:rne vcount
+   690 A0F4 CD 0B D4 F0 FB		cmp:req vcount
+   691 A0F9 60				rts
+   692 				.endp
+   693
+   694 				;==========================================================================
+   695 A0FA			.nowarn .proc _waitFrame
+   696 A0FA EE 0A D4			inc	wsync
+   697 A0FD EE 0A D4			inc	wsync
+   698 A100 4C ED A0			jmp	_waitVBL
+   699 				.endp
+   700
+   701 				;==========================================================================
+   702 A103			.nowarn .proc _waitKeyPrompt
+   703 A103 20 46 A1			jsr		_imprint
+   704 A106 50 72 65 73 73 20 + 	dta		c"Press a key...",0
+   705 					.ifdef SYS5200
+   706 A115 A9 FF 8D 8E 02		mva		#$ff ch
+   707 A11A AD 8E 02 30 FB		lda:rmi	ch
+   708 					.else
+   709 					lda		#0
+   710 					sta		ch
+   711 					sta		ch1
+   712 					lda:req	ch
+   713 					.endif
+   714 A11F 20 46 A1			jsr		_imprint
+   715 A122 9C 00			dta		$9c,0
+   716 A124 60				rts
+   717 				.endp
+   718
+   719 				;==========================================================================
+   720 A125			.nowarn .proc _resetAV
+   721 A125 A9 00			lda	#0
+   722 A127 8D 1D C0			sta	gractl
+   723 A12A 8D 0D C0			sta	grafp0
+   724 A12D 8D 0E C0			sta	grafp1
+   725 A130 8D 0F C0			sta	grafp2
+   726 A133 8D 10 C0			sta	grafp3
+   727 A136 8D 11 C0			sta	grafm
+   728 A139 8D 01 E8			sta	audc1
+   729 A13C 8D 03 E8			sta	audc2
+   730 A13F 8D 05 E8			sta	audc3
+   731 A142 8D 07 E8			sta	audc4
+   732 A145 60				rts
+   733 				.endp
+   734
+   735 				;==========================================================================
+   736 A146			.nowarn .proc _imprint
+   737 A146 68				pla
+   738 A147 AA				tax
+   739 A148 68				pla
+   740 A149 A8				tay
+   741 A14A E8				inx
+   742 A14B D0 01 C8			sne:iny
+   743 A14E 8A				txa
+   744 A14F 20 6C A1			jsr	_print
+   745 A152 A5 C1			lda	a0+1
+   746 A154 48				pha
+   747 A155 A5 C0			lda	a0
+   748 A157 48				pha
+   749 A158 60				rts	
+   750 				.endp
+   751
+   752 				;==========================================================================
+   753 A159			.nowarn .proc _imprintf
+   754 A159 68				pla
+   755 A15A AA				tax
+   756 A15B 68				pla
+   757 A15C A8				tay
+   758 A15D E8				inx
+   759 A15E D0 01 C8			sne:iny
+   760 A161 8A				txa
+   761 A162 20 89 A1			jsr	_printf
+   762 A165 A5 C1			lda	a0+1
+   763 A167 48				pha
+   764 A168 A5 C0			lda	a0
+   765 A16A 48				pha
+   766 A16B 60				rts	
+   767 				.endp
+   768
+   769 				;==========================================================================
+   770 A16C			.nowarn .proc _print
+   771 A16C 85 C0			sta	a0
+   772 A16E 84 C1			sty	a0+1
+   773 A170			charloop:
+   774 A170 A0 00			ldy	#0
+   775 A172 B1 C0			lda	(a0),y
+   776 A174 F0 0C			beq	done
+   777 A176 E6 C0 D0 02 E6 C1		inw	a0
+   778 A17C 20 DA A2			jsr	_printf.putbyte
+   779 A17F 4C 70 A1			jmp	charloop
+   780 A182			done:
+   781 A182 60				rts
+   782 				.endp
+   783
+   784 				;==========================================================================
+   785 A183			.nowarn .proc _println
+   786 A183 20 46 A1			jsr		_imprint
+   787 A186 9B 00			dta		$9b,0
+   788 A188 60				rts
+   789 				.endp
+   790 				;==========================================================================
+   791 A189			.nowarn .proc _printf
+   792 A189 85 C0			sta	a0
+   793 A18B 84 C1			sty	a0+1
+   794 A18D A0 00			ldy	#0
+   795 A18F 84 C8			sty	d0
+   796 A191			charloop:
+   797 A191 B1 C0			lda	(a0),y
+   798 A193 F0 12			beq	done
+   799 A195 E6 C0 D0 02 E6 C1		inw	a0
+   800 A19B C9 25			cmp	#'%'
+   801 A19D F0 09			beq	special
+   802 A19F			escaped:
+   803 A19F 20 DA A2			jsr	putbyte
+   804 A1A2			nextchar:
+   805 A1A2 A0 00			ldy	#0
+   806 A1A4 4C 91 A1			jmp	charloop
+   807 A1A7			done:
+   808 A1A7 60				rts
+   809 A1A8			special:
+   810 A1A8 E6 C8			inc	d0
+   811 A1AA A6 C8			ldx	d0
+   812 A1AC B1 C0			lda	(a0),y
+   813 A1AE E6 C0 D0 02 E6 C1		inw	a0
+   814 A1B4 C9 64			cmp #'d'
+   815 A1B6 D0 47			bne	notdec
+   816 A1B8 98				tya
+   817 A1B9 84 C2			sty	a1
+   818 A1BB A0 06			ldy	#6
+   819 A1BD 78				sei
+   820 A1BE F8				sed
+   821 A1BF			decloop1:
+   822 A1BF 36 C8			rol	d0,x
+   823 A1C1 65 C2			adc	a1
+   824 A1C3 85 C2			sta	a1
+   825 A1C5 88				dey
+   826 A1C6 D0 F7			bne	decloop1
+   827 A1C8 84 C3			sty	a1+1
+   828 A1CA A0 02			ldy	#2
+   829 A1CC			decloop2:
+   830 A1CC 36 C8			rol	d0,x
+   831 A1CE 65 C2			adc	a1
+   832 A1D0 85 C2			sta	a1
+   833 A1D2 26 C3			rol	a1+1
+   834 A1D4 88				dey
+   835 A1D5 D0 F5			bne	decloop2
+   836 A1D7 D8				cld
+   837 A1D8 58				cli
+   838 A1D9 A5 C3			lda	a1+1
+   839 A1DB F0 0F			beq	decdigit2
+   840 A1DD AA				tax
+   841 A1DE BD D6 A4			lda	_hexdig,x
+   842 A1E1 20 DA A2			jsr	putbyte
+   843 A1E4 A5 C2			lda	a1
+   844 A1E6 20 C4 A2			jsr	puthex
+   845 A1E9 4C A2 A1			jmp	nextchar
+   846 A1EC			decdigit2:
+   847 A1EC A5 C2			lda	a1
+   848 A1EE C9 10			cmp	#$10
+   849 A1F0 90 06			bcc	decdigit1
+   850 A1F2 20 C4 A2			jsr	puthex
+   851 A1F5 4C A2 A1			jmp	nextchar
+   852 A1F8			decdigit1:
+   853 A1F8 AA				tax
+   854 A1F9 BD D6 A4			lda	_hexdig,x
+   855 A1FC 4C 9F A1			jmp	escaped
+   856
+   857 A1FF			notdec:
+   858 A1FF C9 78			cmp	#'x'
+   859 A201 D0 08			bne	nothex
+   860 A203 B5 C8			lda	d0,x
+   861 A205 20 C4 A2			jsr	puthex
+   862 A208 4C A2 A1			jmp	nextchar
+   863
+   864 A20B			nothex:
+   865 A20B C9 58			cmp	#'X'
+   866 A20D D0 11			bne	nothexword
+   867 A20F E6 C8			inc	d0
+   868 A211 B5 C9			lda	d1,x
+   869 A213 20 C4 A2			jsr	puthex
+   870 A216 A6 C8			ldx	d0
+   871 A218 B5 C7			lda	d0-1,x
+   872 A21A 20 C4 A2			jsr	puthex
+   873 A21D 4C A2 A1			jmp	nextchar
+   874
+   875 A220			nothexword:
+   876 A220 C9 44			cmp #'D'
+   877 A222 D0 5F			bne	notdecword
+   878
+   879 A224 A0 08			ldy	#8
+   880 A226 A9 00			lda	#0
+   881 A228 85 C2			sta	a1
+   882 A22A 85 C3			sta a1+1
+   883 A22C 85 C4			sta	a2
+   884 A22E 78				sei
+   885 A22F F8				sed
+   886 A230			decword1:
+   887 A230 36 C9			rol	d1,x
+   888 A232 A5 C2			lda	a1
+   889 A234 65 C2			adc	a1
+   890 A236 85 C2			sta	a1
+   891 A238 A5 C3			lda	a1+1
+   892 A23A 65 C3			adc	a1+1
+   893 A23C 85 C3			sta	a1+1
+   894 A23E 88				dey
+   895 A23F D0 EF			bne	decword1
+   896 					
+   897 A241 A0 08			ldy	#8
+   898 A243			decword2:
+   899 A243 36 C8			rol	d0,x
+   900 A245 A5 C2			lda	a1
+   901 A247 65 C2			adc	a1
+   902 A249 85 C2			sta	a1
+   903 A24B A5 C3			lda	a1+1
+   904 A24D 65 C3			adc	a1+1
+   905 A24F 85 C3			sta	a1+1
+   906 A251 A5 C4			lda	a2
+   907 A253 65 C4			adc	a2
+   908 A255 85 C4			sta	a2
+   909 A257 88				dey
+   910 A258 D0 E9			bne	decword2
+   911 A25A D8				cld
+   912 A25B 58				cli
+   913 					
+   914 A25C AA				tax
+   915 A25D F0 10			beq	decword3
+   916 A25F 20 B9 A2			jsr	puthexcond
+   917 A262 A5 C3			lda	a1+1
+   918 A264 20 C4 A2			jsr	puthex
+   919 A267 A5 C2			lda	a1
+   920 A269 20 C4 A2			jsr	puthex
+   921 A26C 4C A2 A1			jmp	nextchar
+   922
+   923 A26F			decword3:
+   924 A26F A5 C3			lda	a1+1
+   925 A271 F0 08			beq	decword4
+   926 A273 A5 C2			lda	a1
+   927 A275 20 C4 A2			jsr	puthex
+   928 A278 4C A2 A1			jmp	nextchar
+   929 					
+   930 A27B			decword4:
+   931 A27B A5 C2			lda	a1
+   932 A27D 20 C4 A2			jsr	puthex
+   933 A280 4C A2 A1			jmp	nextchar
+   934
+   935 A283			notdecword:
+   936 A283 C9 63			cmp #'c'
+   937 A285 D0 0A			bne	notchar
+   938 A287 E6 C8			inc	d0
+   939 A289 B5 C8			lda	d0,x
+   940 A28B 20 DA A2			jsr	putbyte
+   941 A28E 4C A2 A1			jmp	nextchar
+   942 					
+   943 A291			notchar:
+   944 A291 C9 73			cmp #'s'
+   945 A293 D0 1F			bne	notstr
+   946 					
+   947 A295 E6 C8			inc	d0
+   948 A297 B5 C8			lda	d0,x
+   949 A299 85 C2			sta	a1
+   950 A29B B5 C9			lda	d0+1,x
+   951 A29D 85 C3			sta	a1+1
+   952
+   953 A29F			strloop:
+   954 A29F A0 00			ldy	#0
+   955 A2A1 B1 C2			lda	(a1),y
+   956 A2A3 F0 0C			beq	strdone
+   957 A2A5 20 E0 A2			jsr	putbyte2
+   958 A2A8 E6 C2 D0 02 E6 C3		inw	a1
+   959 A2AE 4C 9F A2			jmp	strloop
+   960
+   961 A2B1			strdone:
+   962 A2B1 4C A2 A1			jmp	nextchar
+   963 					
+   964 A2B4			notstr:
+   965 A2B4 C6 C8			dec	d0
+   966 A2B6 4C 9F A1			jmp	escaped
+   967 					
+   968 A2B9			puthexcond:
+   969 A2B9 C9 10			cmp	#$10
+   970 A2BB B0 07			bcs	puthex
+   971 A2BD AA				tax
+   972 A2BE BD D6 A4			lda	_hexdig,x
+   973 A2C1 4C DA A2			jmp	putbyte	
+   974 A2C4			puthex:	
+   975 A2C4 48				pha
+   976 A2C5 4A				lsr
+   977 A2C6 4A				lsr
+   978 A2C7 4A				lsr
+   979 A2C8 4A				lsr
+   980 A2C9 AA				tax
+   981 A2CA BD D6 A4			lda	_hexdig,x
+   982 A2CD 20 DA A2			jsr	putbyte
+   983 A2D0 68				pla
+   984 A2D1 29 0F			and	#$0f
+   985 A2D3 AA				tax
+   986 A2D4 BD D6 A4			lda	_hexdig,x
+   987 A2D7 4C DA A2			jmp	putbyte
+   988
+   989 A2DA			putbyte:
+   990 A2DA AA				tax
+   991 A2DB 20 E0 A2			jsr	putbyte2
+   992 A2DE 8A				txa
+   993 A2DF 60				rts
+   994 					
+   995 A2E0			putbyte2:
+   996 A2E0 6C 89 02			jmp	(_vputchar)
+   997 				.endp
+   998
+   999 				;==========================================================================
+  1000 A2E3			.nowarn .proc	_jam
+  1001 A2E3			loop:
+  1002 A2E3 4C E3 A2			jmp	loop
+  1003 				.endp
+  1004
+  1005 				;==========================================================================
+  1006 A2E6			.nowarn .proc	_waitVCount
+  1007 A2E6 CD 0B D4 D0 FB		cmp:rne	vcount
+  1008 A2EB 60				rts
+  1009 				.endp
+  1010
+  1011 				;=========================================================================
+  1012 A2EC			.nowarn .proc	_imTestInit
+  1013 A2EC 68				pla
+  1014 A2ED 85 C0			sta		a0
+  1015 A2EF A8				tay
+  1016 A2F0 68				pla
+  1017 A2F1 85 C1			sta		a0+1
+  1018 					
+  1019 A2F3 E6 C0 D0 02 E6 C1		inw		a0
+  1020
+  1021 A2F9 A9 00 85 C2			mva		#0 a1
+  1022 A2FD A5 C1 85 C3			mva		a0+1 a1+1	
+  1023 A301			skiploop:
+  1024 A301 B1 C2			lda		(a1),y
+  1025 A303 F0 08			beq		skipdone
+  1026 A305 C8				iny
+  1027 A306 D0 02 E6 C3			sne:inc a1+1
+  1028 A30A 4C 01 A3			jmp		skiploop
+  1029 A30D			skipdone:
+  1030 A30D A5 C3			lda		a1+1
+  1031 A30F 48				pha
+  1032 A310 98				tya
+  1033 A311 48				pha
+  1034 A312 A5 C0			lda		a0
+  1035 A314 A4 C1			ldy		a0+1
+  1036 A316 4C 19 A3			jmp		_testInit
+  1037 				.endp
+  1038
+  1039 				;=========================================================================
+  1040 A319			.nowarn .proc	_testInit
+  1041 					.ifdef STANDALONE
+  1042 					pha
+  1043 					tya
+  1044 					pha
+  1045
+  1046 				.ifdef SYS800
+  1047 					;MaxFlash carts run executables with E: closed. Check for this and
+  1048 					;reopen it if necessary.
+  1049 					lda		ichid
+  1050 					bpl		iocb0_open
+  1051
+  1052 					;reopen IOCB 0
+  1053 					mva		#$03 iccmd
+  1054 					mwa		#e_name icbal
+  1055 					ldx		#0
+  1056 					stx		icax1
+  1057 					mva		#$0c icax2
+  1058 					jsr		ciov
+  1059 					
+  1060 				iocb0_open:
+  1061 				.endif
+  1062
+  1063 					jsr		_crt0init
+  1064 					
+  1065 					pla
+  1066 					tay
+  1067 					pla
+  1068 					.endif
+  1069 					
+  1070 A319 20 6C A1			jsr	_print
+  1071 A31C 20 46 A1			jsr	_imprint
+  1072 A31F 2E 2E 2E 00			dta	c"...",0
+  1073 					
+  1074 					.ifdef STANDALONE
+  1075 					mwa	#_testEnd _exitTest
+  1076 					.else
+  1077 A323 EA EA EA EA EA EA + 	:10 nop
+  1078 					.endif
+  1079 					
+  1080 A32D 60				rts
+  1081 					
+  1082 A32E			msg:
+  1083 A32E 2E 2E 2E 00			dta	c"...",0
+  1084 A332			e_name:
+  1085 A332 45 9B			dta		'E',$9B
+  1086 				.endp
+  1087
+  1088 				;=========================================================================
+  1089 A334			.nowarn .proc	_testEnd
+  1090 					.ifdef SYSSAP
+  1091 						.ifdef STANDALONE
+  1092 							jmp	_sap_testEnd
+  1093 						.else
+  1094 							jmp	_jam
+  1095 						.endif
+  1096 					.else
+  1097 						.ifdef SYS5200
+  1098 A334 4C E3 A2					jmp	_jam
+  1099 						.else
+  1100 							;wait for key
+  1101 							sei
+  1102 							lda		#0
+  1103 							sta		nmien
+  1104 							sta		irqen
+  1105 							mva		#3 skctl
+  1106 							mva		#$40 irqen
+  1107 							bit:rne	irqst
+  1108 							
+  1109 							;initiate soft reset
+  1110 							jmp		($fffc)
+  1111 						.endif
+  1112 					.endif
+  1113 				.endp
+  1114
+  1115 				;=========================================================================
+  1116 A337			.nowarn .proc	_testRestore
+  1117 A337 D8				cld
+  1118 A338 08				php
+  1119 A339 78				sei
+  1120 					
+  1121 					;check if the screen is off; if so, make sure we kill DLIs
+  1122 A33A AD 81 02			lda		_scrnOff
+  1123 A33D F0 08			beq		scrnOK
+  1124 					
+  1125 A33F A9 00			lda		#0
+  1126 A341 EE 0A D4			inc		wsync
+  1127 A344 8D 0E D4			sta		nmien
+  1128 					
+  1129 A347			scrnOK:
+  1130
+  1131 A347 AD 8D 02 8D 0F E8		mva		sskctl skctl
+  1132 						
+  1133 					.ifdef SYSSAP
+  1134 					;kill PIA port A interrupt
+  1135 					mva		#$3c pactl
+  1136 					
+  1137 					;force kernel ROMs back _out_
+  1138 					mva		#$38 pbctl
+  1139 					mva		#$ff portb
+  1140 					mva		#$3c pbctl
+  1141 					mva		#$82 portb
+  1142 					.endif
+  1143 					
+  1144 					.ifdef SYS5200
+  1145 A34D A9 00 8D 1B C0		mva		#$00 prior
+  1146 A352 A9 F8 8D 09 D4		mva		#$f8 chbase
+  1147 A357 A9 02 8D 01 D4		mva		#$02 chactl
+  1148 A35C A9 04 8D 1F C0		mva		#$04 consol
+  1149 					.endif
+  1150 					
+  1151 					.ifdef SYS800
+  1152 					;kill PIA port A interrupt
+  1153 					mva		#$3c pactl
+  1154 					
+  1155 					;force kernel ROMs back in	
+  1156 					mva		#$38 pbctl
+  1157 					mva		#$00 portb
+  1158 					mva		#$3c pbctl
+  1159 					mva		#$83 portb
+  1160 					
+  1161 					;kill OS timer 1
+  1162 					ldx		#$ff
+  1163 					stx		wsync
+  1164 					stx		cdtmv1
+  1165 					inx
+  1166 					stx		cdtmv1
+  1167 					stx		cdtmv1+1
+  1168 					.endif
+  1169
+  1170 A361 28				plp
+  1171 A362 20 63 A0			jsr	_interruptsOn
+  1172 A365 20 81 A0			jsr	_screenOn
+  1173 A368 20 25 A1			jsr	_resetAV
+  1174 					
+  1175 					;unmask interrupts
+  1176 A36B 58				cli
+  1177 A36C 60				rts
+  1178 				.endp
+  1179
+  1180 				;=========================================================================
+  1181 A36D			.nowarn .proc	_testPassed
+  1182 A36D 20 37 A3			jsr	_testRestore
+  1183
+  1184 A370 20 46 A1			jsr	_imprint
+  1185 A373 50 61 73 73 9B 00		dta	c"Pass",$9b,0
+  1186 					
+  1187 A379 AE 88 02			ldx	_exitTestS
+  1188 A37C 9A				txs
+  1189 A37D A0 00			ldy	#0
+  1190 A37F 6C 86 02			jmp	(_exitTest)
+  1191 				.endp
+  1192
+  1193 				;=========================================================================
+  1194 A382			.nowarn .proc	_testFailed
+  1195 A382 20 37 A3			jsr	_testRestore
+  1196
+  1197 A385 20 46 A1			jsr	_imprint
+  1198 A388 46 41 49 4C 2E 9B + 	dta	c"FAIL.",$9b,0
+  1199
+  1200 A38F			nomsgentry:
+  1201 A38F 68				pla
+  1202 A390 AA				tax
+  1203 A391 68				pla
+  1204 A392 A8				tay
+  1205 A393 E8				inx
+  1206 A394 D0 01 C8			sne:iny
+  1207 A397 8A				txa
+  1208 A398 20 89 A1			jsr	_printf
+  1209 A39B 20 83 A1			jsr	_println
+  1210 					
+  1211 A39E AE 88 02			ldx	_exitTestS
+  1212 A3A1 9A				txs
+  1213 A3A2 A0 80			ldy	#$80
+  1214 A3A4 6C 86 02			jmp	(_exitTest)
+  1215
+  1216 A3A7			msg2:
+  1217 A3A7 9B 00			dta	$9b,0
+  1218 				.endp
+  1219
+  1220 				;=========================================================================
+  1221 A3A9			.nowarn .proc	_testFailed2
+  1222 A3A9 20 37 A3			jsr	_testRestore
+  1223 A3AC 4C 8F A3			jmp	_testFailed.nomsgentry
+  1224 				.endp
+  1225
+  1226 				;=========================================================================
+  1227 A3AF			.nowarn .proc	_testSkipped
+  1228 A3AF 20 37 A3			jsr		_testRestore
+  1229
+  1230 A3B2 20 46 A1			jsr		_imprint
+  1231 A3B5 53 6B 69 70 70 65 + 	dta		c"Skipped",$9b,0
+  1232 					
+  1233 A3BE 68				pla
+  1234 A3BF AA				tax
+  1235 A3C0 68				pla
+  1236 A3C1 A8				tay
+  1237 A3C2 E8				inx
+  1238 A3C3 D0 01 C8			sne:iny
+  1239 A3C6 8A				txa
+  1240 A3C7 20 89 A1			jsr		_printf
+  1241 					
+  1242 A3CA 20 83 A1			jsr		_println
+  1243 					
+  1244 A3CD AE 88 02			ldx		_exitTestS
+  1245 A3D0 9A				txs
+  1246 A3D1 A0 40			ldy		#$40
+  1247 A3D3 6C 86 02			jmp		(_exitTest)
+  1248 				.endp
+  1249
+  1250 				;==========================================================================
+  1251 				; _loadSeg()
+  1252 				;
+  1253 				; Module loader.
+  1254 				;
+  1255 				;	X = index of module to load
+  1256 				;
+  1257 				.ifdef SEGS_MIN_MEM
+  1258 				.nowarn .proc	_loadSeg
+  1259 					;get starting sector
+  1260 					mva		segaddrlo,x	daux1
+  1261 					mva		segaddrhi,x	daux2
+  1262 						
+  1263 					;get ending sector
+  1264 					lda		segaddrlo+1,x
+  1265 					sub		daux1
+  1266 					sta		d7
+  1267
+  1268 					;setup sector load command and relocation
+  1269 					mva		#'R' dcomnd
+  1270 					mva		#1 dunit
+  1271 					lda		#$00
+  1272 					sta		dbuflo
+  1273 					sta		a0
+  1274 					sta		runad+1
+  1275 					lda		#$0b
+  1276 					sta		dbufhi
+  1277 					sta		a0+1
+  1278 					
+  1279 					;preload first two sectors
+  1280 					jsr		step_sector
+  1281 				relocloop:
+  1282 					;load starting address
+  1283 					mva		(a0),y a1
+  1284 					iny:sne:jsr step_sector
+  1285 					mva		(a0),y a1+1
+  1286 					iny:sne:jsr step_sector
+  1287 					
+  1288 					;skip $ffff words
+  1289 					lda		a1
+  1290 					and		a1+1
+  1291 					cmp		#$ff
+  1292 					beq		relocloop
+  1293 					
+  1294 					;load ending address
+  1295 					mva		(a0),y a2
+  1296 					iny:sne:jsr step_sector
+  1297 					mva		(a0),y a2+1
+  1298 					iny:sne:jsr step_sector
+  1299 					inw		a2
+  1300
+  1301 					mwa		#definit initad
+  1302 					
+  1303 					;copy data (slow, but oh well)
+  1304 					ldx		#0
+  1305 				copyloop:
+  1306 					lda		(a0),y
+  1307 					sta		(a1,x)
+  1308 					iny:sne:jsr step_sector
+  1309 					inw		a1
+  1310 					lda		a1
+  1311 					cmp		a2
+  1312 					bne		copyloop
+  1313 					lda		a1+1
+  1314 					cmp		a2+1
+  1315 					bne		copyloop
+  1316 					
+  1317 					;init a segment
+  1318 					jsr		doinit
+  1319 					
+  1320 					;check if we're done
+  1321 					lda		runad+1
+  1322 					beq		relocloop
+  1323 					rts
+  1324
+  1325 				doinit:
+  1326 					jmp		(initad)
+  1327 					
+  1328 				step_sector:
+  1329 					lda		d7
+  1330 					beq		no_sectors_left
+  1331 					jsr		dskinv
+  1332 					dec		d7
+  1333 					inw		daux1
+  1334 					lda		dbuflo
+  1335 					eor		#$80
+  1336 					sta		dbuflo
+  1337 					bne		step_sector
+  1338 				no_sectors_left:
+  1339 					ldy		#0
+  1340 					ldx		#0
+  1341 				definit:
+  1342 					rts
+  1343 				.endp
+  1344 				.else
+  1345 A3D6			.nowarn .proc	_loadSeg
+  1346 				.ifdef SEGS_IN_ROM
+  1347 A3D6 8E E4 02			stx		_lastMod
+  1348 A3D9 60				rts
+  1349 				.else
+  1350 					;get starting sector
+  1351 					mva		segaddrlo,x	daux1
+  1352 					mva		segaddrhi,x	daux2
+  1353 						
+  1354 					;get ending sector
+  1355 					mva		segaddrlo+1,x	a0
+  1356 					mva		segaddrhi+1,x	a0+1
+  1357
+  1358 					;load sectors starting at $4000
+  1359 				sectorloop:
+  1360 					mva		#'R' dcomnd
+  1361 					mva		#1 dunit
+  1362 					mwa		#$4000 dbuflo
+  1363 						
+  1364 					jsr		dskinv
+  1365 					tya
+  1366 					bmi		sectorloop
+  1367 					
+  1368 					lda		#$80
+  1369 					eor		dbuflo
+  1370 					sta		dbuflo
+  1371 					sne:inc	dbufhi
+  1372 					
+  1373 					inc		daux1
+  1374 					sne:inc	daux2
+  1375 					
+  1376 					lda		daux1
+  1377 					cmp		a0
+  1378 					bne		sectorloop
+  1379 					lda		daux2
+  1380 					cmp		a0+1
+  1381 					bne		sectorloop
+  1382 					rts
+  1383 				.endif
+  1384 				.endp
+  1385 				.endif
+  1386
+  1387 				;==========================================================================
+  1388 				; _runSeg()
+  1389 				;
+  1390 				; Module relocator and executor.
+  1391 				;
+  1392 				; The last segment loaded by _loadSeg() is relocated and executed.
+  1393 				;
+  1394
+  1395 				.ifdef SEGS_MIN_MEM
+  1396
+  1397 				;-----------------------------------------------
+  1398 				; Minimum memory implementation.
+  1399 				.nowarn .proc _runSeg
+  1400 					jmp		(runad)
+  1401 				.endp
+  1402
+  1403 				.else
+  1404
+  1405 				;-----------------------------------------------
+  1406 A3DA			.nowarn .proc _runSeg
+  1407 					
+  1408 					;begin relocation
+  1409 A3DA A9 01 8D E0 02 A9 + 	mwa		#relocloop runad
+  1410
+  1411 					.ifdef SEGS_IN_ROM
+  1412 A3E4 AE E4 02			ldx		_lastMod
+  1413 A3E7 BD 00 BF 85 C0		mva		segaddrlo,x a0
+  1414 A3EC BD 80 BF 85 C1		mva		segaddrhi,x a0+1
+  1415 					.else
+  1416 					mwa		#$4000 a0
+  1417 					.endif
+  1418 					
+  1419 					.ifndef SEGS_LZPACK
+  1420 					
+  1421 					;==== uncompressed version
+  1422
+  1423 					ldy		#0
+  1424 				relocloop:
+  1425 					;load starting address
+  1426 					mva		(a0),y a1
+  1427 					inw		a0
+  1428 					mva		(a0),y a1+1
+  1429 					inw		a0
+  1430 					
+  1431 					;skip $ffff words
+  1432 					lda		a1
+  1433 					and		a1+1
+  1434 					cmp		#$ff
+  1435 					beq		relocloop
+  1436 					
+  1437 					;load ending address
+  1438 					mva		(a0),y a2
+  1439 					inw		a0
+  1440 					mva		(a0),y a2+1
+  1441 					inw		a0
+  1442 					inw		a2
+  1443 					
+  1444 					;copy data (slow, but oh well)
+  1445 				copyloop:
+  1446 					lda		(a0),y
+  1447 					sta		(a1),y
+  1448 					inw		a0
+  1449 					inw		a1
+  1450 					lda		a1
+  1451 					cmp		a2
+  1452 					bne		copyloop
+  1453 					lda		a1+1
+  1454 					cmp		a2+1
+  1455 					bne		copyloop
+  1456 					
+  1457 					;init a segment
+  1458 					mwa		#definit initad
+  1459 					jsr		doinit
+  1460 					jmp		(runad)
+  1461
+  1462 				doinit:
+  1463 					jmp		(initad)
+  1464 					
+  1465 				definit:
+  1466 					rts
+  1467
+  1468 					.else
+  1469 					
+  1470 					;==== compressed version
+  1471 					;
+  1472 					;loader:
+  1473 					;	a3		destination
+  1474 					;	d6/d7	segment end address
+  1475 					;
+  1476 					;decompressor:
+  1477 					;	a0		raw source stream
+  1478 					;	a1		run source pointer
+  1479 					;	a2		window pointer ($1000-1fff)
+  1480 					;	d0		literal/run flag bits
+  1481 					;	d1		remaining flag bits shifter
+  1482 					;	d2		run length counter
+  1483 					;	d3		temporary
+  1484 					;	d4		superflag bits
+  1485 					;	d5		superflag shifter
+  1486
+  1487 A3F1 A9 00			lda		#0
+  1488 A3F3 85 C8			sta		d0
+  1489 A3F5 85 C9			sta		d1
+  1490 A3F7 85 CA			sta		d2
+  1491 A3F9 85 CD			sta		d5
+  1492 A3FB 85 C4			sta		a2
+  1493 A3FD A9 10			lda		#$10
+  1494 A3FF 85 C5			sta		a2+1
+  1495 A401			relocloop:
+  1496 A401 A0 00			ldy		#0
+  1497 					;load starting address
+  1498 A403 20 4D A4			jsr		getbyte
+  1499 A406 85 C6			sta		a3
+  1500 A408 20 4D A4			jsr		getbyte
+  1501 A40B 85 C7			sta		a3+1
+  1502 					
+  1503 					;skip $ffff words
+  1504 A40D 25 C6			and		a3
+  1505 A40F C9 FF			cmp		#$ff
+  1506 A411 F0 EE			beq		relocloop
+  1507 					
+  1508 					;load ending address
+  1509 A413 20 4D A4			jsr		getbyte
+  1510 A416 85 CE			sta		d6
+  1511 A418 20 4D A4			jsr		getbyte
+  1512 A41B 85 CF			sta		d7
+  1513 A41D E6 CE D0 02 E6 CF		inw		d6
+  1514 					
+  1515 					;copy data (slow, but oh well)
+  1516 A423			copyloop:
+  1517 A423 20 4D A4			jsr		getbyte
+  1518 A426 91 C6			sta		(a3),y
+  1519 A428 E6 C6 D0 02 E6 C7		inw		a3
+  1520 A42E A5 C6			lda		a3
+  1521 A430 C5 CE			cmp		d6
+  1522 A432 D0 EF			bne		copyloop
+  1523 A434 A5 C7			lda		a3+1
+  1524 A436 C5 CF			cmp		d7
+  1525 A438 D0 E9			bne		copyloop
+  1526 					
+  1527 					;init a segment
+  1528 A43A A9 D5 8D E2 02 A9 + 	mwa		#definit initad
+  1529 A444 20 4A A4			jsr		doinit
+  1530 A447 6C E0 02			jmp		(runad)
+  1531
+  1532 A44A			doinit:
+  1533 A44A 6C E2 02			jmp		(initad)
+  1534 					
+  1535 A44D			getbyte:
+  1536 					;check if we have a run in progress
+  1537 A44D A5 CA			lda		d2
+  1538 A44F D0 4E			bne		getrunbyte
+  1539
+  1540 					;check if we need to reload flag bits
+  1541 A451 06 C9			asl		d1
+  1542 A453 D0 1A			bne		havebits
+  1543 					
+  1544 					;check if we need to reload superflag bits
+  1545 A455 06 CD			asl		d5
+  1546 A457 D0 09			bne		havesuperbits
+  1547 					
+  1548 					;load next superflag byte
+  1549 A459 20 B8 A4			jsr		getrawbyte
+  1550 A45C 85 CC			sta		d4
+  1551 A45E A9 7F			lda		#$7f
+  1552 A460 85 CD			sta		d5
+  1553 					
+  1554 A462			havesuperbits:
+  1555 					;pull next superflag and check if it's all literals (0)
+  1556 A462 06 CC			asl		d4
+  1557 A464 90 05			bcc		all_literals
+  1558 					
+  1559 					;nope... read next byte as flags byte
+  1560 A466 20 B8 A4			jsr		getrawbyte
+  1561 A469 85 C8			sta		d0
+  1562
+  1563 A46B			all_literals:
+  1564 A46B A9 7F			lda		#$7f
+  1565 A46D 85 C9			sta		d1
+  1566 A46F			havebits:
+  1567 A46F 06 C8			asl		d0
+  1568 A471 B0 06			bcs		isrun
+  1569 					
+  1570 					;store byte into window
+  1571 A473 20 B8 A4			jsr		getrawbyte
+  1572 A476 4C C1 A4			jmp		putwinbyte
+  1573
+  1574 A479			isrun:
+  1575 					;load offset/run bytes
+  1576 A479 20 B8 A4			jsr		getrawbyte
+  1577 A47C 85 CB			sta		d3
+  1578 A47E 20 B8 A4			jsr		getrawbyte
+  1579 A481 85 CA			sta		d2
+  1580 					
+  1581 					;compute run source from current position and offset
+  1582 A483 A5 C4			lda		a2
+  1583 A485 18				clc
+  1584 A486 E5 CB			sbc		d3
+  1585 A488 85 C2			sta		a1
+  1586 A48A A5 C5			lda		a2+1
+  1587 A48C E5 CA			sbc		d2
+  1588 A48E 29 0F			and		#$0f
+  1589 A490 09 10			ora		#$10
+  1590 A492 85 C3			sta		a1+1
+  1591 					
+  1592 					;compute length and stash run length
+  1593 A494 A5 CA			lda		d2
+  1594 A496 4A				lsr
+  1595 A497 4A				lsr
+  1596 A498 4A				lsr
+  1597 A499 4A				lsr
+  1598 A49A 18 69 03			add		#3
+  1599 A49D 85 CA			sta		d2
+  1600 A49F			getrunbyte:
+  1601 A49F C6 CA			dec		d2
+  1602 A4A1 A0 00			ldy		#0
+  1603 A4A3 B1 C2			lda		(a1),y
+  1604 A4A5 E6 C2			inc		a1
+  1605 A4A7 D0 18			bne		putwinbyte
+  1606 A4A9 E6 C3			inc		a1+1
+  1607 A4AB 48				pha
+  1608 A4AC A5 C3			lda		a1+1
+  1609 A4AE 29 0F			and		#$0f
+  1610 A4B0 09 10			ora		#$10
+  1611 A4B2 85 C3			sta		a1+1
+  1612 A4B4 68				pla
+  1613 A4B5 4C C1 A4			jmp		putwinbyte
+  1614 					
+  1615 A4B8			getrawbyte:
+  1616 A4B8 B1 C0			lda		(a0),y
+  1617 A4BA E6 C0 D0 02 E6 C1		inw		a0
+  1618 A4C0 60				rts
+  1619 					
+  1620 A4C1			putwinbyte:
+  1621 A4C1 91 C4			sta		(a2),y
+  1622 A4C3 E6 C4			inc		a2
+  1623 A4C5 F0 01 60			seq:rts
+  1624 A4C8 A4 C5			ldy		a2+1
+  1625 A4CA C8				iny
+  1626 A4CB C0 20			cpy		#$20
+  1627 A4CD D0 02 A0 10			sne:ldy	#$10
+  1628 A4D1 84 C5			sty		a2+1
+  1629 A4D3 A0 00			ldy		#0
+  1630 A4D5			definit:
+  1631 A4D5 60				rts	
+  1632 					
+  1633 					.endif
+  1634 				.endp
+  1635 				.endif
+  1636
+  1637 				;==========================================================================
+  1638 A4D6 30 31 32 33 34 35 + _hexdig	dta		c"0123456789ABCDEF"
+  1639
+  1640 				;==========================================================================
+  1641 				; segment table
+  1642 				;
+  1643 				.ifndef SYS800
+  1644 = BF00			segaddrlo	equ	$bf00
+  1645 = BF80			segaddrhi	equ	$bf80
+  1646 				.else
+  1647 				segaddrlo	equ	$1900
+  1648 				segaddrhi	equ	$1980
+  1649 				.endif
+  1650
+  1651 = 0900			_veronicaLaunch = $0900
+  1652
+  1653 				;==========================================================================
+  1654 				; platform-specific library
+  1655 				;
+  1656 				.ifdef SYS5200
+  1657 A4E6				icl		'lib5200.s'
+Source: lib5200.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 A4E6			.proc _crt0init_5200
+    23 A4E6 A9 02			lda		#$02
+    24 A4E8 8D 8D 02			sta		sskctl
+    25 A4EB 8D 0F E8			sta		skctl
+    26 					
+    27 A4EE A9 04 8D 1F C0		mva		#$04 consol
+    28 A4F3 A9 00 8D 8F 02		mva		#$00 keydel
+    29 					
+    30 A4F8 08				php
+    31 A4F9 78				sei
+    32 					
+    33 A4FA A5 00			lda		pokmsk
+    34 A4FC 09 C0			ora		#$c0
+    35 A4FE 85 00			sta		pokmsk
+    36 A500 8D 0E E8			sta		irqen
+    37
+    38 A503 A9 19 8D 0A 02 A9 + 	mwa		#_kybd_handler vkybdf
+    39 A50D A9 2C 8D 04 02 A9 + 	mwa		#_vbd_handler vvblkd
+    40 					
+    41 A517 28				plp
+    42 A518 60				rts
+    43 				.endp
+    44
+    45 				;==========================================================================
+    46 A519			.proc _kybd_handler
+    47 					;The bass-ackward design of the 5200 keyboard causes an IRQ to occur
+    48 					;every 32 scanlines while a key is held down. We require keys to be
+    49 					;released for at least one full frame before we recognize another
+    50 					;one.
+    51 A519 AE 8F 02			ldx		keydel
+    52 A51C D0 03 8D 8E 02		sne:sta	ch
+    53 A521 A9 02			lda		#2
+    54 A523 8D 8F 02			sta		keydel
+    55 A526 68				pla
+    56 A527 A8				tay
+    57 A528 68				pla
+    58 A529 AA				tax
+    59 A52A 68				pla
+    60 A52B 40				rti
+    61 				.endp
+    62
+    63 				;==========================================================================
+    64 A52C			.proc _vbd_handler
+    65 A52C AD 8F 02			lda		keydel
+    66 A52F F0 03 CE 8F 02		seq:dec	keydel
+    67 					
+    68 A534 68 A8 68 AA 68		plr
+    69 A539 40				rti
+    70 				.endp
+    71
+  1658 				.endif
+  1659 				.ifdef SYSSAP
+  1660 					icl		'libsap.s'
+  1661 				.endif
+  1662
+  1663 				;==========================================================================
+  1664 				.ifndef STANDALONE
+  1665 				.ifdef SYS5200
+  1666 					opt	o+
+  1667 				.else
+  1668 					opt	h+o+
+  1669 				.endif
+  1670 				.endif
+    28
+    29 A53A			module_begin:
+    30 A53A 00 FF FF 00 20 54 + 	ins		'standalone.lzobx'
+    31 A6C6			module_end:
+    32
+    33 A6C6				icl		'display5200.s'
+Source: display5200.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 = A6C6			disp_savepc = *
+    23
+    24 						opt		o-f-
+    25 A6C6					org		$20
+    26 0020			_disp_row		dta		0
+    27 0021			_disp_col		dta		0
+    28 0022			_disp_rowptr	dta		a(0)
+    29 0024			_disp_cha		dta		0
+    30 						
+    31 = 0300			_disp_dlist		equ		$0300
+    32 = 0380			_disp_rowaddrlo	equ		$0380
+    33 = 0398			_disp_rowaddrhi	equ		$0398
+    34 						
+    35 0025					org		disp_savepc
+    36 						opt		o+f+
+    37
+    38 				;==========================================================================
+    39 A6C6			.nowarn .proc _disp_init
+    40 						;copy down initial rows to low memory
+    41 A6C6 A2 2F				ldx		#47
+    42 A6C8			copyloop1:
+    43 A6C8 BD 39 A8 9D 80 03			mva		_disp_rowaddrinit,x _disp_rowaddrlo,x
+    44 A6CE CA					dex
+    45 A6CF 10 F7				bpl		copyloop1
+    46
+    47 						;clear screen memory
+    48 A6D1 20 22 A8				jsr		_disp_clearScreen
+    49 						
+    50 						;set up new display list
+    51 A6D4 20 E6 A7				jsr		_disp_rewriteDisplayList
+    52 						
+    53 						;setup colors
+    54 A6D7 A9 CA 85 0D				mva		#$ca color1
+    55 A6DB A9 94 85 0E				mva		#$94 color2
+    56 A6DF A9 F8 8D 09 D4			mva		#$f8 chbase
+    57 A6E4 A9 02 8D 01 D4			mva		#$02 chactl
+    58 A6E9 A9 22 85 07				mva		#$22 sdmctl
+    59 						
+    60 						;swap in new display list and vector handlers
+    61 A6ED 78					sei
+    62 A6EE A9 00 85 05 A9 03 + 		mwa		#_disp_dlist sdlstl
+    63 A6F6 58					cli
+    64 						
+    65 						;turn on NMIs
+    66 A6F7 A9 40 8D 0E D4			mva		#$40 nmien
+    67 						
+    68 						;wait for vertical blank
+    69 A6FC 20 ED A0				jsr		_waitVBL
+    70 						
+    71 						;init params
+    72 A6FF A9 00 85 20				mva		#0 _disp_row
+    73 A703 A9 02 85 21				mva		#2 _disp_col
+    74 A707 20 BB A7				jsr		_disp_recompRowAddr
+    75 						
+    76 						;replace putchar vector
+    77 A70A A9 15 8D 89 02 A9 + 		mwa		#_disp_putchar _vputchar
+    78 A714 60					rts
+    79 				.endp
+    80
+    81 				;==========================================================================
+    82 A715			.proc	_disp_putchar
+    83 A715 85 24				sta		_disp_cha
+    84 A717 98					tya
+    85 A718 48					pha
+    86 						
+    87 A719 20 DD A7				jsr		_disp_toggleCursor
+    88 						
+    89 A71C A5 24				lda		_disp_cha
+    90 						
+    91 						;check for newline
+    92 A71E C9 9B				cmp		#$9b
+    93 A720 F0 30				beq		newline
+    94 						
+    95 						;check for clear line
+    96 A722 C9 9C				cmp		#$9c
+    97 A724 F0 26				beq		isclearline
+    98 						
+    99 						;check for clear screen
+   100 A726 C9 7D				cmp		#$7d
+   101 A728 F0 11				beq		isclearscrn
+   102
+   103 						;draw raw character
+   104 A72A 20 C8 A7				jsr		_disp_putraw
+   105 						
+   106 						;update position and exit
+   107 A72D E6 21				inc		_disp_col
+   108 A72F A5 21				lda		_disp_col
+   109 A731 C9 27				cmp		#39
+   110 A733 B0 1D				bcs		newline
+   111 A735			alldone:
+   112 A735 20 DD A7				jsr		_disp_toggleCursor
+   113
+   114 A738 68					pla
+   115 A739 A8					tay
+   116 A73A 60					rts
+   117 						
+   118 A73B			isclearscrn:
+   119 A73B 20 22 A8				jsr		_disp_clearScreen
+   120 A73E A9 00 85 20				mva		#0 _disp_row
+   121 A742 A9 02 85 21				mva		#2 _disp_col
+   122 A746 20 BB A7				jsr		_disp_recompRowAddr
+   123 A749 4C 35 A7				jmp		alldone
+   124 				 
+   125 A74C			isclearline:
+   126 A74C 20 6B A7				jsr		_disp_clearLine
+   127 A74F 4C 35 A7				jmp		alldone
+   128 						
+   129 A752			newline:
+   130 						;reset X position
+   131 A752 A9 02 85 21				mva		#2 _disp_col
+   132 						
+   133 						;increment Y position
+   134 A756 E6 20				inc		_disp_row
+   135 						
+   136 						;check if we've gone over
+   137 A758 A5 20				lda		_disp_row
+   138 A75A C9 18				cmp		#24
+   139 A75C 90 07				bcc		noscroll
+   140 						
+   141 						;whoops... looks like we'll have to scroll
+   142 A75E A9 17 85 20				mva		#23 _disp_row
+   143 A762 20 7B A7				jsr		_disp_scroll
+   144
+   145 A765			noscroll:
+   146 A765 20 BB A7				jsr		_disp_recompRowAddr
+   147 A768 4C 35 A7				jmp		alldone
+   148 				.endp
+   149
+   150 				;==========================================================================
+   151 A76B			.proc	_disp_clearLine
+   152 A76B A9 00				lda		#0
+   153 A76D A0 28				ldy		#40
+   154 A76F			yloop:
+   155 A76F 91 22				sta		(_disp_rowptr),y
+   156 A771 88					dey
+   157 A772 10 FB				bpl		yloop
+   158 						
+   159 A774 A9 02 85 21				mva		#2 _disp_col
+   160 						
+   161 A778 4C BB A7				jmp		_disp_recompRowAddr
+   162 				.endp
+   163
+   164 				;==========================================================================
+   165 A77B			.proc	_disp_scroll
+   166 						;rotate row lines
+   167 A77B AD 80 03				lda		_disp_rowaddrlo
+   168 A77E 48					pha
+   169 A77F AD 98 03				lda		_disp_rowaddrhi
+   170 A782 48					pha
+   171 						
+   172 A783 A2 E9				ldx		#$e9
+   173 A785			shiftloop:
+   174 A785 BD 98 02				lda		_disp_rowaddrlo-$e8,x
+   175 A788 9D 97 02				sta		_disp_rowaddrlo-$e9,x
+   176 A78B BD B0 02				lda		_disp_rowaddrhi-$e8,x
+   177 A78E 9D AF 02				sta		_disp_rowaddrhi-$e9,x
+   178 A791 E8					inx
+   179 A792 D0 F1				bne		shiftloop
+   180 						
+   181 A794 68					pla
+   182 A795 8D AF 03				sta		_disp_rowaddrhi+23
+   183 A798 68					pla
+   184 A799 8D 97 03				sta		_disp_rowaddrlo+23
+   185 						
+   186 						;remake display list
+   187 A79C 20 E6 A7				jsr		_disp_rewriteDisplayList
+   188 						
+   189 						;clear row 23
+   190 A79F AD AF 03 85 23			mva		_disp_rowaddrhi+23 _disp_rowptr+1
+   191 A7A4 AD 97 03 85 22			mva		_disp_rowaddrlo+23 _disp_rowptr
+   192 						
+   193 A7A9 A9 00				lda		#0
+   194 A7AB A0 27				ldy		#39
+   195 A7AD			xloop:
+   196 A7AD 91 22				sta		(_disp_rowptr),y
+   197 A7AF 88					dey
+   198 A7B0 10 FB				bpl		xloop
+   199 A7B2 E6 23				inc		_disp_rowptr+1
+   200 						
+   201 A7B4 A9 17 85 20				mva		#23 _disp_row
+   202 A7B8 4C BB A7				jmp		_disp_recompRowAddr
+   203 				.endp
+   204
+   205 				;==========================================================================
+   206 A7BB			.proc	_disp_recompRowAddr
+   207 A7BB A6 20				ldx		_disp_row
+   208 A7BD BD 80 03 85 22			mva		_disp_rowaddrlo,x _disp_rowptr
+   209 A7C2 BD 98 03 85 23			mva		_disp_rowaddrhi,x _disp_rowptr+1
+   210 A7C7 60					rts
+   211 				.endp
+   212
+   213 				;==========================================================================
+   214 A7C8			.proc	_disp_putraw
+   215 						;convert to internal encoding
+   216 A7C8 48					pha
+   217 A7C9 2A					rol
+   218 A7CA 2A					rol
+   219 A7CB 2A					rol
+   220 A7CC 2A					rol
+   221 A7CD 29 03				and		#3
+   222 A7CF AA					tax
+   223 A7D0 68					pla
+   224 A7D1 5D D9 A7				eor		convtab,x
+   225 						
+   226 						;store character
+   227 A7D4 A4 21				ldy		_disp_col
+   228 A7D6 91 22				sta		(_disp_rowptr),y
+   229
+   230 						;all done
+   231 A7D8 60					rts
+   232 						
+   233 A7D9			convtab:
+   234 A7D9 40					dta		$40
+   235 A7DA 20					dta		$20
+   236 A7DB 60					dta		$60
+   237 A7DC 00					dta		$00
+   238
+   239 				.endp
+   240 						
+   241 				;==========================================================================
+   242 A7DD			.proc	_disp_toggleCursor
+   243 A7DD A4 21				ldy		_disp_col
+   244 A7DF B1 22				lda		(_disp_rowptr),y
+   245 A7E1 49 80				eor		#$80
+   246 A7E3 91 22				sta		(_disp_rowptr),y
+   247 A7E5 60					rts
+   248 				.endp
+   249
+   250 				;=========================================================================
+   251 A7E6			.proc	_disp_rewriteDisplayList
+   252 A7E6 A9 00 85 22 A9 03 + 		mwa		#$0300 _disp_rowptr
+   253 A7EE A0 00				ldy		#0
+   254 						
+   255 						;24 blank lines
+   256 A7F0 A9 70				lda		#$70
+   257 A7F2 91 22 C8				sta:iny	(_disp_rowptr),y
+   258 A7F5 91 22 C8				sta:iny	(_disp_rowptr),y
+   259 A7F8 91 22 C8				sta:iny	(_disp_rowptr),y
+   260 						
+   261 						;24 LMS lines
+   262 A7FB A2 00				ldx		#0
+   263 A7FD			lineloop:
+   264 A7FD A9 42 91 22 C8			mva:iny	#$42				(_disp_rowptr),y
+   265 A802 BD 80 03 91 22 C8			mva:iny	_disp_rowaddrlo,x	(_disp_rowptr),y
+   266 A808 BD 98 03 91 22 C8			mva:iny	_disp_rowaddrhi,x	(_disp_rowptr),y
+   267 A80E E8					inx
+   268 A80F E0 18				cpx		#24
+   269 A811 D0 EA				bne		lineloop
+   270 						
+   271 						;add wait for VBL insn
+   272 A813 A9 41 91 22 C8			mva:iny	#$41		(_disp_rowptr),y
+   273 A818 A9 00 91 22 C8			mva:iny	#<$0300		(_disp_rowptr),y
+   274 A81D A9 03 91 22				mva		#>$0300		(_disp_rowptr),y
+   275 A821 60					rts		
+   276 				.endp
+   277
+   278 				;=========================================================================
+   279 A822			.proc	_disp_clearScreen
+   280 A822 A9 04 85 23				mva		#$04 _disp_rowptr+1
+   281 A826 A9 00 85 22				mva		#$00 _disp_rowptr
+   282 A82A A2 04				ldx		#$04
+   283 A82C			xloop:
+   284 A82C A0 00				ldy		#0
+   285 A82E			yloop:
+   286 A82E 91 22				sta		(_disp_rowptr),y
+   287 A830 C8					iny
+   288 A831 D0 FB				bne		yloop
+   289 A833 E6 23				inc		_disp_rowptr+1
+   290 A835 CA					dex
+   291 A836 D0 F4				bne		xloop
+   292 A838 60					rts
+   293 				.endp
+   294
+   295 				;=========================================================================	
+   296 A839			_disp_rowaddrinit:
+   297 A839 00 28 50 78 A0 C8 + 		:24 dta <($0400 + 40*#)
+   298 A851 04 04 04 04 04 04 + 		:24 dta >($0400 + 40*#)
+    34
+    35 A869			.proc _boot
+    36 A869 20 00 A0			jsr		_crt0init
+    37 A86C 20 C6 A6			jsr		_disp_init
+    38 A86F 58				cli
+    39 A870 A2 00			ldx		#0
+    40 					
+    41 A872 BA				tsx
+    42 A873 8D 88 02			sta		_exitTestS
+    43 					
+    44 A876 A9 E3 8D 86 02 A9 + 	mwa		#_jam _exitTest
+    45
+    46 A880 A2 00			ldx		#0
+    47 A882 20 D6 A3			jsr		_loadSeg
+    48 A885 4C DA A3			jmp		_runSeg
+    49 				.endp
+    50
+    51 A888				org		segaddrlo
+    52 BF00 3A				dta		<module_begin
+    53 BF01 C6				dta		<module_end
+    54 BF02 00				dta		$00
+    55
+    56 BF03				org		segaddrhi
+    57 BF80 A5				dta		>module_begin
+    58 BF81 A6				dta		>module_end
+    59 BF82 00				dta		$00
+    60
+    61 BF83				org		$bfe8
+    62 BFE8 00 00 00 00 00 00 + 	dta		d"                    "
+    63 BFFC 00 00 69 A8			dta		$00,$00,a(_boot)

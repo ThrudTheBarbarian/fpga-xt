@@ -1,0 +1,4012 @@
+mads 2.1.0 build 8 (23 Dec 19)
+Source: cpu_65c816.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010-2013 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 						opt		h+o+
+    23
+    24 						icl		'library.s'
+Source: library.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				;==========================================================================
+    23 				; MEMORY MAP (800)
+    24 				;
+    25 				;	$0000-007F		OS zero page
+    26 				;	$0080-00BF		Module zero page
+    27 				;	$00C0-00DF		Library zero page
+    28 				;	$00E0-00EF		80-column zero page
+    29 				;	$0100-01FF		6502 stack
+    30 				;	$0200-03FF		OS database
+    31 				;	$0400-09FF		Boot loader / unused
+    32 				;	$0A00-0AFF		Boot loader / Veronica support resident page
+    33 				;	$0B00-0BFF		Boot loader / sector load buffer
+    34 				;	$0C00-0FFF		Boot loader / 16K display
+    35 				;	$1000-18FF		Resident test driver (full suite only)
+    36 				;	$1900-19FF		Segment tables (full suite only)
+    37 				;	$1A00-1FFF		Library code
+    38 				;	$2000-3FFF		Module run area
+    39 				;	$4000-5FFF		Segment load area / Extended memory window
+    40 				;	$6000-7FFF		80-column screen A / Extended memory window
+    41 				;	$9000-9BFF		80-column driver
+    42 				;	$9C00-9FFF		Unused (display list if cart)
+    43 				;	$A000-BFFF		80-column screen B
+    44 				;
+    45 				; MEMORY MAP (5200)
+    46 				;
+    47 				;	$0000-001F		OS zero page
+    48 				;	$0020-003F		Display zero page
+    49 				;	$0080-00BF		Module zero page
+    50 				;	$00C0-00DF		Library zero page
+    51 				;	$0100-01FF		6502 stack
+    52 				;	$0200-021F		OS database
+    53 				;	$0220-027F		Unused
+    54 				;	$0280-02FF		Library database
+    55 				;	$0300-07FF		Display memory
+    56 				;	$0800-0FFF		Unused
+    57 				;	$1000-1FFF		LZ decompression history window
+    58 				;	$2000-3FFF		Module run area
+    59 				;	$4000-BFFF		Cartridge library code and module store
+    60 				;
+    61 				; MEMORY MAP (SAP)
+    62 				;
+    63 				;	$0080-00BF		Module zero page
+    64 				;	$00C0-00DF		Library zero page
+    65 				;	$0280-02FF		Library database
+    66 				;	$0300-07FF		Display memory
+    67 				;	$2000-3FFF		Module run area
+    68 				;	$4000-BFFF		Module store
+    69
+    70 				;==========================================================================
+    71 				; CONFIGURATION
+    72 				;
+    73 						.ifndef SYS800
+    74 						SEGS_IN_ROM = 1
+    75 						.else
+    76 = 0001					SEGS_MIN_MEM = 1
+    77 						.endif
+    78 						
+    79 						.ifdef SYS5200
+    80 						SEGS_LZPACK = 1
+    81 						.endif
+    82
+    83 				;==========================================================================
+    84 				; HARDWARE INCLUDES
+    85 				;
+    86 				.ifdef SYS5200
+    87 				;GTIA
+    88 				gtia = $c000
+    89 				m0pf	equ	$c000
+    90 				m1pf	equ	$c001
+    91 				m2pf	equ	$c002
+    92 				m3pf	equ	$c003
+    93 				p0pf	equ	$c004
+    94 				p1pf	equ	$c005
+    95 				p2pf	equ	$c006
+    96 				p3pf	equ	$c007
+    97 				m0pl	equ	$c008
+    98 				m1pl	equ	$c009
+    99 				m2pl	equ	$c00a
+   100 				m3pl	equ	$c00b
+   101 				p0pl	equ	$c00c
+   102 				p1pl	equ	$c00d
+   103 				p2pl	equ	$c00e
+   104 				p3pl	equ	$c00f
+   105 				hposp0	equ	$c000
+   106 				hposp1	equ	$c001
+   107 				hposp2	equ	$c002
+   108 				hposp3	equ	$c003
+   109 				hposm0	equ	$c004
+   110 				hposm1	equ	$c005
+   111 				hposm2	equ	$c006
+   112 				hposm3	equ	$c007
+   113 				sizep0	equ	$c008
+   114 				sizep1	equ	$c009
+   115 				sizep2	equ	$c00a
+   116 				sizep3	equ	$c00b
+   117 				sizem	equ	$c00c
+   118 				grafp0	equ	$c00d
+   119 				grafp1	equ	$c00e
+   120 				grafp2	equ	$c00f
+   121 				grafp3	equ	$c010
+   122 				trig0	equ	$c010
+   123 				grafm	equ	$c011
+   124 				colpm0	equ	$c012
+   125 				colpm1	equ	$c013
+   126 				colpm2	equ	$c014
+   127 				pal		equ	$c014
+   128 				colpm3	equ	$c015
+   129 				colpf0	equ	$c016
+   130 				colpf1	equ	$c017
+   131 				colpf2	equ	$c018
+   132 				colpf3	equ	$c019
+   133 				colbk	equ	$c01a
+   134 				prior	equ	$c01b
+   135 				vdelay	equ	$c01c
+   136 				gractl	equ	$c01d
+   137 				hitclr	equ	$c01e
+   138 				consol	equ	$c01f
+   139
+   140 				;POKEY
+   141 				pokey = $e800
+   142 				audf1	equ	$e800
+   143 				audc1	equ	$e801
+   144 				audf2	equ	$e802
+   145 				audc2	equ	$e803
+   146 				audf3	equ	$e804
+   147 				audc3	equ	$e805
+   148 				audf4	equ	$e806
+   149 				audc4	equ	$e807
+   150 				audctl	equ	$e808
+   151 				stimer	equ	$e809
+   152 				random	equ	$e80a
+   153 				skres	equ	$e80a
+   154 				serin	equ	$e80d
+   155 				serout	equ	$e80d
+   156 				irqen	equ	$e80e
+   157 				irqst	equ	$e80e
+   158 				skctl	equ	$e80f
+   159 				skstat	equ	$e80f
+   160 				.else
+   161 				;GTIA
+   162 = D000			gtia = $d000
+   163 = D000			m0pf	equ	$d000
+   164 = D001			m1pf	equ	$d001
+   165 = D002			m2pf	equ	$d002
+   166 = D003			m3pf	equ	$d003
+   167 = D004			p0pf	equ	$d004
+   168 = D005			p1pf	equ	$d005
+   169 = D006			p2pf	equ	$d006
+   170 = D007			p3pf	equ	$d007
+   171 = D008			m0pl	equ	$d008
+   172 = D009			m1pl	equ	$d009
+   173 = D00A			m2pl	equ	$d00a
+   174 = D00B			m3pl	equ	$d00b
+   175 = D00C			p0pl	equ	$d00c
+   176 = D00D			p1pl	equ	$d00d
+   177 = D00E			p2pl	equ	$d00e
+   178 = D00F			p3pl	equ	$d00f
+   179 = D000			hposp0	equ	$d000
+   180 = D001			hposp1	equ	$d001
+   181 = D002			hposp2	equ	$d002
+   182 = D003			hposp3	equ	$d003
+   183 = D004			hposm0	equ	$d004
+   184 = D005			hposm1	equ	$d005
+   185 = D006			hposm2	equ	$d006
+   186 = D007			hposm3	equ	$d007
+   187 = D008			sizep0	equ	$d008
+   188 = D009			sizep1	equ	$d009
+   189 = D00A			sizep2	equ	$d00a
+   190 = D00B			sizep3	equ	$d00b
+   191 = D00C			sizem	equ	$d00c
+   192 = D00D			grafp0	equ	$d00d
+   193 = D00E			grafp1	equ	$d00e
+   194 = D00F			grafp2	equ	$d00f
+   195 = D010			grafp3	equ	$d010
+   196 = D010			trig0	equ	$d010
+   197 = D011			grafm	equ	$d011
+   198 = D012			colpm0	equ	$d012
+   199 = D013			colpm1	equ	$d013
+   200 = D014			colpm2	equ	$d014
+   201 = D014			pal		equ	$d014
+   202 = D015			colpm3	equ	$d015
+   203 = D016			colpf0	equ	$d016
+   204 = D017			colpf1	equ	$d017
+   205 = D018			colpf2	equ	$d018
+   206 = D019			colpf3	equ	$d019
+   207 = D01A			colbk	equ	$d01a
+   208 = D01B			prior	equ	$d01b
+   209 = D01C			vdelay	equ	$d01c
+   210 = D01D			gractl	equ	$d01d
+   211 = D01E			hitclr	equ	$d01e
+   212 = D01F			consol	equ	$d01f
+   213
+   214 				;POKEY
+   215 = D200			pokey = $d200
+   216 = D200			audf1	equ	$d200
+   217 = D201			audc1	equ	$d201
+   218 = D202			audf2	equ	$d202
+   219 = D203			audc2	equ	$d203
+   220 = D204			audf3	equ	$d204
+   221 = D205			audc3	equ	$d205
+   222 = D206			audf4	equ	$d206
+   223 = D207			audc4	equ	$d207
+   224 = D208			audctl	equ	$d208
+   225 = D209			stimer	equ	$d209
+   226 = D209			kbcode	equ	$d209
+   227 = D20A			random	equ	$d20a
+   228 = D20A			skres	equ	$d20a
+   229 = D20D			serin	equ	$d20d
+   230 = D20D			serout	equ	$d20d
+   231 = D20E			irqen	equ	$d20e
+   232 = D20E			irqst	equ	$d20e
+   233 = D20F			skctl	equ	$d20f
+   234 = D20F			skstat	equ	$d20f
+   235
+   236 				;PIA
+   237 = D300			porta	equ	$d300
+   238 = D301			portb	equ	$d301
+   239 = D302			pactl	equ	$d302
+   240 = D303			pbctl	equ	$d303
+   241 				.endif
+   242
+   243 				;ANTIC
+   244 = D400			dmactl	equ	$d400
+   245 = D401			chactl	equ	$d401
+   246 = D402			dlistl	equ	$d402
+   247 = D403			dlisth	equ	$d403
+   248 = D404			hscrol	equ	$d404
+   249 = D405			vscrol	equ	$d405
+   250 = D407			pmbase	equ	$d407
+   251 = D409			chbase	equ	$d409
+   252 = D40A			wsync	equ	$d40a
+   253 = D40B			vcount	equ	$d40b
+   254 = D40E			nmien	equ	$d40e
+   255 = D40F			nmires	equ	$d40f
+   256 = D40F			nmist	equ	$d40f
+   257
+   258 				;==========================================================================
+   259 				; OS INCLUDES (5200)
+   260 				;
+   261 				.ifdef SYS5200
+   262 				pokmsk	equ		$00
+   263 				rtclok	equ		$01
+   264 				;		equ		$02
+   265 				critic	equ		$03
+   266 				atract	equ		$04
+   267 				sdlstl	equ		$05
+   268 				sdlsth	equ		$06
+   269 				sdmctl	equ		$07
+   270 				pcolr0	equ		$08
+   271 				pcolr1	equ		$09
+   272 				pcolr2	equ		$0a
+   273 				pcolr3	equ		$0b
+   274 				color0	equ		$0c
+   275 				color1	equ		$0d
+   276 				color2	equ		$0e
+   277 				color3	equ		$0f
+   278 				color4	equ		$10
+   279
+   280 				vimirq	equ		$0200		;IRQ immediate vector
+   281 				vvblki	equ		$0202		;VBI immediate vector
+   282 				vvblkd	equ		$0204		;VBI deferred vector
+   283 				vdslst	equ		$0206		;display list vector
+   284 				vkybdi	equ		$0208		;keyboard immediate vector
+   285 				vkybdf	equ		$020a		;keyboard deferred vector
+   286 				.endif
+   287
+   288 				;==========================================================================
+   289 				; OS INCLUDES (800)
+   290 				;
+   291 				.ifndef SYS5200
+   292 = 0010			pokmsk	equ	$10
+   293 = 0012			rtclok	equ	$12
+   294 = 0058			savmsc	equ	$58
+   295 = 006A			ramtop	equ	$6a
+   296
+   297 = 0200			vdslst	equ	$0200
+   298 = 0208			vkeybd	equ	$0208
+   299 = 0216			vimirq	equ	$0216
+   300 = 0218			cdtmv1	equ	$0218
+   301 = 0222			vvblki	equ	$0222
+   302 = 0224			vvblkd	equ	$0224
+   303 = 0226			cdtma1	equ	$0226
+   304 = 022F			sdmctl	equ	$022f
+   305 = 0230			sdlstl	equ	$0230
+   306 = 0231			sdlsth	equ	$0231
+   307 = 0232			sskctl	equ	$0232
+   308 = 02E0			runad	equ	$02e0
+   309 = 02E2			initad	equ	$02e2
+   310 = 02E5			memtop	equ	$02e5
+   311 = 02F2			ch1		equ	$02f2
+   312 = 02FC			ch		equ	$02fc
+   313
+   314 = 0300			ddevic	equ	$0300
+   315 = 0301			dunit	equ	$0301
+   316 = 0302			dcomnd	equ	$0302
+   317 = 0303			dstats	equ	$0303
+   318 = 0304			dbuflo	equ	$0304
+   319 = 0305			dbufhi	equ	$0305
+   320 = 0306			dtimlo	equ	$0306
+   321 = 0308			dbytlo	equ	$0308
+   322 = 0309			dbythi	equ	$0309
+   323 = 030A			daux1	equ	$030a
+   324 = 030B			daux2	equ	$030b
+   325
+   326 = 0340			ichid	equ	$0340
+   327 = 0342			iccmd	equ	$0342
+   328 = 0344			icbal	equ	$0344
+   329 = 0345			icbah	equ	$0345
+   330 = 0346			icptl	equ	$0346
+   331 = 0347			icpth	equ	$0347
+   332 = 0348			icbll	equ	$0348
+   333 = 0349			icblh	equ	$0349
+   334 = 034A			icax1	equ	$034a
+   335 = 034B			icax2	equ	$034b
+   336
+   337 = 03F8			basicf	equ	$03f8
+   338
+   339 = E453			dskinv	equ	$e453
+   340 = E456			ciov	equ	$e456
+   341 = E459			siov	equ	$e459
+   342 = E462			xitvbv	equ	$e462
+   343 				.endif
+   344
+   345 				;==========================================================================
+   346 				; LIBRARY ZP
+   347 				;
+   348 = 00C0			a0		equ	$c0
+   349 = 00C2			a1		equ	$c2
+   350 = 00C4			a2		equ	$c4
+   351 = 00C6			a3		equ	$c6
+   352 = 00C8			d0		equ	$c8
+   353 = 00C9			d1		equ	$c9
+   354 = 00CA			d2		equ	$ca
+   355 = 00CB			d3		equ	$cb
+   356 = 00CC			d4		equ	$cc
+   357 = 00CD			d5		equ	$cd
+   358 = 00CE			d6		equ	$ce
+   359 = 00CF			d7		equ	$cf
+   360
+   361 				;==========================================================================
+   362 				; LIBRARY VARS
+   363 				;
+   364 						opt o-
+   365
+   366 				.ifdef SYS5200
+   367 						opt f-
+   368 				.else
+   369 				.ifdef STANDALONE
+   370 						opt o+
+   371 				.endif
+   372 				.ifdef GENLIBRARY
+   373 						opt o+
+   374 				.endif
+   375 				.endif
+   376
+   377 						.ifdef SYSSAP
+   378 						org	$0280
+   379 						.endif
+   380 						
+   381 						.ifdef SYS5200
+   382 						org	$0280
+   383 						.endif
+   384 						
+   385 						.ifdef SYS800
+   386 						org	$1a20
+   387 						.endif		
+   388 FFFF> 1A20-1F30> 00	_intsOff	dta		0
+   389 1A21 00			_scrnOff	dta		0
+   390 1A22 00 00		_prevIRQ	dta		a(0)
+   391 1A24 00 00		_prevVBI	dta		a(0)
+   392 1A26 00 00		_exitTest	dta		a(0)
+   393 1A28 FF			_exitTestS	dta		$ff
+   394 1A29 00 00		_vputchar	dta		a(0)
+   395
+   396 						.ifdef SYS800
+   397 1A2B 00 00		_vputunhook	dta		a(0)
+   398 						.endif
+   399
+   400 = 0000				CPUMODE_6502 = 0
+   401 = 0001				CPUMODE_65C02 = 1
+   402 = 0080				CPUMODE_65C816_16 = 0x80
+   403 = 0081				CPUMODE_65C816_24 = 0x81
+   404 1A2D 00			_cpuMode	dta		0
+   405
+   406 1A2E 00			_veronica	dta		0
+   407
+   408 						.ifdef SYS5200
+   409 				sskctl		dta		0
+   410 				ch			dta		0
+   411 				keydel		dta		0
+   412
+   413 							org		$02e0
+   414 				runad		dta		a(0)
+   415 				initad		dta		a(0)
+   416 						.endif
+   417
+   418 						.ifdef SEGS_IN_ROM
+   419 				_lastMod	dta		0
+   420 						.endif
+   421 						.ifdef SEGS_MIN_MEM
+   422 1A2F 00			_lastMod	dta		0
+   423 						.endif
+   424
+   425 						.ifdef SYS5200
+   426 						.ifdef STANDALONE
+   427 						opt o+f+
+   428 						.endif
+   429 						.ifdef GENLIBRARY
+   430 						opt o+f+
+   431 						.endif
+   432
+   433 						.ifdef LIBBASE
+   434 						org	LIBBASE
+   435 						.else
+   436 						org	$4000
+   437 						.endif
+   438 						.endif
+   439 						
+   440 						.ifdef SYSSAP
+   441 						org		$4000
+   442 						.endif
+   443
+   444 				;==========================================================================
+   445 				; MACROS
+   446 				;
+   447 				.macro _INITTEST
+   448 					jsr		_imTestInit
+   449 					dta		:1,0
+   450 				.endm
+   451
+   452 				.macro _ASSERT1
+   453 					lda	:1
+   454 					cmp	#:2
+   455 					beq	pass
+   456 					
+   457 					sta	d1
+   458 					jsr	_testFailed
+   459 					dta	:3,0
+   460 				pass:
+   461 				.endm
+   462
+   463 				.macro _ASSERT1_DUAL
+   464 					lda	:1
+   465 					cmp	#:2
+   466 					beq	pass
+   467 					cmp	#:3
+   468 					beq	pass
+   469 					
+   470 					sta	d1
+   471 					jsr	_testFailed
+   472 					dta	:4,0
+   473 				pass:
+   474 				.endm
+   475
+   476 				.macro _ASSERTA
+   477 					cmp	#:1
+   478 					beq	pass
+   479 					
+   480 					sta	d1
+   481 					jsr	_testFailed
+   482 					dta	:2,0
+   483 				pass:
+   484 				.endm
+   485
+   486 				.macro _ASSERTX
+   487 					cpx	#:1
+   488 					beq	pass
+   489 					
+   490 					stx	d1
+   491 					jsr	_testFailed
+   492 					dta	:2,0
+   493 				pass:
+   494 				.endm
+   495
+   496 				.macro _ASSERTY
+   497 					cpy	#:1
+   498 					beq	pass
+   499 					
+   500 					sty	d1
+   501 					jsr	_testFailed
+   502 					dta	:2,0
+   503 				pass:
+   504 				.endm
+   505
+   506 				.macro _FAIL
+   507 					jsr		_testFailed
+   508 					dta		:1,0
+   509 				.endm
+   510
+   511 				.macro _SKIP
+   512 					jsr		_testSkipped
+   513 					dta		:1,0
+   514 				.endm
+   515
+   516 				.macro _SAP_HEADER
+   517 					.ifdef GENSAP
+   518 						opt		o+h-f-
+   519 						org		$0700
+   520 						dta		c"SAP",$0d,$0a
+   521 						dta		c"AUTHOR ",$22,c"Avery Lee",$22,$0d,$0a
+   522 						dta		c"NAME ",$22,c":1",$22,$0d,$0a
+   523 						dta		c"TYPE D",$0d,$0a
+   524 						dta		c"INIT 2000",$0d,$0a
+   525 						dta		c"TIME 00:",c"05",$0d,$0a
+   526 						dta		a($ffff)
+   527 					.endif
+   528 				.endm
+   529
+   530 				;==========================================================================
+   531 1A30			.nowarn .proc	_crt0init
+   532 				.ifdef SYSSAP
+   533 					jsr		_crt0init_sap
+   534 				.endif
+   535
+   536 					;clear zero page and database
+   537 				.ifdef SYS5200
+   538 					ldx		#$20
+   539 					lda		#0
+   540 				zploop:
+   541 					sta		0,x
+   542 					inx
+   543 					bne		zploop
+   544 					ldx		#$80
+   545 				dbloop:
+   546 					sta		$0200,x
+   547 					inx
+   548 					bne		dbloop
+   549 				.endif
+   550
+   551 					;clear options (keep in sync with options.s)
+   552 1A30 A2 06			ldx		#6
+   553 1A32 A9 00			lda		#0
+   554 					.ifdef SYS5200
+   555 					sta:rpl	$02f0,x-
+   556 					.else
+   557 1A34 9D 00 1A CA 10 FA		sta:rpl	$1a00,x-
+   558 					.endif
+   559 					
+   560 					;detect CPU
+   561 1A3A A0 00			ldy		#CPUMODE_6502
+   562 1A3C F8				sed
+   563 1A3D A9 99			lda		#$99
+   564 1A3F 18				clc
+   565 1A40 69 01			adc		#$01
+   566 1A42 D8				cld
+   567 1A43 D0 1E			bne		detdone
+   568 					
+   569 					;we have at least a 65C02... check for 65C816
+   570 1A45 A0 01			ldy		#CPUMODE_65C02
+   571
+   572 1A47 38				sec
+   573 					opt		c+
+   574 1A48 C2 01			rep		#$01
+   575 1A4A B0 17			bcs		detdone
+   576 1A4C E2 01			sep		#$01
+   577 1A4E 90 13			bcc		detdone
+   578 					
+   579 1A50 A0 80			ldy		#CPUMODE_65C816_16
+   580 					
+   581 					;check for 24-bit addressing
+   582 1A52 AF CB 00 01			lda		d3+$10000
+   583 1A56 AA				tax
+   584 1A57 49 F5			eor		#$f5
+   585 1A59 85 CB			sta		d3
+   586 1A5B 8A				txa
+   587 1A5C CF CB 00 01			cmp		d3+$10000
+   588 1A60 D0 01			sne
+   589 1A62 C8				iny
+   590 					
+   591 					opt		c-
+   592 					
+   593 1A63			detdone:
+   594 1A63 8C 2D 1A			sty		_cpuMode
+   595
+   596 				.ifdef SYS5200
+   597 					jsr		_crt0init_5200
+   598 				.endif
+   599
+   600 				.ifdef SYS800
+   601 					;init putchar handler
+   602 1A66 AD 46 03 8D 29 1A + 	mwa		icptl _vputchar
+   603 1A72 EE 29 1A D0 03 EE + 	inw		_vputchar
+   604 				.endif
+   605
+   606 1A7A 60				rts
+   607 				.endp
+   608
+   609 				;==========================================================================
+   610 1A7B			.nowarn .proc	_interruptsOff
+   611 1A7B AD 20 1A			lda	_intsOff
+   612 1A7E 30 12			bmi	xit
+   613 1A80 78				sei
+   614 1A81 AD 16 02 8D 22 1A + 	mwa	vimirq _prevIRQ
+   615 1A8D A9 FF 8D 20 1A		mva	#$ff _intsOff
+   616 1A92			xit:
+   617 1A92 60				rts
+   618 				.endp
+   619
+   620 				;==========================================================================
+   621 1A93			.nowarn .proc	_interruptsOn
+   622 1A93 AD 20 1A			lda	_intsOff
+   623 1A96 10 18			bpl	xit
+   624 1A98 78				sei
+   625 1A99 AD 22 1A 8D 16 02 + 	mwa	_prevIRQ vimirq
+   626 1AA5 A5 10 8D 0E D2		mva	pokmsk irqen
+   627 1AAA A9 00 8D 20 1A		mva	#$00 _intsOff
+   628 1AAF 58				cli
+   629 1AB0			xit:
+   630 1AB0 60				rts
+   631 				.endp
+   632
+   633 				;==========================================================================
+   634 1AB1			.nowarn .proc _screenOn
+   635 					.ifndef SYSSAP
+   636 1AB1 AD 21 1A			lda	_scrnOff
+   637 1AB4 10 40			bpl	xit
+   638 					
+   639 1AB6 20 1F 1B			jsr	_waitVBL
+   640 					
+   641 1AB9 78				sei
+   642 1ABA A9 00			lda	#0
+   643 1ABC 8D 0A D4			sta	wsync
+   644 1ABF 8D 0E D4			sta	nmien
+   645 1AC2 A9 22 8D 00 D4		mva	#$22 dmactl
+   646 1AC7 AD 30 02 8D 02 D4 + 	mwa	sdlstl dlistl
+   647 1AD3 AD 24 1A 8D 22 02 + 	mwa	_prevVBI vvblki
+   648 1ADF A9 40			lda	#$40
+   649 1AE1 8D 0E D4			sta	nmien
+   650 1AE4 58				cli
+   651 					
+   652 1AE5 20 1F 1B			jsr	_waitVBL
+   653 1AE8 8D 0A D4			sta	wsync
+   654 1AEB 8D 0A D4			sta	wsync
+   655 1AEE 20 1F 1B			jsr	_waitVBL
+   656 					.endif
+   657
+   658 1AF1 A9 00 8D 21 1A		mva	#$00 _scrnOff
+   659 1AF6			xit:
+   660 1AF6 60				rts
+   661 				.endp
+   662
+   663 				;==========================================================================
+   664 1AF7			.nowarn .proc _screenOff
+   665 					.ifndef SYSSAP
+   666 1AF7 AD 21 1A			lda	_scrnOff
+   667 1AFA 30 22			bmi	xit
+   668 					
+   669 1AFC 20 1F 1B			jsr	_waitVBL
+   670 						
+   671 1AFF 08				php
+   672 1B00 78				sei
+   673 1B01 A9 00			lda	#0
+   674 1B03 8D 0A D4			sta	wsync
+   675 1B06 8D 0E D4			sta	nmien
+   676 1B09 8D 00 D4			sta	dmactl
+   677 1B0C AD 22 02 8D 24 1A + 	mwa	vvblki _prevVBI
+   678 1B18 28				plp
+   679 					.endif
+   680
+   681 1B19 A9 FF 8D 21 1A		mva	#$ff _scrnOff
+   682 1B1E			xit:
+   683 1B1E 60				rts
+   684 				.endp
+   685
+   686 				;==========================================================================
+   687 1B1F			.nowarn .proc _waitVBL
+   688 1B1F A9 7B			lda	#123
+   689 1B21 CD 0B D4 D0 FB		cmp:rne vcount
+   690 1B26 CD 0B D4 F0 FB		cmp:req vcount
+   691 1B2B 60				rts
+   692 				.endp
+   693
+   694 				;==========================================================================
+   695 1B2C			.nowarn .proc _waitFrame
+   696 1B2C EE 0A D4			inc	wsync
+   697 1B2F EE 0A D4			inc	wsync
+   698 1B32 4C 1F 1B			jmp	_waitVBL
+   699 				.endp
+   700
+   701 				;==========================================================================
+   702 1B35			.nowarn .proc _waitKeyPrompt
+   703 1B35 20 7B 1B			jsr		_imprint
+   704 1B38 50 72 65 73 73 20 + 	dta		c"Press a key...",0
+   705 					.ifdef SYS5200
+   706 					mva		#$ff ch
+   707 					lda:rmi	ch
+   708 					.else
+   709 1B47 A9 00			lda		#0
+   710 1B49 8D FC 02			sta		ch
+   711 1B4C 8D F2 02			sta		ch1
+   712 1B4F AD FC 02 F0 FB		lda:req	ch
+   713 					.endif
+   714 1B54 20 7B 1B			jsr		_imprint
+   715 1B57 9C 00			dta		$9c,0
+   716 1B59 60				rts
+   717 				.endp
+   718
+   719 				;==========================================================================
+   720 1B5A			.nowarn .proc _resetAV
+   721 1B5A A9 00			lda	#0
+   722 1B5C 8D 1D D0			sta	gractl
+   723 1B5F 8D 0D D0			sta	grafp0
+   724 1B62 8D 0E D0			sta	grafp1
+   725 1B65 8D 0F D0			sta	grafp2
+   726 1B68 8D 10 D0			sta	grafp3
+   727 1B6B 8D 11 D0			sta	grafm
+   728 1B6E 8D 01 D2			sta	audc1
+   729 1B71 8D 03 D2			sta	audc2
+   730 1B74 8D 05 D2			sta	audc3
+   731 1B77 8D 07 D2			sta	audc4
+   732 1B7A 60				rts
+   733 				.endp
+   734
+   735 				;==========================================================================
+   736 1B7B			.nowarn .proc _imprint
+   737 1B7B 68				pla
+   738 1B7C AA				tax
+   739 1B7D 68				pla
+   740 1B7E A8				tay
+   741 1B7F E8				inx
+   742 1B80 D0 01 C8			sne:iny
+   743 1B83 8A				txa
+   744 1B84 20 A1 1B			jsr	_print
+   745 1B87 A5 C1			lda	a0+1
+   746 1B89 48				pha
+   747 1B8A A5 C0			lda	a0
+   748 1B8C 48				pha
+   749 1B8D 60				rts	
+   750 				.endp
+   751
+   752 				;==========================================================================
+   753 1B8E			.nowarn .proc _imprintf
+   754 1B8E 68				pla
+   755 1B8F AA				tax
+   756 1B90 68				pla
+   757 1B91 A8				tay
+   758 1B92 E8				inx
+   759 1B93 D0 01 C8			sne:iny
+   760 1B96 8A				txa
+   761 1B97 20 BE 1B			jsr	_printf
+   762 1B9A A5 C1			lda	a0+1
+   763 1B9C 48				pha
+   764 1B9D A5 C0			lda	a0
+   765 1B9F 48				pha
+   766 1BA0 60				rts	
+   767 				.endp
+   768
+   769 				;==========================================================================
+   770 1BA1			.nowarn .proc _print
+   771 1BA1 85 C0			sta	a0
+   772 1BA3 84 C1			sty	a0+1
+   773 1BA5			charloop:
+   774 1BA5 A0 00			ldy	#0
+   775 1BA7 B1 C0			lda	(a0),y
+   776 1BA9 F0 0C			beq	done
+   777 1BAB E6 C0 D0 02 E6 C1		inw	a0
+   778 1BB1 20 0F 1D			jsr	_printf.putbyte
+   779 1BB4 4C A5 1B			jmp	charloop
+   780 1BB7			done:
+   781 1BB7 60				rts
+   782 				.endp
+   783
+   784 				;==========================================================================
+   785 1BB8			.nowarn .proc _println
+   786 1BB8 20 7B 1B			jsr		_imprint
+   787 1BBB 9B 00			dta		$9b,0
+   788 1BBD 60				rts
+   789 				.endp
+   790 				;==========================================================================
+   791 1BBE			.nowarn .proc _printf
+   792 1BBE 85 C0			sta	a0
+   793 1BC0 84 C1			sty	a0+1
+   794 1BC2 A0 00			ldy	#0
+   795 1BC4 84 C8			sty	d0
+   796 1BC6			charloop:
+   797 1BC6 B1 C0			lda	(a0),y
+   798 1BC8 F0 12			beq	done
+   799 1BCA E6 C0 D0 02 E6 C1		inw	a0
+   800 1BD0 C9 25			cmp	#'%'
+   801 1BD2 F0 09			beq	special
+   802 1BD4			escaped:
+   803 1BD4 20 0F 1D			jsr	putbyte
+   804 1BD7			nextchar:
+   805 1BD7 A0 00			ldy	#0
+   806 1BD9 4C C6 1B			jmp	charloop
+   807 1BDC			done:
+   808 1BDC 60				rts
+   809 1BDD			special:
+   810 1BDD E6 C8			inc	d0
+   811 1BDF A6 C8			ldx	d0
+   812 1BE1 B1 C0			lda	(a0),y
+   813 1BE3 E6 C0 D0 02 E6 C1		inw	a0
+   814 1BE9 C9 64			cmp #'d'
+   815 1BEB D0 47			bne	notdec
+   816 1BED 98				tya
+   817 1BEE 84 C2			sty	a1
+   818 1BF0 A0 06			ldy	#6
+   819 1BF2 78				sei
+   820 1BF3 F8				sed
+   821 1BF4			decloop1:
+   822 1BF4 36 C8			rol	d0,x
+   823 1BF6 65 C2			adc	a1
+   824 1BF8 85 C2			sta	a1
+   825 1BFA 88				dey
+   826 1BFB D0 F7			bne	decloop1
+   827 1BFD 84 C3			sty	a1+1
+   828 1BFF A0 02			ldy	#2
+   829 1C01			decloop2:
+   830 1C01 36 C8			rol	d0,x
+   831 1C03 65 C2			adc	a1
+   832 1C05 85 C2			sta	a1
+   833 1C07 26 C3			rol	a1+1
+   834 1C09 88				dey
+   835 1C0A D0 F5			bne	decloop2
+   836 1C0C D8				cld
+   837 1C0D 58				cli
+   838 1C0E A5 C3			lda	a1+1
+   839 1C10 F0 0F			beq	decdigit2
+   840 1C12 AA				tax
+   841 1C13 BD 21 1F			lda	_hexdig,x
+   842 1C16 20 0F 1D			jsr	putbyte
+   843 1C19 A5 C2			lda	a1
+   844 1C1B 20 F9 1C			jsr	puthex
+   845 1C1E 4C D7 1B			jmp	nextchar
+   846 1C21			decdigit2:
+   847 1C21 A5 C2			lda	a1
+   848 1C23 C9 10			cmp	#$10
+   849 1C25 90 06			bcc	decdigit1
+   850 1C27 20 F9 1C			jsr	puthex
+   851 1C2A 4C D7 1B			jmp	nextchar
+   852 1C2D			decdigit1:
+   853 1C2D AA				tax
+   854 1C2E BD 21 1F			lda	_hexdig,x
+   855 1C31 4C D4 1B			jmp	escaped
+   856
+   857 1C34			notdec:
+   858 1C34 C9 78			cmp	#'x'
+   859 1C36 D0 08			bne	nothex
+   860 1C38 B5 C8			lda	d0,x
+   861 1C3A 20 F9 1C			jsr	puthex
+   862 1C3D 4C D7 1B			jmp	nextchar
+   863
+   864 1C40			nothex:
+   865 1C40 C9 58			cmp	#'X'
+   866 1C42 D0 11			bne	nothexword
+   867 1C44 E6 C8			inc	d0
+   868 1C46 B5 C9			lda	d1,x
+   869 1C48 20 F9 1C			jsr	puthex
+   870 1C4B A6 C8			ldx	d0
+   871 1C4D B5 C7			lda	d0-1,x
+   872 1C4F 20 F9 1C			jsr	puthex
+   873 1C52 4C D7 1B			jmp	nextchar
+   874
+   875 1C55			nothexword:
+   876 1C55 C9 44			cmp #'D'
+   877 1C57 D0 5F			bne	notdecword
+   878
+   879 1C59 A0 08			ldy	#8
+   880 1C5B A9 00			lda	#0
+   881 1C5D 85 C2			sta	a1
+   882 1C5F 85 C3			sta a1+1
+   883 1C61 85 C4			sta	a2
+   884 1C63 78				sei
+   885 1C64 F8				sed
+   886 1C65			decword1:
+   887 1C65 36 C9			rol	d1,x
+   888 1C67 A5 C2			lda	a1
+   889 1C69 65 C2			adc	a1
+   890 1C6B 85 C2			sta	a1
+   891 1C6D A5 C3			lda	a1+1
+   892 1C6F 65 C3			adc	a1+1
+   893 1C71 85 C3			sta	a1+1
+   894 1C73 88				dey
+   895 1C74 D0 EF			bne	decword1
+   896 					
+   897 1C76 A0 08			ldy	#8
+   898 1C78			decword2:
+   899 1C78 36 C8			rol	d0,x
+   900 1C7A A5 C2			lda	a1
+   901 1C7C 65 C2			adc	a1
+   902 1C7E 85 C2			sta	a1
+   903 1C80 A5 C3			lda	a1+1
+   904 1C82 65 C3			adc	a1+1
+   905 1C84 85 C3			sta	a1+1
+   906 1C86 A5 C4			lda	a2
+   907 1C88 65 C4			adc	a2
+   908 1C8A 85 C4			sta	a2
+   909 1C8C 88				dey
+   910 1C8D D0 E9			bne	decword2
+   911 1C8F D8				cld
+   912 1C90 58				cli
+   913 					
+   914 1C91 AA				tax
+   915 1C92 F0 10			beq	decword3
+   916 1C94 20 EE 1C			jsr	puthexcond
+   917 1C97 A5 C3			lda	a1+1
+   918 1C99 20 F9 1C			jsr	puthex
+   919 1C9C A5 C2			lda	a1
+   920 1C9E 20 F9 1C			jsr	puthex
+   921 1CA1 4C D7 1B			jmp	nextchar
+   922
+   923 1CA4			decword3:
+   924 1CA4 A5 C3			lda	a1+1
+   925 1CA6 F0 08			beq	decword4
+   926 1CA8 A5 C2			lda	a1
+   927 1CAA 20 F9 1C			jsr	puthex
+   928 1CAD 4C D7 1B			jmp	nextchar
+   929 					
+   930 1CB0			decword4:
+   931 1CB0 A5 C2			lda	a1
+   932 1CB2 20 F9 1C			jsr	puthex
+   933 1CB5 4C D7 1B			jmp	nextchar
+   934
+   935 1CB8			notdecword:
+   936 1CB8 C9 63			cmp #'c'
+   937 1CBA D0 0A			bne	notchar
+   938 1CBC E6 C8			inc	d0
+   939 1CBE B5 C8			lda	d0,x
+   940 1CC0 20 0F 1D			jsr	putbyte
+   941 1CC3 4C D7 1B			jmp	nextchar
+   942 					
+   943 1CC6			notchar:
+   944 1CC6 C9 73			cmp #'s'
+   945 1CC8 D0 1F			bne	notstr
+   946 					
+   947 1CCA E6 C8			inc	d0
+   948 1CCC B5 C8			lda	d0,x
+   949 1CCE 85 C2			sta	a1
+   950 1CD0 B5 C9			lda	d0+1,x
+   951 1CD2 85 C3			sta	a1+1
+   952
+   953 1CD4			strloop:
+   954 1CD4 A0 00			ldy	#0
+   955 1CD6 B1 C2			lda	(a1),y
+   956 1CD8 F0 0C			beq	strdone
+   957 1CDA 20 15 1D			jsr	putbyte2
+   958 1CDD E6 C2 D0 02 E6 C3		inw	a1
+   959 1CE3 4C D4 1C			jmp	strloop
+   960
+   961 1CE6			strdone:
+   962 1CE6 4C D7 1B			jmp	nextchar
+   963 					
+   964 1CE9			notstr:
+   965 1CE9 C6 C8			dec	d0
+   966 1CEB 4C D4 1B			jmp	escaped
+   967 					
+   968 1CEE			puthexcond:
+   969 1CEE C9 10			cmp	#$10
+   970 1CF0 B0 07			bcs	puthex
+   971 1CF2 AA				tax
+   972 1CF3 BD 21 1F			lda	_hexdig,x
+   973 1CF6 4C 0F 1D			jmp	putbyte	
+   974 1CF9			puthex:	
+   975 1CF9 48				pha
+   976 1CFA 4A				lsr
+   977 1CFB 4A				lsr
+   978 1CFC 4A				lsr
+   979 1CFD 4A				lsr
+   980 1CFE AA				tax
+   981 1CFF BD 21 1F			lda	_hexdig,x
+   982 1D02 20 0F 1D			jsr	putbyte
+   983 1D05 68				pla
+   984 1D06 29 0F			and	#$0f
+   985 1D08 AA				tax
+   986 1D09 BD 21 1F			lda	_hexdig,x
+   987 1D0C 4C 0F 1D			jmp	putbyte
+   988
+   989 1D0F			putbyte:
+   990 1D0F AA				tax
+   991 1D10 20 15 1D			jsr	putbyte2
+   992 1D13 8A				txa
+   993 1D14 60				rts
+   994 					
+   995 1D15			putbyte2:
+   996 1D15 6C 29 1A			jmp	(_vputchar)
+   997 				.endp
+   998
+   999 				;==========================================================================
+  1000 1D18			.nowarn .proc	_jam
+  1001 1D18			loop:
+  1002 1D18 4C 18 1D			jmp	loop
+  1003 				.endp
+  1004
+  1005 				;==========================================================================
+  1006 1D1B			.nowarn .proc	_waitVCount
+  1007 1D1B CD 0B D4 D0 FB		cmp:rne	vcount
+  1008 1D20 60				rts
+  1009 				.endp
+  1010
+  1011 				;=========================================================================
+  1012 1D21			.nowarn .proc	_imTestInit
+  1013 1D21 68				pla
+  1014 1D22 85 C0			sta		a0
+  1015 1D24 A8				tay
+  1016 1D25 68				pla
+  1017 1D26 85 C1			sta		a0+1
+  1018 					
+  1019 1D28 E6 C0 D0 02 E6 C1		inw		a0
+  1020
+  1021 1D2E A9 00 85 C2			mva		#0 a1
+  1022 1D32 A5 C1 85 C3			mva		a0+1 a1+1	
+  1023 1D36			skiploop:
+  1024 1D36 B1 C2			lda		(a1),y
+  1025 1D38 F0 08			beq		skipdone
+  1026 1D3A C8				iny
+  1027 1D3B D0 02 E6 C3			sne:inc a1+1
+  1028 1D3F 4C 36 1D			jmp		skiploop
+  1029 1D42			skipdone:
+  1030 1D42 A5 C3			lda		a1+1
+  1031 1D44 48				pha
+  1032 1D45 98				tya
+  1033 1D46 48				pha
+  1034 1D47 A5 C0			lda		a0
+  1035 1D49 A4 C1			ldy		a0+1
+  1036 1D4B 4C 4E 1D			jmp		_testInit
+  1037 				.endp
+  1038
+  1039 				;=========================================================================
+  1040 1D4E			.nowarn .proc	_testInit
+  1041 					.ifdef STANDALONE
+  1042 1D4E 48				pha
+  1043 1D4F 98				tya
+  1044 1D50 48				pha
+  1045
+  1046 				.ifdef SYS800
+  1047 					;MaxFlash carts run executables with E: closed. Check for this and
+  1048 					;reopen it if necessary.
+  1049 1D51 AD 40 03			lda		ichid
+  1050 1D54 10 1C			bpl		iocb0_open
+  1051
+  1052 					;reopen IOCB 0
+  1053 1D56 A9 03 8D 42 03		mva		#$03 iccmd
+  1054 1D5B A9 91 8D 44 03 A9 + 	mwa		#e_name icbal
+  1055 1D65 A2 00			ldx		#0
+  1056 1D67 8E 4A 03			stx		icax1
+  1057 1D6A A9 0C 8D 4B 03		mva		#$0c icax2
+  1058 1D6F 20 56 E4			jsr		ciov
+  1059 					
+  1060 1D72			iocb0_open:
+  1061 				.endif
+  1062
+  1063 1D72 20 30 1A			jsr		_crt0init
+  1064 					
+  1065 1D75 68				pla
+  1066 1D76 A8				tay
+  1067 1D77 68				pla
+  1068 					.endif
+  1069 					
+  1070 1D78 20 A1 1B			jsr	_print
+  1071 1D7B 20 7B 1B			jsr	_imprint
+  1072 1D7E 2E 2E 2E 00			dta	c"...",0
+  1073 					
+  1074 					.ifdef STANDALONE
+  1075 1D82 A9 93 8D 26 1A A9 + 	mwa	#_testEnd _exitTest
+  1076 					.else
+  1077 					:10 nop
+  1078 					.endif
+  1079 					
+  1080 1D8C 60				rts
+  1081 					
+  1082 1D8D			msg:
+  1083 1D8D 2E 2E 2E 00			dta	c"...",0
+  1084 1D91			e_name:
+  1085 1D91 45 9B			dta		'E',$9B
+  1086 				.endp
+  1087
+  1088 				;=========================================================================
+  1089 1D93			.nowarn .proc	_testEnd
+  1090 					.ifdef SYSSAP
+  1091 						.ifdef STANDALONE
+  1092 							jmp	_sap_testEnd
+  1093 						.else
+  1094 							jmp	_jam
+  1095 						.endif
+  1096 					.else
+  1097 						.ifdef SYS5200
+  1098 							jmp	_jam
+  1099 						.else
+  1100 							;wait for key
+  1101 1D93 78						sei
+  1102 1D94 A9 00					lda		#0
+  1103 1D96 8D 0E D4					sta		nmien
+  1104 1D99 8D 0E D2					sta		irqen
+  1105 1D9C A9 03 8D 0F D2				mva		#3 skctl
+  1106 1DA1 A9 40 8D 0E D2				mva		#$40 irqen
+  1107 1DA6 2C 0E D2 D0 FB				bit:rne	irqst
+  1108 							
+  1109 							;initiate soft reset
+  1110 1DAB 6C FC FF					jmp		($fffc)
+  1111 						.endif
+  1112 					.endif
+  1113 				.endp
+  1114
+  1115 				;=========================================================================
+  1116 1DAE			.nowarn .proc	_testRestore
+  1117 1DAE D8				cld
+  1118 1DAF 08				php
+  1119 1DB0 78				sei
+  1120 					
+  1121 					;check if the screen is off; if so, make sure we kill DLIs
+  1122 1DB1 AD 21 1A			lda		_scrnOff
+  1123 1DB4 F0 08			beq		scrnOK
+  1124 					
+  1125 1DB6 A9 00			lda		#0
+  1126 1DB8 EE 0A D4			inc		wsync
+  1127 1DBB 8D 0E D4			sta		nmien
+  1128 					
+  1129 1DBE			scrnOK:
+  1130
+  1131 1DBE AD 32 02 8D 0F D2		mva		sskctl skctl
+  1132 						
+  1133 					.ifdef SYSSAP
+  1134 					;kill PIA port A interrupt
+  1135 					mva		#$3c pactl
+  1136 					
+  1137 					;force kernel ROMs back _out_
+  1138 					mva		#$38 pbctl
+  1139 					mva		#$ff portb
+  1140 					mva		#$3c pbctl
+  1141 					mva		#$82 portb
+  1142 					.endif
+  1143 					
+  1144 					.ifdef SYS5200
+  1145 					mva		#$00 prior
+  1146 					mva		#$f8 chbase
+  1147 					mva		#$02 chactl
+  1148 					mva		#$04 consol
+  1149 					.endif
+  1150 					
+  1151 					.ifdef SYS800
+  1152 					;kill PIA port A interrupt
+  1153 1DC4 A9 3C 8D 02 D3		mva		#$3c pactl
+  1154 					
+  1155 					;force kernel ROMs back in	
+  1156 1DC9 A9 38 8D 03 D3		mva		#$38 pbctl
+  1157 1DCE A9 00 8D 01 D3		mva		#$00 portb
+  1158 1DD3 A9 3C 8D 03 D3		mva		#$3c pbctl
+  1159 1DD8 A9 83 8D 01 D3		mva		#$83 portb
+  1160 					
+  1161 					;kill OS timer 1
+  1162 1DDD A2 FF			ldx		#$ff
+  1163 1DDF 8E 0A D4			stx		wsync
+  1164 1DE2 8E 18 02			stx		cdtmv1
+  1165 1DE5 E8				inx
+  1166 1DE6 8E 18 02			stx		cdtmv1
+  1167 1DE9 8E 19 02			stx		cdtmv1+1
+  1168 					.endif
+  1169
+  1170 1DEC 28				plp
+  1171 1DED 20 93 1A			jsr	_interruptsOn
+  1172 1DF0 20 B1 1A			jsr	_screenOn
+  1173 1DF3 20 5A 1B			jsr	_resetAV
+  1174 					
+  1175 					;unmask interrupts
+  1176 1DF6 58				cli
+  1177 1DF7 60				rts
+  1178 				.endp
+  1179
+  1180 				;=========================================================================
+  1181 1DF8			.nowarn .proc	_testPassed
+  1182 1DF8 20 AE 1D			jsr	_testRestore
+  1183
+  1184 1DFB 20 7B 1B			jsr	_imprint
+  1185 1DFE 50 61 73 73 9B 00		dta	c"Pass",$9b,0
+  1186 					
+  1187 1E04 AE 28 1A			ldx	_exitTestS
+  1188 1E07 9A				txs
+  1189 1E08 A0 00			ldy	#0
+  1190 1E0A 6C 26 1A			jmp	(_exitTest)
+  1191 				.endp
+  1192
+  1193 				;=========================================================================
+  1194 1E0D			.nowarn .proc	_testFailed
+  1195 1E0D 20 AE 1D			jsr	_testRestore
+  1196
+  1197 1E10 20 7B 1B			jsr	_imprint
+  1198 1E13 46 41 49 4C 2E 9B + 	dta	c"FAIL.",$9b,0
+  1199
+  1200 1E1A			nomsgentry:
+  1201 1E1A 68				pla
+  1202 1E1B AA				tax
+  1203 1E1C 68				pla
+  1204 1E1D A8				tay
+  1205 1E1E E8				inx
+  1206 1E1F D0 01 C8			sne:iny
+  1207 1E22 8A				txa
+  1208 1E23 20 BE 1B			jsr	_printf
+  1209 1E26 20 B8 1B			jsr	_println
+  1210 					
+  1211 1E29 AE 28 1A			ldx	_exitTestS
+  1212 1E2C 9A				txs
+  1213 1E2D A0 80			ldy	#$80
+  1214 1E2F 6C 26 1A			jmp	(_exitTest)
+  1215
+  1216 1E32			msg2:
+  1217 1E32 9B 00			dta	$9b,0
+  1218 				.endp
+  1219
+  1220 				;=========================================================================
+  1221 1E34			.nowarn .proc	_testFailed2
+  1222 1E34 20 AE 1D			jsr	_testRestore
+  1223 1E37 4C 1A 1E			jmp	_testFailed.nomsgentry
+  1224 				.endp
+  1225
+  1226 				;=========================================================================
+  1227 1E3A			.nowarn .proc	_testSkipped
+  1228 1E3A 20 AE 1D			jsr		_testRestore
+  1229
+  1230 1E3D 20 7B 1B			jsr		_imprint
+  1231 1E40 53 6B 69 70 70 65 + 	dta		c"Skipped",$9b,0
+  1232 					
+  1233 1E49 68				pla
+  1234 1E4A AA				tax
+  1235 1E4B 68				pla
+  1236 1E4C A8				tay
+  1237 1E4D E8				inx
+  1238 1E4E D0 01 C8			sne:iny
+  1239 1E51 8A				txa
+  1240 1E52 20 BE 1B			jsr		_printf
+  1241 					
+  1242 1E55 20 B8 1B			jsr		_println
+  1243 					
+  1244 1E58 AE 28 1A			ldx		_exitTestS
+  1245 1E5B 9A				txs
+  1246 1E5C A0 40			ldy		#$40
+  1247 1E5E 6C 26 1A			jmp		(_exitTest)
+  1248 				.endp
+  1249
+  1250 				;==========================================================================
+  1251 				; _loadSeg()
+  1252 				;
+  1253 				; Module loader.
+  1254 				;
+  1255 				;	X = index of module to load
+  1256 				;
+  1257 				.ifdef SEGS_MIN_MEM
+  1258 1E61			.nowarn .proc	_loadSeg
+  1259 					;get starting sector
+  1260 1E61 BD 00 19 8D 0A 03		mva		segaddrlo,x	daux1
+  1261 1E67 BD 80 19 8D 0B 03		mva		segaddrhi,x	daux2
+  1262 						
+  1263 					;get ending sector
+  1264 1E6D BD 01 19			lda		segaddrlo+1,x
+  1265 1E70 38 ED 0A 03			sub		daux1
+  1266 1E74 85 CF			sta		d7
+  1267
+  1268 					;setup sector load command and relocation
+  1269 1E76 A9 52 8D 02 03		mva		#'R' dcomnd
+  1270 1E7B A9 01 8D 01 03		mva		#1 dunit
+  1271 1E80 A9 00			lda		#$00
+  1272 1E82 8D 04 03			sta		dbuflo
+  1273 1E85 85 C0			sta		a0
+  1274 1E87 8D E1 02			sta		runad+1
+  1275 1E8A A9 0B			lda		#$0b
+  1276 1E8C 8D 05 03			sta		dbufhi
+  1277 1E8F 85 C1			sta		a0+1
+  1278 					
+  1279 					;preload first two sectors
+  1280 1E91 20 FE 1E			jsr		step_sector
+  1281 1E94			relocloop:
+  1282 					;load starting address
+  1283 1E94 B1 C0 85 C2			mva		(a0),y a1
+  1284 1E98 C8 D0 03 20 FE 1E		iny:sne:jsr step_sector
+  1285 1E9E B1 C0 85 C3			mva		(a0),y a1+1
+  1286 1EA2 C8 D0 03 20 FE 1E		iny:sne:jsr step_sector
+  1287 					
+  1288 					;skip $ffff words
+  1289 1EA8 A5 C2			lda		a1
+  1290 1EAA 25 C3			and		a1+1
+  1291 1EAC C9 FF			cmp		#$ff
+  1292 1EAE F0 E4			beq		relocloop
+  1293 					
+  1294 					;load ending address
+  1295 1EB0 B1 C0 85 C4			mva		(a0),y a2
+  1296 1EB4 C8 D0 03 20 FE 1E		iny:sne:jsr step_sector
+  1297 1EBA B1 C0 85 C5			mva		(a0),y a2+1
+  1298 1EBE C8 D0 03 20 FE 1E		iny:sne:jsr step_sector
+  1299 1EC4 E6 C4 D0 02 E6 C5		inw		a2
+  1300
+  1301 1ECA A9 1D 8D E2 02 A9 + 	mwa		#definit initad
+  1302 					
+  1303 					;copy data (slow, but oh well)
+  1304 1ED4 A2 00			ldx		#0
+  1305 1ED6			copyloop:
+  1306 1ED6 B1 C0			lda		(a0),y
+  1307 1ED8 81 C2			sta		(a1,x)
+  1308 1EDA C8 D0 03 20 FE 1E		iny:sne:jsr step_sector
+  1309 1EE0 E6 C2 D0 02 E6 C3		inw		a1
+  1310 1EE6 A5 C2			lda		a1
+  1311 1EE8 C5 C4			cmp		a2
+  1312 1EEA D0 EA			bne		copyloop
+  1313 1EEC A5 C3			lda		a1+1
+  1314 1EEE C5 C5			cmp		a2+1
+  1315 1EF0 D0 E4			bne		copyloop
+  1316 					
+  1317 					;init a segment
+  1318 1EF2 20 FB 1E			jsr		doinit
+  1319 					
+  1320 					;check if we're done
+  1321 1EF5 AD E1 02			lda		runad+1
+  1322 1EF8 F0 9A			beq		relocloop
+  1323 1EFA 60				rts
+  1324
+  1325 1EFB			doinit:
+  1326 1EFB 6C E2 02			jmp		(initad)
+  1327 					
+  1328 1EFE			step_sector:
+  1329 1EFE A5 CF			lda		d7
+  1330 1F00 F0 17			beq		no_sectors_left
+  1331 1F02 20 53 E4			jsr		dskinv
+  1332 1F05 C6 CF			dec		d7
+  1333 1F07 EE 0A 03 D0 03 EE + 	inw		daux1
+  1334 1F0F AD 04 03			lda		dbuflo
+  1335 1F12 49 80			eor		#$80
+  1336 1F14 8D 04 03			sta		dbuflo
+  1337 1F17 D0 E5			bne		step_sector
+  1338 1F19			no_sectors_left:
+  1339 1F19 A0 00			ldy		#0
+  1340 1F1B A2 00			ldx		#0
+  1341 1F1D			definit:
+  1342 1F1D 60				rts
+  1343 				.endp
+  1344 				.else
+  1345 				.nowarn .proc	_loadSeg
+  1346 				.ifdef SEGS_IN_ROM
+  1347 					stx		_lastMod
+  1348 					rts
+  1349 				.else
+  1350 					;get starting sector
+  1351 					mva		segaddrlo,x	daux1
+  1352 					mva		segaddrhi,x	daux2
+  1353 						
+  1354 					;get ending sector
+  1355 					mva		segaddrlo+1,x	a0
+  1356 					mva		segaddrhi+1,x	a0+1
+  1357
+  1358 					;load sectors starting at $4000
+  1359 				sectorloop:
+  1360 					mva		#'R' dcomnd
+  1361 					mva		#1 dunit
+  1362 					mwa		#$4000 dbuflo
+  1363 						
+  1364 					jsr		dskinv
+  1365 					tya
+  1366 					bmi		sectorloop
+  1367 					
+  1368 					lda		#$80
+  1369 					eor		dbuflo
+  1370 					sta		dbuflo
+  1371 					sne:inc	dbufhi
+  1372 					
+  1373 					inc		daux1
+  1374 					sne:inc	daux2
+  1375 					
+  1376 					lda		daux1
+  1377 					cmp		a0
+  1378 					bne		sectorloop
+  1379 					lda		daux2
+  1380 					cmp		a0+1
+  1381 					bne		sectorloop
+  1382 					rts
+  1383 				.endif
+  1384 				.endp
+  1385 				.endif
+  1386
+  1387 				;==========================================================================
+  1388 				; _runSeg()
+  1389 				;
+  1390 				; Module relocator and executor.
+  1391 				;
+  1392 				; The last segment loaded by _loadSeg() is relocated and executed.
+  1393 				;
+  1394
+  1395 				.ifdef SEGS_MIN_MEM
+  1396
+  1397 				;-----------------------------------------------
+  1398 				; Minimum memory implementation.
+  1399 1F1E			.nowarn .proc _runSeg
+  1400 1F1E 6C E0 02			jmp		(runad)
+  1401 				.endp
+  1402
+  1403 				.else
+  1404
+  1405 				;-----------------------------------------------
+  1406 				.nowarn .proc _runSeg
+  1407 					
+  1408 					;begin relocation
+  1409 					mwa		#relocloop runad
+  1410
+  1411 					.ifdef SEGS_IN_ROM
+  1412 					ldx		_lastMod
+  1413 					mva		segaddrlo,x a0
+  1414 					mva		segaddrhi,x a0+1
+  1415 					.else
+  1416 					mwa		#$4000 a0
+  1417 					.endif
+  1418 					
+  1419 					.ifndef SEGS_LZPACK
+  1420 					
+  1421 					;==== uncompressed version
+  1422
+  1423 					ldy		#0
+  1424 				relocloop:
+  1425 					;load starting address
+  1426 					mva		(a0),y a1
+  1427 					inw		a0
+  1428 					mva		(a0),y a1+1
+  1429 					inw		a0
+  1430 					
+  1431 					;skip $ffff words
+  1432 					lda		a1
+  1433 					and		a1+1
+  1434 					cmp		#$ff
+  1435 					beq		relocloop
+  1436 					
+  1437 					;load ending address
+  1438 					mva		(a0),y a2
+  1439 					inw		a0
+  1440 					mva		(a0),y a2+1
+  1441 					inw		a0
+  1442 					inw		a2
+  1443 					
+  1444 					;copy data (slow, but oh well)
+  1445 				copyloop:
+  1446 					lda		(a0),y
+  1447 					sta		(a1),y
+  1448 					inw		a0
+  1449 					inw		a1
+  1450 					lda		a1
+  1451 					cmp		a2
+  1452 					bne		copyloop
+  1453 					lda		a1+1
+  1454 					cmp		a2+1
+  1455 					bne		copyloop
+  1456 					
+  1457 					;init a segment
+  1458 					mwa		#definit initad
+  1459 					jsr		doinit
+  1460 					jmp		(runad)
+  1461
+  1462 				doinit:
+  1463 					jmp		(initad)
+  1464 					
+  1465 				definit:
+  1466 					rts
+  1467
+  1468 					.else
+  1469 					
+  1470 					;==== compressed version
+  1471 					;
+  1472 					;loader:
+  1473 					;	a3		destination
+  1474 					;	d6/d7	segment end address
+  1475 					;
+  1476 					;decompressor:
+  1477 					;	a0		raw source stream
+  1478 					;	a1		run source pointer
+  1479 					;	a2		window pointer ($1000-1fff)
+  1480 					;	d0		literal/run flag bits
+  1481 					;	d1		remaining flag bits shifter
+  1482 					;	d2		run length counter
+  1483 					;	d3		temporary
+  1484 					;	d4		superflag bits
+  1485 					;	d5		superflag shifter
+  1486
+  1487 					lda		#0
+  1488 					sta		d0
+  1489 					sta		d1
+  1490 					sta		d2
+  1491 					sta		d5
+  1492 					sta		a2
+  1493 					lda		#$10
+  1494 					sta		a2+1
+  1495 				relocloop:
+  1496 					ldy		#0
+  1497 					;load starting address
+  1498 					jsr		getbyte
+  1499 					sta		a3
+  1500 					jsr		getbyte
+  1501 					sta		a3+1
+  1502 					
+  1503 					;skip $ffff words
+  1504 					and		a3
+  1505 					cmp		#$ff
+  1506 					beq		relocloop
+  1507 					
+  1508 					;load ending address
+  1509 					jsr		getbyte
+  1510 					sta		d6
+  1511 					jsr		getbyte
+  1512 					sta		d7
+  1513 					inw		d6
+  1514 					
+  1515 					;copy data (slow, but oh well)
+  1516 				copyloop:
+  1517 					jsr		getbyte
+  1518 					sta		(a3),y
+  1519 					inw		a3
+  1520 					lda		a3
+  1521 					cmp		d6
+  1522 					bne		copyloop
+  1523 					lda		a3+1
+  1524 					cmp		d7
+  1525 					bne		copyloop
+  1526 					
+  1527 					;init a segment
+  1528 					mwa		#definit initad
+  1529 					jsr		doinit
+  1530 					jmp		(runad)
+  1531
+  1532 				doinit:
+  1533 					jmp		(initad)
+  1534 					
+  1535 				getbyte:
+  1536 					;check if we have a run in progress
+  1537 					lda		d2
+  1538 					bne		getrunbyte
+  1539
+  1540 					;check if we need to reload flag bits
+  1541 					asl		d1
+  1542 					bne		havebits
+  1543 					
+  1544 					;check if we need to reload superflag bits
+  1545 					asl		d5
+  1546 					bne		havesuperbits
+  1547 					
+  1548 					;load next superflag byte
+  1549 					jsr		getrawbyte
+  1550 					sta		d4
+  1551 					lda		#$7f
+  1552 					sta		d5
+  1553 					
+  1554 				havesuperbits:
+  1555 					;pull next superflag and check if it's all literals (0)
+  1556 					asl		d4
+  1557 					bcc		all_literals
+  1558 					
+  1559 					;nope... read next byte as flags byte
+  1560 					jsr		getrawbyte
+  1561 					sta		d0
+  1562
+  1563 				all_literals:
+  1564 					lda		#$7f
+  1565 					sta		d1
+  1566 				havebits:
+  1567 					asl		d0
+  1568 					bcs		isrun
+  1569 					
+  1570 					;store byte into window
+  1571 					jsr		getrawbyte
+  1572 					jmp		putwinbyte
+  1573
+  1574 				isrun:
+  1575 					;load offset/run bytes
+  1576 					jsr		getrawbyte
+  1577 					sta		d3
+  1578 					jsr		getrawbyte
+  1579 					sta		d2
+  1580 					
+  1581 					;compute run source from current position and offset
+  1582 					lda		a2
+  1583 					clc
+  1584 					sbc		d3
+  1585 					sta		a1
+  1586 					lda		a2+1
+  1587 					sbc		d2
+  1588 					and		#$0f
+  1589 					ora		#$10
+  1590 					sta		a1+1
+  1591 					
+  1592 					;compute length and stash run length
+  1593 					lda		d2
+  1594 					lsr
+  1595 					lsr
+  1596 					lsr
+  1597 					lsr
+  1598 					add		#3
+  1599 					sta		d2
+  1600 				getrunbyte:
+  1601 					dec		d2
+  1602 					ldy		#0
+  1603 					lda		(a1),y
+  1604 					inc		a1
+  1605 					bne		putwinbyte
+  1606 					inc		a1+1
+  1607 					pha
+  1608 					lda		a1+1
+  1609 					and		#$0f
+  1610 					ora		#$10
+  1611 					sta		a1+1
+  1612 					pla
+  1613 					jmp		putwinbyte
+  1614 					
+  1615 				getrawbyte:
+  1616 					lda		(a0),y
+  1617 					inw		a0
+  1618 					rts
+  1619 					
+  1620 				putwinbyte:
+  1621 					sta		(a2),y
+  1622 					inc		a2
+  1623 					seq:rts
+  1624 					ldy		a2+1
+  1625 					iny
+  1626 					cpy		#$20
+  1627 					sne:ldy	#$10
+  1628 					sty		a2+1
+  1629 					ldy		#0
+  1630 				definit:
+  1631 					rts	
+  1632 					
+  1633 					.endif
+  1634 				.endp
+  1635 				.endif
+  1636
+  1637 				;==========================================================================
+  1638 1F21 30 31 32 33 34 35 + _hexdig	dta		c"0123456789ABCDEF"
+  1639
+  1640 				;==========================================================================
+  1641 				; segment table
+  1642 				;
+  1643 				.ifndef SYS800
+  1644 				segaddrlo	equ	$bf00
+  1645 				segaddrhi	equ	$bf80
+  1646 				.else
+  1647 = 1900			segaddrlo	equ	$1900
+  1648 = 1980			segaddrhi	equ	$1980
+  1649 				.endif
+  1650
+  1651 = 0900			_veronicaLaunch = $0900
+  1652
+  1653 				;==========================================================================
+  1654 				; platform-specific library
+  1655 				;
+  1656 				.ifdef SYS5200
+  1657 					icl		'lib5200.s'
+  1658 				.endif
+  1659 				.ifdef SYSSAP
+  1660 					icl		'libsap.s'
+  1661 				.endif
+  1662
+  1663 				;==========================================================================
+  1664 				.ifndef STANDALONE
+  1665 				.ifdef SYS5200
+  1666 					opt	o+
+  1667 				.else
+  1668 					opt	h+o+
+  1669 				.endif
+  1670 				.endif
+    25 						
+    26 						opt		o-
+    27 1F31					icl		'options.s'
+Source: options.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010-2011 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22
+    23 				.ifndef SYS800
+    24 					_savepc = *
+    25 				.endif
+    26
+    27 				;note: library.s also has this address
+    28 				.ifdef SYS5200
+    29 						opt		o-f-
+    30 						org		$02f0
+    31 				.else
+    32 1F31					org		$1a00
+    33 				.endif
+    34
+    35 1A00			testidx			dta		0
+    36 1A01			passed			dta		0
+    37 1A02			failed			dta		0
+    38 1A03			skipped			dta		0
+    39 1A04			opt_wait		dta		0
+    40 1A05			opt_waitfail	dta		0
+    41 1A06			opt_noillinsn	dta		0
+    42
+    43 				.ifndef SYS800
+    44 						org		_savepc
+    45 				.endif
+    46 						
+    47 				.ifdef SYS5200
+    48 				.ifdef GENLIBRARY
+    49 						opt		o+f+
+    50 				.else
+    51 						opt		o+
+    52 				.endif
+    53 				.endif
+    28
+    29 				.macro _FAIL816
+    30 						jsr		FailTest816
+    31 						dta		:1,0
+    32 				.endm
+    33 						
+    34 				.macro _ASSERT816
+    35 						:1		ok
+    36 						jsr		FailTest816
+    37 						dta		:2,0
+    38 				ok:
+    39 				.endm
+    40
+    41 						opt		o+
+    42 1A07					org		$0080
+    43 						
+    44 0080-0089> 00		emusp			dta		0
+    45 0081 00			save_crb		dta		0
+    46 0082 00			save_ddrb		dta		0
+    47 0083 00			save_orb		dta		0
+    48 0084 00			switched_pia	dta		0
+    49 0085 00			switched_os		dta		0
+    50 0086 00			switched_zp		dta		0
+    51 0087 00			romos_ok		dta		0
+    52 0088 00			int_p			dta		0
+    53 0089 00			int_type		dta		0
+    54
+    55 008A					org		$2000
+    56 						opt		o-
+    57 2000			oszpsave:
+    58 = 2000					.ds		128
+    59 2080			stksave:
+    60 = 2080					.ds		128
+    61 2100			romsave:
+    62 = 2100					.ds		32
+    63 						
+    64 = 1000			vercopy_start = $1000
+    65
+    66 						opt		o+
+    67 2120					org		$2200
+    68
+    69 2200			.proc main
+    70 2200-2247> A9 26				lda		#<[test_name+1]
+    71 2202 A0 22				ldy		#>[test_name+1]
+    72 2204			quick_abort_msg:
+    73 2204 20 4E 1D				jsr		_testInit
+    74 						
+    75 2207 AD 2D 1A				lda		_cpuMode
+    76 220A 0D 2E 1A				ora		_veronica
+    77 220D 30 39				bmi		have_816
+    78 						
+    79 220F					_SKIP	'No 65C816 present.'
+Macro: _SKIP [Source: library.s]
+     1 220F 20 3A 1E			jsr		_testSkipped
+     2 2212 4E 6F 20 36 35 43 + 	dta		'No 65C816 present.',0
+Source: cpu_65c816.s
+    80
+    81 2225			test_name:
+    82 2225 9B 43 50 55 3A 20 + 		dta		$9b,'CPU: 65C816 tests',0
+    83
+    84 2238			precheck:
+    85 						;check if 65C816 or Veronica is present - if so, print the banner and
+    86 						;bail out now, without loading the full test (so it can extend beyond
+    87 						;16K)
+    88 2238 AD 2D 1A				lda		_cpuMode
+    89 223B 0D 2E 1A				ora		_veronica
+    90 223E 10 01 60				spl:rts
+    91 2241 A9 25				lda		#<test_name
+    92 2243 A0 22				ldy		#>test_name
+    93 2245 4C 04 22				jmp		quick_abort_msg
+    94
+    95 02E2-02E3> 38 22				ini		precheck
+    96 						
+    97 2248			have_816:
+    98 						opt		c+
+    99 						
+   100 						;save off current stack pointer
+   101 2248-3DB8> BA				tsx
+   102 2249 86 80				stx		emusp
+   103
+   104 						;check if we are using Veronica
+   105 224B 2C 2E 1A				bit		_veronica
+   106 224E 10 27				bpl		no_veronica
+   107 						
+   108 						;launch on Veronica
+   109 2250 A9 22				lda		#>veronica_start
+   110 2252 85 C8				sta		d0
+   111 2254 A2 68				ldx		#<veronica_start
+   112 2256 A9 10				lda		#>vercopy_start
+   113 2258 A0 2E				ldy		#>[vercopy_end-1]+1->[vercopy_start]
+   114 225A 20 00 09				jsr		_veronicaLaunch
+   115 225D 30 03 4C F8 1D			smi:jmp	_testPassed
+   116 2262 48					pha
+   117 2263 8A					txa
+   118 2264 48					pha
+   119 2265 4C 0D 1E				jmp		_testFailed
+   120
+   121 2268			veronica_start:
+   122 2268 A9 4C 8D 0D 1E			mva		#$4c _testFailed
+   123 226D A9 8D 8D 0E 1E A9 + 		mwa		#FailTest816 _testFailed+1
+   124
+   125 2277			no_veronica:
+   126 						;first, let's do some basic tests in emulation mode with interrupts on
+   127 2277 A9 A5				lda		#$a5
+   128 2279 EB					xba
+   129 227A A9 F0				lda		#$f0
+   130 227C EB					xba
+   131 227D					_ASSERTA $a5, 'XBA instruction failed.'
+Macro: _ASSERTA [Source: library.s]
+     1 227D C9 A5			cmp	#$a5
+     2 227F F0 1D			beq	pass
+     4 2281 85 C9			sta	d1
+     5 2283 20 0D 1E			jsr	_testFailed
+     6 2286 58 42 41 20 69 6E + 	dta	'XBA instruction failed.',0
+     7 229E			pass:
+Source: cpu_65c816.s
+   132 						
+   133 229E A2 42				ldx		#$42
+   134 22A0 DA					phx
+   135 22A1 68					pla
+   136 22A2					_ASSERTA $42, 'PHX instruction failed.'
+Macro: _ASSERTA [Source: library.s]
+     1 22A2 C9 42			cmp	#$42
+     2 22A4 F0 1D			beq	pass
+     4 22A6 85 C9			sta	d1
+     5 22A8 20 0D 1E			jsr	_testFailed
+     6 22AB 50 48 58 20 69 6E + 	dta	'PHX instruction failed.',0
+     7 22C3			pass:
+Source: cpu_65c816.s
+   137 						
+   138 22C3 A0 8C				ldy		#$8c
+   139 22C5 5A					phy
+   140 22C6 68					pla
+   141 22C7					_ASSERTA $8c, 'PHY instruction failed.'
+Macro: _ASSERTA [Source: library.s]
+     1 22C7 C9 8C			cmp	#$8c
+     2 22C9 F0 1D			beq	pass
+     4 22CB 85 C9			sta	d1
+     5 22CD 20 0D 1E			jsr	_testFailed
+     6 22D0 50 48 59 20 69 6E + 	dta	'PHY instruction failed.',0
+     7 22E8			pass:
+Source: cpu_65c816.s
+   142 						
+   143 22E8 A9 22				lda		#$22
+   144 22EA 48					pha
+   145 22EB FA					plx
+   146 22EC					_ASSERTX $22, 'PLX instruction failed.'
+Macro: _ASSERTX [Source: library.s]
+     1 22EC E0 22			cpx	#$22
+     2 22EE F0 1D			beq	pass
+     4 22F0 86 C9			stx	d1
+     5 22F2 20 0D 1E			jsr	_testFailed
+     6 22F5 50 4C 58 20 69 6E + 	dta	'PLX instruction failed.',0
+     7 230D			pass:
+Source: cpu_65c816.s
+   147 						
+   148 230D A9 FE				lda		#$fe
+   149 230F 48					pha
+   150 2310 7A					ply
+   151 2311					_ASSERTY $fe, 'PLY instruction failed.'
+Macro: _ASSERTY [Source: library.s]
+     1 2311 C0 FE			cpy	#$fe
+     2 2313 F0 1D			beq	pass
+     4 2315 84 C9			sty	d1
+     5 2317 20 0D 1E			jsr	_testFailed
+     6 231A 50 4C 59 20 69 6E + 	dta	'PLY instruction failed.',0
+     7 2332			pass:
+Source: cpu_65c816.s
+   152 						
+   153 2332 7B					tdc
+   154 2333					_ASSERTA $00, 'TDC instruction failed.'
+Macro: _ASSERTA [Source: library.s]
+     1 2333 C9 00			cmp	#$00
+     2 2335 F0 1D			beq	pass
+     4 2337 85 C9			sta	d1
+     5 2339 20 0D 1E			jsr	_testFailed
+     6 233C 54 44 43 20 69 6E + 	dta	'TDC instruction failed.',0
+     7 2354			pass:
+Source: cpu_65c816.s
+   155 						
+   156 2354 A2 01				ldx		#$01
+   157 2356 A0 02				ldy		#$02
+   158 2358 9B					txy
+   159 2359					_ASSERTY $01, 'TXY instruction failed.'
+Macro: _ASSERTY [Source: library.s]
+     1 2359 C0 01			cpy	#$01
+     2 235B F0 1D			beq	pass
+     4 235D 84 C9			sty	d1
+     5 235F 20 0D 1E			jsr	_testFailed
+     6 2362 54 58 59 20 69 6E + 	dta	'TXY instruction failed.',0
+     7 237A			pass:
+Source: cpu_65c816.s
+   160 						
+   161 237A A2 01				ldx		#$01
+   162 237C A0 02				ldy		#$02
+   163 237E BB					tyx
+   164 237F					_ASSERTX $02, 'TYX instruction failed.'
+Macro: _ASSERTX [Source: library.s]
+     1 237F E0 02			cpx	#$02
+     2 2381 F0 1D			beq	pass
+     4 2383 86 C9			stx	d1
+     5 2385 20 0D 1E			jsr	_testFailed
+     6 2388 54 59 58 20 69 6E + 	dta	'TYX instruction failed.',0
+     7 23A0			pass:
+Source: cpu_65c816.s
+   165
+   166 						;check that WDM is a two-byte opcode
+   167 23A0 42					wdm
+   168 23A1 E8					inx
+   169 23A2					_ASSERTX $02, 'WDM was not a two-byte opcode.'
+Macro: _ASSERTX [Source: library.s]
+     1 23A2 E0 02			cpx	#$02
+     2 23A4 F0 24			beq	pass
+     4 23A6 86 C9			stx	d1
+     5 23A8 20 0D 1E			jsr	_testFailed
+     6 23AB 57 44 4D 20 77 61 + 	dta	'WDM was not a two-byte opcode.',0
+     7 23CA			pass:
+Source: cpu_65c816.s
+   170 						
+   171 						;check that we cannot clear M/X in emulation mode
+   172 23CA 08					php
+   173 23CB 68					pla
+   174 23CC 29 CF				and		#$cf
+   175 23CE 48					pha
+   176 23CF 28					plp
+   177 23D0 08					php
+   178 23D1 68					pla
+   179 23D2 29 30				and		#$30
+   180 23D4					_ASSERTA $30, 'PLP was able to clear M or X in emu mode.'
+Macro: _ASSERTA [Source: library.s]
+     1 23D4 C9 30			cmp	#$30
+     2 23D6 F0 2F			beq	pass
+     4 23D8 85 C9			sta	d1
+     5 23DA 20 0D 1E			jsr	_testFailed
+     6 23DD 50 4C 50 20 77 61 + 	dta	'PLP was able to clear M or X in emu mode.',0
+     7 2407			pass:
+Source: cpu_65c816.s
+   181 						
+   182 						;test REP/SEP
+   183 2407 18					clc
+   184 2408 E2 01				sep		#$01
+   185 240A					_ASSERT816 bcs, 'SEP did not set carry flag.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 240A B0 1F				bcs		ok
+     2 240C 20 8D 3D				jsr		FailTest816
+     3 240F 53 45 50 20 64 69 + 		dta		'SEP did not set carry flag.',0
+     4 242B			ok:
+Source: cpu_65c816.s
+   186 242B C2 01				rep		#$01
+   187 242D					_ASSERT816 bcc, 'REP did not clear carry flag.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 242D 90 21				bcc		ok
+     2 242F 20 8D 3D				jsr		FailTest816
+     3 2432 52 45 50 20 64 69 + 		dta		'REP did not clear carry flag.',0
+     4 2450			ok:
+Source: cpu_65c816.s
+   188 2450 C2 30				rep		#$30
+   189 2452 08					php
+   190 2453 68					pla
+   191 2454 29 30				and		#$30
+   192 2456 C9 30				cmp		#$30
+   193 2458					_ASSERTA $30, 'REP was able to clear M or X in emu mode.'
+Macro: _ASSERTA [Source: library.s]
+     1 2458 C9 30			cmp	#$30
+     2 245A F0 2F			beq	pass
+     4 245C 85 C9			sta	d1
+     5 245E 20 0D 1E			jsr	_testFailed
+     6 2461 52 45 50 20 77 61 + 	dta	'REP was able to clear M or X in emu mode.',0
+     7 248B			pass:
+Source: cpu_65c816.s
+   194
+   195 						;interrupts off
+   196 248B 2C 2E 1A				bit		_veronica
+   197 248E 30 06				bmi		skip_intsoff
+   198 2490 20 F7 1A				jsr		_screenOff
+   199 2493 20 7B 1A				jsr		_interruptsOff
+   200 2496			skip_intsoff:
+   201 						
+   202 						;save off OS zero page and low stack
+   203 2496 A2 7F				ldx.b	#$7f
+   204 2498			zpsave_loop:
+   205 2498 B5 00 9D 00 20			mva		0,x oszpsave,x
+   206 249D BD 00 01 9D 80 20			mva		$100,x stksave,x
+   207 24A3 CA					dex
+   208 24A4 10 F2				bpl		zpsave_loop
+   209 						
+   210 24A6 86 86				stx		switched_zp
+   211
+   212 						;check that dp,X addressing wraps in zero page
+   213 24A8 A9 F2				lda.b	#$f2
+   214 24AA 85 C9				sta		d1
+   215 24AC A2 FF				ldx.b	#$ff
+   216 24AE D5 CA				cmp		d1+1,x
+   217 24B0					_ASSERT816 beq, 'dp,X did not wrap in zero page with D=0.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 24B0 F0 2C				beq		ok
+     2 24B2 20 8D 3D				jsr		FailTest816
+     3 24B5 64 70 2C 58 20 64 + 		dta		'dp,X did not wrap in zero page with D=0.',0
+     4 24DE			ok:
+Source: cpu_65c816.s
+   218 						
+   219 						;check that (dp),Y and (dp,X) addressing wraps in zero page
+   220 24DE AE C8 01				ldx		d0+$100			;save d0+$100
+   221 24E1 DA					phx
+   222 24E2 AE 00 01				ldx		$100
+   223 24E5 DA					phx
+   224 						
+   225 24E6 A9 AA 85 C8				mva		#$aa d0
+   226 24EA A9 CC 8D C8 01			mva		#$cc d0+$100
+   227 24EF A9 C8 85 FF				mva		#d0 $ff
+   228 24F3 A9 00 85 00				mva		#0	$0
+   229 24F7 A9 01 8D 00 01			mva		#1	$100
+   230 24FC A0 00				ldy.b	#0
+   231 24FE BB					tyx
+   232 24FF B2 FF				lda		($ff)
+   233 2501 8D 7F 25				sta		dpwrap_result
+   234 2504 B1 FF				lda		($ff),y
+   235 2506 EB					xba
+   236 2507 A1 FF				lda		($ff,x)
+   237 						
+   238 2509 FA					plx
+   239 250A 8D 00 01				sta		$100
+   240 250D FA					plx
+   241 250E 8E C8 01				stx		d0+$100
+   242 						
+   243 2511 C9 AA				cmp		#$aa
+   244 2513					_ASSERT816 beq, '(dp,X) address read did not wrap in page zero.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2513 F0 32				beq		ok
+     2 2515 20 8D 3D				jsr		FailTest816
+     3 2518 28 64 70 2C 58 29 + 		dta		'(dp,X) address read did not wrap in page zero.',0
+     4 2547			ok:
+Source: cpu_65c816.s
+   245 2547 EB					xba
+   246 2548 C9 AA				cmp		#$aa
+   247 254A					_ASSERT816 beq, '(dp),Y address read did not wrap in page zero.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 254A F0 32				beq		ok
+     2 254C 20 8D 3D				jsr		FailTest816
+     3 254F 28 64 70 29 2C 59 + 		dta		'(dp),Y address read did not wrap in page zero.',0
+     4 257E			ok:
+Source: cpu_65c816.s
+   248 257E A9 00				lda		#0
+   249 = 257F			dpwrap_result = *-1
+   250 2580 C9 AA				cmp		#$aa
+   251 2582					_ASSERT816 beq, '(dp) address read did not wrap in page zero.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2582 F0 30				beq		ok
+     2 2584 20 8D 3D				jsr		FailTest816
+     3 2587 28 64 70 29 20 61 + 		dta		'(dp) address read did not wrap in page zero.',0
+     4 25B4			ok:
+Source: cpu_65c816.s
+   252
+   253 						;check that [dp] and [dp],Y do not wrap in page zero, even in emulation mode and
+   254 						;with DL=0
+   255 25B4 A9 AA 85 08				mva		#$aa $08
+   256 25B8 A9 AB 85 09				mva		#$ab $09
+   257 25BC A9 CC 8D 08 01			mva		#$cc $108
+   258 25C1 A9 CD 8D 09 01			mva		#$cd $109
+   259 25C6 A9 08 85 FF				mva		#$08 $ff
+   260 25CA A9 09 8D FF 01			mva		#$09 $1ff
+   261 25CF A9 00 85 00				mva		#0	$0
+   262 25D3 A9 01 8D 00 01			mva		#1	$100
+   263 25D8 A9 00 8D 01 01			mva		#0	$101
+   264 25DD A0 00				ldy.b	#0
+   265 25DF B7 FF				lda		[$ff],y
+   266 25E1 EB					xba
+   267 25E2 A7 FF				lda		[$ff]
+   268 								
+   269 25E4 C9 CC				cmp.b	#$cc
+   270 25E6					_ASSERT816 beq, '[dp] address read wrapped in page zero.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 25E6 F0 2B				beq		ok
+     2 25E8 20 8D 3D				jsr		FailTest816
+     3 25EB 5B 64 70 5D 20 61 + 		dta		'[dp] address read wrapped in page zero.',0
+     4 2613			ok:
+Source: cpu_65c816.s
+   271 2613 EB					xba
+   272 2614 C9 CC				cmp.b	#$cc
+   273 2616					_ASSERT816 beq, '[dp],Y address read wrapped in page zero.'		
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2616 F0 2D				beq		ok
+     2 2618 20 8D 3D				jsr		FailTest816
+     3 261B 5B 64 70 5D 2C 59 + 		dta		'[dp],Y address read wrapped in page zero.',0
+     4 2645			ok:
+Source: cpu_65c816.s
+   274
+   275 						;check that PEI (dp) does not wrap
+   276 2645 D4 FF				pei		($ff)
+   277 2647 68					pla
+   278 2648 C9 08				cmp.b	#8
+   279 264A			pei_fail:
+   280 264A					_ASSERT816 beq, 'PEI (dp) did not cross pages with DL=0.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 264A F0 2B				beq		ok
+     2 264C 20 8D 3D				jsr		FailTest816
+     3 264F 50 45 49 20 28 64 + 		dta		'PEI (dp) did not cross pages with DL=0.',0
+     4 2677			ok:
+Source: cpu_65c816.s
+   281 2677 68					pla
+   282 2678 C9 01				cmp.b	#1
+   283 267A D0 CE				bne		pei_fail
+   284
+   285 						;check that we can change the direct page to page 1 with wrapping
+   286 267C A9 01				lda.b	#1
+   287 267E EB					xba
+   288 267F A9 00				lda.b	#0
+   289 2681 5B					tcd
+   290 2682 A9 3C				lda.b	#$3c
+   291 2684 48					pha
+   292 2685 BA					tsx
+   293 2686 E8					inx
+   294 2687 E8					inx
+   295 2688 D5 FF				cmp.b	$ff,x
+   296 268A					_ASSERT816 beq, 'dp,X did not wrap in page one with D=$100.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 268A F0 2E				beq		ok
+     2 268C 20 8D 3D				jsr		FailTest816
+     3 268F 64 70 2C 58 20 64 + 		dta		'dp,X did not wrap in page one with D=$100.',0
+     4 26BA			ok:
+Source: cpu_65c816.s
+   297 26BA 68					pla
+   298 						
+   299 						;check that we can change the direct page base to $0001 and that it
+   300 						;can cross into page one
+   301 26BB A9 00				lda.b	#0
+   302 26BD EB					xba
+   303 26BE A9 01				lda.b	#1
+   304 26C0 5B					tcd
+   305 26C1 A2 FF				ldx.b	#$ff
+   306 26C3 A9 5C				lda.b	#$5c
+   307 26C5 95 20				sta.b	$20,x
+   308 26C7 CD 20 01				cmp		$120
+   309 26CA					_ASSERT816 beq, 'dp,X did not cross page boundaries with DL!=0.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 26CA F0 32				beq		ok
+     2 26CC 20 8D 3D				jsr		FailTest816
+     3 26CF 64 70 2C 58 20 64 + 		dta		'dp,X did not cross page boundaries with DL!=0.',0
+     4 26FE			ok:
+Source: cpu_65c816.s
+   310 						
+   311 						;check that (dp,X=0) still wraps high byte
+   312 26FE A2 00				ldx.b	#0
+   313 2700 A1 FE				lda		($fe,x)
+   314 2702 C9 AA				cmp.b	#$aa
+   315 2704					_ASSERT816 beq, '($fe,X=0) crossed page boundaries with DL=1.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2704 F0 30				beq		ok
+     2 2706 20 8D 3D				jsr		FailTest816
+     3 2709 28 24 66 65 2C 58 + 		dta		'($fe,X=0) crossed page boundaries with DL=1.',0
+     4 2736			ok:
+Source: cpu_65c816.s
+   316
+   317 						;check that (dp,X=$ff) crosses pages
+   318 2736 CA					dex
+   319 2737 A1 FF				lda		($ff,x)		;($1ff) = $109
+   320 2739 C9 CD				cmp.b	#$cd
+   321 273B					_ASSERT816 beq, '($fe,X=$ff) unexpected read with DL=1.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 273B F0 2A				beq		ok
+     2 273D 20 8D 3D				jsr		FailTest816
+     3 2740 28 24 66 65 2C 58 + 		dta		'($fe,X=$ff) unexpected read with DL=1.',0
+     4 2767			ok:
+Source: cpu_65c816.s
+   322 						
+   323 						;check that (dp),Y now wraps
+   324 2767 A0 00				ldy.b	#0
+   325 2769 B1 FE				lda		($fe),y
+   326 276B C9 CC				cmp.b	#$cc
+   327 276D					_ASSERT816 beq, '(dp),Y did not cross page boundaries with DL!=0.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 276D F0 34				beq		ok
+     2 276F 20 8D 3D				jsr		FailTest816
+     3 2772 28 64 70 29 2C 59 + 		dta		'(dp),Y did not cross page boundaries with DL!=0.',0
+     4 27A3			ok:
+Source: cpu_65c816.s
+   328
+   329 						;check that (dp) now wraps
+   330 27A3 B2 FE				lda		($fe)
+   331 27A5 C9 CC				cmp.b	#$cc
+   332 27A7					_ASSERT816 beq, '(dp) did not cross page boundaries with DL!=0.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 27A7 F0 32				beq		ok
+     2 27A9 20 8D 3D				jsr		FailTest816
+     3 27AC 28 64 70 29 20 64 + 		dta		'(dp) did not cross page boundaries with DL!=0.',0
+     4 27DB			ok:
+Source: cpu_65c816.s
+   333 						
+   334 						;restore normal direct page
+   335 27DB A9 00				lda.b	#0
+   336 27DD EB					xba
+   337 27DE A9 00				lda.b	#0
+   338 27E0 5B					tcd
+   339 						
+   340 						;check if we can index out of page one using d,S indexing
+   341 27E1 A2 FF				ldx.b	#$ff
+   342 27E3 9A					txs
+   343 27E4 AC 20 01				ldy		$0120			;save $0120
+   344 27E7 AD 20 02				lda		$0220
+   345 27EA 49 FF				eor		#$ff
+   346 27EC 8D 20 01				sta		$0120
+   347 27EF A3 21				lda.b	$21,s
+   348 27F1 8C 20 01				sty		$0120			;restore $0120
+   349 27F4 A6 80				ldx		emusp			;get original stack pointer
+   350 27F6 9A					txs						;restore stack pointer
+   351 27F7 CD 20 02				cmp		$0220
+   352 27FA					_ASSERT816 beq, 'd,S addressing did not cross into page 2.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 27FA F0 2D				beq		ok
+     2 27FC 20 8D 3D				jsr		FailTest816
+     3 27FF 64 2C 53 20 61 64 + 		dta		'd,S addressing did not cross into page 2.',0
+     4 2829			ok:
+Source: cpu_65c816.s
+   353 						
+   354 						;check if we can index out of page one using (d,S),Y indexing
+   355 						;CAREFUL: Veronica has hardware registers at $0200-$020F.
+   356 2829 AD 20 02				lda		$0220
+   357 282C 48					pha
+   358 282D AD 21 02				lda		$0221
+   359 2830 48					pha
+   360 2831 AD 20 01				lda		$0120
+   361 2834 48					pha
+   362 2835 AD 21 01				lda		$0121
+   363 2838 48					pha
+   364 2839 A2 FF				ldx.b	#$ff
+   365 283B 9A					txs
+   366 283C A9 C4 8D 20 01 A9 + 		mwa		#d0-4 $0120
+   367 2846 A9 C5 8D 20 02 A9 + 		mwa		#d1-4 $0220
+   368 2850 A9 A9 85 C8				mva		#$a9 d0
+   369 2854 A9 2C 85 C9				mva		#$2c d1
+   370 2858 A0 04				ldy.b	#4
+   371 285A B3 21				lda		($21,s),y
+   372 285C A6 80				ldx		emusp
+   373 285E 9A					txs
+   374 285F FA					plx
+   375 2860 8E 21 01				stx		$0121
+   376 2863 FA					plx
+   377 2864 8E 20 01				stx		$0120
+   378 2867 FA					plx
+   379 2868 8E 21 02				stx		$0221
+   380 286B FA					plx
+   381 286C 8E 20 02				stx		$0220
+   382 286F C9 2C				cmp.b	#$2c
+   383 2871					_ASSERT816 beq, '(d,S),Y addressing did not cross into page 2.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2871 F0 31				beq		ok
+     2 2873 20 8D 3D				jsr		FailTest816
+     3 2876 28 64 2C 53 29 2C + 		dta		'(d,S),Y addressing did not cross into page 2.',0
+     4 28A4			ok:
+Source: cpu_65c816.s
+   384 						
+   385 						;set stack pointer to $00 and see if we can push a 16-bit
+   386 						;value into page zero
+   387 28A4 A5 FF 85 C8				mva		$ff d0				;save potential problem locations
+   388 28A8 AD 00 01 85 C9			mva		$100 d1
+   389 28AD AD FF 01 85 CA			mva		$1ff d2
+   390 28B2 A2 00				ldx		#0					;reset stack to push 16-bit across page boundary
+   391 28B4 9A					txs
+   392 28B5 A9 FF				lda		#$ff
+   393 28B7 85 FF				sta		$ff					;($ff) = $ff
+   394 28B9 0B					phd							;write $100, $ff
+   395 28BA A5 FF				lda		$ff					;see if ($ff) changed
+   396 28BC A6 CA 8E FF 01			mvx		d2 $1ff				;restore locations
+   397 28C1 A6 C9 8E 00 01			mvx		d1 $100
+   398 28C6 A6 C8 86 FF				mvx		d0 $ff
+   399 28CA A6 80				ldx		emusp				;restore stack pointer
+   400 28CC 9A					txs
+   401 28CD C9 00				cmp		#0					;check result
+   402 28CF					_ASSERT816 beq, 'PHD was not able to write to $00FF in emu mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 28CF F0 33				beq		ok
+     2 28D1 20 8D 3D				jsr		FailTest816
+     3 28D4 50 48 44 20 77 61 + 		dta		'PHD was not able to write to $00FF in emu mode.',0
+     4 2904			ok:
+Source: cpu_65c816.s
+   403 						
+   404 						;set stack pointer to $FF and see if we can read from page two
+   405 2904 AC 00 01				ldy		$0100
+   406 2907 AD 00 02				lda		$0200
+   407 290A 49 FF				eor		#$ff
+   408 290C 8D 00 01				sta		$0100
+   409 290F A2 FE				ldx		#$fe
+   410 2911 9A					txs
+   411 2912 2B					pld							;read $1ff, $200
+   412 2913 AE 80 00				ldx.w	emusp				;!! D is weird... must avoid dp addressing!
+   413 2916 9A					txs
+   414 2917 8C 00 01				sty		$0100
+   415 291A 7B					tdc
+   416 291B A2 00				ldx		#0
+   417 291D DA					phx
+   418 291E DA					phx
+   419 291F 2B					pld							;back to normal zero page
+   420 2920 EB					xba
+   421 2921 CD 00 02				cmp		$0200
+   422 2924					_ASSERT816 beq, 'PLD was not able to read from $0200 in emu mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2924 F0 34				beq		ok
+     2 2926 20 8D 3D				jsr		FailTest816
+     3 2929 50 4C 44 20 77 61 + 		dta		'PLD was not able to read from $0200 in emu mode.',0
+     4 295A			ok:
+Source: cpu_65c816.s
+   423 						
+   424 						;----------------------------------------------
+   425 						; Stack page crossing tests
+   426 						;----------------------------------------------
+   427
+   428 295A A2 A5				ldx		#$a5
+   429 295C 85 FF				sta		$ff
+   430 295E A2 00				ldx		#0
+   431 2960 9A					txs
+   432
+   433 						;PEA should index out of page one
+   434 2961 F4 CD AB				pea		#$abcd
+   435 2964 A5 FF				lda		$ff
+   436 2966 C9 CD				cmp		#$cd
+   437 2968					_ASSERT816 beq, 'PEA did not write to $FF in emu mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2968 F0 29				beq		ok
+     2 296A 20 8D 3D				jsr		FailTest816
+     3 296D 50 45 41 20 64 69 + 		dta		'PEA did not write to $FF in emu mode.',0
+     4 2993			ok:
+Source: cpu_65c816.s
+   438 2993 68					pla
+   439 2994 68					pla
+   440
+   441 						;PER should index out of page one
+   442 2995 A9 1C				lda		#<per0_next^$80
+   443 2997 85 FF				sta		$ff
+   444 2999 62 00 00				per		per0_next
+   445 299C			per0_next:
+   446 299C A5 FF				lda		$ff
+   447 299E C9 9C				cmp		#<per0_next
+   448 29A0					_ASSERT816 beq, 'PER did not write to $FF in emu mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 29A0 F0 29				beq		ok
+     2 29A2 20 8D 3D				jsr		FailTest816
+     3 29A5 50 45 52 20 64 69 + 		dta		'PER did not write to $FF in emu mode.',0
+     4 29CB			ok:
+Source: cpu_65c816.s
+   449 29CB 68					pla
+   450 29CC 68					pla
+   451
+   452 						;PEI should index out of page one
+   453 29CD A2 5C				ldx		#$5c
+   454 29CF 86 C0				stx		a0
+   455 29D1 E8					inx
+   456 29D2 85 C1				sta		a0+1
+   457 29D4 D4 C0				pei		(a0)
+   458 29D6 A5 FF				lda		$ff
+   459 29D8 C9 5C				cmp		#$5c
+   460 29DA					_ASSERT816 beq, 'PEI did not write to $FF in emu mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 29DA F0 29				beq		ok
+     2 29DC 20 8D 3D				jsr		FailTest816
+     3 29DF 50 45 49 20 64 69 + 		dta		'PEI did not write to $FF in emu mode.',0
+     4 2A05			ok:
+Source: cpu_65c816.s
+   461 2A05 68					pla
+   462 2A06 68					pla
+   463
+   464 						;JSL should index out of page one
+   465 2A07 A9 FF				lda		#$ff
+   466 2A09 85 FF				sta		$ff
+   467 2A0B 85 FE				sta		$fe
+   468 2A0D 22 11 2A 00				jsl		jsl0_next
+   469 2A11			jsl0_next:
+   470 2A11 A5 FF				lda		$ff
+   471 2A13 C9 2A				cmp		#>[jsl0_next-1]
+   472 2A15					_ASSERT816 beq, 'JSL did not write to $FF in emu mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2A15 F0 29				beq		ok
+     2 2A17 20 8D 3D				jsr		FailTest816
+     3 2A1A 4A 53 4C 20 64 69 + 		dta		'JSL did not write to $FF in emu mode.',0
+     4 2A40			ok:
+Source: cpu_65c816.s
+   473 2A40 A5 FE				lda		$fe
+   474 2A42 C9 10				cmp		#<[jsl0_next-1]
+   475 2A44					_ASSERT816 beq, 'JSL did not write to $FE in emu mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2A44 F0 29				beq		ok
+     2 2A46 20 8D 3D				jsr		FailTest816
+     3 2A49 4A 53 4C 20 64 69 + 		dta		'JSL did not write to $FE in emu mode.',0
+     4 2A6F			ok:
+Source: cpu_65c816.s
+   476 2A6F 68					pla
+   477 2A70 68					pla
+   478 2A71 68					pla
+   479
+   480 						;PLB should index across to page two
+   481 2A72 A2 E4				ldx		#$e4
+   482 2A74 8E 00 01				stx		$100
+   483 2A77 E8					inx
+   484 2A78 8E 00 02				stx		$200
+   485 2A7B A2 FF				ldx		#$ff
+   486 2A7D 9A					txs
+   487 2A7E AB					plb
+   488 2A7F E8					inx
+   489 2A80 E8					inx
+   490 2A81 9A					txs
+   491 2A82 8B					phb
+   492 2A83 68					pla
+   493 2A84 A2 00				ldx		#0
+   494 2A86 DA					phx
+   495 2A87 AB					plb
+   496 2A88 C9 E5				cmp		#$e5
+   497 2A8A					_ASSERT816 beq, 'PLB did not read from $0200 in emu mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2A8A F0 2C				beq		ok
+     2 2A8C 20 8D 3D				jsr		FailTest816
+     3 2A8F 50 4C 42 20 64 69 + 		dta		'PLB did not read from $0200 in emu mode.',0
+     4 2AB8			ok:
+Source: cpu_65c816.s
+   498
+   499 						;PLX, PLY should not index across to page two
+   500 2AB8 A2 FF				ldx		#$ff
+   501 2ABA 9A					txs
+   502 2ABB 7A					ply
+   503 2ABC 9A					txs
+   504 2ABD FA					plx
+   505 2ABE E0 E4				cpx		#$e4
+   506 2AC0					_ASSERT816 beq, 'PLX should not read from $0200 in emu mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2AC0 F0 2F				beq		ok
+     2 2AC2 20 8D 3D				jsr		FailTest816
+     3 2AC5 50 4C 58 20 73 68 + 		dta		'PLX should not read from $0200 in emu mode.',0
+     4 2AF1			ok:
+Source: cpu_65c816.s
+   507 2AF1 C0 E4				cpy		#$e4
+   508 2AF3					_ASSERT816 beq, 'PLY should not read from $0200 in emu mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2AF3 F0 2F				beq		ok
+     2 2AF5 20 8D 3D				jsr		FailTest816
+     3 2AF8 50 4C 59 20 73 68 + 		dta		'PLY should not read from $0200 in emu mode.',0
+     4 2B24			ok:
+Source: cpu_65c816.s
+   509
+   510 						;
+   511
+   512 2B24 A6 80				ldx		emusp
+   513 2B26 9A					txs
+   514
+   515 						;jump to native mode (and test XCE)
+   516 2B27 18					clc
+   517 2B28 FB					xce
+   518 2B29					_ASSERT816 bcs, 'XCE did not set the carry flag.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2B29 B0 23				bcs		ok
+     2 2B2B 20 8D 3D				jsr		FailTest816
+     3 2B2E 58 43 45 20 64 69 + 		dta		'XCE did not set the carry flag.',0
+     4 2B4E			ok:
+Source: cpu_65c816.s
+   519 						
+   520 						;----------------------------------------------
+   521 						;       ** WE ARE NOW IN NATIVE MODE **
+   522 						;----------------------------------------------
+   523
+   524 						;save off the ROM vector area
+   525 2B4E A2 1F				ldx		#31
+   526 2B50 BD E0 FF 9D 00 21 + 		mva:rpl	$ffe0,x romsave,x-
+   527 						
+   528 						;check if we are running on a RAM OS
+   529 2B59 EE FF FF				inc		$ffff
+   530 2B5C AD FF FF				lda		$ffff
+   531 2B5F CE FF FF				dec		$ffff
+   532 2B62 CD FF FF				cmp		$ffff
+   533 2B65 D0 40				bne		ram_os
+   534 						
+   535 						;save off the current port B state
+   536 2B67 A2 38				ldx		#$38
+   537 2B69 A0 3C				ldy		#$3c
+   538 2B6B AD 01 D3 85 81			mva		portb save_crb
+   539 2B70 8E 03 D3				stx		pbctl
+   540 2B73 AD 01 D3 85 82			mva		portb save_ddrb
+   541 2B78 8C 03 D3				sty		pbctl
+   542 2B7B AD 01 D3 85 83			mva		portb save_orb
+   543 						
+   544 						;try to bank out the kernel ROM
+   545 2B80 A9 FF				lda		#$ff
+   546 2B82 85 84				sta		switched_pia
+   547 2B84 8D 01 D3				sta		portb
+   548 2B87 8E 03 D3				stx		pbctl
+   549 2B8A 8D 01 D3				sta		portb
+   550 2B8D 8C 03 D3				sty		pbctl
+   551 2B90 A9 FE 8D 01 D3			mva		#$fe portb
+   552 						
+   553 2B95 EE FF FF				inc		$ffff
+   554 2B98 AD FF FF				lda		$ffff
+   555 2B9B CE FF FF				dec		$ffff
+   556 2B9E CD FF FF				cmp		$ffff
+   557 2BA1 F0 08				beq		softos_fail
+   558 						
+   559 2BA3 A9 FF 85 85				mva		#$ff switched_os
+   560 2BA7			ram_os:
+   561 2BA7 A9 FF 85 87				mva		#$ff romos_ok
+   562 						
+   563 2BAB			softos_fail:
+   564
+   565 						;check that we can do 16-bit accumulator and that NZC are sane.
+   566 2BAB C2 20				rep		#$20
+   567 2BAD A9 00 A5				lda.w	#$a500
+   568 2BB0					_ASSERT816 bmi, 'LDA.w #$a500 did not set N.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2BB0 30 1F				bmi		ok
+     2 2BB2 20 8D 3D				jsr		FailTest816
+     3 2BB5 4C 44 41 2E 77 20 + 		dta		'LDA.w #$a500 did not set N.',0
+     4 2BD1			ok:
+Source: cpu_65c816.s
+   569 2BD1					_ASSERT816 bne, 'LDA.w #$a500 did not clear Z.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2BD1 D0 21				bne		ok
+     2 2BD3 20 8D 3D				jsr		FailTest816
+     3 2BD6 4C 44 41 2E 77 20 + 		dta		'LDA.w #$a500 did not clear Z.',0
+     4 2BF4			ok:
+Source: cpu_65c816.s
+   570 2BF4 18					clc
+   571 2BF5 69 00 5B				adc.w	#$5b00
+   572 2BF8					_ASSERT816 bpl, 'ADC.w #$5b00 did not clear N.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2BF8 10 21				bpl		ok
+     2 2BFA 20 8D 3D				jsr		FailTest816
+     3 2BFD 41 44 43 2E 77 20 + 		dta		'ADC.w #$5b00 did not clear N.',0
+     4 2C1B			ok:
+Source: cpu_65c816.s
+   573 2C1B					_ASSERT816 beq, 'ADC.w #$5b00 did not set Z.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2C1B F0 1F				beq		ok
+     2 2C1D 20 8D 3D				jsr		FailTest816
+     3 2C20 41 44 43 2E 77 20 + 		dta		'ADC.w #$5b00 did not set Z.',0
+     4 2C3C			ok:
+Source: cpu_65c816.s
+   574 2C3C					_ASSERT816 bcs, 'ADC.w #$5b00 did not set C.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2C3C B0 1F				bcs		ok
+     2 2C3E 20 8D 3D				jsr		FailTest816
+     3 2C41 41 44 43 2E 77 20 + 		dta		'ADC.w #$5b00 did not set C.',0
+     4 2C5D			ok:
+Source: cpu_65c816.s
+   575 						
+   576 						;check that we can do 16-bit memory
+   577 2C5D A9 FF 00				lda.w	#$00ff
+   578 2C60 85 C0				sta		a0
+   579 2C62 E6 C0				inc		a0
+   580 2C64 A5 C0				lda		a0
+   581 2C66 C9 00 01				cmp.w	#$0100
+   582 2C69					_ASSERT816 beq, 'INC did not increment a 16-bit location.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2C69 F0 2C				beq		ok
+     2 2C6B 20 8D 3D				jsr		FailTest816
+     3 2C6E 49 4E 43 20 64 69 + 		dta		'INC did not increment a 16-bit location.',0
+     4 2C97			ok:
+Source: cpu_65c816.s
+   583 						
+   584 						;check that we can do 16-bit index
+   585 2C97 C2 10				rep		#$10	;MADS bug -- doesn't recognize #$91
+   586 2C99 C2 81				rep		#$81
+   587 2C9B A2 00 A5				ldx.w	#$a500
+   588 2C9E					_ASSERT816 bmi, 'LDX.w #$a500 did not set N.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2C9E 30 1F				bmi		ok
+     2 2CA0 20 8D 3D				jsr		FailTest816
+     3 2CA3 4C 44 58 2E 77 20 + 		dta		'LDX.w #$a500 did not set N.',0
+     4 2CBF			ok:
+Source: cpu_65c816.s
+   589 2CBF					_ASSERT816 bne, 'LDX.w #$a500 did not clear Z.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2CBF D0 21				bne		ok
+     2 2CC1 20 8D 3D				jsr		FailTest816
+     3 2CC4 4C 44 58 2E 77 20 + 		dta		'LDX.w #$a500 did not clear Z.',0
+     4 2CE2			ok:
+Source: cpu_65c816.s
+   590 2CE2 E0 FF A4				cpx.w	#$a4ff
+   591 2CE5					_ASSERT816 bpl, 'CPX.w #$a4ff did not clear N.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2CE5 10 21				bpl		ok
+     2 2CE7 20 8D 3D				jsr		FailTest816
+     3 2CEA 43 50 58 2E 77 20 + 		dta		'CPX.w #$a4ff did not clear N.',0
+     4 2D08			ok:
+Source: cpu_65c816.s
+   592 2D08					_ASSERT816 bne, 'CPX.w #$a4ff did not clear Z.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2D08 D0 21				bne		ok
+     2 2D0A 20 8D 3D				jsr		FailTest816
+     3 2D0D 43 50 58 2E 77 20 + 		dta		'CPX.w #$a4ff did not clear Z.',0
+     4 2D2B			ok:
+Source: cpu_65c816.s
+   593 2D2B					_ASSERT816 bcs, 'CPX.w #$a4ff did not set C.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2D2B B0 1F				bcs		ok
+     2 2D2D 20 8D 3D				jsr		FailTest816
+     3 2D30 43 50 58 2E 77 20 + 		dta		'CPX.w #$a4ff did not set C.',0
+     4 2D4C			ok:
+Source: cpu_65c816.s
+   594 2D4C 18					clc
+   595 2D4D A0 00 A5				ldy.w	#$a500
+   596 2D50					_ASSERT816 bmi, 'LDY.w #$a500 did not set N.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2D50 30 1F				bmi		ok
+     2 2D52 20 8D 3D				jsr		FailTest816
+     3 2D55 4C 44 59 2E 77 20 + 		dta		'LDY.w #$a500 did not set N.',0
+     4 2D71			ok:
+Source: cpu_65c816.s
+   597 2D71					_ASSERT816 bne, 'LDY.w #$a500 did not clear Z.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2D71 D0 21				bne		ok
+     2 2D73 20 8D 3D				jsr		FailTest816
+     3 2D76 4C 44 59 2E 77 20 + 		dta		'LDY.w #$a500 did not clear Z.',0
+     4 2D94			ok:
+Source: cpu_65c816.s
+   598 2D94 C0 FF A4				cpy.w	#$a4ff
+   599 2D97					_ASSERT816 bpl, 'CPY.w #$a4ff did not clear N.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2D97 10 21				bpl		ok
+     2 2D99 20 8D 3D				jsr		FailTest816
+     3 2D9C 43 50 59 2E 77 20 + 		dta		'CPY.w #$a4ff did not clear N.',0
+     4 2DBA			ok:
+Source: cpu_65c816.s
+   600 2DBA					_ASSERT816 bne, 'CPY.w #$a4ff did not clear Z.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2DBA D0 21				bne		ok
+     2 2DBC 20 8D 3D				jsr		FailTest816
+     3 2DBF 43 50 59 2E 77 20 + 		dta		'CPY.w #$a4ff did not clear Z.',0
+     4 2DDD			ok:
+Source: cpu_65c816.s
+   601 2DDD					_ASSERT816 bcs, 'CPY.w #$a4ff did not set C.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2DDD B0 1F				bcs		ok
+     2 2DDF 20 8D 3D				jsr		FailTest816
+     3 2DE2 43 50 59 2E 77 20 + 		dta		'CPY.w #$a4ff did not set C.',0
+     4 2DFE			ok:
+Source: cpu_65c816.s
+   602 2DFE A2 FF A4				ldx.w	#$a4ff
+   603 2E01 E8					inx
+   604 2E02					_ASSERT816 bmi, '16-bit INX did not set N properly.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2E02 30 26				bmi		ok
+     2 2E04 20 8D 3D				jsr		FailTest816
+     3 2E07 31 36 2D 62 69 74 + 		dta		'16-bit INX did not set N properly.',0
+     4 2E2A			ok:
+Source: cpu_65c816.s
+   605 2E2A					_ASSERT816 bne, '16-bit INX did not set Z properly.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2E2A D0 26				bne		ok
+     2 2E2C 20 8D 3D				jsr		FailTest816
+     3 2E2F 31 36 2D 62 69 74 + 		dta		'16-bit INX did not set Z properly.',0
+     4 2E52			ok:
+Source: cpu_65c816.s
+   606 2E52 E0 00 A5				cpx.w	#$a500
+   607 2E55					_ASSERT816 beq, '16-bit INX failed.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2E55 F0 16				beq		ok
+     2 2E57 20 8D 3D				jsr		FailTest816
+     3 2E5A 31 36 2D 62 69 74 + 		dta		'16-bit INX failed.',0
+     4 2E6D			ok:
+Source: cpu_65c816.s
+   608 2E6D A0 FF A4				ldy.w	#$a4ff
+   609 2E70 C8					iny
+   610 2E71					_ASSERT816 bmi, '16-bit INY did not set N properly.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2E71 30 26				bmi		ok
+     2 2E73 20 8D 3D				jsr		FailTest816
+     3 2E76 31 36 2D 62 69 74 + 		dta		'16-bit INY did not set N properly.',0
+     4 2E99			ok:
+Source: cpu_65c816.s
+   611 2E99					_ASSERT816 bne, '16-bit INY did not set Z properly.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2E99 D0 26				bne		ok
+     2 2E9B 20 8D 3D				jsr		FailTest816
+     3 2E9E 31 36 2D 62 69 74 + 		dta		'16-bit INY did not set Z properly.',0
+     4 2EC1			ok:
+Source: cpu_65c816.s
+   612 2EC1 C0 00 A5				cpy.w	#$a500
+   613 2EC4					_ASSERT816 beq, '16-bit INY failed.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2EC4 F0 16				beq		ok
+     2 2EC6 20 8D 3D				jsr		FailTest816
+     3 2EC9 31 36 2D 62 69 74 + 		dta		'16-bit INY failed.',0
+     4 2EDC			ok:
+Source: cpu_65c816.s
+   614 2EDC E8					inx
+   615 2EDD CA					dex
+   616 2EDE					_ASSERT816 bmi, '16-bit DEX did not set N properly.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2EDE 30 26				bmi		ok
+     2 2EE0 20 8D 3D				jsr		FailTest816
+     3 2EE3 31 36 2D 62 69 74 + 		dta		'16-bit DEX did not set N properly.',0
+     4 2F06			ok:
+Source: cpu_65c816.s
+   617 2F06					_ASSERT816 bne, '16-bit DEX did not set Z properly.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2F06 D0 26				bne		ok
+     2 2F08 20 8D 3D				jsr		FailTest816
+     3 2F0B 31 36 2D 62 69 74 + 		dta		'16-bit DEX did not set Z properly.',0
+     4 2F2E			ok:
+Source: cpu_65c816.s
+   618 2F2E E0 00 A5				cpx.w	#$a500
+   619 2F31					_ASSERT816 beq, '16-bit DEX failed.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2F31 F0 16				beq		ok
+     2 2F33 20 8D 3D				jsr		FailTest816
+     3 2F36 31 36 2D 62 69 74 + 		dta		'16-bit DEX failed.',0
+     4 2F49			ok:
+Source: cpu_65c816.s
+   620 2F49 C8					iny
+   621 2F4A 88					dey
+   622 2F4B					_ASSERT816 bmi, '16-bit DEY did not set N properly.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2F4B 30 26				bmi		ok
+     2 2F4D 20 8D 3D				jsr		FailTest816
+     3 2F50 31 36 2D 62 69 74 + 		dta		'16-bit DEY did not set N properly.',0
+     4 2F73			ok:
+Source: cpu_65c816.s
+   623 2F73					_ASSERT816 bne, '16-bit DEY did not set Z properly.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2F73 D0 26				bne		ok
+     2 2F75 20 8D 3D				jsr		FailTest816
+     3 2F78 31 36 2D 62 69 74 + 		dta		'16-bit DEY did not set Z properly.',0
+     4 2F9B			ok:
+Source: cpu_65c816.s
+   624 2F9B C0 00 A5				cpy.w	#$a500
+   625 2F9E					_ASSERT816 beq, '16-bit DEY failed.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2F9E F0 16				beq		ok
+     2 2FA0 20 8D 3D				jsr		FailTest816
+     3 2FA3 31 36 2D 62 69 74 + 		dta		'16-bit DEY failed.',0
+     4 2FB6			ok:
+Source: cpu_65c816.s
+   626 						
+   627 						;go to 8-bit index and back and make sure XH/YH are cleared.
+   628 2FB6 E8					inx
+   629 2FB7 C8					iny
+   630 2FB8 E2 10				sep		#$10
+   631 2FBA C2 10				rep		#$10
+   632 2FBC E0 01 00				cpx.w	#$0001
+   633 2FBF					_ASSERT816 beq, 'X did not revert to $01 after switch to idx8.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2FBF F0 31				beq		ok
+     2 2FC1 20 8D 3D				jsr		FailTest816
+     3 2FC4 58 20 64 69 64 20 + 		dta		'X did not revert to $01 after switch to idx8.',0
+     4 2FF2			ok:
+Source: cpu_65c816.s
+   634 2FF2 C0 01 00				cpy.w	#$0001
+   635 2FF5					_ASSERT816 beq, 'X did not revert to $01 after switch to idx8.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 2FF5 F0 31				beq		ok
+     2 2FF7 20 8D 3D				jsr		FailTest816
+     3 2FFA 58 20 64 69 64 20 + 		dta		'X did not revert to $01 after switch to idx8.',0
+     4 3028			ok:
+Source: cpu_65c816.s
+   636 						
+   637 						;check that switching the acc to 8-bit does NOT clear B
+   638 3028 C2 20				rep		#$20
+   639 302A A9 34 12				lda.w	#$1234
+   640 302D E2 20				sep		#$20
+   641 302F C9 34				cmp.b	#$34
+   642 3031					_ASSERT816 beq, 'A did not survive switch to 8-bit acc.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3031 F0 2A				beq		ok
+     2 3033 20 8D 3D				jsr		FailTest816
+     3 3036 41 20 64 69 64 20 + 		dta		'A did not survive switch to 8-bit acc.',0
+     4 305D			ok:
+Source: cpu_65c816.s
+   643 305D EB					xba
+   644 305E C9 12				cmp.b	#$12
+   645 3060					_ASSERT816 beq, 'B did not survive switch to 8-bit acc.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3060 F0 2A				beq		ok
+     2 3062 20 8D 3D				jsr		FailTest816
+     3 3065 42 20 64 69 64 20 + 		dta		'B did not survive switch to 8-bit acc.',0
+     4 308C			ok:
+Source: cpu_65c816.s
+   646 						
+   647 						;check that TXA cannot set B in 8-bit acc mode
+   648 308C A2 78 56				ldx.w	#$5678
+   649 308F A9 12				lda.b	#$12
+   650 3091 EB					xba
+   651 3092 A9 34				lda.b	#$34
+   652 3094 8A					txa
+   653 3095 AA					tax
+   654 3096 E0 78 12				cpx.w	#$1278
+   655 3099					_ASSERT816 beq, 'TXA failed in M8X16 mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3099 F0 1D				beq		ok
+     2 309B 20 8D 3D				jsr		FailTest816
+     3 309E 54 58 41 20 66 61 + 		dta		'TXA failed in M8X16 mode.',0
+     4 30B8			ok:
+Source: cpu_65c816.s
+   656 						
+   657 						;check that TXA can set B in 16-bit acc mode, 8-bit X mode
+   658 30B8 C2 20				rep		#$20
+   659 30BA A9 34 12				lda.w	#$1234
+   660 30BD E2 10				sep		#$10
+   661 30BF A2 FE				ldx.b	#$fe
+   662 30C1 8A					txa
+   663 30C2 C9 FE 00				cmp.w	#$00fe
+   664 30C5					_ASSERT816 beq, 'TXA failed in M16X8 mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 30C5 F0 1D				beq		ok
+     2 30C7 20 8D 3D				jsr		FailTest816
+     3 30CA 54 58 41 20 66 61 + 		dta		'TXA failed in M16X8 mode.',0
+     4 30E4			ok:
+Source: cpu_65c816.s
+   665 						
+   666 						;-----------------------------------------
+   667 						;native direct page tests (DP=0)
+   668 						;-----------------------------------------		
+   669 30E4 E2 30				sep		#$30
+   670 						
+   671 						;check that (dp), (dp,X) and (dp),Y can now wrap even with DL=0
+   672 30E6 A9 55				lda.b	#$55
+   673 30E8 85 20				sta.b	$20
+   674 30EA A9 33				lda.b	#$33
+   675 30EC 8D 20 01				sta.w	$120
+   676 30EF A9 20				lda.b	#$20
+   677 30F1 85 FF				sta.b	$ff
+   678 30F3 A9 00				lda.b	#$00
+   679 30F5 85 00				sta.b	$00
+   680 30F7 AA					tax
+   681 30F8 A8					tay
+   682 30F9 A9 01				lda.b	#$01
+   683 30FB 8D 00 01				sta.w	$100
+   684 						
+   685 30FE B2 FF				lda		($ff)
+   686 3100 C9 33				cmp.b	#$33
+   687 3102					_ASSERT816 beq, '(dp) incorrectly wrapped in native mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3102 F0 2C				beq		ok
+     2 3104 20 8D 3D				jsr		FailTest816
+     3 3107 28 64 70 29 20 69 + 		dta		'(dp) incorrectly wrapped in native mode.',0
+     4 3130			ok:
+Source: cpu_65c816.s
+   688 3130 A1 FF				lda		($ff,x)
+   689 3132 C9 33				cmp.b	#$33
+   690 3134					_ASSERT816 beq, '(dp,X) incorrectly wrapped in native mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3134 F0 2E				beq		ok
+     2 3136 20 8D 3D				jsr		FailTest816
+     3 3139 28 64 70 2C 58 29 + 		dta		'(dp,X) incorrectly wrapped in native mode.',0
+     4 3164			ok:
+Source: cpu_65c816.s
+   691 3164 B1 FF				lda		($ff),y		
+   692 3166 C9 33				cmp.b	#$33
+   693 3168					_ASSERT816 beq, '(dp),Y incorrectly wrapped in native mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3168 F0 2E				beq		ok
+     2 316A 20 8D 3D				jsr		FailTest816
+     3 316D 28 64 70 29 2C 59 + 		dta		'(dp),Y incorrectly wrapped in native mode.',0
+     4 3198			ok:
+Source: cpu_65c816.s
+   694 						
+   695 						;set D=$0100
+   696 3198 A9 01				lda.b	#$01
+   697 319A EB					xba
+   698 319B A9 00				lda.b	#$00
+   699 						
+   700 						;check that we can index out of zero page
+   701 319D A2 80				ldx.b	#$80
+   702 319F AD 40 01				lda		$140
+   703 31A2 1A					inc
+   704 31A3 F6 C0				inc		$c0,x
+   705 31A5 D5 C0				cmp.b	$c0,x
+   706 31A7					_ASSERT816 beq, 'dp,X did not access page one in native mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 31A7 F0 30				beq		ok
+     2 31A9 20 8D 3D				jsr		FailTest816
+     3 31AC 64 70 2C 58 20 64 + 		dta		'dp,X did not access page one in native mode.',0
+     4 31D9			ok:
+Source: cpu_65c816.s
+   707 						
+   708 31D9 9B					txy
+   709 31DA B6 C0				ldx.b	$c0,y
+   710 31DC E0 01				cpx.b	#$01
+   711 31DE					_ASSERT816 beq, 'dp,Y did not access page one in native mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 31DE F0 30				beq		ok
+     2 31E0 20 8D 3D				jsr		FailTest816
+     3 31E3 64 70 2C 59 20 64 + 		dta		'dp,Y did not access page one in native mode.',0
+     4 3210			ok:
+Source: cpu_65c816.s
+   712 						
+   713 						;check that we can do 16-bit indexing
+   714 3210 C2 10				rep		#$10
+   715 3212 A2 96 3C				ldx.w	#no_24bit
+   716 3215 B5 00				lda.b	0,x
+   717 3217 DD 00 00				cmp.w	0,x
+   718 321A					_ASSERT816 beq, 'dp,X did not work with 16-bit indexing.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 321A F0 2B				beq		ok
+     2 321C 20 8D 3D				jsr		FailTest816
+     3 321F 64 70 2C 58 20 64 + 		dta		'dp,X did not work with 16-bit indexing.',0
+     4 3247			ok:
+Source: cpu_65c816.s
+   719
+   720 						;-----------------------------------------
+   721 						;native direct page tests (DP=1)
+   722 						;-----------------------------------------
+   723 						
+   724 						;switch to misaligned direct page (DP=1)
+   725 3247 F4 01 00				pea		#1
+   726 324A 2B					pld
+   727
+   728 						;verify that (dp,X) is fully wrap free in native mode
+   729 						;
+   730 						; ($00) = 0
+   731 						; ($01) = $fa
+   732 						; ($20) = $55
+   733 						; ($ff) = $20
+   734 						; ($100) = 1
+   735 						; ($101) = 1
+   736
+   737 324B A9 01				lda.b	#1
+   738 324D 8D 01 01				sta		$0101
+   739 3250 A9 FA				lda.b	#$fa
+   740 3252 85 01				sta		$01
+   741
+   742 3254 E2 30				sep		#$30
+   743 3256 A2 00				ldx.b	#0
+   744 3258 A1 FE				lda		($fe,x)		;should read $ff, $100 -> $120 -> $33
+   745 325A C9 33				cmp.b	#$33
+   746 325C					_ASSERT816 beq, '(dp,X=0) did not cross banks in native mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 325C F0 30				beq		ok
+     2 325E 20 8D 3D				jsr		FailTest816
+     3 3261 28 64 70 2C 58 3D + 		dta		'(dp,X=0) did not cross banks in native mode.',0
+     4 328E			ok:
+Source: cpu_65c816.s
+   747
+   748 328E A2 FE				ldx.b	#$fe
+   749 3290 A1 01				lda		(1,x)		;should read $100, $101 -> $101 -> $01
+   750 3292 C9 01				cmp.b	#1
+   751 3294					_ASSERT816 beq, '(dp,X=$fe) did not cross banks in native mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3294 F0 32				beq		ok
+     2 3296 20 8D 3D				jsr		FailTest816
+     3 3299 28 64 70 2C 58 3D + 		dta		'(dp,X=$fe) did not cross banks in native mode.',0
+     4 32C8			ok:
+Source: cpu_65c816.s
+   752
+   753 						;restore DP=0
+   754 32C8 F4 00 00				pea		#0
+   755 32CB 2B					pld
+   756
+   757 						;-----------------------------------------
+   758 						;stack tests
+   759 						;-----------------------------------------
+   760 						
+   761 						;check TSC against TSX in 8-bit memory mode
+   762 32CC C2 10				rep		#$10
+   763 32CE 3B					tsc
+   764 32CF BA					tsx
+   765 32D0 85 C0				sta		a0
+   766 32D2 EB					xba
+   767 32D3 85 C1				sta		a0+1
+   768 32D5 E4 C0				cpx		a0
+   769 32D7					_ASSERT816 beq, 'TSC and TSX were inconsistent in M8 mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 32D7 F0 2D				beq		ok
+     2 32D9 20 8D 3D				jsr		FailTest816
+     3 32DC 54 53 43 20 61 6E + 		dta		'TSC and TSX were inconsistent in M8 mode.',0
+     4 3306			ok:
+Source: cpu_65c816.s
+   770 3306 C9 01				cmp		#1
+   771 3308					_ASSERT816 beq, 'TSC result was not within page 1.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3308 F0 25				beq		ok
+     2 330A 20 8D 3D				jsr		FailTest816
+     3 330D 54 53 43 20 72 65 + 		dta		'TSC result was not within page 1.',0
+     4 332F			ok:
+Source: cpu_65c816.s
+   772 						
+   773 						;check TSC in 16-bit memory mode
+   774 332F C2 20				rep		#$20
+   775 3331 A9 00 00				lda.w	#0
+   776 3334 3B					tsc
+   777 3335 E4 C0				cpx		a0
+   778 3337					_ASSERT816 beq, 'TSC failed in M16 mode.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3337 F0 1B				beq		ok
+     2 3339 20 8D 3D				jsr		FailTest816
+     3 333C 54 53 43 20 66 61 + 		dta		'TSC failed in M16 mode.',0
+     4 3354			ok:
+Source: cpu_65c816.s
+   779 						
+   780 						;relocate stack and set $21ff and $2200
+   781 3354 E2 20				sep		#$20
+   782 3356 A2 00 22				ldx.w	#$2200
+   783 3359 9A					txs
+   784 335A A9 12				lda.b	#$12
+   785 335C 48					pha
+   786 335D D5 00				cmp.b	0,x
+   787 335F					_ASSERT816 beq, 'Unable to relocate stack to $2200.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 335F F0 26				beq		ok
+     2 3361 20 8D 3D				jsr		FailTest816
+     3 3364 55 6E 61 62 6C 65 + 		dta		'Unable to relocate stack to $2200.',0
+     4 3387			ok:
+Source: cpu_65c816.s
+   788 3387 A9 34				lda.b	#$34
+   789 3389 48					pha
+   790 338A CA					dex
+   791 338B D5 00				cmp.b	0,x
+   792 338D					_ASSERT816 beq, 'Unable to cross page with stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 338D F0 24				beq		ok
+     2 338F 20 8D 3D				jsr		FailTest816
+     3 3392 55 6E 61 62 6C 65 + 		dta		'Unable to cross page with stack.',0
+     4 33B3			ok:
+Source: cpu_65c816.s
+   793
+   794 						;check PLX, PLY, PHX, PHY (8-bit)
+   795 33B3 E2 10				sep		#$10
+   796 33B5 FA					plx
+   797 33B6 E0 34				cpx.b	#$34
+   798 33B8					_ASSERT816 beq, 'PLX (8-bit) failed in extended stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 33B8 F0 29				beq		ok
+     2 33BA 20 8D 3D				jsr		FailTest816
+     3 33BD 50 4C 58 20 28 38 + 		dta		'PLX (8-bit) failed in extended stack.',0
+     4 33E3			ok:
+Source: cpu_65c816.s
+   799 33E3 7A					ply
+   800 33E4 C0 12				cpy.b	#$12
+   801 33E6					_ASSERT816 beq, 'PLY (8-bit) failed in extended stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 33E6 F0 29				beq		ok
+     2 33E8 20 8D 3D				jsr		FailTest816
+     3 33EB 50 4C 59 20 28 38 + 		dta		'PLY (8-bit) failed in extended stack.',0
+     4 3411			ok:
+Source: cpu_65c816.s
+   802 3411 A2 56				ldx.b	#$56
+   803 3413 DA					phx
+   804 3414 68					pla
+   805 3415 C9 56				cmp.b	#$56
+   806 3417					_ASSERT816 beq, 'PHX (8-bit) failed in extended stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3417 F0 29				beq		ok
+     2 3419 20 8D 3D				jsr		FailTest816
+     3 341C 50 48 58 20 28 38 + 		dta		'PHX (8-bit) failed in extended stack.',0
+     4 3442			ok:
+Source: cpu_65c816.s
+   807 3442 A0 78				ldy.b	#$78
+   808 3444 5A					phy
+   809 3445 68					pla
+   810 3446 C9 78				cmp.b	#$78
+   811 3448					_ASSERT816 beq, 'PHY (8-bit) failed in extended stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3448 F0 29				beq		ok
+     2 344A 20 8D 3D				jsr		FailTest816
+     3 344D 50 48 59 20 28 38 + 		dta		'PHY (8-bit) failed in extended stack.',0
+     4 3473			ok:
+Source: cpu_65c816.s
+   812 						
+   813 						;check PLX, PLY, PHX, PHY (16-bit)
+   814 3473 C2 10				rep		#$10
+   815 3475 F4 01 A1				pea		#$a101
+   816 3478 FA					plx
+   817 3479 E0 01 A1				cpx.w	#$a101
+   818 347C					_ASSERT816 beq, 'PLX (16-bit) failed in extended stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 347C F0 2A				beq		ok
+     2 347E 20 8D 3D				jsr		FailTest816
+     3 3481 50 4C 58 20 28 31 + 		dta		'PLX (16-bit) failed in extended stack.',0
+     4 34A8			ok:
+Source: cpu_65c816.s
+   819 34A8 C2 10				rep		#$10
+   820 34AA F4 02 A2				pea		#$a202
+   821 34AD 7A					ply
+   822 34AE C0 02 A2				cpy.w	#$a202
+   823 34B1					_ASSERT816 beq, 'PLY (16-bit) failed in extended stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 34B1 F0 2A				beq		ok
+     2 34B3 20 8D 3D				jsr		FailTest816
+     3 34B6 50 4C 59 20 28 31 + 		dta		'PLY (16-bit) failed in extended stack.',0
+     4 34DD			ok:
+Source: cpu_65c816.s
+   824 34DD C2 10				rep		#$10
+   825 34DF A2 03 A3				ldx.w	#$a303
+   826 34E2 DA					phx
+   827 34E3 7A					ply
+   828 34E4 C0 03 A3				cpy.w	#$a303
+   829 34E7					_ASSERT816 beq, 'PHX (16-bit) failed in extended stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 34E7 F0 2A				beq		ok
+     2 34E9 20 8D 3D				jsr		FailTest816
+     3 34EC 50 48 58 20 28 31 + 		dta		'PHX (16-bit) failed in extended stack.',0
+     4 3513			ok:
+Source: cpu_65c816.s
+   830 3513 C2 10				rep		#$10
+   831 3515 A0 04 A4				ldy.w	#$a404
+   832 3518 5A					phy
+   833 3519 FA					plx
+   834 351A E0 04 A4				cpx.w	#$a404
+   835 351D					_ASSERT816 beq, 'PHY (16-bit) failed in extended stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 351D F0 2A				beq		ok
+     2 351F 20 8D 3D				jsr		FailTest816
+     3 3522 50 48 59 20 28 31 + 		dta		'PHY (16-bit) failed in extended stack.',0
+     4 3549			ok:
+Source: cpu_65c816.s
+   836
+   837 						;PEA has already been checked above
+   838
+   839 						;check that PEI (dp) works in xstack with page crossing
+   840 3549 A2 A7 A5				ldx.w	#$a5a7
+   841 354C 86 C0				stx		a0
+   842 354E D4 C0				pei		(a0)
+   843 3550 FA					plx
+   844 3551 E4 C0				cpx		a0
+   845 3553					_ASSERT816 beq, 'PEI (dp) failed in extended stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3553 F0 26				beq		ok
+     2 3555 20 8D 3D				jsr		FailTest816
+     3 3558 50 45 49 20 28 64 + 		dta		'PEI (dp) failed in extended stack.',0
+     4 357B			ok:
+Source: cpu_65c816.s
+   846
+   847 						;check that PER works in xstack
+   848 357B 62 00 00				per		per_next
+   849 357E			per_next:
+   850 357E FA					plx
+   851 357F E0 7E 35				cpx.w	#per_next
+   852 3582					_ASSERT816 beq, 'PER failed in extended stack.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3582 F0 21				beq		ok
+     2 3584 20 8D 3D				jsr		FailTest816
+     3 3587 50 45 52 20 66 61 + 		dta		'PER failed in extended stack.',0
+     4 35A5			ok:
+Source: cpu_65c816.s
+   853
+   854 						;restore stack pointer
+   855 35A5 A9 01				lda.b	#1
+   856 35A7 EB					xba
+   857 35A8 A5 80				lda.b	emusp
+   858 35AA 1B					tcs
+   859 								
+   860 						;-----------------------------------------
+   861 						;interrupt tests
+   862 						;-----------------------------------------
+   863
+   864 						;check if we can modify the vector area
+   865 35AB A5 87				lda		romos_ok
+   866 35AD D0 03 82 E4 00			sne:brl	skip_interrupt_tests
+   867 						
+   868 						;change vectors
+   869 35B2 A0 1B 00				ldy.w	#$1b
+   870 35B5			veccopy_loop:
+   871 35B5 B9 28 3D				lda		NativeVectors,y
+   872 35B8 99 E4 FF				sta		$ffe4,y
+   873 35BB 88					dey
+   874 35BC 10 F7				bpl		veccopy_loop
+   875 						
+   876 						;check that BRK calls the native vector and that it sets
+   877 						;I=1, D=0.
+   878 						
+   879 35BE A9 00				lda.b	#0
+   880 35C0 85 89				sta		int_type
+   881 35C2 85 88				sta		int_p
+   882 						
+   883 35C4 F8					sed
+   884 35C5 00					brk
+   885 35C6 EA					nop
+   886 35C7 D8					cld
+   887 						
+   888 35C8 A5 89				lda		int_type
+   889 35CA C9 02				cmp.b	#2
+   890 35CC					_ASSERT816 beq, 'BRK native vector was not called.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 35CC F0 25				beq		ok
+     2 35CE 20 8D 3D				jsr		FailTest816
+     3 35D1 42 52 4B 20 6E 61 + 		dta		'BRK native vector was not called.',0
+     4 35F3			ok:
+Source: cpu_65c816.s
+   891 35F3 A5 88				lda		int_p
+   892 35F5 29 0C				and.b	#$0c
+   893 35F7 C9 04				cmp.b	#$04
+   894 35F9					_ASSERT816 beq, 'BRK did not change I and D flags correctly.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 35F9 F0 2F				beq		ok
+     2 35FB 20 8D 3D				jsr		FailTest816
+     3 35FE 42 52 4B 20 64 69 + 		dta		'BRK did not change I and D flags correctly.',0
+     4 362A			ok:
+Source: cpu_65c816.s
+   895 						
+   896 						;check the same for COP
+   897 362A A9 00				lda.b	#0
+   898 362C 85 89				sta		int_type
+   899 362E 85 88				sta		int_p
+   900 						
+   901 3630 F8					sed
+   902 3631 02 80				cop		#$80
+   903 3633 D8					cld
+   904 						
+   905 3634 A5 89				lda		int_type
+   906 3636 C9 01				cmp.b	#1
+   907 3638					_ASSERT816 beq, 'COP native vector was not called.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3638 F0 25				beq		ok
+     2 363A 20 8D 3D				jsr		FailTest816
+     3 363D 43 4F 50 20 6E 61 + 		dta		'COP native vector was not called.',0
+     4 365F			ok:
+Source: cpu_65c816.s
+   908 365F A5 88				lda		int_p
+   909 3661 29 0C				and.b	#$0c
+   910 3663 C9 04				cmp.b	#$04
+   911 3665					_ASSERT816 beq, 'COP did not change I and D flags correctly.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3665 F0 2F				beq		ok
+     2 3667 20 8D 3D				jsr		FailTest816
+     3 366A 43 4F 50 20 64 69 + 		dta		'COP did not change I and D flags correctly.',0
+     4 3696			ok:
+Source: cpu_65c816.s
+   912
+   913 3696			skip_interrupt_tests:
+   914
+   915 						;-----------------------------------------
+   916 						;high memory tests (A=8-bit, X/Y = 16-bit)
+   917 						;-----------------------------------------
+   918 3696 C2 10				rep		#$10
+   919 3698 E2 20				sep		#$20
+   920 							
+   921 						;check if we have 24-bit addressing and skip if we don't
+   922 369A AD 2D 1A				lda		_cpuMode
+   923 369D 3A					dec
+   924 369E 30 03				smi
+   925 36A0			no_24bit_1:
+   926 36A0 4C 96 3C				jmp		no_24bit
+   927 						
+   928 						;check if we have high memory available
+   929 36A3 AF C8 00 01				lda		$10000+d0
+   930 36A7 1A					inc
+   931 36A8 8F C8 00 01				sta		$10000+d0
+   932 36AC CF C8 00 01				cmp		$10000+d0
+   933 36B0 D0 EE				bne		no_24bit_1
+   934 						
+   935 						;switch data bank to bank $01
+   936 36B2 A9 01				lda.b	#$01
+   937 36B4 48					pha
+   938 36B5 AB					plb
+   939 36B6 3A					dec
+   940 36B7 8B					phb
+   941 36B8 68					pla
+   942 36B9 C9 01				cmp.b	#$01
+   943 36BB					_ASSERT816 beq, 'Could not set DBK=$01.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 36BB F0 1A				beq		ok
+     2 36BD 20 8D 3D				jsr		FailTest816
+     3 36C0 43 6F 75 6C 64 20 + 		dta		'Could not set DBK=$01.',0
+     4 36D7			ok:
+Source: cpu_65c816.s
+   944
+   945 						;check that dp addressing is still in bank $00
+   946 36D7 A9 A5				lda.b	#$a5
+   947 36D9 8F C8 00 00				sta.l	d0
+   948 36DD 3A					dec
+   949 36DE 8F C8 00 01				sta.l	$10000+d0
+   950 36E2 1A					inc
+   951 36E3 C5 C8				cmp		d0
+   952 36E5					_ASSERT816 beq, 'DP addressing did not stay in bank $00.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 36E5 F0 2B				beq		ok
+     2 36E7 20 8D 3D				jsr		FailTest816
+     3 36EA 44 50 20 61 64 64 + 		dta		'DP addressing did not stay in bank $00.',0
+     4 3712			ok:
+Source: cpu_65c816.s
+   953 						
+   954 						;check that abs addressing is now in bank $01
+   955 3712 3A					dec
+   956 3713 CD C8 00				cmp.w	d0
+   957 3716					_ASSERT816 beq, 'Abs addressing did not go to bank $01.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3716 F0 2A				beq		ok
+     2 3718 20 8D 3D				jsr		FailTest816
+     3 371B 41 62 73 20 61 64 + 		dta		'Abs addressing did not go to bank $01.',0
+     4 3742			ok:
+Source: cpu_65c816.s
+   958 						
+   959 						;check that stack addressing is still in bank $00
+   960 						;pea	$1234		;MADS 1.9.6 misassembles this as PER!
+   961 3742 F4 34 12				dta		$f4,a($1234)
+   962 3745 BA					tsx
+   963 3746 B4 01				ldy		1,x			;Note: This is dp,X, not abs,X.
+   964 3748 FA					plx
+   965 3749 C0 34 12				cpy.w	#$1234
+   966 374C					_ASSERT816 beq, 'Stack addressing did not stay in bank $00.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 374C F0 2E				beq		ok
+     2 374E 20 8D 3D				jsr		FailTest816
+     3 3751 53 74 61 63 6B 20 + 		dta		'Stack addressing did not stay in bank $00.',0
+     4 377C			ok:
+Source: cpu_65c816.s
+   967 						
+   968 						;check that d,S still reads from bank 0
+   969 377C 5A					phy
+   970 377D A3 01				lda		1,s
+   971 377F 7A					ply
+   972 3780 C9 34				cmp.b	#$34
+   973 3782					_ASSERT816 beq, 'd,S did not read from bank 0.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3782 F0 21				beq		ok
+     2 3784 20 8D 3D				jsr		FailTest816
+     3 3787 64 2C 53 20 64 69 + 		dta		'd,S did not read from bank 0.',0
+     4 37A5			ok:
+Source: cpu_65c816.s
+   974 						
+   975 						;check that (d,S),Y can read from bank $01
+   976 37A5 A0 00 00				ldy.w	#0
+   977 37A8 5A					phy
+   978 37A9 A0 C8 00				ldy.w	#d0
+   979 37AC B3 01				lda		(1,s),y
+   980 37AE 7A					ply
+   981 37AF C9 A4				cmp.b	#$a4
+   982 37B1					_ASSERT816 beq, '(d,S),Y did not read from bank $01.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 37B1 F0 27				beq		ok
+     2 37B3 20 8D 3D				jsr		FailTest816
+     3 37B6 28 64 2C 53 29 2C + 		dta		'(d,S),Y did not read from bank $01.',0
+     4 37DA			ok:
+Source: cpu_65c816.s
+   983 						
+   984 						;reset DBK to $00
+   985 37DA A9 00				lda.b	#0
+   986 37DC 85 C2				sta		a1
+   987 37DE 48					pha
+   988 37DF AB					plb
+   989 						
+   990 						;check that we can index across the 64K boundary with abs,X
+   991 37E0 A2 C9 00				ldx.w	#d0+1
+   992 37E3 BD FF FF				lda		$ffff,x
+   993 37E6 C9 A4				cmp.b	#$a4
+   994 37E8					_ASSERT816 beq, 'Abs addressing did not cross banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 37E8 F0 27				beq		ok
+     2 37EA 20 8D 3D				jsr		FailTest816
+     3 37ED 41 62 73 20 61 64 + 		dta		'Abs addressing did not cross banks.',0
+     4 3811			ok:
+Source: cpu_65c816.s
+   995 						
+   996 						;check that we can index across the 64K boundary with (dp),Y
+   997 3811 A0 FF FF				ldy.w	#$ffff
+   998 3814 5A					phy
+   999 3815 84 C0				sty		a0
+  1000 3817 9B					txy
+  1001 3818 B1 C0				lda		(a0),y
+  1002 381A C9 A4				cmp.b	#$a4
+  1003 381C					_ASSERT816 beq, '(dp),Y addressing did not cross banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 381C F0 2A				beq		ok
+     2 381E 20 8D 3D				jsr		FailTest816
+     3 3821 28 64 70 29 2C 59 + 		dta		'(dp),Y addressing did not cross banks.',0
+     4 3848			ok:
+Source: cpu_65c816.s
+  1004 						
+  1005 						;check that we can index into bank $01 with (d,S),Y
+  1006 3848 D3 01				cmp.b	(1,s),y
+  1007 384A					_ASSERT816 beq, '(d,S),Y addressing did not cross banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 384A F0 2B				beq		ok
+     2 384C 20 8D 3D				jsr		FailTest816
+     3 384F 28 64 2C 53 29 2C + 		dta		'(d,S),Y addressing did not cross banks.',0
+     4 3877			ok:
+Source: cpu_65c816.s
+  1008 						
+  1009 						;check that we can index into bank $01 with [dp],Y.
+  1010 3877 D7 C0				cmp.b	[a0],y
+  1011 3879					_ASSERT816 beq, '[dp],Y addressing did not cross banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3879 F0 2A				beq		ok
+     2 387B 20 8D 3D				jsr		FailTest816
+     3 387E 5B 64 70 5D 2C 59 + 		dta		'[dp],Y addressing did not cross banks.',0
+     4 38A5			ok:
+Source: cpu_65c816.s
+  1012 						
+  1013 						;check that [dp] and [dp],Y can read from bank $01 directly
+  1014 38A5 A2 C8 00				ldx.w	#d0
+  1015 38A8 86 C0				stx		a0
+  1016 38AA A9 01				lda.b	#1
+  1017 38AC 85 C2				sta		a1
+  1018 38AE A9 A4				lda		#$a4
+  1019 38B0 C7 C0				cmp		[a0]
+  1020 38B2					_ASSERT816 beq, '[dp] addressing did not read bank $01.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 38B2 F0 2A				beq		ok
+     2 38B4 20 8D 3D				jsr		FailTest816
+     3 38B7 5B 64 70 5D 20 61 + 		dta		'[dp] addressing did not read bank $01.',0
+     4 38DE			ok:
+Source: cpu_65c816.s
+  1021 38DE A0 00 00				ldy.w	#0
+  1022 38E1 D7 C0				cmp		[a0],y
+  1023 38E3					_ASSERT816 beq, '[dp],Y addressing did not read bank $01.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 38E3 F0 2C				beq		ok
+     2 38E5 20 8D 3D				jsr		FailTest816
+     3 38E8 5B 64 70 5D 2C 59 + 		dta		'[dp],Y addressing did not read bank $01.',0
+     4 3911			ok:
+Source: cpu_65c816.s
+  1024 						
+  1025 						;---------------------------------------------------
+  1026 						; 16-bit bank crossing tests
+  1027 						;---------------------------------------------------
+  1028 						
+  1029 						;set DBK=0
+  1030 3911 A9 00				lda.b	#0
+  1031 3913 48					pha
+  1032 3914 AB					plb
+  1033 						
+  1034 						;set $10000 to $7c
+  1035 3915 A9 7C				lda.b	#$7c
+  1036 3917 8F 00 00 01				sta.l	$10000
+  1037 391B A9 00				lda.b	#$00
+  1038 391D 8F 01 00 01				sta.l	$10001
+  1039 						
+  1040 						;switch to 16-bit accumulator, 16-bit indexing
+  1041 3921 C2 30				rep		#$30
+  1042 						
+  1043 						;test direct page read (should NOT cross banks)
+  1044 3923 A9 55 55				lda.w	#$5555
+  1045 3926 85 00				sta		0
+  1046 3928 A2 FF FF				ldx.w	#$ffff
+  1047 392B B5 00				lda.b	0,x
+  1048 392D 29 00 FF				and.w	#$ff00
+  1049 3930 C9 00 55				cmp.w	#$5500
+  1050 3933					_ASSERT816 beq, 'dp,X 16-bit read should not have crossed banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3933 F0 33				beq		ok
+     2 3935 20 8D 3D				jsr		FailTest816
+     3 3938 64 70 2C 58 20 31 + 		dta		'dp,X 16-bit read should not have crossed banks.',0
+     4 3968			ok:
+Source: cpu_65c816.s
+  1051 3968 A0 FF FF				ldy.w	#$ffff
+  1052 396B B6 00				ldx.b	0,y
+  1053 396D 8A					txa
+  1054 396E 29 00 FF				and.w	#$ff00
+  1055 3971 C9 00 55				cmp.w	#$5500
+  1056 3974					_ASSERT816 beq, 'dp,Y 16-bit read should not have crossed banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3974 F0 33				beq		ok
+     2 3976 20 8D 3D				jsr		FailTest816
+     3 3979 64 70 2C 59 20 31 + 		dta		'dp,Y 16-bit read should not have crossed banks.',0
+     4 39A9			ok:
+Source: cpu_65c816.s
+  1057 						
+  1058 						;test (dp), (dp,X) and (dp,Y)
+  1059 39A9 E2 20				sep		#$20
+  1060 39AB A9 1C				lda.b	#$1c
+  1061 39AD 85 20				sta.b	$20
+  1062 39AF A9 35				lda.b	#$35
+  1063 39B1 8D 20 01				sta.w	$120
+  1064 39B4 A9 20				lda.b	#$20
+  1065 39B6 8D FF FF				sta.w	$ffff
+  1066 39B9 A2 FF FF				ldx.w	#$ffff
+  1067 39BC A1 00				lda.b	(0,x)
+  1068 39BE					_ASSERT816 beq, '(dp,X) address read should not have crossed banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 39BE F0 36				beq		ok
+     2 39C0 20 8D 3D				jsr		FailTest816
+     3 39C3 28 64 70 2C 58 29 + 		dta		'(dp,X) address read should not have crossed banks.',0
+     4 39F6			ok:
+Source: cpu_65c816.s
+  1069 39F6 A0 FF FF				ldy.w	#$ffff
+  1070 39F9 5A					phy
+  1071 39FA 2B					pld
+  1072 39FB A0 00 00				ldy.w	#0
+  1073 39FE B1 00				lda.b	(0),y
+  1074 3A00					_ASSERT816 beq, '(dp),Y address read should not have crossed banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3A00 F0 36				beq		ok
+     2 3A02 20 8D 3D				jsr		FailTest816
+     3 3A05 28 64 70 29 2C 59 + 		dta		'(dp),Y address read should not have crossed banks.',0
+     4 3A38			ok:
+Source: cpu_65c816.s
+  1075 3A38 B2 00				lda.b	(0)
+  1076 3A3A					_ASSERT816 beq, '(dp) address read should not have crossed banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3A3A F0 34				beq		ok
+     2 3A3C 20 8D 3D				jsr		FailTest816
+     3 3A3F 28 64 70 29 20 61 + 		dta		'(dp) address read should not have crossed banks.',0
+     4 3A70			ok:
+Source: cpu_65c816.s
+  1077 3A70 5A					phy
+  1078 3A71 2B					pld
+  1079
+  1080 						;test absolute read (should cross banks)
+  1081 3A72 C2 20				rep		#$20
+  1082 3A74 AD FF FF				lda.w	$ffff
+  1083 3A77 29 00 FF				and.w	#$ff00
+  1084 3A7A C9 00 7C				cmp.w	#$7c00
+  1085 3A7D					_ASSERT816 beq, 'abs 16-bit read did not cross banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3A7D F0 28				beq		ok
+     2 3A7F 20 8D 3D				jsr		FailTest816
+     3 3A82 61 62 73 20 31 36 + 		dta		'abs 16-bit read did not cross banks.',0
+     4 3AA7			ok:
+Source: cpu_65c816.s
+  1086 						
+  1087 						;test absolute long read (should cross banks)
+  1088 3AA7 AF FF FF 00				lda.l	$00ffff
+  1089 3AAB 29 00 FF				and.w	#$ff00
+  1090 3AAE C9 00 7C				cmp.w	#$7c00
+  1091 3AB1					_ASSERT816 beq, 'long 16-bit read did not cross banks.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3AB1 F0 29				beq		ok
+     2 3AB3 20 8D 3D				jsr		FailTest816
+     3 3AB6 6C 6F 6E 67 20 31 + 		dta		'long 16-bit read did not cross banks.',0
+     4 3ADC			ok:
+Source: cpu_65c816.s
+  1092
+  1093 						;---------------------------------------------------
+  1094 						; high bank code tests
+  1095 						;---------------------------------------------------
+  1096 						
+  1097 						;switch to 16-bit accumulator and index registers
+  1098 3ADC C2 30				rep		#$30
+  1099 						
+  1100 						;copy code up to bank $01 (this also sets DBK=$01)
+  1101 3ADE A9 3F 00				lda.w	#[bank01_end-bank01_start-1]
+  1102 3AE1 A2 B2 3C				ldx.w	#bank01_start
+  1103 3AE4 9B					txy
+  1104 3AE5 54 01 00				mvn		0,1
+  1105 						
+  1106 						;check that C is now $FFFF
+  1107 3AE8 AA					tax
+  1108 3AE9 E0 FF FF				cpx.w	#$ffff
+  1109 3AEC					_ASSERT816 beq, 'C was not $FFFF after MVP.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3AEC F0 1E				beq		ok
+     2 3AEE 20 8D 3D				jsr		FailTest816
+     3 3AF1 43 20 77 61 73 20 + 		dta		'C was not $FFFF after MVP.',0
+     4 3B0C			ok:
+Source: cpu_65c816.s
+  1110 						
+  1111 						;switch to 8-bit accumulator
+  1112 3B0C E2 20				sep		#$20
+  1113 						
+  1114 						;check that DBK is now $01
+  1115 3B0E 8B					phb
+  1116 3B0F 68					pla
+  1117 3B10 C9 01				cmp.b	#1
+  1118 3B12					_ASSERT816 beq, 'DBK was not $01 after MVP.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3B12 F0 1E				beq		ok
+     2 3B14 20 8D 3D				jsr		FailTest816
+     3 3B17 44 42 4B 20 77 61 + 		dta		'DBK was not $01 after MVP.',0
+     4 3B32			ok:
+Source: cpu_65c816.s
+  1119 						
+  1120 						;check that our code actually made it to Mars safely
+  1121 3B32 AD F1 3C				lda		bank01_end-1
+  1122 3B35 CF F1 3C 00				cmp.l	bank01_end-1
+  1123 3B39					_ASSERT816 beq, 'MVP to bank $01 failed.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3B39 F0 1B				beq		ok
+     2 3B3B 20 8D 3D				jsr		FailTest816
+     3 3B3E 4D 56 50 20 74 6F + 		dta		'MVP to bank $01 failed.',0
+     4 3B56			ok:
+Source: cpu_65c816.s
+  1124 						
+  1125 						;set DBK back to 0
+  1126 3B56 A9 00				lda.b	#0
+  1127 3B58 48					pha
+  1128 3B59 AB					plb
+  1129 						
+  1130 						;write an sec:rtl pair in bank $01 and try calling it
+  1131 3B5A A9 38				lda.b	#$38
+  1132 3B5C 8F B2 3C 01				sta.l	SetCarryTest+$010000
+  1133 3B60 A9 6B				lda.b	#$6b
+  1134 3B62 8F B3 3C 01				sta.l	SetCarryTest+$010001
+  1135 3B66 22 B2 3C 01				jsl		SetCarryTest+$010000
+  1136 3B6A					_ASSERT816 bcs, 'Could not call code in bank $01.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3B6A B0 24				bcs		ok
+     2 3B6C 20 8D 3D				jsr		FailTest816
+     3 3B6F 43 6F 75 6C 64 20 + 		dta		'Could not call code in bank $01.',0
+     4 3B90			ok:
+Source: cpu_65c816.s
+  1137 						
+  1138 						;check that PBK is reflected correctly
+  1139 3B90 22 B4 3C 01				jsl		ReadPBK+$10000
+  1140 3B94 C9 01				cmp.b	#1
+  1141 3B96					_ASSERT816 beq, 'PBK!=1 in bank $01.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3B96 F0 17				beq		ok
+     2 3B98 20 8D 3D				jsr		FailTest816
+     3 3B9B 50 42 4B 21 3D 31 + 		dta		'PBK!=1 in bank $01.',0
+     4 3BAF			ok:
+Source: cpu_65c816.s
+  1142 						
+  1143 						;set DBK to bank $01
+  1144 3BAF A9 01				lda.b	#1
+  1145 3BB1 48					pha
+  1146 3BB2 AB					plb
+  1147
+  1148 						;test JMP (abs) in bank $01 (reads from bank $00)
+  1149 3BB3 A9 04 8F BF 3C 01			mva		#4 JmpTest.addval+$10000
+  1150 3BB9 A9 BC 8F C1 3C 01 + 		mwa		#JmpTest.pt2 JmpTest.addr+$10000
+  1151 3BC5 22 B7 3C 01				jsl		JmpTest+$10000		
+  1152 3BC9 C9 02				cmp.b	#2
+  1153 3BCB					_ASSERT816 beq, 'JMP (abs) failed in bank $01.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3BCB F0 21				beq		ok
+     2 3BCD 20 8D 3D				jsr		FailTest816
+     3 3BD0 4A 4D 50 20 28 61 + 		dta		'JMP (abs) failed in bank $01.',0
+     4 3BEE			ok:
+Source: cpu_65c816.s
+  1154
+  1155 						;set DBK to bank 0
+  1156 3BEE A9 00				lda.b	#0
+  1157 3BF0 48					pha
+  1158 3BF1 AB					plb
+  1159 						
+  1160 						;test JMP (abs,X) in bank $01 (reads from PBR)
+  1161 3BF2 A9 04 8F CE 3C 01			mva		#4 JmpXTest.addval+$10000
+  1162 3BF8 A9 CB 8F D3 3C 01 + 		mwa		#JmpXTest.pt2 JmpXTest.addr+$10000
+  1163 3C04 22 C3 3C 01				jsl		JmpXTest+$10000
+  1164 						
+  1165 3C08 C9 03				cmp.b	#3
+  1166 3C0A					_ASSERT816 beq, 'JMP (abs,X) failed in bank $01.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3C0A F0 23				beq		ok
+     2 3C0C 20 8D 3D				jsr		FailTest816
+     3 3C0F 4A 4D 50 20 28 61 + 		dta		'JMP (abs,X) failed in bank $01.',0
+     4 3C2F			ok:
+Source: cpu_65c816.s
+  1167 						
+  1168 						;test JSR (abs,X) in bank $01 (reads from PBR)
+  1169 3C2F A9 04 8F E3 3C 01			mva		#4 JsrXTest.addval+$10000
+  1170 3C35 A9 E0 8F E8 3C 01 + 		mwa		#JsrXTest.pt2 JsrXTest.addr+$10000
+  1171 3C41 22 D7 3C 01				jsl		JsrXTest+$10000
+  1172 						
+  1173 3C45 C9 03				cmp.b	#3
+  1174 3C47					_ASSERT816 beq, 'JSR (abs,X) failed in bank $01.'
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3C47 F0 23				beq		ok
+     2 3C49 20 8D 3D				jsr		FailTest816
+     3 3C4C 4A 53 52 20 28 61 + 		dta		'JSR (abs,X) failed in bank $01.',0
+     4 3C6C			ok:
+Source: cpu_65c816.s
+  1175 						
+  1176 						;set DBK to bank 1
+  1177 3C6C A9 01				lda.b	#1
+  1178 3C6E 48					pha
+  1179 3C6F AB					plb
+  1180 						
+  1181 						;test JMP [abs] with DBK=1 -- should read from bank $00, not PBK or DBK
+  1182 3C70 A9 01				lda.b	#$01
+  1183 3C72 48					pha
+  1184 3C73 AB					plb
+  1185 3C74 A9 00 8F EE 3C 01			mva		#$00 JmpAbsLongTest+$10002
+  1186 3C7A 18					clc
+  1187 3C7B 22 EF 3C 00				jsl		JmpAbsLongTest.dispatch
+  1188 3C7F					_ASSERT816 bcs, 'JMP [abs] failed.'		
+Macro: _ASSERT816 [Source: cpu_65c816.s]
+     1 3C7F B0 15				bcs		ok
+     2 3C81 20 8D 3D				jsr		FailTest816
+     3 3C84 4A 4D 50 20 5B 61 + 		dta		'JMP [abs] failed.',0
+     4 3C96			ok:
+Source: cpu_65c816.s
+  1189 						
+  1190 3C96			no_24bit:
+  1191
+  1192 						;all good... go back to emu mode and exit
+  1193 3C96 E2 30				sep		#$30
+  1194 3C98 A9 00				lda.b	#0
+  1195 3C9A EB					xba
+  1196 3C9B A9 00				lda.b	#0
+  1197 3C9D 5B					tcd
+  1198 3C9E 48					pha
+  1199 3C9F AB					plb
+  1200 3CA0 38					sec
+  1201 3CA1 FB					xce
+  1202
+  1203 3CA2 2C 2E 1A				bit		_veronica
+  1204 3CA5 10 05				bpl		maincpu_ret
+  1205
+  1206 3CA7 A0 00				ldy		#0
+  1207 3CA9 4C E0 FF				jmp		$ffe0
+  1208
+  1209 3CAC			maincpu_ret:
+  1210 3CAC 20 44 3D				jsr		RestoreOS
+  1211 3CAF 4C F8 1D				jmp		_testPassed		
+  1212 				.endp
+  1213
+  1214 3CB2			bank01_start:
+  1215
+  1216 3CB2			.proc SetCarryTest
+  1217 3CB2 18					clc
+  1218 3CB3 6B					rtl
+  1219 				.endp
+  1220
+  1221 3CB4			.proc ReadPBK
+  1222 3CB4 4B					phk
+  1223 3CB5 68					pla
+  1224 3CB6 6B					rtl
+  1225 				.endp
+  1226
+  1227 				;==========================================================================
+  1228 				; Exit:
+  1229 				;	A = $fe		WTF -- didn't hit any of the code.
+  1230 				;	A = $00		Address read from bank $00, jumped to code in bank $00
+  1231 				;	A = $01		Address read from bank $01, jumped to code in bank $00
+  1232 				;	A = $02		Address read from bank $00, jumped to code in bank $01
+  1233 				;	A = $03		Address read from bank $01, jumped to code in bank $01
+  1234 				;
+  1235 				; Remarks:
+  1236 				;	JMP (abs) reads the jump address from bank 0 and jumps to that address
+  1237 				;	in the current program bank. Therefore, calling this in bank $01 should
+  1238 				;	give A=$02.
+  1239 				;
+  1240 3CB7			.proc JmpTest
+  1241 3CB7 A9 FE				lda.b	#$fe
+  1242 3CB9 6C C1 3C				jmp		(addr)
+  1243 3CBC			pt2:
+  1244 3CBC 1A					inc
+  1245 3CBD			pt1:
+  1246 3CBD 18					clc
+  1247 3CBE 69 02				adc.b	#2				;patched to 4 in bank $01
+  1248 = 3CBF			addval = *-1
+  1249 3CC0 6B					rtl
+  1250
+  1251 3CC1			addr:
+  1252 3CC1 BD 3C				dta		a(pt1)			;patched to pt2 in bank $01
+  1253 				.endp
+  1254
+  1255 				;==========================================================================
+  1256 				; Exit:
+  1257 				;	A = $fe		WTF -- didn't hit any of the code.
+  1258 				;	A = $ff		WTF -- indexing didn't occur.
+  1259 				;	A = $00		Address read from bank $00, jumped to code in bank $00
+  1260 				;	A = $01		Address read from bank $01, jumped to code in bank $00
+  1261 				;	A = $02		Address read from bank $00, jumped to code in bank $01
+  1262 				;	A = $03		Address read from bank $01, jumped to code in bank $01
+  1263 				;
+  1264 				; Remarks:
+  1265 				;	JMP (abs,X) reads the jump address from the current program bank and
+  1266 				;	jumps to that address in the current program bank. Therefore, calling
+  1267 				;	this in bank $01 should give A=$03.
+  1268 				;
+  1269 3CC3			.proc JmpXTest
+  1270 3CC3 A9 FE				lda.b	#$fe
+  1271 3CC5 A2 FE FF				ldx.w	#$fffe
+  1272 3CC8 7C D5 3C				jmp		(addr+2,X)
+  1273 3CCB			pt2:
+  1274 3CCB 1A					inc
+  1275 3CCC			pt1:
+  1276 3CCC 18					clc
+  1277 3CCD 69 02				adc.b	#2				;patched to 4 in bank $01
+  1278 = 3CCE			addval = *-1
+  1279 3CCF 6B					rtl
+  1280 3CD0			pt3:
+  1281 3CD0 A9 FF				lda.b	#$ff
+  1282 3CD2 6B					rtl
+  1283 						
+  1284 3CD3			addr:
+  1285 3CD3 CC 3C				dta		a(pt1)			;patched to pt2 in bank $01
+  1286 3CD5 D0 3C				dta		a(pt3)
+  1287 				.endp
+  1288
+  1289 				;==========================================================================
+  1290 				; Exit:
+  1291 				;	A = $fe		WTF -- didn't hit any of the code.
+  1292 				;	A = $ff		WTF -- indexing didn't occur.
+  1293 				;	A = $00		Address read from bank $00, jumped to code in bank $00
+  1294 				;	A = $01		Address read from bank $01, jumped to code in bank $00
+  1295 				;	A = $02		Address read from bank $00, jumped to code in bank $01
+  1296 				;	A = $03		Address read from bank $01, jumped to code in bank $01
+  1297 				;
+  1298 				; Remarks:
+  1299 				;	JSR (abs,X) reads the jump address from the current program bank and
+  1300 				;	jumps to that address in the current program bank. Therefore, calling
+  1301 				;	this in bank $01 should give A=$03.
+  1302 				;
+  1303 3CD7			.proc JsrXTest
+  1304 3CD7 A9 FE				lda.b	#$fe
+  1305 3CD9 A2 FE FF				ldx.w	#$fffe
+  1306 3CDC FC EA 3C				jsr		(addr+2,X)
+  1307 3CDF 6B					rtl
+  1308 3CE0			pt2:
+  1309 3CE0 1A					inc
+  1310 3CE1			pt1:
+  1311 3CE1 18					clc
+  1312 3CE2 69 02				adc.b	#2				;patched to 4 in bank $01
+  1313 = 3CE3			addval = *-1
+  1314 3CE4 60					rts
+  1315 3CE5			pt3:
+  1316 3CE5 A9 FF				lda.b	#$ff
+  1317 3CE7 60					rts
+  1318
+  1319 3CE8			addr:
+  1320 3CE8 E1 3C				dta		a(pt1)			;patched to pt2 in bank $01
+  1321 3CEA E5 3C				dta		a(pt3)
+  1322 				.endp
+  1323
+  1324 				;==========================================================================
+  1325 3CEC			.proc JmpAbsLongTest
+  1326 3CEC B2 3C 01				dta		a(SetCarryTest),$01		;patched to bank $00 in bank $01
+  1327 3CEF			dispatch:
+  1328 3CEF DC EC 3C				jmp		[JmpAbsLongTest]		;should read from bank $00
+  1329 				.endp
+  1330
+  1331 3CF2			bank01_end:
+  1332
+  1333 				;==========================================================================
+  1334 3CF2			.proc NativeCOP
+  1335 3CF2 E2 20				sep		#$20
+  1336 3CF4 48					pha
+  1337 3CF5 08					php
+  1338 3CF6 68					pla
+  1339 3CF7 8F 88 00 00				sta.l	int_p
+  1340 3CFB A9 01				lda		#1
+  1341 3CFD 8F 89 00 00				sta.l	int_type
+  1342 3D01 68					pla
+  1343 3D02 40					rti
+  1344 				.endp
+  1345
+  1346 3D03			.proc NativeBRK
+  1347 3D03 E2 20				sep		#$20
+  1348 3D05 48					pha
+  1349 3D06 08					php
+  1350 3D07 68					pla
+  1351 3D08 8F 88 00 00				sta.l	int_p
+  1352 3D0C A9 02				lda.b	#2
+  1353 3D0E 8F 89 00 00				sta.l	int_type
+  1354 3D12 68					pla
+  1355 3D13 40					rti
+  1356 				.endp
+  1357
+  1358 = 3D14			NativeABORT = NativeInterrupt
+  1359 = 3D14			NativeNMI = NativeInterrupt
+  1360 = 3D14			NativeIRQ = NativeInterrupt
+  1361 3D14			.proc NativeInterrupt
+  1362 3D14 E2 20				sep		#$20
+  1363 3D16 48					pha
+  1364 3D17 A9 80				lda.b	#$80
+  1365 3D19 8F 89 00 00				sta.l	int_type
+  1366 3D1D 68					pla
+  1367 3D1E 6B					rtl
+  1368 				.endp
+  1369
+  1370 = 3D1F			EmuNMI = EmuInterrupt
+  1371 = 3D1F			EmuRESET = EmuInterrupt
+  1372 = 3D1F			EmuIRQ = EmuInterrupt
+  1373
+  1374 3D1F			.proc EmuInterrupt
+  1375 3D1F 48					pha
+  1376 3D20 A9 80				lda.b	#$80
+  1377 3D22 8F 89 00 00				sta.l	int_type
+  1378 3D26 68					pla
+  1379 3D27 40					rti
+  1380 				.endp
+  1381 				;==========================================================================
+  1382 3D28			.proc NativeVectors
+  1383 3D28 F2 3C				dta		a(NativeCOP)
+  1384 3D2A 03 3D				dta		a(NativeBRK)
+  1385 3D2C 14 3D				dta		a(NativeABORT)
+  1386 3D2E 14 3D				dta		a(NativeNMI)
+  1387 3D30 00 00				dta		a(0)
+  1388 3D32 14 3D				dta		a(NativeIRQ)
+  1389 3D34 00 00				dta		a(0)
+  1390 3D36 00 00				dta		a(0)
+  1391 3D38 00 00				dta		a(0)
+  1392 3D3A 00 00				dta		a(0)
+  1393 3D3C 00 00				dta		a(0)
+  1394 3D3E 1F 3D				dta		a(EmuNMI)
+  1395 3D40 1F 3D				dta		a(EmuRESET)
+  1396 3D42 1F 3D				dta		a(EmuIRQ)
+  1397 				.endp
+  1398
+  1399 				;==========================================================================
+  1400 3D44			.proc RestoreOS
+  1401 						;restore vector area
+  1402 3D44 A5 85				lda		switched_os
+  1403 3D46 F0 0B				beq		postos
+  1404 3D48 A2 1F				ldx		#31
+  1405 3D4A BD 00 21 9D E0 FF + 		mva:rpl	romsave,x $ffe0,x-
+  1406 3D53			postos:
+  1407
+  1408 						;restore PIA state
+  1409 3D53 A5 84				lda		switched_pia
+  1410 3D55 F0 21				beq		postpia
+  1411 3D57 A2 38				ldx		#$38
+  1412 3D59 A0 3C				ldy		#$3c
+  1413 3D5B 8E 03 D3				stx		pbctl
+  1414 3D5E A9 FF 8D 01 D3			mva		#$ff portb
+  1415 3D63 8C 03 D3				sty		pbctl
+  1416 3D66 A5 83 8D 01 D3			mva		save_orb portb
+  1417 3D6B 8E 03 D3				stx		pbctl
+  1418 3D6E A5 82 8D 01 D3			mva		save_ddrb portb
+  1419 3D73 A5 81 8D 01 D3			mva		save_crb portb
+  1420 3D78			postpia:
+  1421 						
+  1422 						;restore OS zero page and low satck
+  1423 3D78 A5 86				lda		switched_zp
+  1424 3D7A F0 10				beq		postzp
+  1425 3D7C A2 7F				ldx		#$7f
+  1426 3D7E			restorezp_loop:
+  1427 3D7E BD 00 20 95 00			mva		oszpsave,x 0,x
+  1428 3D83 AD 80 20 9D 00 01			mva		stksave $100,x
+  1429 3D89 CA					dex
+  1430 3D8A 10 F2				bpl		restorezp_loop
+  1431 3D8C			postzp:
+  1432 3D8C 60					rts
+  1433 				.endp
+  1434
+  1435 				;==========================================================================
+  1436 3D8D			.proc FailTest816
+  1437 						;okay, let's get this thing back to home base -- first, go to 8-bit
+  1438 						;registers.
+  1439 3D8D E2 30				sep		#$30
+  1440 						
+  1441 						;restore direct page
+  1442 3D8F A9 00				lda.b	#0
+  1443 3D91 EB					xba
+  1444 3D92 A9 00				lda.b	#0
+  1445 3D94 5B					tcd
+  1446 						
+  1447 						;pull the return address (for the message)
+  1448 3D95 FA					plx
+  1449 3D96 7A					ply
+  1450 						
+  1451 						;restore the stack
+  1452 3D97 A9 01				lda.b		#1
+  1453 3D99 EB					xba
+  1454 3D9A AF 80 00 00				lda.l	emusp
+  1455 3D9E 1B					tcs
+  1456 						
+  1457 						;put the return address back
+  1458 3D9F 5A					phy
+  1459 3DA0 DA					phx
+  1460 						
+  1461 						;restore data bank
+  1462 3DA1 A9 00				lda.b	#0
+  1463 3DA3 48					pha
+  1464 3DA4 AB					plb
+  1465 						
+  1466 						;jump to emulation mode
+  1467 3DA5 38					sec
+  1468 3DA6 FB					xce
+  1469
+  1470 						;check if we're on Veronica
+  1471 3DA7 2C 2E 1A				bit		_veronica
+  1472 3DAA 10 07				bpl		maincpu_ret
+  1473
+  1474 						;load message address - 1 to A:X
+  1475 3DAC FA					plx
+  1476 3DAD 68					pla
+  1477 3DAE A0 80				ldy		#$80
+  1478 3DB0 4C E0 FF				jmp		$ffe0
+  1479
+  1480 3DB3			maincpu_ret:
+  1481 						;restore the RAM OS, if there is one
+  1482 3DB3 20 44 3D				jsr		RestoreOS
+  1483 						
+  1484 						;fail
+  1485 3DB6 4C 0D 1E				jmp		_testFailed
+  1486 				.endp
+  1487
+  1488 3DB9			vercopy_end:
+  1489
+  1490 02E0-02E1> 00 22				run		main
+  1491 						end

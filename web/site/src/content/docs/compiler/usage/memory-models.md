@@ -7,23 +7,25 @@ A **memory model** is the layout a 6502 build targets: where code lives, where d
 how banking works, and where the stack and heap sit. Pick one with `-m <name>`.
 
 ```bash
-xtc -m xt app.xt -o app.xex
+xcc -m xt app.xc -o app.xex
 ```
 
-Memory models apply to the **6502 backend only**. The other four targets
-(`arm64`, `arm9`, `m68k`, `x86_64`) are native platforms with a loader and an OS of their
-own — they have no layout to choose, and `-m` is ignored.
+Memory models apply to the **6502 backend only**. The other five targets
+(`arm64`, `x86_64`, `win64`, `arm9`, `m68k`) are native platforms with a loader and an OS
+of their own — they have no layout to choose, and `-m` does not apply.
+
+`-m xt` implies `-A 6502`, so it is a complete target selection on its own.
 
 To see every layout the compiler ships with:
 
 ```bash
-xtc -ll
+xcc -ll
 ```
 
 To inspect a layout's memory map:
 
 ```bash
-xtc --dump-layout -m xt
+xcc --dump-layout -m xt
 ```
 
 ## The xt6502 target
@@ -41,7 +43,7 @@ xt-heap    ← the same map with a fixed heap reservation
 ```
 
 `support/xt6502/layouts/xt.lnk` is the **single source of truth** for the map. The code
-generator, the assembler (`xta`) and the simulator (`xts`) all read the bank registers and
+generator, the assembler (`xcc-as`) and the simulator (`xcc-sim-6502`) all read the bank registers and
 regions out of it — nothing is hardcoded in any of them.
 
 ## The map
@@ -85,15 +87,15 @@ class Player { … }     // possibly a different one
 
 i16 main(void)
 {
-    World@  w = new World();
-    Player@ p = new Player();
+    World*  w = new World();
+    Player* p = new Player();
     p.bumpInto(w);      // cross-bank call — the trampoline handles it
     return 0;
 }
 ```
 
 Banking is **function-granular**, so a single function larger than the 16 KB window cannot be
-placed at all; `xta` fails the build rather than spilling code somewhere it can't run. Split
+placed at all; `xcc-as` fails the build rather than spilling code somewhere it can't run. Split
 it into smaller functions. (See [Future work](/compiler/future-work/) — intra-function banking
 is a planned fix.)
 
@@ -132,8 +134,8 @@ allocation deterministic.
 
 The standard library is selected on **two** axes: the backend's CPU tree
 (`support/xt6502/`, `support/arm64/`) and the arch-neutral `support/generic/lib` beneath it,
-with a platform-specific file of the same name winning. That is how one `Stdio.xt` or
-`Math.xt` source serves a banked 6502 and a 64-bit host.
+with a platform-specific file of the same name winning. That is how one `Stdio.xc` or
+`Math.xc` source serves a banked 6502 and a 64-bit host.
 
 ## Customising or writing your own
 

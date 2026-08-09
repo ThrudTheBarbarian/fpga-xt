@@ -88,7 +88,19 @@ int _unlink(const char *p) { return (int)sc(SYS_unlink, (long)p, 0, 0); }
 int _fork(void) { return -1; }
 int _execve(const char *p, char *const a[], char *const e[]) { (void)p; (void)a; (void)e; return -1; }
 int _fcntl(int fd, int cmd, int arg) { (void)fd; (void)cmd; (void)arg; return -1; }
-int _getentropy(void *buf, unsigned n) { (void)buf; (void)n; return -1; }
+/* entropy: the kernel CSPRNG via SYS_getrandom (xt_random.c). getentropy is
+ * all-or-nothing by contract, so a short return is a failure rather than a
+ * partial fill — and a -EIO from a faulted TRNG propagates instead of being
+ * papered over with whatever bytes happened to be reachable. */
+int _getentropy(void *buf, unsigned n)
+{
+    if (!buf || n > 256) return -1;                  /* getentropy's documented cap */
+    return sc(SYS_getrandom, (long)buf, (long)n, 0) == (long)n ? 0 : -1;
+}
+long _getrandom(void *buf, unsigned n, unsigned flags)
+{
+    return sc(SYS_getrandom, (long)buf, (long)n, (long)flags);
+}
 int _mkdir(const char *p, int m) { return (int)sc(SYS_mkdir, (long)p, m, 0); }
 void _init(void) {}
 void _fini(void) {}

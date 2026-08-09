@@ -1,0 +1,98 @@
+/*
+ * pokey_rand.c — POKEY's polynomial counters. See pokey_rand.h for provenance.
+ */
+#include <stdio.h>
+#include "pokey_rand.h"
+#include "antic.h"
+
+#define M9   0x000001FFu
+#define M17  0x0001FFFFu
+
+/* How many further FREE-RUNNING cycles the counters take after the SKCTL write
+ * that enters init — see the tick.  Overridable so it can be A/B'd. */
+#ifndef STOP_LAG
+#define STOP_LAG 1
+#endif
+
+void pokey_rand_reset(pokey_rand *p)
+{
+    p->lfsr9  = M9;      /* all-ones: leaving init always starts from here */
+    p->lfsr17 = M17;
+    p->audctl = 0;
+    p->skctl  = 0;
+    p->init   = 1;       /* SKCTL[1:0] == 0 out of reset */
+    p->release_cycle = 0;
+    p->stop_cycle    = 0;
+}
+
+void pokey_rand_tick(pokey_rand *p)
+{
+    /* The SKCTL write that leaves init happens DURING a machine cycle, and that
+     * cycle's advance still belongs to the pre-release state — the counters are
+     * free from the FOLLOWING cycle.
+     *
+     * Measured, not assumed.  antic_wsync writes SKCTL on the 4th cycle of an
+     * STA and reads RANDOM on the 4th cycle of an LDY exactly one scanline
+     * later, which is 114 machine cycles; the hardware answer is step 113.  The
+     * release cycle is the only cycle that can account for the difference. */
+    if (p->release_cycle) {
+        p->release_cycle = 0;
+        p->lfsr9  = ((p->lfsr9  >> 1) | (1u <<  8)) & M9;
+        p->lfsr17 = ((p->lfsr17 >> 1) | (1u << 16)) & M17;
+        return;
+    }
+    /* ...and the SAME on the way IN.  The write that ENTERS init lands during a
+     * machine cycle whose advance still belongs to the free-running state, so
+     * the counters take one more real step before the ones start coming in.
+     *
+     * Measured on pokey_noise's "hot stop": it frees the counters, runs them one
+     * scanline, drops back into init and reads RANDOM four cycles later, so the
+     * byte is a free-run value with its top bits already filled with ones — and
+     * the number of ones says directly how many of those four cycles were init
+     * cycles.  Hardware's $E9 has THREE leading ones where our $F9 had four, and
+     * its underlying value is one free-run step further on.  Same total shifts,
+     * one moved from one side of the boundary to the other. */
+    if (p->stop_cycle) {
+        p->stop_cycle = 0;
+        uint32_t f9  = (p->lfsr9  ^ (p->lfsr9  >> 5)) & 1u;
+        uint32_t f17 = (p->lfsr17 ^ (p->lfsr17 >> 5)) & 1u;
+        p->lfsr9  = ((p->lfsr9  >> 1) | (f9  <<  8)) & M9;
+        p->lfsr17 = ((p->lfsr17 >> 1) | (f17 << 16)) & M17;
+        return;
+    }
+    if (p->init) {
+        /* Init keeps SHIFTING and feeds in ones — it does not snap to $FF, so
+         * RANDOM reads a partially-filled value on the way there. */
+        p->lfsr9  = ((p->lfsr9  >> 1) | (1u <<  8)) & M9;
+        p->lfsr17 = ((p->lfsr17 >> 1) | (1u << 16)) & M17;
+        return;
+    }
+    uint32_t fb9  = (p->lfsr9  ^ (p->lfsr9  >> 5)) & 1u;
+    uint32_t fb17 = (p->lfsr17 ^ (p->lfsr17 >> 5)) & 1u;
+    p->lfsr9  = ((p->lfsr9  >> 1) | (fb9  <<  8)) & M9;
+    p->lfsr17 = ((p->lfsr17 >> 1) | (fb17 << 16)) & M17;
+}
+
+uint8_t pokey_rand_read(const pokey_rand *p)
+{
+    /* AUDCTL[7] makes the 9-bit poly REPLACE the 17-bit one for RANDOM, so the
+     * byte comes from a different register entirely — not just a shorter one. */
+    return (uint8_t)((p->audctl & 0x80u) ? ((p->lfsr9  >> 1) & 0xFFu)
+                                         : ((p->lfsr17 >> 9) & 0xFFu));
+}
+
+void pokey_rand_audctl(pokey_rand *p, uint8_t v) { p->audctl = v; }
+
+void pokey_rand_skctl(pokey_rand *p, uint8_t v)
+{
+    uint8_t was_init = p->init;
+    /* ACID_GLYPHPROBE=6: every SKCTL write, to answer "does this test release
+     * the polynomial counters at all, and when". */
+    if (antic_glyph_probe == 6)
+        fprintf(stderr, "  SKCTLW $%02X (init %d -> %d)\n", v, was_init,
+                (v & 0x03u) == 0);
+    p->skctl = v;
+    p->init  = (uint8_t)((v & 0x03u) == 0);
+    if (was_init && !p->init) p->release_cycle = 1;
+    if (!was_init && p->init) p->stop_cycle = STOP_LAG;
+}

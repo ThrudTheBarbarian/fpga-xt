@@ -57,7 +57,19 @@
 module compositor #(
     parameter int FB_ROW_STRIDE = 1024,
     parameter int FB_ADDR_W     = 24,
-    parameter int ATARI_H       = 192
+    parameter int ATARI_H       = 192,
+    // Vertical offset between the playfield row supplied on `row_in`
+    // (ar_atari_row, 0 at the first displayed playfield line) and the
+    // PHYSICAL scanline the frame-spanning P/M DMA vertical counter uses to
+    // index the player/missile memory.  Real ANTIC fetches the P/M shape byte
+    // for a scanline by its physical position in the frame, NOT by the
+    // playfield-relative row — so player memory offset N appears at physical
+    // scanline N, and the playfield only begins at scanline DISPLAY_TOP.
+    // MUST equal antic_raster's DISPLAY_TOP (the first playfield scanline).
+    // Without this, the P/M shape fetched for playfield row r reads offset r
+    // instead of r+DISPLAY_TOP — the acid800 antic_pmdma "One-line P0 data bad
+    // at line 8: $00 != $08" failure (row 0's byte fetched at physical line 8).
+    parameter int PM_ROW_OFFSET = 8
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -87,6 +99,25 @@ module compositor #(
     input  wire  [7:0]  hposm1,            // HPOSM1 ($D005)
     input  wire  [7:0]  hposm2,            // HPOSM2 ($D006)
     input  wire  [7:0]  hposm3,            // HPOSM3 ($D007)
+    // Mid-scanline SIZEP support.  The compositor composes a whole row in
+    // one burst, so it normally sees only the register values standing at
+    // burst time and a CPU write partway along the scanline is invisible.
+    // ACID800 gtia_pmresize changes SIZEP0 mid-line and reads the resulting
+    // width back through the player-player collision registers.  antic_top
+    // supplies, per player: the SIZEP value as it stood at line start, and
+    // the atari-x at which the first mid-line write landed (a sentinel of
+    // 12'h7FF = "no write this line", which makes the early value apply for
+    // the whole row — identical to the old behaviour).
+    // NOTE the select below must test against CHG_NONE explicitly: the
+    // sentinel ($7FF) is larger than any visible atari_x, so a bare
+    // "atari_x < chg_x" is TRUE on every untouched line and would pin the
+    // render to the line-start value forever.  Harmless for SIZEP (early ==
+    // current) but fatal for HPOS, where an uncaptured 0 parks the player
+    // off-screen left.
+    input  wire [31:0]  hposp_early_flat,  // {p3,p2,p1,p0} x 8 bits, value at line start
+    input  wire [47:0]  hposp_chg_x_flat,  // {p3,p2,p1,p0} x 12 bits, first mid-line write
+    input  wire  [7:0]  sizep_early_flat,  // {p3,p2,p1,p0} x 2 bits
+    input  wire [47:0]  sizep_chg_x_flat,  // {p3,p2,p1,p0} x 12 bits
     input  wire  [1:0]  sizep0,            // SIZEP0 ($D008) — 00=1x, 01=2x, 10=1x, 11=4x
     input  wire  [1:0]  sizep1,
     input  wire  [1:0]  sizep2,
@@ -96,6 +127,16 @@ module compositor #(
     input  wire  [3:0]  hscrol,            // HSCROL ($D404) — colour-clock shift, 0..15
     input  wire  [3:0]  vscrol,            // VSCROL ($D405) — sub-row shift, 0..15 (consumed by dl_parser; M11b)
     input  wire  [7:0]  prior,             // PRIOR ($D01B) — bits[7:6] select GTIA mode 9/10/11 (M10b)
+
+    // GTIA player/missile shape registers. These are the live GRAFPx/GRAFM
+    // register contents; the renderer sources p*_shape/ms_byte from them by
+    // default (CPU-written shape draws with no DMA), and the P/M DMA fetch
+    // OVERWRITES them each scanline when the matching DMA is enabled.
+    input  wire  [7:0]  grafp0,            // GRAFP0 ($D00D) player 0 shape
+    input  wire  [7:0]  grafp1,            // GRAFP1 ($D00E) player 1 shape
+    input  wire  [7:0]  grafp2,            // GRAFP2 ($D00F) player 2 shape
+    input  wire  [7:0]  grafp3,            // GRAFP3 ($D010) player 3 shape
+    input  wire  [7:0]  grafm,             // GRAFM  ($D011) missile shape (m0=[1:0]..m3=[7:6])
 
     // cpu_shadow / DMA read port. mem_req pulses one cycle on entry to
     // any FETCH state so the M16-int adapter can trigger a DMA cycle in
@@ -110,7 +151,9 @@ module compositor #(
     // rp_tx command issuance — SET opcodes only.
     output logic [1:0]  cmd_tag,
     output logic [23:0] cmd_addr,
-    output logic [23:0] cmd_data,        // 2× 12-bit pixels (M10c widened from 16-bit)
+    output wire  [23:0] cmd_data,        // 2× 12-bit pixels (M10c widened from 16-bit)
+                                         // COMBINATIONAL off col_raw_q/col_pres*_q
+                                         // — see apply_pm_overlay_p
     output logic        cmd_valid,
     input  wire         cmd_ready,
 
@@ -163,8 +206,11 @@ module compositor #(
         S_ISSUE_SET         = 5'd12,
         S_NEXT_ROW          = 5'd13,
 
-        S_BLANK_FILL        = 5'd23     // paint a full row of COLBK (idx 0) for
+        S_BLANK_FILL        = 5'd23,    // paint a full row of COLBK (idx 0) for
                                         // blank ($x0) / unsupported-mode lines
+
+        S_PMSWEEP           = 5'd24     // border P/M mutual-collision sweep
+                                        // (visible scanline outside playfield)
     } state_t;
 
     state_t      state;
@@ -207,6 +253,25 @@ module compositor #(
     // Active playfield is 384 px = 192 pairs (matches the antic_top render-tap
     // LB_WIDTH).  A blank/unsupported row issues this many COLBK pairs.
     localparam int BLANK_PAIRS = 192;
+
+    // ---- Border P/M mutual-collision sweep -----------------------------
+    // Real GTIA accumulates player/missile mutual collisions (M-vs-P, P-vs-P)
+    // across the WHOLE visible scanline — including the left/right borders that
+    // lie outside the playfield pixel window.  The playfield emit pass only
+    // walks the playfield (atari-x 0..~319), so P/M objects sitting in the
+    // border (e.g. hpos $22 = color clock 34 -> atari-x -28) never registered a
+    // mutual collision (acid800 gtia_collision "Missing M/P collisions on left
+    // at $22").  After the playfield pass, S_PMSWEEP walks the full visible
+    // atari-x range and feeds the SAME collision pipeline (col_presL/H_q with a
+    // zero raw_pair, so only the playfield-independent mpl/ppl terms accumulate;
+    // mpf/ppf stay a function of the playfield pass).  The sweep runs on
+    // RENDERED rows only — blank/unsupported rows make no P/M collision, matching
+    // the compositor's existing "no emit on blank lines" behaviour.
+    //   Left visible edge  : color clock 34  ($22) -> atari-x -28.
+    //   Right visible edge : color clock 221 ($DD) -> atari-x  346.
+    localparam signed [11:0] SWEEP_X_LO = -12'sd28;
+    localparam signed [11:0] SWEEP_X_HI =  12'sd346;
+    logic signed [11:0] sweep_x;
 
     logic [7:0]  cur_byte;            // mode F's source byte (also char glyph for char modes)
     logic [7:0]  cur_code;            // char-mode char code
@@ -292,24 +357,27 @@ module compositor #(
     // table is only 8 rows — divide sub_row by 2 to address. Mode 3
     // (10 scan lines tall, with descender chars) needs the code to
     // pick between regular and descender mappings.
-    function automatic logic [2:0]  glyph_row(logic [3:0] m, logic [7:0] code, logic [3:0] sub);
+    function automatic logic [2:0]  glyph_row(logic [3:0] m, logic [7:0] code, logic [3:0] sub,
+                                              logic refl);
+        logic [2:0] r;
         case (m)
-            4'h5, 4'h7: return sub[3:1];
+            4'h5, 4'h7: r = sub[3:1];
             4'h3: begin
-                // Mode 3: codes with bits[6:5] == 11 (i.e. 96..127 of
-                // the 7-bit char code) are descenders — sub_row 0/1
-                // pull glyph rows 6/7 from the SAME glyph table; sub 2..9
-                // pull rows 0..7. Codes 0..95 use sub 0..7 → rows 0..7
-                // and sub 8/9 are blanked at the glyph-latch step.
-                if (code[6:5] == 2'b11) begin
-                    if (sub < 4'd2) return {2'b11, sub[0]};         // 6 or 7
-                    else            return sub[2:0] - 3'd2;          // sub-2
-                end else begin
-                    return sub[2:0];                                  // 0..7 (8/9 → 0; blanked later)
-                end
+                // Mode 3 is TEN scan lines over an EIGHT-row glyph, and the
+                // glyph is indexed by the row counter's LOW THREE BITS -- rows
+                // 8/9 come back round to glyph rows 0/1.  There is NO row
+                // remap: which two rows go blank is the CHARACTER's choice and
+                // is made at the glyph-latch step below.  emu is explicit that
+                // a downward shift is wrong (antic.c): subtracting two puts
+                // every row one object left of where antic_charcontrol looks.
+                r = sub[2:0];
             end
-            default:    return sub[2:0];
+            default:    r = sub[2:0];
         endcase
+        // CHACTL[2] vertical reflect: characters render upside-down —
+        // glyph row r becomes 7-r (~r on 3 bits).  Applied uniformly,
+        // mode 3 descenders included (approximation for that corner).
+        return refl ? ~r : r;
     endfunction
 
     // Compose the 16-bit glyph address: (chbase << 8) | (masked_code << 3) | glyph_row.
@@ -329,7 +397,7 @@ module compositor #(
             default:    mask = 8'h7F;
         endcase
         base = code[6:0] & mask[6:0];
-        row  = glyph_row(m, code, sub);
+        row  = glyph_row(m, code, sub, chactl[2]);
         addr = {chb, 8'h00}                   // chbase * 256
              + {6'h0, base, 3'b000}           // (code & mask) * 8
              + {13'h0, row};                  // glyph row within char
@@ -594,12 +662,18 @@ module compositor #(
     endfunction
 
     // ---- P/M overlay ----------------------------------------------------
-    // player_covers: 1 when the named player covers `atari_x`. Gated on
-    // GRACTL[1] (player DMA enable) + DMACTL[3] (PM-DMA player) +
-    // non-zero shape. SIZEP scaling: 00/10=1x (16 px), 01=2x (32 px),
-    // 11=4x (64 px) — bit_idx = 7 - (dx >> scale_shift), where scale_shift
-    // is 1/2/3 for 1x/2x/4x respectively.
-    function automatic logic player_covers(logic [9:0] atari_x,
+    // player_covers: 1 when the named player covers `atari_x`. Display depends
+    // only on shape-register content + HPOSP + SIZEP — NOT on DMA being enabled
+    // (DMA merely reloads the shape register each scanline; a CPU-written shape
+    // renders just the same). A zero shape draws nothing (correct early-out).
+    // SIZEP scaling: 00/10=1x (16 px), 01=2x (32 px), 11=4x (64 px) —
+    // bit_idx = 7 - (dx >> scale_shift), scale_shift = 1/2/3 for 1x/2x/4x.
+    // `atari_x` is a SIGNED coordinate (12-bit) so the left/right BORDER
+    // (negative or beyond-playfield color clocks) can be evaluated for the
+    // P/M mutual-collision sweep — real GTIA accumulates player/missile
+    // collisions across the whole visible scanline, not just the playfield
+    // window.  The pixel path passes a zero-extended (always ≥0) value.
+    function automatic logic player_covers(logic signed [11:0] atari_x,
                                             logic [7:0] hposp,
                                             logic [7:0] shape,
                                             logic [1:0] sizep);
@@ -607,9 +681,9 @@ module compositor #(
         logic signed [11:0] dx;
         logic signed [11:0] width;
         logic [2:0]         bit_sel;
-        if (!gractl[1] || !dmactl[3] || shape == 8'h00) return 1'b0;
+        if (shape == 8'h00) return 1'b0;
         x_left = ({{4{1'b0}}, hposp} - 12'sd48) <<< 1;
-        dx     = $signed({2'b00, atari_x}) - x_left;
+        dx     = atari_x - x_left;
         case (sizep)
             2'b01:        begin width = 12'sd32; bit_sel = 3'd7 - dx[4:2]; end
             2'b11:        begin width = 12'sd64; bit_sel = 3'd7 - dx[5:3]; end
@@ -619,12 +693,12 @@ module compositor #(
         return shape[bit_sel];
     endfunction
 
-    // missile_covers: 1 when the named missile covers `atari_x`. Gated
-    // on GRACTL[0] (missile presence enable) + DMACTL[2] (missile DMA).
-    // m_shape is the 2-bit shape; bit 1 = leftmost, bit 0 = rightmost.
-    // SIZEM (per-missile 2 bits): 00/10=1x (4 px, 2 px/bit), 01=2x (8 px),
-    // 11=4x (16 px). bit_sel picks the 1 of 2 shape bits based on dx.
-    function automatic logic missile_covers(logic [9:0] atari_x,
+    // missile_covers: 1 when the named missile covers `atari_x`. Like players,
+    // display depends only on the shape (GRAFM) content + HPOSM + SIZEM, not on
+    // missile DMA being enabled. m_shape is the 2-bit shape; bit 1 = leftmost,
+    // bit 0 = rightmost. SIZEM (per-missile 2 bits): 00/10=1x (4 px, 2 px/bit),
+    // 01=2x (8 px), 11=4x (16 px). bit_sel picks the 1 of 2 bits from dx.
+    function automatic logic missile_covers(logic signed [11:0] atari_x,
                                              logic [7:0] hposm,
                                              logic [1:0] m_shape,
                                              logic [1:0] m_size);
@@ -632,9 +706,9 @@ module compositor #(
         logic signed [11:0] dx;
         logic signed [11:0] width;
         logic               bit_sel;
-        if (!gractl[0] || !dmactl[2] || m_shape == 2'h0) return 1'b0;
+        if (m_shape == 2'h0) return 1'b0;
         x_left = ({{4{1'b0}}, hposm} - 12'sd48) <<< 1;
-        dx     = $signed({2'b00, atari_x}) - x_left;
+        dx     = atari_x - x_left;
         case (m_size)
             2'b01:   begin width = 12'sd8;  bit_sel = ~dx[2]; end
             2'b11:   begin width = 12'sd16; bit_sel = ~dx[3]; end
@@ -644,11 +718,12 @@ module compositor #(
         return m_shape[bit_sel];
     endfunction
 
-    // pm_presence: returns 8-bit vector {P3,P2,P1,P0,M3,M2,M1,M0} for one
-    // atari_x. Per-missile VDELAY picks between the current-row and prev-
-    // row missile byte. Used by apply_pm_overlay (pixel path) and registered
-    // per pair (col_presL/H_q) for the next-cycle collision_combine.
-    function automatic logic [7:0] pm_presence(logic [9:0] atari_x);
+    // pm_presence_s: returns 8-bit vector {P3,P2,P1,P0,M3,M2,M1,M0} for one
+    // SIGNED atari_x (so the border sweep can probe negative color clocks).
+    // Per-missile VDELAY picks between the current-row and prev-row missile
+    // byte. Used by apply_pm_overlay (pixel path, via the [9:0] wrapper) and
+    // registered per pair (col_presL/H_q) for the next-cycle collision_combine.
+    function automatic logic [7:0] pm_presence_s(logic signed [11:0] atari_x);
         logic [7:0] ms_eff;
         logic       p0p, p1p, p2p, p3p;
         logic       m0p, m1p, m2p, m3p;
@@ -656,15 +731,39 @@ module compositor #(
         ms_eff[3:2] = vdelay[1] ? ms_byte_prev[3:2] : ms_byte[3:2];
         ms_eff[5:4] = vdelay[2] ? ms_byte_prev[5:4] : ms_byte[5:4];
         ms_eff[7:6] = vdelay[3] ? ms_byte_prev[7:6] : ms_byte[7:6];
-        p0p = player_covers(atari_x, hposp0, p0_shape, sizep0);
-        p1p = player_covers(atari_x, hposp1, p1_shape, sizep1);
-        p2p = player_covers(atari_x, hposp2, p2_shape, sizep2);
-        p3p = player_covers(atari_x, hposp3, p3_shape, sizep3);
+        // Pick the size in force AT THIS PIXEL: before the mid-line write
+        // position the line-start value applies, at or after it the live
+        // register does.
+        p0p = player_covers(atari_x,
+                  (atari_x < $signed(hposp_chg_x_flat[11:0]))
+                      ? hposp_early_flat[7:0] : hposp0, p0_shape,
+                  (atari_x < $signed(sizep_chg_x_flat[11:0]))
+                      ? sizep_early_flat[1:0] : sizep0);
+        p1p = player_covers(atari_x,
+                  (atari_x < $signed(hposp_chg_x_flat[23:12]))
+                      ? hposp_early_flat[15:8] : hposp1, p1_shape,
+                  (atari_x < $signed(sizep_chg_x_flat[23:12]))
+                      ? sizep_early_flat[3:2] : sizep1);
+        p2p = player_covers(atari_x,
+                  (atari_x < $signed(hposp_chg_x_flat[35:24]))
+                      ? hposp_early_flat[23:16] : hposp2, p2_shape,
+                  (atari_x < $signed(sizep_chg_x_flat[35:24]))
+                      ? sizep_early_flat[5:4] : sizep2);
+        p3p = player_covers(atari_x,
+                  (atari_x < $signed(hposp_chg_x_flat[47:36]))
+                      ? hposp_early_flat[31:24] : hposp3, p3_shape,
+                  (atari_x < $signed(sizep_chg_x_flat[47:36]))
+                      ? sizep_early_flat[7:6] : sizep3);
         m0p = missile_covers(atari_x, hposm0, ms_eff[1:0], sizem[1:0]);
         m1p = missile_covers(atari_x, hposm1, ms_eff[3:2], sizem[3:2]);
         m2p = missile_covers(atari_x, hposm2, ms_eff[5:4], sizem[5:4]);
         m3p = missile_covers(atari_x, hposm3, ms_eff[7:6], sizem[7:6]);
         return {p3p, p2p, p1p, p0p, m3p, m2p, m1p, m0p};
+    endfunction
+
+    // Thin [9:0] wrapper for the pixel path (atari_x is always ≥0 there).
+    function automatic logic [7:0] pm_presence(logic [9:0] atari_x);
+        return pm_presence_s($signed({2'b00, atari_x}));
     endfunction
 
     // apply_pm_overlay ORs P0..P3 + M0..M3 presence bits onto a packed
@@ -685,6 +784,34 @@ module compositor #(
     // exactly the original PF + P|M-shared encoding; the M-only nibble
     // sits in bits[11:8] of the storage cell and is invisible to byte-
     // level reads.
+    // Same overlay, but taking the presence vectors DIRECTLY instead of
+    // recomputing them from x.  This is what lets cmd_data be driven off the
+    // already-registered col_* values: the expensive cones (BRAM -> pack_pair,
+    // and pm_presence) then terminate at their own flops with nothing stacked
+    // on top, which is precisely the clk_sys limiter identified in HANDOFF 1i
+    // (display_shadow BRAM -> compositor/cmd_data_reg, 8 logic levels).
+    function automatic logic [23:0] apply_pm_overlay_p(logic [15:0] packed_pair,
+                                                       logic [7:0]  pres_lo,
+                                                       logic [7:0]  pres_hi);
+        logic [7:0] lo, hi;
+        logic [3:0] m_lo, m_hi;
+        begin
+            lo = packed_pair[7:0];
+            hi = packed_pair[15:8];
+            if (pres_lo[0] | pres_lo[4]) lo = lo | 8'h10;
+            if (pres_hi[0] | pres_hi[4]) hi = hi | 8'h10;
+            if (pres_lo[1] | pres_lo[5]) lo = lo | 8'h20;
+            if (pres_hi[1] | pres_hi[5]) hi = hi | 8'h20;
+            if (pres_lo[2] | pres_lo[6]) lo = lo | 8'h40;
+            if (pres_hi[2] | pres_hi[6]) hi = hi | 8'h40;
+            if (pres_lo[3] | pres_lo[7]) lo = lo | 8'h80;
+            if (pres_hi[3] | pres_hi[7]) hi = hi | 8'h80;
+            m_lo = pres_lo[3:0];
+            m_hi = pres_hi[3:0];
+            return {m_hi, m_lo, hi, lo};
+        end
+    endfunction
+
     function automatic logic [23:0] apply_pm_overlay(logic [15:0] packed_pair,
                                                       logic [9:0]  atari_x_lo);
         logic [7:0] lo, hi;
@@ -724,6 +851,7 @@ module compositor #(
     //   bits [47:32] = mpl
     //   bits [63:48] = ppl
     function automatic logic [63:0] collision_combine(
+        logic [3:0]  mode,
         logic [15:0] raw_pair,
         logic [7:0]  pres_lo,
         logic [7:0]  pres_hi);
@@ -733,6 +861,27 @@ module compositor #(
 
         pf_lo   = raw_pair[3:0];
         pf_hi   = raw_pair[11:8];
+
+        // Hi-res modes (2, 3, F): the Atari GR.0/GR.8 collision quirk.  These
+        // 1-bpp modes are DISPLAYED with the lit pixel using COLPF1's luminance
+        // over COLPF2's hue and the background as COLPF2 — so the display packer
+        // emits lit=$02 (PF1) / bg=$04 (PF2).  For COLLISION and priority,
+        // however, GTIA treats a hi-res pixel as PLAYFIELD 2: only the LIT
+        // (foreground) pixels register, and they register against PF2 — the
+        // luminance substitution is display-only and never reaches the collision
+        // playfield code.  So remap the collision PF nibble: lit ($02) -> PF2
+        // ($04); everything else (background $04, or $00) -> no collision.
+        //   * lit -> PF2 makes acid800 antic_charcontrol's `lda pXpf; and #$04`
+        //     see a hit where a player overlaps a lit GR.0 text pixel (it read
+        //     $00 while lit collided as PF1).
+        //   * dropping the background keeps acid800 antic_addresswrap's "player
+        //     over an unlit $00 GR.8 region makes no P{i}PF" true.
+        // Lo-res PF pixels (modes 4/5/8-E) are genuine playfield and collide as
+        // emitted.
+        if (mode == 4'h2 || mode == 4'h3 || mode == 4'hF) begin
+            pf_lo = (pf_lo == 4'h2) ? 4'h4 : 4'h0;
+            pf_hi = (pf_hi == 4'h2) ? 4'h4 : 4'h0;
+        end
 
         mpf_c = 16'h0;
         ppf_c = 16'h0;
@@ -747,17 +896,16 @@ module compositor #(
             if (pres_hi[i+4])   ppf_c[4*i +: 4] = ppf_c[4*i +: 4] | pf_hi;
         end
 
-        // M[i] vs P[j] and P[i] vs P[j] (P-vs-P excludes self).
-        for (i = 0; i < 4; i = i + 1) begin
-            for (j = 0; j < 4; j = j + 1) begin
-                if (pres_lo[i]   && pres_lo[j+4]) mpl_c[4*i + j] = 1'b1;
-                if (pres_hi[i]   && pres_hi[j+4]) mpl_c[4*i + j] = 1'b1;
-                if (i != j) begin
-                    if (pres_lo[i+4] && pres_lo[j+4]) ppl_c[4*i + j] = 1'b1;
-                    if (pres_hi[i+4] && pres_hi[j+4]) ppl_c[4*i + j] = 1'b1;
-                end
-            end
-        end
+        // M-vs-P and P-vs-P are NOT computed here any more.  They moved to
+        // hdl/gtia_pm_collide.sv, which walks the beam and accumulates as GTIA
+        // does, so that a mid-line HPOSP move or a mid-line HITCLR lands at the
+        // right point in the line — something a once-per-row burst cannot
+        // represent at all.  antic_top reads P0PL..P3PL / M0PL..M3PL from that
+        // engine; mpl_q/ppl_q here stay wired for the standalone compositor
+        // testbenches but carry no collision information.  Dropping the 4x4
+        // matrix also gives clk_sys back the slack the beam-time engine costs.
+        // Playfield collisions (mpf/ppf) are still computed here — they need
+        // per-x playfield content, which the beam-time path does not yet have.
 
         return {ppl_c, mpl_c, ppf_c, mpf_c};
     endfunction
@@ -851,6 +999,17 @@ module compositor #(
         return {hi_px, lo_px};
     endfunction
 
+    // ANTIC screen-memory (playfield / LMS-data) address counter wraps at a
+    // 4 KB boundary: only the low 12 bits advance while the top 4 stay frozen,
+    // so a scanline's data fetch that crosses $xFFF wraps back to $x000 within
+    // the same 4 KB page (e.g. LMS $2FF0 + 24 -> $2008, NOT $3008).  Char-set
+    // (glyph) fetches address the CHBASE font and are NOT wrapped through here.
+    // (Altirra HW ref §4.6; acid800 antic_addresswrap "4K boundary" assert.)
+    function automatic logic [15:0] screen_addr(logic [15:0] base,
+                                                logic [15:0] off);
+        return {base[15:12], base[11:0] + off[11:0]};
+    endfunction
+
     // ---- Address / state registers --------------------------------------
     wire [FB_ADDR_W-1:0] row_base    = cur_row * FB_ROW_STRIDE;
     wire [FB_ADDR_W-1:0] unit_offset = unit_idx * unit_width_atari(cur_mode);
@@ -870,21 +1029,36 @@ module compositor #(
     // VDELAY[i]=1 shifts the effective row down by 1 (uses cur_row-1).
     // For idx 5 (the row-1 missile byte), eff_row = cur_row - 1 unconditionally.
     function automatic logic [15:0] pm_addr_for(logic [2:0] idx);
+        logic [7:0]  phys_row;
         logic [7:0]  eff_row;
         logic [7:0]  byte_idx;
         logic        two_line;
         logic [15:0] base;
         logic [15:0] pm_origin;
         two_line  = !dmactl[4];
-        pm_origin = {pmbase, 8'h00};
+        // P/M DMA indexes player/missile memory by the PHYSICAL scanline (the
+        // frame-spanning ANTIC vertical counter), not the playfield-relative
+        // row.  cur_row is ar_atari_row (0 at the first playfield line), so the
+        // physical scanline is cur_row + PM_ROW_OFFSET (= DISPLAY_TOP).  This is
+        // what makes player-memory offset N line up with physical scanline N.
+        phys_row  = cur_row + PM_ROW_OFFSET[7:0];
+        // PMBASE alignment: the P/M region is not simply PMBASE*256.  In
+        // 1-line resolution the region is 2KB and must be 2KB-aligned (ANTIC
+        // drives A15-A11 from PMBASE, so PMBASE[2:0] are ignored); in 2-line
+        // resolution it is 1KB, 1KB-aligned (A15-A10, PMBASE[1:0] ignored).
+        // Masking the low base bits is REQUIRED — e.g. antic_pmdma sets
+        // PMBASE=$37 in 1-line mode: the region starts at $3000 (not $3700),
+        // so player-0 shape data lives at $3400, not $3B00.  Without the mask
+        // the fetch reads uninitialised memory and every shape byte is $00.
+        pm_origin = two_line ? {pmbase[7:2], 10'h0} : {pmbase[7:3], 11'h0};
         case (idx)
-            3'd0: eff_row = (vdelay[4] && cur_row != 8'h0) ? cur_row - 8'd1 : cur_row;
-            3'd1: eff_row = (vdelay[5] && cur_row != 8'h0) ? cur_row - 8'd1 : cur_row;
-            3'd2: eff_row = (vdelay[6] && cur_row != 8'h0) ? cur_row - 8'd1 : cur_row;
-            3'd3: eff_row = (vdelay[7] && cur_row != 8'h0) ? cur_row - 8'd1 : cur_row;
-            3'd4: eff_row = cur_row;
-            3'd5: eff_row = (cur_row != 8'h0) ? cur_row - 8'd1 : cur_row;
-            default: eff_row = cur_row;
+            3'd0: eff_row = (vdelay[4] && phys_row != 8'h0) ? phys_row - 8'd1 : phys_row;
+            3'd1: eff_row = (vdelay[5] && phys_row != 8'h0) ? phys_row - 8'd1 : phys_row;
+            3'd2: eff_row = (vdelay[6] && phys_row != 8'h0) ? phys_row - 8'd1 : phys_row;
+            3'd3: eff_row = (vdelay[7] && phys_row != 8'h0) ? phys_row - 8'd1 : phys_row;
+            3'd4: eff_row = phys_row;
+            3'd5: eff_row = (phys_row != 8'h0) ? phys_row - 8'd1 : phys_row;
+            default: eff_row = phys_row;
         endcase
         byte_idx = two_line ? {1'b0, eff_row[7:1]} : eff_row;
         case (idx)
@@ -919,9 +1093,35 @@ module compositor #(
     //                 P/P matrix from the registered values and ORs into the
     //                 latches.
     // Collisions simply lag the beam by one clk_bus cycle.
+    //
+    // cmd_data is driven COMBINATIONALLY from those same registered values.
+    // It is stable for as long as cmd_valid is held (the col_* registers only
+    // change on the next emit), so the SET handshake is unaffected and there is
+    // no throughput cost — no extra state, no stall, same cycles per pair.
+    // The border sweep (S_PMSWEEP) gets its OWN presence registers rather than
+    // reusing col_pres*_q.  Two reasons:
+    //   * correctness — the sweep runs after the playfield while cmd_valid is
+    //     being torn down, and sharing let sweep values reach cmd_data while
+    //     cmd_valid was still asserted, emitting a garbage SET per row.
+    //   * timing — the earlier fix duplicated the EMIT side instead, which
+    //     doubled the fanout of the expensive pack_pair cone and cost ~0.12ns
+    //     on clk_sys (builds 84-86 all failed).  Splitting the SWEEP side is
+    //     free by comparison: it is fed by pm_presence_s off sweep_x, a much
+    //     shallower cone, and nothing downstream of it is timing-critical.
+    logic [7:0]  sweep_presL_q;
+    logic [7:0]  sweep_presH_q;
+    logic        sweep_active_q;
+    logic        col_blank_q;      // 1 = this pair is blank (emit COLBK)
     logic [15:0] col_raw_q;        // PF-bit pair, registered for the combine
     logic [7:0]  col_presL_q;      // P/M presence at the pair's low  atari_x
     logic [7:0]  col_presH_q;      // P/M presence at the pair's high atari_x
+
+    // The emit-path output.  Long cones (BRAM -> pack_pair, pm_presence) end at
+    // col_raw_q / col_pres*_q; only the shallow overlay sits between those flops
+    // and the port.
+    assign cmd_data = col_blank_q
+                    ? 24'h0
+                    : apply_pm_overlay_p(col_raw_q, col_presL_q, col_presH_q);
     logic        col_valid_q;
 
     always_ff @(posedge clk or posedge rst) begin
@@ -953,8 +1153,12 @@ module compositor #(
             cmd_valid       <= 1'b0;
             cmd_tag         <= `BUS_TAG_NOP;
             cmd_addr        <= '0;
-            cmd_data        <= 24'h0;
+            col_blank_q     <= 1'b1;
+            sweep_presL_q   <= 8'h0;
+            sweep_presH_q   <= 8'h0;
+            sweep_active_q  <= 1'b0;
             blank_col       <= 9'd0;
+            sweep_x         <= 12'sd0;
             mem_raddr       <= 16'h0;
             meta_row        <= 8'h0;
             compose_done    <= 1'b0;
@@ -1050,13 +1254,21 @@ module compositor #(
                 end
                 S_PM_WAIT: if (mem_ready) state <= S_PM_LATCH;
                 S_PM_LATCH: begin
+                    // P/M shape source: the DMA fetch supplies mem_rdata only
+                    // when the matching DMA is enabled (players: GRACTL[1] &
+                    // DMACTL[3]; missiles: GRACTL[0] & DMACTL[2]) — that is the
+                    // per-scanline automatic register write. With DMA disabled
+                    // the shape is the live CPU-written GRAFPx/GRAFM register, so
+                    // players/missiles drawn straight from a STA still render.
                     case (pm_fetch_idx)
-                        3'd0: p0_shape     <= mem_rdata;
-                        3'd1: p1_shape     <= mem_rdata;
-                        3'd2: p2_shape     <= mem_rdata;
-                        3'd3: p3_shape     <= mem_rdata;
-                        3'd4: ms_byte      <= mem_rdata;
-                        3'd5: ms_byte_prev <= mem_rdata;
+                        3'd0: p0_shape     <= (gractl[1] && dmactl[3]) ? mem_rdata : grafp0;
+                        3'd1: p1_shape     <= (gractl[1] && dmactl[3]) ? mem_rdata : grafp1;
+                        3'd2: p2_shape     <= (gractl[1] && dmactl[3]) ? mem_rdata : grafp2;
+                        3'd3: p3_shape     <= (gractl[1] && dmactl[3]) ? mem_rdata : grafp3;
+                        // ms_byte_prev feeds VDELAY missile delay; with DMA off
+                        // there is no prior-row byte, so both hold the register.
+                        3'd4: ms_byte      <= (gractl[0] && dmactl[2]) ? mem_rdata : grafm;
+                        3'd5: ms_byte_prev <= (gractl[0] && dmactl[2]) ? mem_rdata : grafm;
                         default: ;
                     endcase
                     if (pm_fetch_idx == 3'd5) begin
@@ -1079,7 +1291,7 @@ module compositor #(
 
                 // ==== Mode F path ============================================
                 S_F_FETCH_BYTE: begin
-                    mem_raddr <= cur_lms + {10'h0, unit_idx};
+                    mem_raddr <= screen_addr(cur_lms, {10'h0, unit_idx});
                     state     <= S_F_WAIT_BYTE;
                 end
 
@@ -1092,12 +1304,13 @@ module compositor #(
                     pair_idx  <= 4'd0;
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= set_addr;
-                    cmd_data  <= apply_pm_overlay(raw_f, atari_x_lo_q);
+                    col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                     cmd_valid <= 1'b1;
                     col_raw_q   <= raw_f;           // combined + accumulated next cycle
                     col_presL_q <= pm_presence(atari_x_lo_q);
                     col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                     col_valid_q <= 1'b1;
+                    sweep_active_q <= 1'b0;
                     atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                     state     <= S_ISSUE_SET;
                 end
@@ -1105,7 +1318,7 @@ module compositor #(
                 // ==== Mode F + HSCROL path (shift-register windowing) =======
                 S_HS_FETCH_PRE: begin
                     // Pre-fetch the byte that will become cur_byte for unit 0.
-                    mem_raddr <= cur_lms + {14'h0, hs_byte_offset};
+                    mem_raddr <= screen_addr(cur_lms, {14'h0, hs_byte_offset});
                     state     <= S_HS_WAIT_PRE;
                 end
                 S_HS_WAIT_PRE: if (mem_ready) state <= S_HS_LATCH_PRE;
@@ -1118,8 +1331,8 @@ module compositor #(
                     // Fetch the byte to the RIGHT of cur_byte (i.e. the
                     // "next_byte" of the shift register) for the current
                     // unit_idx. Address = cur_lms + hs_byte_offset + unit_idx + 1.
-                    mem_raddr <= cur_lms + {14'h0, hs_byte_offset}
-                               + {10'h0, unit_idx} + 16'd1;
+                    mem_raddr <= screen_addr(cur_lms, {14'h0, hs_byte_offset}
+                               + {10'h0, unit_idx} + 16'd1);
                     state     <= S_HS_WAIT_BYTE;
                 end
                 S_HS_WAIT_BYTE: if (mem_ready) state <= S_HS_LATCH_BYTE;
@@ -1146,12 +1359,13 @@ module compositor #(
                     pair_idx  <= 4'd0;
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= set_addr;
-                    cmd_data  <= apply_pm_overlay(idx_h, atari_x_lo_q);
+                    col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                     cmd_valid <= 1'b1;
                     col_raw_q   <= raw_h;           // combined + accumulated next cycle
                     col_presL_q <= pm_presence(atari_x_lo_q);
                     col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                     col_valid_q <= 1'b1;
+                    sweep_active_q <= 1'b0;
                     atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                     state     <= S_ISSUE_SET;
                 end
@@ -1170,11 +1384,11 @@ module compositor #(
                     // (lms + unit_idx + hs_byte_offset); phase-1 fetches
                     // the nxt side at (... + 1).
                     if (is_txt_hscrol)
-                        mem_raddr <= cur_lms + {10'h0, unit_idx}
+                        mem_raddr <= screen_addr(cur_lms, {10'h0, unit_idx}
                                     + {14'h0, hs_byte_offset}
-                                    + (hsc_phase ? 16'd1 : 16'd0);
+                                    + (hsc_phase ? 16'd1 : 16'd0));
                     else
-                        mem_raddr <= cur_lms + {10'h0, unit_idx};
+                        mem_raddr <= screen_addr(cur_lms, {10'h0, unit_idx});
                     state <= S_TXT_WAIT_CODE;
                 end
 
@@ -1221,19 +1435,22 @@ module compositor #(
                         blanking_code = cur_code;
                         blanking_b7   = cur_code_bit7;
                     end
-                    // chactl[0] = vrefl (handled via glyph_row); [1] = inv_en;
-                    // [2] = inv_blank. Modes 4-7 take raw glyph (per
-                    // rp-antic's expand.c).
-                    if (cur_mode == 4'h2 && chactl[2] && blanking_b7)
+                    // CHACTL ($D401): [0] = BLANK (inverse-video chars
+                    // render blank), [1] = INVERT, [2] = REFLECT (vertical
+                    // mirror, applied in glyph_row).  Modes 4-7 take the raw
+                    // glyph (per rp-antic's expand.c).
+                    if ((cur_mode == 4'h2 || cur_mode == 4'h3) && chactl[0] && blanking_b7)
                         glyph_eff = 8'h00;
-                    else if (cur_mode == 4'h2 && chactl[1] && blanking_b7)
+                    else if ((cur_mode == 4'h2 || cur_mode == 4'h3) && chactl[1] && blanking_b7)
                         glyph_eff = mem_rdata ^ 8'hFF;
-                    // Mode 3: codes 0..95 (code[6:5] != 11) blank rows
-                    // 8/9 of the 10-scan-line cell. Codes 96..127
-                    // (descenders) use rows 6/7 of the glyph for sub 0/1
-                    // — handled by glyph_row() picking the right address.
-                    else if (cur_mode == 4'h3 && blanking_code[6:5] != 2'b11
-                             && cur_sub_row >= 4'd8)
+                    // Mode 3: the CHARACTER selects which two of the ten
+                    // scan lines blank.  Codes $60..$7F -- the lowercase
+                    // DESCENDERS -- blank rows 0..1, so the glyph hangs below
+                    // the cell; every other code blanks rows 8..9.  The rows
+                    // that do render are just (row & 7); see glyph_row.
+                    else if (cur_mode == 4'h3 &&
+                             (blanking_code[6:5] == 2'b11 ? (cur_sub_row <  4'd2)
+                                                          : (cur_sub_row >= 4'd8)))
                         glyph_eff = 8'h00;
                     else
                         glyph_eff = mem_rdata;
@@ -1260,12 +1477,13 @@ module compositor #(
                         pair_idx  <= 4'd0;
                         cmd_tag   <= `BUS_TAG_SET;
                         cmd_addr  <= set_addr;
-                        cmd_data  <= apply_pm_overlay(raw_t, atari_x_lo_q);
+                        col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                         cmd_valid <= 1'b1;
                         col_raw_q   <= raw_t;           // combined + accumulated next cycle
                         col_presL_q <= pm_presence(atari_x_lo_q);
                         col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                         col_valid_q <= 1'b1;
+                    sweep_active_q <= 1'b0;
                         atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                         state     <= S_ISSUE_SET;
                     end
@@ -1285,7 +1503,17 @@ module compositor #(
                             // Last pair of this unit.
                             if (unit_idx == units_per_row(cur_mode) - 6'd1) begin
                                 cmd_valid <= 1'b0;
-                                state     <= S_NEXT_ROW;
+                                // After the playfield, sweep the visible border
+                                // for P/M mutual collisions — but only when some
+                                // player/missile shape is actually lit (else the
+                                // sweep is a no-op; skip it to save the cycles).
+                                if (|{p0_shape, p1_shape, p2_shape, p3_shape,
+                                      ms_byte, ms_byte_prev}) begin
+                                    sweep_x <= SWEEP_X_LO;
+                                    state   <= S_PMSWEEP;
+                                end else begin
+                                    state   <= S_NEXT_ROW;
+                                end
                             end else begin
                                 unit_idx  <= unit_idx + 6'd1;
                                 pair_idx  <= 4'd0;
@@ -1351,11 +1579,12 @@ module compositor #(
                             pair_idx <= next_p;
                             cmd_addr <= row_base + unit_offset
                                       + {next_p, 1'b0};
-                            cmd_data <= apply_pm_overlay(idx_a, atari_x_lo_q);
+                            col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                             col_raw_q   <= raw_a;           // combined + accumulated next cycle
                             col_presL_q <= pm_presence(atari_x_lo_q);
                             col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                             col_valid_q <= 1'b1;
+                    sweep_active_q <= 1'b0;
                             atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                         end
                     end
@@ -1371,7 +1600,7 @@ module compositor #(
                 S_BLANK_FILL: begin
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= row_base + {blank_col, 1'b0};
-                    cmd_data  <= 24'h0;            // both pixels of the pair -> COLBK
+                    col_blank_q <= 1'b1;           // both pixels of the pair -> COLBK
                     cmd_valid <= 1'b1;
                     if (cmd_valid && cmd_ready) begin
                         if (blank_col == BLANK_PAIRS[8:0] - 9'd1) begin
@@ -1381,6 +1610,28 @@ module compositor #(
                             blank_col <= blank_col + 9'd1;
                         end
                     end
+                end
+
+                // ==== Border P/M mutual-collision sweep ======================
+                // Walk the full visible scanline (color clocks 34..221) probing
+                // P/M presence at each color clock and accumulating ONLY the
+                // playfield-independent mutual collisions (mpl / ppl).  Feeds the
+                // same col_* pipeline the playfield pass uses, with a zero
+                // raw_pair so collision_combine's mpf/ppf terms contribute
+                // nothing — mpf/ppf remain owned by the playfield pass.  The
+                // playfield region is re-probed too (idempotent: the sticky
+                // latches already hold those bits), so no special-casing of the
+                // playfield extent is needed.
+                S_PMSWEEP: begin
+                    col_raw_q   <= 16'h0;
+                    sweep_presL_q  <= pm_presence_s(sweep_x);
+                    sweep_presH_q  <= pm_presence_s(sweep_x + 12'sd1);
+                    sweep_active_q <= 1'b1;
+                    col_valid_q <= 1'b1;
+                    if (sweep_x >= SWEEP_X_HI)
+                        state   <= S_NEXT_ROW;
+                    else
+                        sweep_x <= sweep_x + 12'sd2;
                 end
 
                 S_NEXT_ROW: begin
@@ -1401,7 +1652,9 @@ module compositor #(
             // path.  (HITCLR below still wins over this same-cycle update.)
             if (col_valid_q) begin : sblk_col_acc
                 logic [63:0] cc;
-                cc = collision_combine(col_raw_q, col_presL_q, col_presH_q);
+                cc = sweep_active_q
+                   ? collision_combine(cur_mode, 16'h0, sweep_presL_q, sweep_presH_q)
+                   : collision_combine(cur_mode, col_raw_q, col_presL_q, col_presH_q);
                 mpf_q <= mpf_q | cc[15:0];
                 ppf_q <= ppf_q | cc[31:16];
                 mpl_q <= mpl_q | cc[47:32];

@@ -7,9 +7,17 @@
 #include <stdio.h>
 
 static sqlite3 *g_db;
+static int      g_rw;               /* the handle is writable (settings can be stored) */
+static int      g_settings_made;    /* the settings CREATE has run against THIS handle */
 
 int registry_open(const char *db_path) {
     if (g_db) return 0;
+    /* Read-WRITE first: the settings table is written through this same handle.  A registry on
+       read-only media (or one another process holds) still opens read-only, and everything except
+       registry_setting_set keeps working — reads never needed the write bit. */
+    if (sqlite3_open_v2(db_path, &g_db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK) { g_rw = 1; return 0; }
+    if (g_db) { sqlite3_close(g_db); g_db = NULL; }
+    g_rw = 0;
     if (sqlite3_open_v2(db_path, &g_db, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK) {
         if (g_db) { sqlite3_close(g_db); g_db = NULL; }
         return -1;
@@ -17,8 +25,22 @@ int registry_open(const char *db_path) {
     return 0;
 }
 
+/* Like registry_open, but CREATES the database when it is not there.  registry_open must keep
+   failing on a missing file — its callers report "no registry at %s" and mean it — but a settings
+   client has nothing to report: first run, no file, make one. */
+int registry_open_or_create(const char *db_path) {
+    if (g_db) return 0;
+    if (sqlite3_open_v2(db_path, &g_db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL) != SQLITE_OK) {
+        if (g_db) { sqlite3_close(g_db); g_db = NULL; }
+        return -1;
+    }
+    g_rw = 1;
+    return 0;
+}
+
 void registry_close(void) {
     if (g_db) { sqlite3_close(g_db); g_db = NULL; }
+    g_rw = 0; g_settings_made = 0;
     registry_match_flush();              /* the cached rules belong to the closed db */
 }
 
@@ -51,6 +73,96 @@ int registry_pref(const char *key, const char *deflt, char *out, int osz) {
     if (sqlite3_step(st) == SQLITE_ROW) {
         const char *v = (const char *)sqlite3_column_text(st, 0);
         if (v) { if (out && osz > 0) snprintf(out, osz, "%s", v); found = 1; }
+    }
+    sqlite3_finalize(st);
+    return found;
+}
+
+/* ── settings: (domain, key) -> value ──────────────────────────────────────────────────────────
+   Applications keep their preferences here, each under its OWN domain, so two apps may both have a
+   'fontSize' without colliding; the empty domain is the SHARED one, seen by everybody.  A caller
+   passing NULL for domain means that shared domain — normalised to "" on the way in, because
+   SQLite treats NULLs as distinct in a UNIQUE index and a NULL domain would then admit duplicates.
+
+   The table is made on demand rather than seeded in Registry.sql: an existing board's registry
+   predates it, and a settings client is the only thing that needs it. */
+static int settings_ensure(void) {
+    if (!g_db || !g_rw) return -1;
+    if (g_settings_made) return 0;
+    char *err = NULL;
+    if (sqlite3_exec(g_db,
+            "CREATE TABLE IF NOT EXISTS settings ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  domain VARCHAR NOT NULL DEFAULT ''," /* '' = every domain */
+            "  key    VARCHAR NOT NULL,"
+            "  value  VARCHAR NOT NULL,"
+            "  UNIQUE(domain, key))", NULL, NULL, &err) != SQLITE_OK) {
+        if (err) sqlite3_free(err);
+        return -1;
+    }
+    g_settings_made = 1;
+    return 0;
+}
+
+int registry_setting_get(const char *domain, const char *key, const char *deflt, char *out, int osz) {
+    if (out && osz > 0) snprintf(out, osz, "%s", deflt ? deflt : "");
+    if (!g_db || !key) return 0;
+    sqlite3_stmt *st;
+    const char *sql = "SELECT value FROM settings WHERE domain=? AND key=?";
+    /* No table yet (a registry nobody has written settings into) -> prepare fails; that is a
+       legitimate "no value", not an error. */
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_text(st, 1, domain ? domain : "", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, key, -1, SQLITE_TRANSIENT);
+    int found = 0;
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        const char *v = (const char *)sqlite3_column_text(st, 0);
+        if (v) { if (out && osz > 0) snprintf(out, osz, "%s", v); found = 1; }
+    }
+    sqlite3_finalize(st);
+    return found;
+}
+
+int registry_setting_set(const char *domain, const char *key, const char *value) {
+    if (!key || !value) return -1;
+    if (settings_ensure() != 0) return -1;
+    sqlite3_stmt *st;
+    const char *sql = "INSERT INTO settings(domain,key,value) VALUES(?,?,?)"
+                      " ON CONFLICT(domain,key) DO UPDATE SET value=excluded.value";
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_text(st, 1, domain ? domain : "", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, key,   -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, value, -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    return rc == SQLITE_DONE ? 0 : -1;
+}
+
+int registry_setting_remove(const char *domain, const char *key) {
+    if (!key) return -1;
+    if (settings_ensure() != 0) return -1;
+    sqlite3_stmt *st;
+    if (sqlite3_prepare_v2(g_db, "DELETE FROM settings WHERE domain=? AND key=?", -1, &st, NULL) != SQLITE_OK)
+        return -1;
+    sqlite3_bind_text(st, 1, domain ? domain : "", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, key, -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    return rc == SQLITE_DONE ? 0 : -1;
+}
+
+int registry_setting_key(const char *domain, int idx, char *out, int osz) {
+    if (!g_db || !out || osz <= 0) return 0;
+    out[0] = 0;
+    sqlite3_stmt *st;
+    const char *sql = "SELECT key FROM settings WHERE domain=? ORDER BY key LIMIT 1 OFFSET ?";
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_text(st, 1, domain ? domain : "", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 2, idx);
+    int found = 0;
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        const char *v = (const char *)sqlite3_column_text(st, 0);
+        if (v) { snprintf(out, osz, "%s", v); found = 1; }
     }
     sqlite3_finalize(st);
     return found;

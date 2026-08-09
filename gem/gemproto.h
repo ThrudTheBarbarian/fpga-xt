@@ -127,6 +127,9 @@
 #define GEM_MSG_MENUCLK  23         /* w[2]=x — a press in the strip; the FOCUS app owns the pixels
                                      * there, so it owns the hit test (its own title layout) */
 #define GEM_MSG_GRAB_REVOKED 24     /* the §9 clock fired: the grab is gone, dismiss and clean up */
+#define GEM_MSG_WHEEL    25         /* w[1]=wh w[2]=x w[3]=y (window-local) w[4]=notches — a wheel
+                                     * that hit NO window scrollbar: forwarded to the owner so a
+                                     * client-drawn scroll region (a table) can handle it. */
 #define GEM_MSG_VSLID    21         /* w[1]=wh u[0]=scroll_x u[1]=scroll_y — the scroll offset
                                      * CHANGED: the user worked the bar (gemd's chrome, gemd's
                                      * interaction), or a WF_SCROLL request came back clamped.

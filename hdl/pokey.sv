@@ -15,10 +15,16 @@
 module pokey #(
     parameter int unsigned CLK_BUS_HZ   = 161_079_525,   // 90 × NTSC phi2 (M-cache-rework Step 5b)
     parameter int unsigned REF_HZ_M23_1 = 64_000,        // AUDCTL[0]=0 reference
-    parameter int unsigned REF_HZ_LOW   = 15_700         // AUDCTL[0]=1 reference (M23-3)
+    parameter int unsigned REF_HZ_LOW   = 15_700,        // AUDCTL[0]=1 reference (M23-3)
+    parameter int unsigned REF_PHI2_HI  = 28,            // 64 kHz period in phi2 cycles
+    parameter int unsigned REF_PHI2_LO  = 114,           // 15 kHz period in phi2 cycles
+    parameter int unsigned REF_REL_HI   = 22,            // init-release phase (Altirra)
+    parameter int unsigned REF_REL_LO   = 81,
+    parameter int unsigned REL_SKEW     = 2              // write-commit vs phi2_tick alignment
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        cold_boot,   // SALLYRST cold-boot -> power-on-clear IRQEN in pokey_regs
 
     // Bus phi2 strobe — 1-cycle pulse per 6502 phi2 rising edge.
     // Generated at antic_top from the bus-clock divider; consumed by
@@ -100,10 +106,21 @@ module pokey #(
     // Audio ↔ regs IRQ-source wires (M23-6).
     wire timer1_pulse_w, timer2_pulse_w, timer4_pulse_w;
     wire stimer_pulse_w;
+    wire timer2_ser_pulse_w;
+
+    // Serial-shifter wires, declared before the u_regs/u_audio instances that
+    // consume them (iverilog cannot bind a port to a later declaration).  The
+    // shifter itself (u_serial) and the story behind the _eff composition live
+    // further down.
+    wire ser_out_ready_int, ser_out_complete_int, ser_out_bit_w;
+    wire ser_out_complete_eff = ser_out_complete    & ser_out_complete_int;
+    wire ser_out_ready_eff    = ser_out_ready_pulse | ser_out_ready_int;
 
     pokey_regs u_regs (
         .clk                  (clk),
+        .phi2_tick            (phi2_tick),
         .rst                  (rst),
+        .cold_boot            (cold_boot),
         .we                   (we),
         .waddr                (waddr),
         .wdata                (wdata),
@@ -134,8 +151,8 @@ module pokey #(
         .timer1_pulse         (timer1_pulse_w),
         .timer2_pulse         (timer2_pulse_w),
         .timer4_pulse         (timer4_pulse_w),
-        .ser_out_complete     (ser_out_complete),
-        .ser_out_ready_pulse  (ser_out_ready_pulse),
+        .ser_out_complete     (ser_out_complete_eff),
+        .ser_out_ready_pulse  (ser_out_ready_eff),
         .ser_in_byte_pulse    (ser_in_byte_pulse),
         .ser_in_byte          (ser_in_byte),
         .break_key_pulse      (break_key_pulse),
@@ -152,6 +169,9 @@ module pokey #(
     wire ref_tick_15khz_w;       // fixed 15 kHz — POT slow-scan tick
 
     pokey_audio #(.CLK_BUS_HZ(CLK_BUS_HZ),
+                  .REF_PHI2_HI(REF_PHI2_HI), .REF_PHI2_LO(REF_PHI2_LO),
+                  .REF_REL_HI(REF_REL_HI),   .REF_REL_LO(REF_REL_LO),
+                  .REL_SKEW(REL_SKEW),
                   .REF_HZ_M23_1(REF_HZ_M23_1),
                   .REF_HZ_LOW(REF_HZ_LOW)) u_audio (
         .clk          (clk),
@@ -162,6 +182,7 @@ module pokey #(
         .audc1        (audc1),  .audc2 (audc2),
         .audc3        (audc3),  .audc4 (audc4),
         .audctl       (audctl),
+        .skctl        (skctl_out),
         .ch1_out      (ch1_out),
         .ch2_out      (ch2_out),
         .ch3_out      (ch3_out),
@@ -169,11 +190,43 @@ module pokey #(
         .random_byte  (random_byte),
         .ref_tick_out       (ref_tick_w),
         .ref_tick_15khz_out (ref_tick_15khz_w),
+        .ser_out_bit        (ser_out_bit_w),
         .stimer_pulse       (stimer_pulse_w),
         .timer1_pulse (timer1_pulse_w),
         .timer2_pulse (timer2_pulse_w),
+        .timer2_ser_pulse (timer2_ser_pulse_w),
         .timer4_pulse (timer4_pulse_w)
     );
+
+    // ---- POKEY'S OWN TRANSMIT SHIFTER --------------------------------------
+    //
+    // This was written and unit-tested and then never instantiated: pokey took
+    // ser_out_complete / ser_out_ready_pulse as INPUTS for a future SIO state
+    // machine, and a8_core tied them to 1'b1 / 1'b0.  With the ready pulse
+    // wired to a constant zero the serial-output IRQ (IRQEN bit 4) could never
+    // fire at all, which is why pokey_serclock's MeasureSerOutRate returned 0
+    // where it wanted 40.
+    //
+    // The external ports stay, because a real SIO can still drive them: idle is
+    // the AND (the line is only free if both agree it is) and the ready pulse is
+    // the OR.  With a8_core's tie-offs that leaves the shifter in charge.
+    pokey_serial u_serial (
+        .clk(clk), .rst(rst),
+        .skctl(skctl_out),
+        // The SERIAL edge, not the IRQ edge: a fast-linked pair's shifter
+        // clock runs its own divider (full first period), pokey_sertiming.
+        .timer2_pulse(timer2_ser_pulse_w),
+        .timer4_pulse(timer4_pulse_w),
+        .ext_clk_tick(1'b0),
+        .serout_byte(serout_byte),
+        .serout_strobe(serout_strobe),
+        .ser_out_ready_pulse(ser_out_ready_int),
+        .ser_out_complete(ser_out_complete_int),
+        .ser_out_bit(ser_out_bit_w),
+        .dbg_bitcnt(), .dbg_holding_valid()
+    );
+
+    // (ser_out_*_eff composition declared up with the IRQ-source wires.)
 
     // M23-7 — pokey_i2s_tx now lives at antic_top level so it can mix
     // both POKEYs (left at $D20x, right at $D21x) into the HDMI audio

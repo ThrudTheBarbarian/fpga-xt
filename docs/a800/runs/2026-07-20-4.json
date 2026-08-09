@@ -1,0 +1,246 @@
+{
+  "date": "2026-07-20",
+  "seq": 4,
+  "core": "fid",
+  "bitstream": "build6: + addresswrap fixes (4K-wrap + hi-res collision luminance-gate) + turbo core strip; clk_sys clean +0.145",
+  "note": "turbo stripped to speed-only (Klaus pass); clean timing. addresswrap+pmdma fixes sim-proven but HW-blocked by the compositor mem-fetch read-path (#54).",
+  "results": {
+    "cpu_insn": {
+      "s": "pass"
+    },
+    "cpu_decimal": {
+      "s": "pass"
+    },
+    "cpu_flags": {
+      "s": "pass"
+    },
+    "cpu_bugs": {
+      "s": "pass"
+    },
+    "cpu_illtiming": {
+      "s": "pass"
+    },
+    "cpu_illegal": {
+      "s": "pass"
+    },
+    "cpu_clisei": {
+      "s": "pass"
+    },
+    "cpu_timing": {
+      "s": "fail",
+      "d": "Incorrect DEX/BNE cycle count: 6 \u2014 fid<->ANTIC WSYNC-resume pacing, not a core bug (Harte 256/256)"
+    },
+    "cpu_65c816": {
+      "s": "na",
+      "d": "correctly skipped \u2014 no 65C816"
+    },
+    "antic_default": {
+      "s": "pass"
+    },
+    "antic_addrmirror": {
+      "s": "pass"
+    },
+    "antic_addresswrap": {
+      "s": "fail",
+      "d": "LMS did not wrap at 1K \u2014 4K-wrap + luminance-gate fixes are SIM-PROVEN but don't manifest on HW; blocked by the compositor real mem-fetch read-path (#54), same root as pmdma"
+    },
+    "antic_vcount": {
+      "s": "fail",
+      "d": "VCOUNT #3 wrong: $02 != $03 (revert restored build6: #1/#2 pass). Needs per-core cycle recal."
+    },
+    "antic_wsync": {
+      "s": "fail",
+      "d": "Initial RANDOM incorrect: $4A != $95 (POKEY exact value, deferred)"
+    },
+    "antic_nmist": {
+      "s": "fail",
+      "d": "DLI1 handler was not called"
+    },
+    "antic_dlitiming": {
+      "s": "fail",
+      "d": "Even count incorrect: $C3 != $0a"
+    },
+    "antic_blockednmi": {
+      "s": "fail",
+      "d": "VBI handler should not have executed"
+    },
+    "antic_vscroldli": {
+      "s": "fail",
+      "d": "VSCROL took effect too early"
+    },
+    "antic_dmapattern": {
+      "s": "fail",
+      "d": "Cannot decode random pair: B8 2F (POKEY RANDOM)"
+    },
+    "antic_virtdma": {
+      "s": "fail",
+      "d": "Pattern #2 not correct: 00 != $05"
+    },
+    "antic_pmdma": {
+      "s": "fail",
+      "d": "One-line P0 data $00 \u2014 DMA-fetch addressing fixed; HW read-path (#54) still returns $00"
+    },
+    "antic_linebuffering": {
+      "s": "fail",
+      "d": "Readout incorrect for initial mode E: 04040404"
+    },
+    "antic_pfstarttiming": {
+      "s": "fail",
+      "d": "DLIs did not fire"
+    },
+    "antic_pfstoptiming": {
+      "s": "fail",
+      "d": "DLIs did not fire"
+    },
+    "antic_hscrolbug": {
+      "s": "fail",
+      "d": "Unstopped PF DMA test failed: cl=00"
+    },
+    "antic_hiresbug": {
+      "s": "fail",
+      "d": "Collision not found with bug: $00"
+    },
+    "antic_charcontrol": {
+      "s": "fail",
+      "d": "chactl=$00 mode 2 row 0: expected $10 got $00"
+    },
+    "antic_vscroll": {
+      "s": "fail",
+      "d": "Failed test #1: expected 12, got 13"
+    },
+    "antic_dlistwrap": {
+      "s": "fail",
+      "d": "display list did not wrap around"
+    },
+    "gtia_addrmirror": {
+      "s": "pass"
+    },
+    "gtia_default": {
+      "s": "fail",
+      "d": "GTIA default value wrong: $00"
+    },
+    "gtia_consol": {
+      "s": "fail",
+      "d": "CONSOL value #1 bad: $07 != $04"
+    },
+    "gtia_collision": {
+      "s": "fail",
+      "d": "Missing M/P collisions on left at $22 (collision path partly works)"
+    },
+    "gtia_collision2": {
+      "s": "fail",
+      "d": "Gr.8 %00 collision incorrect: $02 (was $06)"
+    },
+    "gtia_pmoverlap": {
+      "s": "fail",
+      "d": "Pos=64, Expected F0, Got 00 (register-path positioning, task #53)"
+    },
+    "gtia_pmresize": {
+      "s": "fail",
+      "d": "4x-to-1x failed at index 0: expected $80, got $00 (task #53)"
+    },
+    "gtia_pmretrigger": {
+      "s": "fail",
+      "d": "Player retrigger timing test #1 failed: $06"
+    },
+    "gtia_vdelay": {
+      "s": "fail",
+      "d": "No delay 1/4 failed: 00 != $01"
+    },
+    "gtia_phantomdma": {
+      "s": "fail",
+      "d": "Phantom DMA byte #1 was not $AD (was $4F)"
+    },
+    "gtia_psuedomodee": {
+      "s": "fail",
+      "d": "Cycle 14 test failed: 00"
+    },
+    "pokey_timerirq": {
+      "s": "pass"
+    },
+    "pokey_timergranularity": {
+      "s": "pass"
+    },
+    "pokey_seroc": {
+      "s": "pass"
+    },
+    "pokey_addrmirror": {
+      "s": "pass"
+    },
+    "pokey_default": {
+      "s": "fail",
+      "d": "POKEY default value wrong: $00"
+    },
+    "pokey_timertiming": {
+      "s": "fail",
+      "d": "1.79MHz 8-bit timer triggered too early (loop #1)"
+    },
+    "pokey_irqtiming": {
+      "s": "fail",
+      "d": "Incorrect IRQEN delay count (even): $00"
+    },
+    "pokey_inittiming": {
+      "s": "fail",
+      "d": "Incorrect 15KHz cycle count (even): $07"
+    },
+    "pokey_noise": {
+      "s": "fail",
+      "d": "Incorrect 9-bit PRNG value: $12 != $95 (init->$FF hold passes; exact value deferred, task #48)"
+    },
+    "pokey_twotone": {
+      "s": "fail",
+      "d": "Too many timer 2 interrupts on mark: 43 (should be 16)"
+    },
+    "pokey_skstat": {
+      "s": "fail",
+      "d": "Serial input active bit asserted when idle"
+    },
+    "pokey_serclock": {
+      "s": "fail",
+      "d": "Timer 3+4 1.79MHz output failed: 0 != 40"
+    },
+    "pokey_sertiming": {
+      "s": "fail",
+      "d": "Serial output register loaded too late"
+    },
+    "pokey_serdirect": {
+      "s": "error",
+      "d": "no result captured (running/hung at grab)"
+    },
+    "pokey_asyncrecv": {
+      "s": "fail",
+      "d": "Timer #4 IRQ fired with async recv mode active"
+    },
+    "pia_basic": {
+      "s": "pass"
+    },
+    "pia_irq": {
+      "s": "fail",
+      "d": "Wrote $FF to PACTL, got $FF, expected $3F"
+    },
+    "mmu_xlbanking": {
+      "s": "fail",
+      "d": "Self-test ROM bit failed: mask=$0E"
+    },
+    "mod_dispmin": {
+      "s": "na",
+      "d": "display module \u2014 no textual pass/fail"
+    },
+    "mod_disp80": {
+      "s": "na",
+      "d": "display module \u2014 no textual pass/fail"
+    },
+    "mod_scroll40": {
+      "s": "na",
+      "d": "display module \u2014 no textual pass/fail"
+    },
+    "mod_options": {
+      "s": "na",
+      "d": "display module \u2014 no textual pass/fail"
+    },
+    "mod_vbxe80": {
+      "s": "na",
+      "d": "display module \u2014 no textual pass/fail"
+    }
+  }
+}

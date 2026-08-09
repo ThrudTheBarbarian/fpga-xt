@@ -1,0 +1,214 @@
+{
+  "bitstream": "simulation",
+  "core": "antic2",
+  "date": "2026-08-07",
+  "note": "pseudo mode E: GTIA latches once per scanline whether mode F is hi-res, and a GTIA mode selected at that instant makes the pair a direct playfield index for the rest of the line",
+  "results": {
+    "antic_addresswrap": {
+      "s": "pass"
+    },
+    "antic_addrmirror": {
+      "s": "pass"
+    },
+    "antic_blockednmi": {
+      "s": "pass"
+    },
+    "antic_charcontrol": {
+      "s": "pass"
+    },
+    "antic_default": {
+      "s": "pass"
+    },
+    "antic_dlistwrap": {
+      "s": "pass"
+    },
+    "antic_dlitiming": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "antic_dmapattern": {
+      "s": "pass"
+    },
+    "antic_hiresbug": {
+      "s": "pass"
+    },
+    "antic_hscrolbug": {
+      "s": "pass"
+    },
+    "antic_linebuffering": {
+      "s": "pass"
+    },
+    "antic_nmist": {
+      "s": "pass"
+    },
+    "antic_pfstarttiming": {
+      "s": "pass"
+    },
+    "antic_pfstoptiming": {
+      "s": "pass"
+    },
+    "antic_pmdma": {
+      "s": "pass"
+    },
+    "antic_vcount": {
+      "s": "pass"
+    },
+    "antic_virtdma": {
+      "s": "pass"
+    },
+    "antic_vscroldli": {
+      "s": "pass"
+    },
+    "antic_vscroll": {
+      "s": "pass"
+    },
+    "antic_wsync": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "cpu_65c816": {
+      "d": "SKIP: reached _testSkipped $1e3a",
+      "s": "na"
+    },
+    "cpu_bugs": {
+      "s": "pass"
+    },
+    "cpu_clisei": {
+      "s": "pass"
+    },
+    "cpu_decimal": {
+      "s": "pass"
+    },
+    "cpu_flags": {
+      "s": "pass"
+    },
+    "cpu_illegal": {
+      "s": "pass"
+    },
+    "cpu_illtiming": {
+      "s": "pass"
+    },
+    "cpu_insn": {
+      "s": "pass"
+    },
+    "cpu_timing": {
+      "s": "pass"
+    },
+    "gtia_addrmirror": {
+      "s": "pass"
+    },
+    "gtia_collision": {
+      "s": "pass"
+    },
+    "gtia_collision2": {
+      "s": "pass"
+    },
+    "gtia_consol": {
+      "s": "pass"
+    },
+    "gtia_default": {
+      "s": "pass"
+    },
+    "gtia_phantomdma": {
+      "s": "pass"
+    },
+    "gtia_pmoverlap": {
+      "s": "pass"
+    },
+    "gtia_pmresize": {
+      "s": "pass"
+    },
+    "gtia_pmretrigger": {
+      "s": "pass"
+    },
+    "gtia_psuedomodee": {
+      "s": "pass"
+    },
+    "gtia_vdelay": {
+      "s": "pass"
+    },
+    "mmu_xlbanking": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "mod_disp80": {
+      "d": "RAN: returned to the loader park $FF60",
+      "s": "na"
+    },
+    "mod_dispmin": {
+      "d": "RAN: returned to the loader park $FF60",
+      "s": "na"
+    },
+    "mod_options": {
+      "d": "TIMEOUT: pc $381b, never reached _testEnd $1d93",
+      "s": "error"
+    },
+    "mod_scroll40": {
+      "d": "TIMEOUT: pc $5422, never reached _testEnd $1d93",
+      "s": "error"
+    },
+    "mod_vbxe80": {
+      "d": "TIMEOUT: pc $1b50, never reached _testEnd $1d93",
+      "s": "error"
+    },
+    "pia_basic": {
+      "s": "pass"
+    },
+    "pia_irq": {
+      "s": "pass"
+    },
+    "pokey_addrmirror": {
+      "s": "pass"
+    },
+    "pokey_asyncrecv": {
+      "s": "pass"
+    },
+    "pokey_default": {
+      "s": "pass"
+    },
+    "pokey_inittiming": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "pokey_irqtiming": {
+      "s": "pass"
+    },
+    "pokey_noise": {
+      "s": "pass"
+    },
+    "pokey_serclock": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "pokey_serdirect": {
+      "d": "SKIP: reached _testSkipped $1e3a",
+      "s": "na"
+    },
+    "pokey_seroc": {
+      "s": "pass"
+    },
+    "pokey_sertiming": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "pokey_skstat": {
+      "d": "SKIP: reached _testSkipped $1e3a",
+      "s": "na"
+    },
+    "pokey_timergranularity": {
+      "s": "pass"
+    },
+    "pokey_timerirq": {
+      "s": "pass"
+    },
+    "pokey_timertiming": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    },
+    "pokey_twotone": {
+      "d": "FAIL: reached _testFailed $1e0d",
+      "s": "fail"
+    }
+  },
+  "seq": 7
+}

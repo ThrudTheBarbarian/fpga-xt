@@ -1,0 +1,10 @@
+KNOWN-GOOD SNAPSHOT — BRAM DO_REG + no pblocks
+  bitstream known-good-doreg.bit   (PLACE_DIRECTIVE=ExtraTimingOpt)
+  timing    clk_sys  +0.123/+0.009   clk_sally +0.176/+0.113
+            clk_pix  +0.255/+0.094   (setup/hold; gate PASS)
+  WATCH     clk_sys HOLD is thin (+0.009). THS failing endpoints = 0, but if a
+            future build goes negative, hold is router-fixable — check before
+            blaming RTL.
+  verified  boots; /bin/blittest byte-identical (bilinear mid=abcd0009);
+            ACID antic_vcount/pokey_noise/cpu_timing/gtia_collision pass;
+            desktop running

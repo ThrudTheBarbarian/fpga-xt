@@ -6,7 +6,7 @@ description: In-place quicksort with a user-supplied comparator.
 `Sort` is an in-place quicksort over a `u16` array, with the ordering supplied by a user-written comparator function. The standard C `qsort` convention applies — the comparator returns negative / zero / positive for less / equal / greater. The class lives under `support/generic/lib/`, so it works the same on every platform.
 
 ```c
-#import <Sort.xt>
+#import <Sort.xc>
 ```
 
 ## Comparator type
@@ -36,7 +36,7 @@ The same reason C's `qsort` uses `int`: xtc's codegen currently treats `i8` call
 ## The sort
 
 ```c
-static void qsort(u16@ base, u16 n, cmpU16_t@ cmp);
+static void qsort(u16* base, u16 n, cmpU16_t* cmp);
 ```
 
 ```c
@@ -52,35 +52,25 @@ void main(void) {
 
 The implementation is a recursive Lomuto-partition quicksort with the pivot at the high end of the partition. No auxiliary buffers — sorting is in place.
 
-## Caveat: arrays must be local
+## A historical caveat: global arrays
 
-`base` must be a **local** array. Global array names currently decay to pointers with a corrupted high byte, so:
+`Sort.xc`'s own header comment still warns that `base` must be a **local** array — that global array names decay to pointers with a corrupted high byte, so `Sort.qsort(globalArr, …)` silently reads the wrong memory.
+
+That no longer reproduces. Sorting a module-scope `u16[]` gives the correct result on **both** live backends (arm64 and xt6502), at `-O0` and at the default `-O3`:
 
 ```c
-u16 g[8] = {…};                     // global
+u16 g[4] = {4, 1, 3, 2};
 
 void main(void) {
-    Sort.qsort(g, (u16)8, &ascending);   // ⚠ silently reads wrong memory
+    Sort.qsort(g, (u16)4, &ascending);
+    // 1 2 3 4
 }
 ```
 
-…compiles but reads garbage at runtime. Until the codegen lifts that restriction, the workaround is to copy the array into a local before sorting:
-
-```c
-u16 g[8] = {…};
-
-void main(void) {
-    u16 local[8];
-    for (u16 i = 0; i < 8; i = i + 1) {
-        local[i] = g[i];
-    }
-    Sort.qsort(local, (u16)8, &ascending);
-    // …copy back if needed…
-}
-```
+The warning is left in the library source and recorded here because it was real; if you do see a global sort misbehave, that is the shape the old bug had, and it is worth reporting rather than working around.
 
 ## Recursion and the call stack
 
-`Sort.qsort`'s internal driver is recursive, so it allocates its frame on the **xtc software stack** rather than the 6502 hardware stack — the codegen's stage-4c eligibility pass marks recursive functions ineligible for the static-frame fast path. Non-recursive comparators stay static-frame eligible under the stage-2 CFA pass, so the comparator itself adds no per-call overhead beyond an indirect JSR.
+On **xt6502**, `Sort.qsort`'s internal driver is recursive, so it allocates its frame on the software stack rather than taking the static-frame fast path — the codegen marks recursive functions ineligible for it. Non-recursive comparators stay eligible, so the comparator itself costs no more than an indirect `JSR`. On the register targets the frame is an ordinary stack frame and none of this applies.
 
 For arrays of thousands of elements, watch the depth: worst-case quicksort is O(N) deep on already-sorted input. The xtc stack is tunable with the `-ss` / `--stack-size` flag if you need more headroom.

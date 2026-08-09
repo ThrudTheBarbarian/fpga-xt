@@ -16,6 +16,8 @@
  *   0x500  XLCTL       XL compositor-plane window placement (A9-positioned emulation window)
  *   0x600  MATH        math-coprocessor mailbox (A9-only); 6502 side = $D5C6-$D5C8 + the $4000-$5FFF math page
  *   0x700  TRNG        hardware entropy (ring-oscillator TRNG in the PL; A9-only, read-only)
+ *   0x800  DEBUG       in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, driving /bin/6502. Halt is a non-destructive rdy-gate (state preserved); all actions align to the ST_FETCH instruction boundary. Status is coherent when halted (a halted core is static). Sel 0x9 is RESERVED for the future ANTIC debugger. See docs/OS/6502-debug.md
+ *   0xA00  SIO         paravirtual SIO mailbox (xt_sio_mbox): the 512 B page the XL OS boot stub shares with the A9, plus its data window. The doorbell/completion/status legs are the MATH block's ($D5C7 done, MATH_EVT, MATH_DONE, IRQ_F2P[1]) so the worker-task and IRQ wiring are unchanged; only the payload window is here. Sel 0x9 stays RESERVED for the ANTIC debugger. See hdl/xt_sio_mbox.sv
  */
 #ifndef XT_GP0_MAP_H_
 #define XT_GP0_MAP_H_
@@ -33,6 +35,8 @@
 #define XT_BLK_XLCTL     (XT_GP0_BASE + 0x500u)
 #define XT_BLK_MATH      (XT_GP0_BASE + 0x600u)
 #define XT_BLK_TRNG      (XT_GP0_BASE + 0x700u)
+#define XT_BLK_DEBUG     (XT_GP0_BASE + 0x800u)
+#define XT_BLK_SIO       (XT_GP0_BASE + 0xA00u)
 
 /* ---- BLITTER block --------------------------------------------------- */
 /*   0x00..0x18  W  blitter registers DST/PAT/CMD/SRC/FLAGS (bl_addr = offset); see blitter.h XT_BL_* */
@@ -62,6 +66,9 @@
 #define XT_CTRL_KBD_BREAK    (XT_BLK_CTRL + 0x14u)        /* W Atari BREAK (A9-only; emits $D4CB) */
 #define XT_CTRL_CMPCFG       (XT_BLK_CTRL + 0x18u)        /* RW compositor plane arrangement (A9-only; reset 0x210 = current). depth: [3:0]=desktop, [7:4]=overlay, [11:8]=XL. alpha_en: [16]=desktop, [17]=overlay, [18]=XL. Route-A flip = desktop on top with alpha (0x00010132) */
 #define XT_CTRL_SALLYRST     (XT_BLK_CTRL + 0x1Cu)        /* RW [0]=1 HOLD the SALLY realm in reset (A9-only; reset 0 = running). Cold-boot-per-launch: hold, rewrite the OS/RAM through the ROM-loader window (0x1000+), release = fresh coldstart. Resets the 6502 core AND the XT state a stock guest cannot know about (bank selects $D5C0/$D5C1, screen banking $D5C3-5); the video pipeline keeps scanning */
+#define XT_CTRL_JOY_OVR      (XT_BLK_CTRL + 0x20u)        /* W keypad->joystick override (A9-only; forces STICK0/1 PORTA pins + TRIG0 when the physical PCAL9722 joystick is absent). [31]=override enable (0 = joy_bridge/PCAL9722 drives as normal). [7:0]=PORTA pin value, ACTIVE-LOW (STICK0 bits[3:0]: bit0=up bit1=down bit2=left bit3=right; STICK1 bits[7:4]; 1=released 0=pressed; 0xFF=neutral). [8]=TRIG0/fire value, ACTIVE-LOW (0=fire pressed). Muxed into pia_regs PORTA + GTIA TRIG0 in antic_top; the joy_bridge write-through path is untouched */
+#define XT_CTRL_CONSOL       (XT_BLK_CTRL + 0x24u)        /* W console-keys value the 6502 reads as CONSOL ($D01F). ACTIVE-LOW: bit0=START bit1=SELECT bit2=OPTION (0=pressed). Reset $07 (none). The kernel holds OPTION ($03) across a game coldstart so the XL OS leaves BASIC DISABLED ($A000-$BFFF stays RAM) — no game boots with BASIC mapped, and BASIC shadowing RAM was crashing games; releases to $07 for boot-to-BASIC (READY). Replaces the hardwired 8'h07 in antic_top */
+#define XT_CTRL_RWTUNE       (XT_BLK_CTRL + 0x28u)        /* W ANTIC-rewrite timing tune (A9-only; reset 0 = the RTL defaults). Four SIGNED nibble offsets on the cycle numbers ACID bisects, so a cycle question costs a register write instead of a 25-minute bitstream: [3:0] NMIST status cycle (default 7), [7:4] /NMI cycle (8), [11:8] WSYNC /RDY release (104), [15:12] VCOUNT advance (111). The legacy timing machine has the same facility for its WSYNC release and that is how its constants were found. Only meaningful under rewrite timing authority (sallyrst[3]) */
 
 /* ---- DIAG block --------------------------------------------------- */
 #define XT_DIAG0             (XT_BLK_DIAG + 0x00u)        /* R MMCM locks / clk_pix-alive / frame count */
@@ -89,5 +96,47 @@
 
 /* ---- TRNG block --------------------------------------------------- */
 #define XT_TRNG_RND          (XT_BLK_TRNG + 0x00u)        /* R whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output */
+#define XT_TRNG_STAT         (XT_BLK_TRNG + 0x04u)        /* R R [5:0]=debiased entropy bits accumulated since the last TRNG_RND read (saturates at 32), [8]=fresh (>=32 bits, i.e. a FULLY re-seeded word). Reading TRNG_RND CONSUMES and clears the counter. Poll bit 8 before taking key material: the pool refills ~32 bits per microsecond, far slower than back-to-back AXI reads, so un-gated reads return an LFSR-stretched pool rather than fresh entropy */
+
+/* ---- DEBUG block --------------------------------------------------- */
+#define XT_DBG_HALT          (XT_BLK_DEBUG + 0x00u)       /* W write (any) -> run to the next instruction boundary, then freeze (state preserved). Also arms halt-at-reset when combined with a SALLYRST pulse */
+#define XT_DBG_GO            (XT_BLK_DEBUG + 0x04u)       /* W write (any) -> release the core, run at the configured speed */
+#define XT_DBG_STEP          (XT_BLK_DEBUG + 0x08u)       /* W write N -> execute exactly N instructions (min 1) then freeze */
+#define XT_DBG_CFG           (XT_BLK_DEBUG + 0x0Cu)       /* RW [0]=bkpt_en (arm the PC breakpoint), [1]=halt_at_reset (freeze at the reset-vector fetch after the next SALLYRST release) */
+#define XT_DBG_BKPT          (XT_BLK_DEBUG + 0x10u)       /* RW [15:0]=breakpoint PC; when bkpt_en, the core freezes at the ST_FETCH of this address (before executing it) */
+#define XT_DBG_COMMIT        (XT_BLK_DEBUG + 0x14u)       /* W write (any) -> inject DBG_WPC/WAXYS/WPSH into the core's PC/regs and re-anchor at ST_FETCH (only meaningful while halted) */
+#define XT_DBG_WPC           (XT_BLK_DEBUG + 0x18u)       /* RW [15:0]=PC to inject on DBG_COMMIT */
+#define XT_DBG_WAXYS         (XT_BLK_DEBUG + 0x1Cu)       /* RW regs to inject on DBG_COMMIT: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) */
+#define XT_DBG_WPSH          (XT_BLK_DEBUG + 0x20u)       /* RW inject on DBG_COMMIT: [7:0]=P (NV-BDIZC) [11:8]=SP high nibble (12-bit xt stack) */
+#define XT_DBG_STAT          (XT_BLK_DEBUG + 0x24u)       /* R [0]=halted [1]=bkpt_hit [2]=stepping [3]=running */
+#define XT_DBG_PC            (XT_BLK_DEBUG + 0x28u)       /* R [15:0]=PC snapshot at the last instruction boundary (coherent when halted = next instruction to execute) */
+#define XT_DBG_AXYS          (XT_BLK_DEBUG + 0x2Cu)       /* R reg snapshot: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) */
+#define XT_DBG_PSH           (XT_BLK_DEBUG + 0x30u)       /* R snapshot: [7:0]=P [11:8]=SP high nibble */
+#define XT_DBG_ICNT          (XT_BLK_DEBUG + 0x34u)       /* R retired-instruction count since SALLYRST (increments on each ST_FETCH boundary) */
+#define XT_DBG_BEAM          (XT_BLK_DEBUG + 0x38u)       /* R R ANTIC beam position latched when the core HALTED at an instruction boundary: [15:0]=scanline (0..261), [22:16]=beam X in ANTIC machine cycles (0..113). Lets an instruction be read off against the cycle numbers ACID annotates its kernels with; the trace ring records PC but not the beam. Reflects the REWRITE's beam (antic_gtia), whichever authority is selected */
+#define XT_DBG_TRC_CTRL      (XT_BLK_DEBUG + 0x3Cu)       /* RW instruction-trace ring: [0]=enable (capture {PC,A,X,Y,SP,P} every ST_DECODE boundary), [1]=break_on_full (halt the core when the ring wraps). Ring is 4096 deep; readable only when halted (static). */
+#define XT_DBG_TRC_WPTR      (XT_BLK_DEBUG + 0x40u)       /* R trace write pointer: [11:0]=next write slot (newest = WPTR-1), [16]=wrapped (ring has been full at least once), [17]=broke_on_full */
+#define XT_DBG_TRC_IDX       (XT_BLK_DEBUG + 0x44u)       /* W set the ring read index (0..4095); the entry appears in DBG_TRC_PC/AXYS/P */
+#define XT_DBG_TRC_PC        (XT_BLK_DEBUG + 0x48u)       /* R [15:0]=PC of the traced instruction at DBG_TRC_IDX */
+#define XT_DBG_TRC_AXYS      (XT_BLK_DEBUG + 0x4Cu)       /* R traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) */
+#define XT_DBG_TRC_P         (XT_BLK_DEBUG + 0x50u)       /* R traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble */
+#define XT_DBG_WP            (XT_BLK_DEBUG + 0x54u)       /* RW [15:0]=data watchpoint address; when armed the core freezes on a bus access to it */
+#define XT_DBG_WPCFG         (XT_BLK_DEBUG + 0x58u)       /* RW data watchpoint arm: [0]=enable, [1]=break on WRITE to DBG_WP, [2]=break on READ of DBG_WP (set both for any access) */
+#define XT_DBG_DIAG          (XT_BLK_DEBUG + 0x5Cu)       /* R debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT — verify it matches what was written) */
+#define XT_DBG_STRM_CTRL     (XT_BLK_DEBUG + 0x60u)       /* W FIDELITY streaming-trace control: [0]=strm_en (capture {PC,A,X,Y,SP,P,IR} per instruction into a 4096-deep ring; the core AUTO-HALTS when the ring fills = real stop-the-world), [1]=drain_done (4-phase level handshake: after draining STRM_RD* set this to clear flush_req, reset the ring, and resume the core; then clear it). Rising edge of strm_en resets the ring. */
+#define XT_DBG_STRM_STAT     (XT_BLK_DEBUG + 0x64u)       /* R [0]=flush_req: the streaming ring is FULL and the core is halted; the A9 should drain STRM_RD* (0..STRM_WPTR-1) then pulse drain_done */
+#define XT_DBG_STRM_WPTR     (XT_BLK_DEBUG + 0x68u)       /* R [12:0]=count of valid entries in the streaming ring (4096 when full; a smaller partial count if strm_en was cleared mid-window) */
+#define XT_DBG_STRM_RADDR    (XT_BLK_DEBUG + 0x6Cu)       /* W [11:0]=streaming ring read address; the entry appears in STRM_RDLO/RDHI (coherent while flush_req — the ring is static because the core is halted) */
+#define XT_DBG_STRM_RDLO     (XT_BLK_DEBUG + 0x70u)       /* R streaming entry [31:0] at STRM_RADDR: [15:0]=PC [23:16]=A [31:24]=X */
+#define XT_DBG_STRM_RDHI     (XT_BLK_DEBUG + 0x74u)       /* R streaming entry [63:32] at STRM_RADDR: [7:0]=Y [15:8]=SP [23:16]=P [31:24]=IR */
+#define XT_DBG_TB_CFG        (XT_BLK_DEBUG + 0x78u)       /* RW ANTIC timebase probe config: [2:0]=mode (0=off 1=$D4xx write@match 2=$D4xx read@match 3=DLI-line 4=VBI 5=WSYNC($D40A wr) 6=any $D4xx wr 7=every line_start), [11:4]=match_addr (low byte of $D4xx reg), [19:16]=read_idx (0..15 ring entry selected into DBG_TB_CAP), [24]=clear (write with a mode to arm+reset the ring for a fresh capture), [25]=circular (0=stop-on-full: hold the FIRST 16 triggers then freeze; 1=wrap: hold the LAST 16 triggers, DBG_TB_STAT.wr_idx = oldest entry), [28:26]=WSYNC /RDY shape mask {latch,q1,q2} (0 = default = 011 q1|q2; see wsync_gen.sv; [14]=comb fallback, [15]=disable write immunity, [23:20]=signed release-cycle offset from 103). 2-FF synced into the ANTIC clk_bus domain. */
+#define XT_DBG_TB_STAT       (XT_BLK_DEBUG + 0x7Cu)       /* R ANTIC timebase probe status (2-FF synced from clk_bus): [15:0]=trig_count (16-bit saturating # of triggers since clear), [20:16]=wr_idx (0..16; 16=full), [24]=full (ring holds 16 entries), [25]=armed (set by a clear write) */
+#define XT_DBG_TB_CAP        (XT_BLK_DEBUG + 0x80u)       /* R ANTIC timebase probe capture: ring entry selected by DBG_TB_CFG.read_idx = {[24:16]=scanline (0..261), [15:8]=phi2_in_line (machine-cycle 0..113), [7:0]=data (write byte for write modes, ANTIC read byte for read mode, 0 for event modes)} */
+#define XT_DBG_BEAMPC        (XT_BLK_DEBUG + 0x3Cu)       /* W W [15:0]=PC to beam-stamp. When the core reaches this instruction boundary the ANTIC beam is latched into DBG_BEAM2 WITHOUT halting, so an interval can be measured inside ONE run: set this to the first instruction, put the breakpoint on the second, and read DBG_BEAM2 and DBG_BEAM when it stops. Necessary because each xexload lands the test on a different scanline, so beam readings from separate runs cannot be subtracted */
+#define XT_DBG_BEAM2         (XT_BLK_DEBUG + 0x40u)       /* R R ANTIC beam latched at the DBG_BEAMPC instruction boundary (no halt): [15:0]=scanline, [22:16]=beam X in machine cycles. Same layout as DBG_BEAM */
+
+/* ---- SIO block --------------------------------------------------- */
+#define XT_SIO_PTR           (XT_BLK_SIO + 0x00u)         /* W byte pointer into the 512 B mailbox (word-aligned; [1:0] ignored). Writing it re-aims the window; each SIO_DAT access then auto-increments by 4, so a run of bytes is one seek plus N accesses */
+#define XT_SIO_DAT           (XT_BLK_SIO + 0x04u)         /* RW 32-bit little-endian word at the pointer; read or write auto-increments the pointer by 4. The BRAM read register tracks the pointer continuously and consecutive AXI transactions are tens of clocks apart, so a read always returns settled data */
 
 #endif /* XT_GP0_MAP_H_ */

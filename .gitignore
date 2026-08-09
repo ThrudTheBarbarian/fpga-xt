@@ -66,3 +66,8 @@ third_party/toybox/.config
 third_party/toybox/.config.old
 third_party/toybox/.singlemake
 third_party/toybox/toybox
+
+# Archived bitstreams: 262 MB of build artefacts kept on disk for bisecting
+# known-good hardware, NOT repo content. A `git add -A vivado` swept them into a
+# commit once; this stops that recurring.
+vivado/archive/*.bit

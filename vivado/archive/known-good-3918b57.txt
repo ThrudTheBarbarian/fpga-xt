@@ -1,0 +1,11 @@
+KNOWN-GOOD SNAPSHOT
+  commit    3918b57  "blitter: pre-compute SCALED bilinear tap operands..."
+  bitstream known-good-3918b57-blitpipe.bit
+  timing    clk_sys +0.000  clk_sally +0.079  clk_pix +0.142  (gate PASS)
+  verified  /bin/blittest byte-identical to baseline
+              STRETCH bilinear corner=abcd0000 mid=abcd0009
+            ACID: antic_vcount, pokey_noise, cpu_timing, gtia_collision all pass
+            boots to desktop; SD BOOT.BIN measured 2.5s power-on -> desktop
+  restore   cp this .bit to vivado/build/fpga_xt_top.bit
+            ./vivado/jtag-valhalla.sh reset && ./vivado/jtag-valhalla.sh load
+            (reset+load, not load alone, after any hang)

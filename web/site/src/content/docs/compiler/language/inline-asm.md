@@ -3,7 +3,7 @@ title: Inline assembly
 description: asm blocks, byte-extract operators, accessing xtc variables, the clobbers annotation.
 ---
 
-xtc supports embedded assembly via `asm { ... }` blocks. Inside the block the assembler grammar is the same as `xta`'s — see the [xta reference](/compiler/api/) — but with the added ability to refer to xtc identifiers by name and pull individual bytes out of wider values.
+xtc supports embedded assembly via `asm { ... }` blocks. Inside the block the assembler grammar is the same as `xcc-as`'s — see the [xcc-as reference](/compiler/api/) — but with the added ability to refer to xtc identifiers by name and pull individual bytes out of wider values.
 
 ## The asm block
 
@@ -12,14 +12,9 @@ asm {
     lda #$ff;
     sta $D40E;          // disable VBLANK interrupts
 }
-
-asm ((
-    lda #$ff;
-    sta $D40E;
-))
 ```
 
-`{ ... }` and `(( ... ))` are interchangeable, exactly as in xtc statement bodies.
+The body is delimited by `{ ... }`, exactly as an xtc statement body is.
 
 By default the compiler scans the block, determines which registers it thinks will be written, and emits save / restore around the block. That is usually what you want — but if your block has *intended* side effects on a register the compiler thinks you didn't touch (or vice versa), you can override with a `clobbers` annotation:
 
@@ -108,7 +103,7 @@ Platform memory-map symbols are predefined for the active target — on Atari th
 A small inline-asm helper that disables and re-enables NMI generation around a critical section, demonstrating variable access, control flow, and the `clobbers` annotation:
 
 ```c
-volatile u8@ NMIEN = @$D40E;
+volatile u8* NMIEN = (u8*)$D40E;
 
 void atomic(void(*body)(void)) {
     u8 saved;

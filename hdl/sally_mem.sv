@@ -104,6 +104,7 @@ module sally_mem #(
     input  wire [7:0]  data_in,
     input  wire        rw,
     output logic [7:0] data_out,
+    output wire        data_out_zero,   // (data_out == 0), computed at the source
     input  wire        rdy,
     output wire        busy,           // 1 when banked_axi_reader in flight
 
@@ -170,6 +171,16 @@ module sally_mem #(
     // undisturbed.  See docs/Zynq/register-unlock.md (BANK group).
     input  wire        unlock_bank,
 
+    // SALLYRST held (2-FF synced into this domain).  A cold boot must not
+    // inherit XT state a stock guest cannot know about -- the same rule that
+    // made SALLYRST clear ANTIC's NMIEN.  The $4000-$5FFF aperture overlay is
+    // the one that bites: the XL OS boot stub sets $D5C6.0 for a paravirtual
+    // SIO transaction and clears it afterwards, so a core halted mid-stub (or
+    // reset between the two) leaves the overlay ON, and every read of
+    // $4000-$5FFF then returns the mailbox instead of RAM.  ACID mmu_xlbanking
+    // catches exactly that: it banks out every ROM and finds $5000 is not RAM.
+    input  wire        cold,
+
     // PORTB ($D301) from PIA — controls ROM vs banked/BRAM visibility.
     // Stock XL/XE: bit0 = OS ROM enable (active HIGH), bit1 = BASIC enable
     // (active LOW).  See the memory-map header.
@@ -223,6 +234,11 @@ module sally_mem #(
     // fetch display data without halting SALLY (at CLOCK_MULT>=2).
     // dma_addr is sampled on posedge dma_clk; dma_rdata is registered
     // and available 1 cycle later.
+    // Display-shadow mirror write tap (registered; see the mirror block).
+    output logic        mirror_we_q,
+    output logic [15:0] mirror_addr_q,
+    output logic [7:0]  mirror_din_q,
+
     input  wire         dma_clk,
     input  wire [15:0]  dma_addr,
     output wire [7:0]   dma_rdata
@@ -278,7 +294,13 @@ module sally_mem #(
     wire is_cart_s5_window = (addr[15:13] == 3'b101);    // $A000-$BFFF
     wire is_stack_page     = (addr[15:8] == 8'h01);      // $0100-$01FF (legacy alias)
     wire is_selftest_range = (addr[15:11] == 5'b01010);  // $5000-$57FF
-    wire selftest_en       = is_selftest_range && !portb[7];  // self-test ROM mapped (PORTB[7]=0)
+    // Self-test ROM ($5000-$57FF) maps only when PORTB[7]=0 (self-test select,
+    // active low) AND PORTB[0]=1 (OS ROM enabled).  On a real XL the self-test
+    // ROM is a slice of the OS ROM address space, so it cannot appear while the
+    // OS ROM is banked out — PORTB[7]=0 alone is not enough.  (ACID800
+    // mmu_xlbanking: PORTB=$72 has bit7=0 but bit0=0, so $5000 must read RAM,
+    // giving mask $0F; without the PORTB[0] term it read ROM -> mask $0E.)
+    wire selftest_en       = is_selftest_range && !portb[7] && portb[0];
     wire cart_external_read = rw                                // reads only
                             & ((is_cart_s4_window & ~bus_rd4_n_in)
                             |  (is_cart_s5_window & ~bus_rd5_n_in));
@@ -376,7 +398,7 @@ module sally_mem #(
     logic       math_map;
     logic [7:0] math_chunk;
     always_ff @(posedge clk or posedge rst) begin
-        if (rst) begin
+        if (rst || cold) begin
             math_map   <= 1'b0;
             math_chunk <= 8'h00;
         end else if (rdy && !rw && unlock_bank_q) begin
@@ -655,7 +677,12 @@ module sally_mem #(
     // gates puts the cascade back together; shadow writes into hwreg
     // / bank-window addresses are harmless because the read path
     // already prefers was_hwreg_q / was_bank_q over bram_dout_q.
-    wire        cpu_w      = rdy && !rw && !stack_op && !rom_override;
+    // `selftest_en` blocks the RAM write exactly like `rom_override`: while the
+    // XL self-test ROM is banked into $5000-$57FF (PORTB[7]=0 && PORTB[0]=1) it
+    // is a read-only slice of the OS ROM space, so a CPU write must be ignored
+    // and must NOT fall through to the RAM beneath (ACID800 mmu_xlbanking:
+    // "Write through self-test ROM was not blocked").
+    wire        cpu_w      = rdy && !rw && !stack_op && !rom_override && !selftest_en;
     wire        mem_we     = cpu_w || rom_we;
     wire [15:0] mem_addr_w = rom_we ? rom_addr : addr;
     wire  [7:0] mem_din_w  = rom_we ? rom_data : data_in;
@@ -696,6 +723,24 @@ module sally_mem #(
 
     always_ff @(posedge clk) begin
         if (stack_we) stack_mem[stack_addr_w] <= stack_din_w;
+    end
+
+    // Display-shadow mirror tap: registered copies of the ONE BRAM write
+    // site (cpu_w + rom_we both funnel through mem_we/mem_addr_w/mem_din_w
+    // above, so this is complete writer coverage).  Registered so the
+    // shadow BRAM's write port doesn't share the main array's input cone
+    // (placement decoupling); the shadow lags mem[] by one clk — invisible
+    // at scanline granularity.
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            mirror_we_q   <= 1'b0;
+            mirror_addr_q <= 16'h0;
+            mirror_din_q  <= 8'h0;
+        end else begin
+            mirror_we_q   <= mem_we;
+            mirror_addr_q <= mem_addr_w;
+            mirror_din_q  <= mem_din_w;
+        end
     end
 
     // ANTIC DMA read port — independent clock.  Vivado infers a true
@@ -852,6 +897,22 @@ module sally_mem #(
                                                : overlay_active ? ovl_dout_qq
                                                : bram_dout_q;
     assign data_out = cpu_rdata;
+
+    // ---- zero flag, computed HERE rather than in the CPU ----------------
+    // The clk_sally limiter is sally_mem BRAM -> u_sally_core/P_reg[1]: the
+    // CPU's Z-flag bit.  In the core that is `(di == 8'h00)`, an 8-input
+    // reduction sitting at the FAR end of a route-dominated path (60% route),
+    // so the comparator delay lands after the full crossing.
+    //
+    // Computing it at the source instead means only a 1-bit result makes that
+    // crossing, with the comparator next to the data it reduces.  NOTE this is
+    // NOT the same as hoisting the core's eight duplicated comparators into one
+    // shared wire — that was tried (build 95) and made things WORSE, because
+    // the shared net was still computed from late-arriving `di` inside the core
+    // (HANDOFF 1s).  Here the reduction happens before the crossing.
+    assign data_out_zero = use_early      ? (rare_dout   == 8'h00)
+                         : overlay_active ? (ovl_dout_qq == 8'h00)
+                         :                  (bram_dout_q == 8'h00);
 
     // ---- Hardware-register write passthrough ----------------------
     // rdy-gated so each write commits exactly once per CPU step (mirrors the

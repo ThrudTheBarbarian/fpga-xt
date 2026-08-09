@@ -7,10 +7,10 @@
 //
 //   1. dl_start fires exactly once per frame, the cycle after vbi_start.
 //   2. cmp_start fires exactly once per active scanline (the cycle after
-//      line_start while ar_atari_row is in the active band), and never before
+//      line_end while ar_atari_row is in the active band), and never before
 //      the first display-list parse has completed (the parse_pending gate, so
 //      no garbage first frame).
-//   3. The composed row advances 0,1,2,…,191 in lockstep with line_start,
+//   3. The composed row advances 0,1,2,…,191 in lockstep with line_end,
 //      wrapping to 0 at the next active frame.
 //   4. The compositor composes exactly the commanded row: at compose_done its
 //      meta_row lookup equals the row latched at the triggering cmp_start, and
@@ -42,6 +42,9 @@ module tb_antic_seq;
     wire [8:0] scanline;
     wire [7:0] phi2_in_line, atari_row, vcount;
     wire       line_start, vbi_start;
+    // cmp_start now fires near the END of the line (antic_top uses cycle 110 of
+    // 114) so mid-line register writes are visible to the row they belong to.
+    wire       line_end = phi2_tick && (phi2_in_line == CYC-4);
 
     antic_raster #(
         .CYC_PER_LINE(CYC), .LINES_PER_FRAME(LINES),
@@ -77,6 +80,7 @@ module tb_antic_seq;
         .clk(clk), .rst(rst),
         .vbi_start (vbi_start),
         .line_start(line_start),
+        .line_end  (line_end),
         .active_row(atari_row != 8'hFF),
         .parse_done(parse_done),
         .dl_start  (dl_start),
@@ -105,6 +109,7 @@ module tb_antic_seq;
         .chbase(8'h0), .chactl(8'h0), .pmbase(8'h0), .dmactl(8'h0), .gractl(8'h0),
         .hposp0(8'h0), .hposp1(8'h0), .hposp2(8'h0), .hposp3(8'h0),
         .hposm0(8'h0), .hposm1(8'h0), .hposm2(8'h0), .hposm3(8'h0),
+        .sizep_early_flat(8'h00), .sizep_chg_x_flat({4{12'h7FF}}),
         .sizep0(2'h0), .sizep1(2'h0), .sizep2(2'h0), .sizep3(2'h0),
         .sizem(8'h0), .vdelay(8'h0), .hscrol(4'h0), .vscrol(4'h0), .prior(8'h0),
         .mem_raddr(cmp_mem_raddr), .mem_rdata(8'h0),
@@ -125,12 +130,12 @@ module tb_antic_seq;
     logic vbi_q;
     always_ff @(posedge clk) vbi_q <= (rst ? 1'b0 : vbi_start);
 
-    // cmp_start must coincide with the cycle after a line_start in the
+    // cmp_start must coincide with the cycle after a line_END in the
     // active band; track the row sequence + pending compose.
     logic       line_q;
     logic [7:0] row_q;
     always_ff @(posedge clk) begin
-        line_q <= (rst ? 1'b0 : line_start);
+        line_q <= (rst ? 1'b0 : line_end);
         row_q  <= atari_row;
     end
 
@@ -167,7 +172,7 @@ module tb_antic_seq;
                 end
                 // alignment: the cycle after an active line_start
                 if (!(line_q && row_q != 8'hFF)) begin
-                    $display("FAIL cmp_start not aligned to active line_start (scanline %0d)", scanline);
+                    $display("FAIL cmp_start not aligned to active line_end (scanline %0d)", scanline);
                     fail++;
                 end
                 // row sequence 0,1,..,191 wrapping to 0

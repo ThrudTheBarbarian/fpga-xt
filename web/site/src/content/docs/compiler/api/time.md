@@ -6,7 +6,7 @@ description: Read the Atari real-time clock, measure elapsed jiffies and seconds
 `Time` exposes the Atari `RTCLOK` three-byte timer (`$12`/`$13`/`$14`) as a 24-bit jiffy counter, plus helpers for measuring elapsed time in seconds and for busy-waiting for fixed durations. All methods are `static`.
 
 ```c
-#import <Time.xt>
+#import <Time.xc>
 ```
 
 A **jiffy** is one VBI tick — that's 1/50 s on PAL hardware and 1/60 s on NTSC. `Time` detects PAL vs NTSC at runtime by reading the GTIA `PAL` register at `$D014`, so `secondsSince` and `delaySeconds` work correctly without per-platform recompilation.
@@ -79,4 +79,12 @@ That gives a 24-bit jiffy counter (max `$FFFFFF`, ~16.7 million jiffies). At 50 
 
 ## Platform notes
 
-`Time` is reimplemented per-architecture — the native backends read a real monotonic clock through the host runtime rather than the Atari `RTCLOK` jiffy counter. The signatures and semantics match.
+`Time` is reimplemented per-architecture. The native backends read a real monotonic clock through the host runtime rather than the Atari `RTCLOK` jiffy counter, and the shared methods keep their semantics — but the surface is **not** the same size:
+
+| Method | xt6502 | arm64 |
+|---|---|---|
+| `clearTimer()`, `timerValue()`, `ticksSince()`, `secondsSince()`, `delayJiffies()` | yes | yes |
+| `dpSecondsSince(u32)` | yes | **no** |
+| `delaySeconds(float)` | yes | **no** |
+
+Calling one of the missing two on a native backend is a compile error (`No method 'delaySeconds' on class 'Time'`), not a silent no-op. On arm64, `Time.delayJiffies(n)` is the available wait.

@@ -8,7 +8,7 @@
 //   clk_pix   (148.44 MHz) — RGB565 pixel output to SiI9022A HDMI transmitter
 //
 // CDC:
-//   - SALLY→ANTIC register writes: async FIFO (cdc_fifo_1w1r)
+//   - SALLY→ANTIC register writes: deterministic mesochronous toggle handoff
 //   - ANTIC→SALLY status (nmi_n, irq_n, halt_n, rdy_n): 2-FF sync
 //   - ANTIC DMA reads from sally_mem BRAM via dual-port (dma_clk = clk_sys)
 //   - SALLY bank-select state → ANTIC: 2-FF sync on update strobe
@@ -225,6 +225,8 @@ module fpga_xt_top (
     // coldstart, not here — sally_mem must not reset (BRAM writes, bank
     // in-flight AXI drain).
     wire [7:0] sallyrst;                     // clk_sys, from xt_gp0_regs
+    wire [31:0] joy_ovr;                      // clk_sys, from xt_gp0_regs (keypad->joystick override)
+    wire [7:0]  consol_keys;                  // clk_sys, from xt_gp0_regs (CONSOL keys; kernel holds OPTION to keep BASIC off)
     (* ASYNC_REG = "TRUE" *) reg [1:0] sallyrst_sync = 2'b00;
     always_ff @(posedge clk_sally) sallyrst_sync <= {sallyrst_sync[0], sallyrst[0]};
     wire rst_sally_core = rst_sally | sallyrst_sync[1];
@@ -293,9 +295,32 @@ module fpga_xt_top (
     // ====================================================================
     // SALLY + memory (runs on clk_sally)
     // ====================================================================
+    // cpu_* is the MUXED active-core bus into sally_mem (all downstream decode keys off it).
+    // The turbo xt6502 drives turbo_*; the resident fidelity xt6502f drives fid_*; `cpu_sel`
+    // (sallyrst[1]) picks the owner. Power-on default 1 = FIDELITY (first-class debug/boot core);
+    // turbo is a PS opt-in (CTRL_SALLYRST bit1=0).
     wire [15:0] cpu_addr;
     wire [7:0]  cpu_din, cpu_dout;
     wire        cpu_rw;
+    wire [15:0] turbo_addr, fid_addr;
+    wire [7:0]  turbo_dout, fid_dout;
+    wire        turbo_rw,   fid_rw;
+    wire        turbo_stackop; wire [3:0] turbo_shigh;
+    // cpu_sel: 0 = turbo owns the bus, 1 = fidelity core owns it.
+    //
+    // TIED TO FIDELITY.  The reset decision (docs/ANTIC-rewrite.md) drops the
+    // turbo core from the build but KEEPS the HDL, and this is how: with the
+    // select constant, every turbo_* mux folds, the core's outputs feed nothing
+    // and synthesis prunes the whole of xt6502 -- no instantiation is deleted
+    // and no wiring is disturbed, so putting it back is one line.
+    //
+    // The area is the point.  This design routed at 99.62% slice occupancy with
+    // 2,003 control sets while LUTs sat at 61%, which is packing starvation, and
+    // it is why an unrelated change misses the timing gate two builds in three.
+    // Turbo is a whole second 6502 that the machine does not use: fidelity is
+    // the boot default and the only core ACID timing is meaningful on.
+    localparam bit CPU_SEL_FIDELITY = 1'b1;
+    wire        cpu_sel = CPU_SEL_FIDELITY;
     wire        sally_rdy;
 
     // sally_clock wires
@@ -305,6 +330,8 @@ module fpga_xt_top (
     wire        phi2_tick = 1'b0;
     wire        halt_n_sally;      // /HALT after CDC (external-ANTIC mode; unused at our op point)
     wire        antic_dma_steal_w; // ANTIC cycle-steal (clk_sys, active-high) from antic_top
+    wire        antic_wsync_write_immune; // clk_sys; quasi-static debug knob
+    wire        antic_phi2_level;  // ANTIC's raw phi2 level (clk_sys) — timing master; paces the fid core
     wire        dma_steal_sally;   // ...CDC'd into clk_sally; gates the CPU at CLOCK_MULT=1
     wire        wsync_rdy_n;       // from ANTIC WSYNC
     wire        mem_busy_n;        // from sally_mem (1 = ready)
@@ -499,20 +526,29 @@ module fpga_xt_top (
     wire [1:0]  spr_arburst; wire spr_arvalid, spr_arready;
     wire [63:0] spr_rdata;   wire spr_rvalid, spr_rlast, spr_rready;
 
-    // ANTIC's BRAM read port — driven by antic_top's u_bram_shim and
-    // serviced by sally_mem's second BRAM port (clk_sys side).  SALLY
-    // writes propagate naturally through sally_mem; ANTIC sees the
-    // same state without a shadow memory.
-    wire [15:0] antic_bram_addr;
+    // ANTIC's read ports — one per consumer since the display-shadow split:
+    //   - dl_parser: antic_bram_* -> sally_mem's dma port (unchanged path;
+    //     the A9 OVL peek still hijacks this port via peek_en).
+    //   - compositor: antic_cmpram_* -> the display_shadow copy (a 64 KB
+    //     BRAM write-mirrored from sally_mem's single write site).
+    wire [15:0] antic_bram_addr_top;  // legacy dl_parser's fetch address
+    wire [15:0] antic_bram_addr;       // ...muxed with the rewrite's (below)
     wire [7:0]  antic_bram_rdata;
-    // ANTIC read mux: sally_mem's flat-shadow read (scrn_shadow_rdata) vs the
-    // banked screen_bank ANTIC-BRAM (scrn_antic_rdata).  Select is registered to
-    // align with both registered read data (1-cycle, clk_sys).
+    wire [15:0] antic_cmpram_addr_top;   // legacy compositor's fetch address
+    wire [15:0] antic_cmpram_addr;        // ...muxed with the rewrite's (below)
+    wire [7:0]  antic_cmpram_rdata;
+    wire [7:0]  shadow_rdata;
+    // Screen-bank overlay mux ($4000-$5FFF banked screen) follows the
+    // COMPOSITOR address now — it reads screen data; the parser reads DL
+    // bytes from the flat copy (a DL living inside a banked screen bank is
+    // not supported — it never was intentionally).  Select registered to
+    // align with the registered read data (1-cycle, clk_sys).
     wire [7:0]  scrn_shadow_rdata;
     reg         scrn_antic_sel_q;
     always_ff @(posedge clk_sys)
-        scrn_antic_sel_q <= (antic_bram_addr[15:13] == 3'b010) && scrn_antic_banked;
-    assign antic_bram_rdata = scrn_antic_sel_q ? scrn_antic_rdata : scrn_shadow_rdata;
+        scrn_antic_sel_q <= (antic_cmpram_addr[15:13] == 3'b010) && scrn_antic_banked;
+    assign antic_cmpram_rdata = scrn_antic_sel_q ? scrn_antic_rdata : shadow_rdata;
+    assign antic_bram_rdata   = scrn_shadow_rdata;
 
     // PORTB ($D301) from PIA — controls ROM vs banked/BRAM visibility.
     wire [7:0]  portb_q;
@@ -708,8 +744,11 @@ module fpga_xt_top (
     // 100 MHz, BASE_DIV=56 -> 1.786 MHz ≈ real NTSC phi2; CLOCK_MULT=56 (full
     // turbo) steps every cycle = 100 MHz.  Keep the phi2 RATE matched to
     // antic_top's BASE_DIV (which divides clk_sys, so a different value).
-    // /HALT is bypassed at CLOCK_MULT>=2, so halt_n is tied high.
-    // wsync_rdy_n comes from ANTIC via CDC.
+    // Turbo core is SNOOP-ONLY: its register writes still reach ANTIC via the
+    // sally_mem snoop/CDC path, but it must NOT stall for ANTIC. So both ANTIC
+    // sync inputs are tied always-ready — /HALT (DMA cycle-steal) and WSYNC.
+    // Only sally_mem's memory pacing (busy_n) and the CLOCK_MULT step gate RDY.
+    // (The fidelity core keeps its own /HALT + WSYNC via fid_rdy.)
     // busy_n comes from sally_mem (1 = ready, 0 = cache miss stall).
 
     sally_clock #(
@@ -719,8 +758,8 @@ module fpga_xt_top (
         .rst           (rst_sally_core),     // A9 hold freezes the step gen too
         .phi2_tick     (phi2_tick),
         .clock_mult    (clock_mult_sally),   // runtime-set via $D4CA (REPL `speed`); resets to 1x
-        .halt_n        (~dma_steal_sally), // ANTIC DMA bus-steal; gated to CLOCK_MULT=1 inside
-        .wsync_rdy_n   (wsync_rdy_n),
+        .halt_n        (1'b1),             // snoop-only: no ANTIC DMA cycle-steal stall
+        .wsync_rdy_n   (1'b1),             // snoop-only: no ANTIC WSYNC stall
         .busy_n        (~(mem_busy_n | hwreg_rd_busy)),  // stall on sally_mem cache miss OR hwreg-read CDC round-trip
         .sally_rdy     (sally_rdy),
         .sally_step    (sally_step)
@@ -731,19 +770,567 @@ module fpga_xt_top (
     wire [3:0]  cpu_s_high;
 
     // The xt6502 clean-sheet core (registered MAR, mem round-trip in-clock).
+    // ---- 6502 debugger (xt6502_debug) wires ----
+    wire        cdbg_boundary;
+    wire [15:0] cdbg_pc;
+    wire [7:0]  cdbg_a, cdbg_x, cdbg_y, cdbg_s, cdbg_p;
+    wire [3:0]  cdbg_shigh;
+    wire        dbg_core_run;                // gates .rdy (1 = run)
+    // control from xt_gp0_regs (clk_sys), synchronised inside the debug block
+    wire        gdbg_halt_tog, gdbg_go_tog, gdbg_step_tog, gdbg_commit_tog;
+    wire [1:0]  gdbg_cfg;
+    wire [15:0] gdbg_bkpt, gdbg_stepcnt, gdbg_wpc;
+    wire [31:0] gdbg_waxys;
+    wire [11:0] gdbg_wpsh;
+    // status back to xt_gp0_regs (clk_sally; coherent when halted)
+    wire [3:0]  sdbg_stat;
+    wire [15:0] sdbg_pc;
+    wire [31:0] sdbg_axys;
+    wire [11:0] sdbg_psh;
+    wire [31:0] sdbg_icnt;
+    // trace-ring control (from GP0) + readback
+    wire [1:0]  gdbg_trc_ctrl;
+    wire [11:0] gdbg_trc_idx;
+    wire [31:0] sdbg_trc_wptr;
+    wire [15:0] sdbg_trc_pc;
+    wire [31:0] sdbg_trc_axys;
+    wire [11:0] sdbg_trc_p;
+    // bus-access taps + watchpoint + self-observability
+    wire        cdbg_bus_stb;
+    wire [15:0] cdbg_bus_addr;
+    wire        cdbg_bus_rw;
+    wire [15:0] gdbg_wp;
+    wire [2:0]  gdbg_wpcfg;
+
+    // FID streaming trace (fidelity long-run capture) — fid-only, so NOT cpu_sel
+    // muxed: control straight from GP0 (clk_sys, synced inside u_fid_dbg), status
+    // straight back (coherent when the ring is full = core frozen).
+    wire [1:0]  gdbg_strm_ctrl;    // [0]=strm_en [1]=drain_done
+    wire [11:0] gdbg_strm_raddr;
+    wire        sdbg_strm_flush;
+    wire [12:0] sdbg_strm_wptr;
+    wire [63:0] sdbg_strm_rd;
+    wire [31:0] sdbg_diag;
+
+    // ---- turbo-debugger status (pre-mux). sdbg_* above are the MUXED result
+    // (turbo vs fidelity, on cpu_sel) that reaches the GP0 DEBUG registers; the
+    // turbo debugger now drives these private tdbg_* wires. Mux lives just after
+    // the two debugger instances below. ----
+    wire [3:0]  tdbg_stat;
+    wire [15:0] tdbg_pc;
+    wire [31:0] tdbg_axys;
+    wire [11:0] tdbg_psh;
+    wire [31:0] tdbg_icnt;
+    wire [31:0] tdbg_trc_wptr;
+    wire [15:0] tdbg_trc_pc;
+    wire [31:0] tdbg_trc_axys;
+    wire [11:0] tdbg_trc_p;
+    wire [31:0] tdbg_diag;
+
+    // ---- fidelity-core debug taps (clk_sally, no CDC) + halt back-pressure ----
+    wire        fid_sync;
+    wire [7:0]  fdbg_a, fdbg_x, fdbg_y, fdbg_s, fdbg_p;
+    wire [15:0] fid_cyc_addr;
+    wire [7:0]  fid_cyc_val;
+    wire        fid_cyc_rw, fid_cyc_valid;
+    wire        fdbg_cpu_halt;          // u_fid_dbg.cpu_halt — ANDed into fid_rdy to freeze
+
+    wire cpu_din_zero;   // (cpu_din == 0) from sally_mem — turbo Z-flag path
+
     xt6502 u_sally_core (
         .clk      (clk_sally),
         .rst      (rst_sally_core),          // A9-held for cold-boot-per-launch
-        .addr     (cpu_addr),
+        .addr     (turbo_addr),
         .data_in  (cpu_din),
-        .data_out (cpu_dout),
-        .rw       (cpu_rw),
-        .rdy      (sally_rdy),
+        .di_zero_in (cpu_din_zero),
+        .data_out (turbo_dout),
+        .rw       (turbo_rw),
+        .rdy      (sally_rdy & dbg_core_run & ~cpu_sel), // owns the bus only when cpu_sel=0
         .irq_n    (irq_n_sync),      // from ANTIC via CDC
         .nmi_n    (nmi_n_sync),      // from ANTIC via CDC
-        .stack_op (cpu_stack_op),    // 12-bit stack push/pull cycle
-        .s_high   (cpu_s_high)       // high 4 bits of SP
+        .stack_op (turbo_stackop),   // 12-bit stack push/pull cycle
+        .s_high   (turbo_shigh),     // high 4 bits of SP
+        // debug taps out
+        .dbg_boundary (cdbg_boundary),
+        .dbg_pc   (cdbg_pc),
+        .dbg_a    (cdbg_a), .dbg_x (cdbg_x), .dbg_y (cdbg_y),
+        .dbg_s    (cdbg_s), .dbg_p (cdbg_p), .dbg_shigh (cdbg_shigh),
+        // bus-access taps (data watchpoint)
+        .dbg_bus_stb  (cdbg_bus_stb),
+        .dbg_bus_addr (cdbg_bus_addr),
+        .dbg_bus_rw   (cdbg_bus_rw)
     );
+
+    // ---- Resident fidelity ("single-speed Sally") 6502 --------------------
+    // A second, time-native cycle-exact 6502 (hdl/xt6502f/, all 256 opcodes Harte-exact,
+    // interrupts, first-class debug — docs/Design/fidelity-6502.md) lives in the fabric
+    // alongside the turbo core, sharing sally_mem. `cpu_sel` (below) hands it the bus. This
+    // first integration proves the binding-path 2:1 addr mux closes clk_sally timing (mux
+    // doc §5) and lets the OS boot on either core; the live hand-off FSM (cpu_handoff.sv,
+    // sim-proven) lands next once timing is confirmed.
+    //
+    // Clocking (single-phi2): the fid core's machine-cycle tick is SOURCED FROM
+    // ANTIC's phi2 — the timing master — not a second free-running divider. A
+    // private divider (the old fid_ph_ctr @ 56 clk_sally) drifted against
+    // ANTIC's phi2 (133.3MHz/74) because 56 clk_sally (560ns) ≠ 74 clk_sys
+    // (555ns), breaking the ACID800 cycle-exact timing tests. Now `antic_phi2_level`
+    // (antic_top's phi2, clk_sys domain) is 2-FF synced into clk_sally and
+    // edge-detected; a rising edge = the start of a machine cycle. The fid core's
+    // sub-schedule (N=56: SUB_DATA=49, SUB_COMMIT=53) still runs on clk_sally and
+    // completes well inside the ~55.5-clk_sally ANTIC phi2 period, so it holds after
+    // commit until the next ANTIC-sourced tick. commit is gated by `fid_rdy`.
+    // `fid_mem_ok` samples the sally_mem busy at the core's data slot
+    // (SUB_DATA = 56-7 = 49) so a banked/DDR cache miss can never let the fixed
+    // sub-schedule commit stale data (sim/tb_xt6502f_busy.sv). The turbo core keeps
+    // its own free-running sally_clock — this change is FID-CORE-ONLY.
+    (* ASYNC_REG="true" *) reg phi2f_s0=0, phi2f_s1=0, phi2f_s2=0;
+    always_ff @(posedge clk_sally) begin
+        if (rst_sally_core) begin phi2f_s0<=0; phi2f_s1<=0; phi2f_s2<=0; end
+        else begin phi2f_s0<=antic_phi2_level; phi2f_s1<=phi2f_s0; phi2f_s2<=phi2f_s1; end
+    end
+    wire       phi2_tick_fid = phi2f_s1 & ~phi2f_s2;  // rising edge of ANTIC's phi2 = machine-cycle start
+
+    // =========================================================================
+    // ANTIC timing machine (docs/Design/antic-timing-machine.md), phase 2a-c.
+    // Runs unconditionally on the fid grid; AUTHORITY is opt-in per sallyrst[2]
+    // (CTRL 0x31C bit 2, power-on 0 = legacy paths) and fid-core-only.  When
+    // on, /RDY, /NMI and the VCOUNT/NMIST read values come from the machine —
+    // same-domain, same-grid with the core.  The DMA-steal gate stays on the
+    // legacy model until the machine's playfield windows land (phase 2d).
+    (* ASYNC_REG = "TRUE" *) reg [1:0] tmauth_sync = 2'b00;
+    always_ff @(posedge clk_sally) tmauth_sync <= {tmauth_sync[0], sallyrst[2]};
+    wire tm_auth = tmauth_sync[1] & cpu_sel;          // fid-only authority
+
+    // ---- ANTIC/GTIA rewrite authority (docs/ANTIC-rewrite.md) ------------
+    // Same shape as the timing machine one bit down, and fid-only for the same
+    // reason.  The rewrite lives in clk_sys, so its three control signals cross
+    // here -- SINGLE BIT each, which is the crossing this design has precedent
+    // for (dma_steal_sally, nmi_n_sync).  VCOUNT and NMIST deliberately do NOT
+    // cross as data: they are register reads and ride the existing
+    // hwreg_rd_cdc handshake instead, so no multi-bit crossing is added.
+    (* ASYNC_REG = "TRUE" *) reg [1:0] rwauth_sync = 2'b00;
+    always_ff @(posedge clk_sally) rwauth_sync <= {rwauth_sync[0], sallyrst[3]};
+    wire rw_auth = rwauth_sync[1] & cpu_sel;
+
+    (* ASYNC_REG = "TRUE" *) reg [1:0] rwsteal_s = 2'b00;
+    (* ASYNC_REG = "TRUE" *) reg [1:0] rwrdy_s   = 2'b00;
+    (* ASYNC_REG = "TRUE" *) reg [1:0] rwnmi_s   = 2'b11;
+    always_ff @(posedge clk_sally) begin
+        rwsteal_s <= {rwsteal_s[0], rw_steal};
+        rwrdy_s   <= {rwrdy_s[0],   rw_rdy_n};
+        rwnmi_s   <= {rwnmi_s[0],   rw_nmi_n};
+    end
+
+    wire        tm_mem_req;
+    wire [15:0] tm_mem_addr;
+    wire [7:0]  tm_mem_rdata;                          // display_shadow port-A read
+    wire [7:0]  tm_vcount, tm_nmist;
+    wire        tm_nmi_n, tm_rdy_n;
+    wire [2:0]  tm_cycle_type, tm_cycle_type_q;
+
+    antic_timing u_antic_timing (
+        .clk        (clk_sally),
+        .rst        (rst_sally),
+        .phi2_tick  (phi2_tick_fid),
+        .cold       (sallyrst_sync[1]),               // SALLYRST cold: clear NMIEN/DMACTL
+        .reg_we     (hwreg_we && hwreg_addr[15:8] == 8'hD4),
+        .reg_addr   (hwreg_addr[3:0]),
+        .reg_wdata  (hwreg_din),
+        .mem_req    (tm_mem_req),
+        .mem_addr   (tm_mem_addr),
+        .mem_rdata  (tm_mem_rdata),
+        .vcount     (tm_vcount),
+        .nmist      (tm_nmist),
+        .nmi_n      (tm_nmi_n),
+        .rdy_n_q    (tm_rdy_n),
+        .cycle_type (tm_cycle_type),
+        .cycle_type_q (tm_cycle_type_q),
+        // playfield byte stream — consumed by the streaming GTIA stage
+        // (docs/video/gtia-streaming.md); unused until that lands.
+        .pf_valid (), .pf_byte (), .pf_code (), .pf_hpos (), .pf_is_char (),
+        .dbg_hcount (), .dbg_line (), .dbg_rowctr (), .dbg_dlctl (), .dbg_dlpc ()
+    );
+    wire [7:0] fid_sub;
+    wire [15:0] fdbg_pc;             // TEMP: fid core live PC  -> diag8
+    wire  [7:0] fdbg_ir;             // TEMP: fid core current opcode -> diag8
+    wire       fid_busy = mem_busy_n | hwreg_rd_busy;
+    reg        fid_mem_ok = 1'b1;
+    always_ff @(posedge clk_sally) if (fid_sub == 8'd49) fid_mem_ok <= ~fid_busy;  // SUB_DATA = N-7
+    // Honor WSYNC exactly like the turbo core (sally_clock ANDs wsync_rdy_n into sally_rdy):
+    // a STA $D40A sets wsync_pending in antic_top, wsync_gen drops wsync_rdy_n (1=ready,0=stall)
+    // until ANTIC's cycle-105 hblank (plus an overdue timeout), so no deadlock. Without this the
+    // fid core free-ran through STA WSYNC and every beam-raced kernel (intro rainbow, per-scanline
+    // COLPF) mistimed — turbo and fid must be timing-identical.
+    // WSYNC stalls every cycle — no read/write special case.  The reason a RMW's
+    // second write survives is NOT that writes ignore RDY: it is that ANTIC has
+    // not pulled RDY yet.  Avery Lee: "there is a one-cycle delay before RDY is
+    // pulled ... INC WSYNC's second write cycle either drops into this delay slot
+    // or proceeds on the next CPU cycle under RDY."  Logic-analyser trace of a
+    // real XE:
+    //     STA wsync:  write, then the next OPCODE FETCH runs, then stall
+    //     INC wsync:  write, then the SECOND WRITE runs,       then stall
+    // One rule: exactly one cycle executes after the WSYNC write, whatever it is.
+    //
+    // On the NMOS 6502 /RDY only halts READ cycles — a write always completes.
+    // Avery Lee's trace shows it directly: the RMW's second write proceeds
+    // while /RDY is still high, and the stall lands on the following fetch.
+    // Honouring that is not optional here: if WSYNC can stall a write cycle,
+    // the core parks mid-write with the bus held, the held write re-arms $D40A,
+    // and INC WSYNC deadlocks outright — the ACID800 framework hangs in
+    // _testEnd ($1DB8 INC WSYNC), which is most of the suite.
+    // Write-immunity is defeatable (debug cfg[15]) so the fidelity-correct
+    // WSYNC shape can be swept: immunity breaks the INC-WSYNC deadlock but
+    // grants the RMW's second write a free cycle, so the assert-only delay in
+    // wsync_gen may be the better model.  The knob is quasi-static — synced
+    // into clk_sally with a plain 2-FF.
+    (* ASYNC_REG = "true" *) reg immune_s1 = 1'b1, immune_s2 = 1'b1;
+    always_ff @(posedge clk_sally) begin
+        immune_s1 <= antic_wsync_write_immune;
+        immune_s2 <= immune_s1;
+    end
+    // THREE /RDY SHAPES HAVE BEEN TRIED ON HARDWARE AND ALL ARE NEUTRAL OR
+    // WORSE.  Recorded so they are not retried:
+    //   * retiming the edge mid-cycle inside antic_reg_file (clk_sys, BEFORE
+    //     the crossing) — cost antic_blockednmi and cpu_bugs;
+    //   * q1|q2 there — antic_wsync's reading did not move at all;
+    //   * retiming mid-cycle HERE (clk_sally, AFTER the crossing, at
+    //     fid_sub 28, which is what wsync_gen does for the legacy machine) —
+    //     exactly neutral, 27 either way with no test changing.
+    // The last one is the shape the legacy model prescribes, and it still does
+    // nothing, which is good evidence the missing cycle is NOT in the /RDY
+    // waveform at all.  Look at the CPU's rdy sampling or at the write path.
+    wire       fid_wsync_rdy = (rw_auth ? ~rwrdy_s[1] :
+                                 tm_auth ?  tm_rdy_n   : wsync_rdy_n)
+                              | (~fid_rw & immune_s2);   // writes immune to WSYNC unless disabled
+    // Under machine authority the steal gate ALSO comes from the machine:
+    // mixed authority (tm WSYNC/VCOUNT + legacy-raster steals) is unsound —
+    // the two rasters' phase offset is arbitrary on hardware, so legacy
+    // steals land on random machine-cycles and shift every post-WSYNC
+    // stream (measured: VCOUNT #1 read +2, build 47b sweep B3).
+    // DELIVERY PHASE: back to the combinational view (the cycle's own
+    // owner), which is what matches Avery's cycle numbering in the schedule
+    // dump.  The delayed view was tried on build 65b: it did NOT move any
+    // DMA-cluster test and gtia_collision regressed (it passes in isolation
+    // on build 57, fails on 65b), so it costs a green for nothing.
+    wire       fid_steal = rw_auth ? rwsteal_s[1] :
+                           tm_auth ? (tm_cycle_type != 3'd0) : dma_steal_sally;
+    wire       fid_rdy = cpu_sel & fid_mem_ok & ~fid_steal & fid_wsync_rdy & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
+    // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
+    // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
+    // fidelity core drives a STABLE address for the whole window and samples data at SUB_DATA=49,
+    // so it needs sally_mem stepped EARLY (so the read is latched by 49) and exactly ONCE per
+    // machine cycle (so writes/peripheral strobes/bank selects don't fire N times). A single
+    // pulse near window-start does both. (Banked-AXI reads, which trigger on this too, aren't
+    // used by a plain OS boot; they get the active-core treatment when the hand-off lands.)
+    wire       fid_mem_step = (fid_sub == 8'd2);
+    // ---- WRITE strobes fire on the ADVANCING presentation, exactly once --
+    // "exactly ONCE per machine cycle" above was only true for cycles that
+    // ADVANCE.  A cycle that reaches its commit slot (SUB_COMMIT = N-3 = 53,
+    // mirrored the same way fid_mem_ok mirrors SUB_DATA=49) with fid_rdy LOW
+    // does not retire: the SAME cycle replays next phi2 with the same
+    // addr/data, and fid_mem_step re-fired every write strobe once per
+    // replay.  BRAM data writes are idempotent; strobe consumers are NOT:
+    //   * a $D5C7 doorbell write toggles xt_sio_mbox's req_tgl per strobe --
+    //     an even replay count cancels the doorbell entirely (the random
+    //     mid-load paravirtual-SIO stalls, HW-traced 2026-08-08);
+    //   * STA $D40A re-armed WSYNC on every replay -- the exact deadlock
+    //     sally_mem's rdy gate was built against (that gate keys on mem_rdy,
+    //     which fires on replays too for this core; the turbo core's
+    //     sally_rdy never replays, which is why only fid was affected).
+    // WHEN the single strobe fires matters as much as firing once: a stalled
+    // store's bus cycle happens when the bus is GRANTED (real SALLY /HALT
+    // semantics), so the side effect belongs to the presentation that
+    // ADVANCES -- at the commit slot, gated by fid_rdy.  Strobing the FIRST
+    // presentation instead committed WSYNC-paced colour writes mid-visible-
+    // line: the per-scanline rainbow kernels showed a vertical seam where
+    // every bar changed colour partway across (HW photo 2026-08-09).
+    // Reads keep the EARLY step (data latched by SUB_DATA); writes strobe
+    // once, at the advancing presentation's commit slot.
+    wire       fid_wr_commit = (fid_sub == 8'd53) & fid_rdy;
+    wire       mem_rdy = cpu_sel ? (fid_rw ? fid_mem_step : fid_wr_commit)
+                                 : sally_rdy;   // sally_mem steps with the ACTIVE core
+
+    // ---- Fidelity-core register inject (commit) -------------------------------
+    // The fid core is the first-class debug/boot core, so its inject port is no
+    // longer tied off.  Mirrors the turbo path (u_sally_dbg drives the turbo
+    // core's dbg_wr/_in from the GP0 commit registers): edge-detect the GP0
+    // commit TOGGLE into a 1-clk clk_sally pulse and 2-FF sync the value buses
+    // (wpc/waxys/wpsh — clk_sys GP0 nets) across to clk_sally, then pulse the fid
+    // core's dbg_load.  dbg_load in xt6502f (~line 350) is honoured every clk
+    // regardless of rdy, so it seeds PC/A/X/Y/S/P and restarts at ST_FETCH even
+    // while halted — exactly what /bin/6502 `commit` and SYS_xexload need.
+    (* ASYNC_REG = "TRUE" *) reg [2:0]  fc_s;
+    (* ASYNC_REG = "TRUE" *) reg [15:0] fwpc_s1,   fwpc_s2;
+    (* ASYNC_REG = "TRUE" *) reg [31:0] fwaxys_s1, fwaxys_s2;
+    (* ASYNC_REG = "TRUE" *) reg [11:0] fwpsh_s1,  fwpsh_s2;
+    always_ff @(posedge clk_sally) begin
+        fc_s      <= {fc_s[1:0], gdbg_commit_tog};
+        fwpc_s1   <= gdbg_wpc;    fwpc_s2   <= fwpc_s1;
+        fwaxys_s1 <= gdbg_waxys;  fwaxys_s2 <= fwaxys_s1;
+        fwpsh_s1  <= gdbg_wpsh;   fwpsh_s2  <= fwpsh_s1;
+    end
+    wire        fid_do_commit = fc_s[2] ^ fc_s[1];        // 1-clk pulse on commit
+    wire [15:0] fid_in_pc = fwpc_s2;
+    wire [7:0]  fid_in_a  = fwaxys_s2[7:0];               // waxys: [7:0]A [15:8]X [23:16]Y [31:24]S
+    wire [7:0]  fid_in_x  = fwaxys_s2[15:8];
+    wire [7:0]  fid_in_y  = fwaxys_s2[23:16];
+    wire [7:0]  fid_in_s  = fwaxys_s2[31:24];
+    wire [7:0]  fid_in_p  = fwpsh_s2[7:0];                // wpsh: [7:0]P [11:8]S_high (unused on fid)
+
+    // Local same-cycle VCOUNT/NMIST read (tm authority): served from the
+    // machine, bypassing the hwreg read CDC round-trip.  The CDC read still
+    // runs underneath and paces mem_ok; its data is simply not consumed.
+    // ANTIC decodes only the low nibble: every register mirrors through
+    // $D400-$D4FF (ACID antic_addrmirror reads VCOUNT at $D41B etc.).
+    // Matching the exact address let mirrored reads fall through to the
+    // legacy CDC path and return the OTHER raster's value under authority.
+    // Rewrite VCOUNT/NMIST carried into clk_sally (crossing instantiated with
+    // the rewrite itself, further down); declared here because fid_din_mux is
+    // the consumer.
+    wire [15:0] rw_vn_sally;
+    wire [7:0]  rw_vcount_sally = rw_vn_sally[7:0];
+    wire [7:0]  rw_nmist_sally  = rw_vn_sally[15:8];
+
+    wire fid_d4 = (fid_addr[15:8] == 8'hD4);
+    // rw_auth outranks tm_auth, exactly as it does for rdy/steal/nmi below.
+    // Getting this wrong is not a small error: with sallyrst = $0E BOTH bits are
+    // set, so the CPU took its NMI from the rewrite but read NMIST from the
+    // timing machine -- two rasters disagreeing about whether an interrupt had
+    // happened, which is why $0E scored worse than $06.
+    wire [7:0] fid_din_mux = (fid_rw && fid_d4 && fid_addr[3:0] == 4'hB)
+                                 ? (rw_auth ? rw_vcount_sally :
+                                    tm_auth ? tm_vcount       : cpu_din)
+                           : (fid_rw && fid_d4 && fid_addr[3:0] == 4'hF)
+                                 ? (rw_auth ? rw_nmist_sally  :
+                                    tm_auth ? tm_nmist        : cpu_din)
+                           : cpu_din;
+
+    xt6502f #(.CLK_SALLY_HZ(100_000_000), .PHI2_HZ(1_785_714)) u_fid_core (  // N = 56
+        .clk       (clk_sally),
+        .rst       (rst_sally_core),
+        .phi2_tick (phi2_tick_fid),
+        .addr      (fid_addr),
+        .data_in   (fid_din_mux),
+        .data_out  (fid_dout),
+        .rw        (fid_rw),
+        .rdy       (fid_rdy),
+        .irq_n     (irq_n_sync),
+        .nmi_n     (rw_auth ? rwnmi_s[1] :
+                    tm_auth ? tm_nmi_n    : nmi_n_sync),
+        .sync      (fid_sync),
+        .dbg_pc    (fdbg_pc), .dbg_a (fdbg_a), .dbg_x (fdbg_x), .dbg_y (fdbg_y), .dbg_s (fdbg_s), .dbg_p (fdbg_p),
+        .dbg_sub   (fid_sub), .dbg_ir (fdbg_ir),
+        .dbg_load  (fid_do_commit), .dbg_pc_in (fid_in_pc), .dbg_a_in (fid_in_a), .dbg_x_in (fid_in_x),
+        .dbg_y_in  (fid_in_y), .dbg_s_in (fid_in_s), .dbg_p_in (fid_in_p),
+        .dbg_cyc_addr (fid_cyc_addr), .dbg_cyc_val (fid_cyc_val), .dbg_cyc_rw (fid_cyc_rw), .dbg_cyc_valid (fid_cyc_valid)
+    );
+
+    // ---- the 2:1 bus mux (the one LUT on the clk_sally binding path, mux doc §5) ----------
+    // Read data (cpu_din) fans out to both cores; only the owner's rdy is live.
+    assign cpu_addr     = cpu_sel ? fid_addr : turbo_addr;
+    assign cpu_dout     = cpu_sel ? fid_dout : turbo_dout;
+    assign cpu_rw       = cpu_sel ? fid_rw   : turbo_rw;
+    assign cpu_stack_op = cpu_sel ? 1'b0     : turbo_stackop;  // fidelity uses plain $01xx stack accesses
+    assign cpu_s_high   = cpu_sel ? 4'h0     : turbo_shigh;
+
+    // In-fabric 6502 debugger — halt/step/breakpoint/register access (docs/OS/6502-debug.md).
+    // Reset by rst_sally (power-on) so it survives a SALLYRST core reset.
+    xt6502_debug u_sally_dbg (
+        .clk          (clk_sally),
+        .rst          (rst_sally),
+        .core_rst     (rst_sally_core),
+        .dbg_boundary (cdbg_boundary),
+        .dbg_pc       (cdbg_pc),
+        .dbg_a        (cdbg_a), .dbg_x (cdbg_x), .dbg_y (cdbg_y),
+        .dbg_s        (cdbg_s), .dbg_p (cdbg_p), .dbg_shigh (cdbg_shigh),
+        .halt_tog     (gdbg_halt_tog),
+        .go_tog       (gdbg_go_tog),
+        .step_tog     (gdbg_step_tog),
+        .commit_tog   (gdbg_commit_tog),
+        .cfg          (gdbg_cfg),
+        .bkpt_addr    (gdbg_bkpt),
+        .step_count   (gdbg_stepcnt),
+        .wpc          (gdbg_wpc),
+        .waxys        (gdbg_waxys),
+        .wpsh         (gdbg_wpsh),
+        // NOTE: the turbo core's register-INJECT was removed (fidelity/debug
+        // now lives in the fid core). xt6502_debug still drives dbg_wr/_w* but
+        // they go nowhere on the turbo core, so `commit`/xexload --turbo can no
+        // longer load regs into this core. Left unconnected on purpose.
+        .core_run     (dbg_core_run),
+        .stat         (tdbg_stat),
+        .snap_pc      (tdbg_pc),
+        .snap_axys    (tdbg_axys),
+        .snap_psh     (tdbg_psh),
+        .icnt         (tdbg_icnt),
+        .trc_ctrl     (gdbg_trc_ctrl),
+        .trc_idx      (gdbg_trc_idx),
+        .trc_wptr_stat(tdbg_trc_wptr),
+        .trc_pc       (tdbg_trc_pc),
+        .trc_axys     (tdbg_trc_axys),
+        .trc_p        (tdbg_trc_p),
+        // data watchpoint + bus taps + self-observability
+        .dbg_bus_stb  (cdbg_bus_stb),
+        .dbg_bus_addr (cdbg_bus_addr),
+        .dbg_bus_rw   (cdbg_bus_rw),
+        .wp_addr      (gdbg_wp),
+        .wp_cfg       (gdbg_wpcfg),
+        .diag         (tdbg_diag)
+    );
+
+    // ======================================================================
+    // Fidelity-core in-fabric debugger (xt6502f_debug) — mirrors u_sally_dbg
+    // for the resident xt6502f.  /bin/6502 drives ONE GP0 DEBUG block; when
+    // cpu_sel selects the fidelity core its control reaches THIS debugger and
+    // its status is muxed back to the GP0 status registers, so halt / step /
+    // break / watch / trace / status work on whichever core owns the bus with
+    // no change to /bin/6502.  Reset by rst_sally (power-on), like the turbo
+    // debugger, so it survives a SALLYRST core reset.
+    //
+    // Control adaptation: the GP0 block emits TOGGLES (xt6502_debug edge-XORs
+    // them into pulses); the fid module wants a LEVEL halt_req plus 1-cycle
+    // resume/step pulses.  We edge-detect the toggles into pulses (identical
+    // XOR scheme) and hold a halt_req level that sets on `halt`, clears on
+    // `go`/`step` so a resume is never immediately re-halted.
+    // ======================================================================
+    (* ASYNC_REG = "TRUE" *) reg [2:0] fh_s, fg_s, fs_s;
+    always_ff @(posedge clk_sally) begin
+        fh_s <= {fh_s[1:0], gdbg_halt_tog};
+        fg_s <= {fg_s[1:0], gdbg_go_tog};
+        fs_s <= {fs_s[1:0], gdbg_step_tog};
+    end
+    wire fid_do_halt = fh_s[2] ^ fh_s[1];
+    wire fid_do_go   = fg_s[2] ^ fg_s[1];
+    wire fid_do_step = fs_s[2] ^ fs_s[1];
+
+    reg fid_halt_req;
+    always_ff @(posedge clk_sally) begin
+        if (rst_sally)                    fid_halt_req <= 1'b0;
+        else if (fid_do_go | fid_do_step) fid_halt_req <= 1'b0;
+        else if (fid_do_halt)             fid_halt_req <= 1'b1;
+    end
+
+    // GP0 level buses (clk_sys, stable whenever their command toggle fires) ->
+    // 2-FF sync into clk_sally (the fid module has no internal synchronisers,
+    // unlike xt6502_debug which syncs these itself).
+    (* ASYNC_REG = "TRUE" *) reg [1:0]  fcfg1,  fcfg2;
+    (* ASYNC_REG = "TRUE" *) reg [15:0] fbkpt1, fbkpt2;
+    (* ASYNC_REG = "TRUE" *) reg [15:0] fwpa1,  fwpa2;
+    (* ASYNC_REG = "TRUE" *) reg [2:0]  fwpc1,  fwpc2;
+    (* ASYNC_REG = "TRUE" *) reg [11:0] ftrci1, ftrci2;
+    always_ff @(posedge clk_sally) begin
+        fcfg1  <= gdbg_cfg;     fcfg2  <= fcfg1;
+        fbkpt1 <= gdbg_bkpt;    fbkpt2 <= fbkpt1;
+        fwpa1  <= gdbg_wp;      fwpa2  <= fwpa1;
+        fwpc1  <= gdbg_wpcfg;   fwpc2  <= fwpc1;
+        ftrci1 <= gdbg_trc_idx; ftrci2 <= ftrci1;
+    end
+    wire       fid_bkpt_en = fcfg2[0];              // gdbg_cfg[0]=bkpt_en (halt_at_reset[1] unsupported on fid)
+    wire       fid_wp_en   = fwpc2[0];              // gdbg_wpcfg[0]=en
+    wire [1:0] fid_wp_mode = {fwpc2[1], fwpc2[2]};  // mode[1]=on_write(cfg[1]) mode[0]=on_read(cfg[2])
+
+    // fid debugger outputs
+    wire [15:0] fdbg_entry_pc, fdbg_settled_pc;
+    wire [7:0]  fdbg_entry_a, fdbg_entry_x, fdbg_entry_y, fdbg_entry_s, fdbg_entry_p;
+    wire [7:0]  fdbg_settled_a, fdbg_settled_x, fdbg_settled_y, fdbg_settled_s, fdbg_settled_p;
+    wire        fdbg_halted, fdbg_hit_bkpt, fdbg_hit_wp;
+    wire [15:0] fdbg_trc_pc, fdbg_trc_addr;
+    wire [7:0]  fdbg_trc_ir, fdbg_trc_val;
+    wire        fdbg_trc_rw;
+    wire [4:0]  fdbg_trc_count;                     // $clog2(16)+1 bits, saturates at 16
+
+    // /bin/6502 addresses the trace ring by an ABSOLUTE oldest-based index
+    // (0..avail-1); this ring is "0 = most recent". Invert: fid_idx = count-1-idx.
+    wire [4:0]  fid_trc_sel = fdbg_trc_count - 5'd1 - ftrci2[4:0];
+
+    xt6502f_debug #(.N(56), .TRACE_DEPTH(16), .STREAM_DEPTH(4096)) u_fid_dbg (
+        .clk        (clk_sally),
+        .rst        (rst_sally),
+        .sub        (fid_sub),
+        .sync       (fid_sync),
+        .pc         (fdbg_pc),
+        .a          (fdbg_a), .x (fdbg_x), .y (fdbg_y), .s (fdbg_s), .p (fdbg_p),
+        .ir_in      (fdbg_ir),
+        .cyc_addr   (fid_cyc_addr), .cyc_val (fid_cyc_val),
+        .cyc_rw     (fid_cyc_rw),   .cyc_valid (fid_cyc_valid),
+        .halt_req   (fid_halt_req),
+        .resume     (fid_do_go),
+        .step       (fid_do_step),
+        .bkpt_en    (fid_bkpt_en),
+        .bkpt_addr  (fbkpt2),
+        .wp_en      (fid_wp_en),
+        .wp_addr    (fwpa2),
+        .wp_mode    (fid_wp_mode),
+        .entry_pc   (fdbg_entry_pc),
+        .entry_a    (fdbg_entry_a), .entry_x (fdbg_entry_x), .entry_y (fdbg_entry_y),
+        .entry_s    (fdbg_entry_s), .entry_p (fdbg_entry_p),
+        .settled_pc (fdbg_settled_pc),
+        .settled_a  (fdbg_settled_a), .settled_x (fdbg_settled_x), .settled_y (fdbg_settled_y),
+        .settled_s  (fdbg_settled_s), .settled_p (fdbg_settled_p),
+        .cpu_halt   (fdbg_cpu_halt),
+        .halted     (fdbg_halted),
+        .hit_bkpt   (fdbg_hit_bkpt),
+        .hit_wp     (fdbg_hit_wp),
+        .trace_idx  (fid_trc_sel[3:0]),
+        .trace_pc   (fdbg_trc_pc),
+        .trace_ir   (fdbg_trc_ir),
+        .trace_addr (fdbg_trc_addr),
+        .trace_val  (fdbg_trc_val),
+        .trace_rw   (fdbg_trc_rw),
+        .trace_count(fdbg_trc_count),
+        .strm_en         (gdbg_strm_ctrl[0]),
+        .strm_drain_done (gdbg_strm_ctrl[1]),
+        .strm_raddr      (gdbg_strm_raddr),
+        .strm_flush_req  (sdbg_strm_flush),
+        .strm_wptr       (sdbg_strm_wptr),
+        .strm_rdata      (sdbg_strm_rd)
+    );
+
+    // Instruction counter for the fid core (the fid debug module has none):
+    // a committed instruction = rising edge of `sync` (entry to ST_FETCH) while
+    // not halted.  Reset on the core reset so icnt counts from the (SALLYRST)
+    // cold start, matching how the turbo debugger zeroes icnt on core_rst.
+    reg [31:0] fid_icnt;
+    reg        fid_sync_d;
+    always_ff @(posedge clk_sally) begin
+        if (rst_sally_core) begin fid_icnt <= 32'd0; fid_sync_d <= 1'b0; end
+        else begin
+            fid_sync_d <= fid_sync;
+            if (fid_sync & ~fid_sync_d & ~fdbg_halted) fid_icnt <= fid_icnt + 32'd1;
+        end
+    end
+
+    // Assemble fid status in the exact bit layout dbg6502.c expects.  The
+    // architectural snapshot uses the ENTRY (cycle-entry) latch: when halted at
+    // a breakpoint the core is frozen in its opcode-fetch cycle, so entry_pc =
+    // the instruction address and the entry regs are the pre-execution state —
+    // "break before execute", matching the turbo debugger's snap.
+    wire [3:0]  fid_stat      = {~fdbg_halted, 1'b0, (fdbg_hit_bkpt | fdbg_hit_wp), fdbg_halted};
+    wire [15:0] fid_snap_pc   = fdbg_entry_pc;
+    wire [31:0] fid_snap_axys = {fdbg_entry_s, fdbg_entry_y, fdbg_entry_x, fdbg_entry_a};
+    wire [11:0] fid_snap_psh  = {4'h0, fdbg_entry_p};   // fid stack is $01xx -> S_high = 0
+    wire [31:0] fid_trc_wptr  = {15'd0, 1'b0 /*wrapped*/, 4'd0, {7'd0, fdbg_trc_count}};
+    wire [15:0] fid_trc_pc    = fdbg_trc_pc;
+    // NB: the fid trace ring is a per-machine-CYCLE bus trace {addr,val,rw,ir},
+    // NOT the turbo per-instruction {A,X,Y,SP,P}.  dbg6502.c formats these as
+    // registers, so a fid trace dump MISLABELS them: A/X = addr lo/hi, Y = val,
+    // P = opcode, SP = 0.  Raw data is preserved; a fid-aware `6502 trace`
+    // formatter is a follow-up.
+    wire [31:0] fid_trc_axys  = {8'h00, fdbg_trc_val, fdbg_trc_addr};
+    wire [11:0] fid_trc_p     = {3'd0, fdbg_trc_rw, fdbg_trc_ir};
+    wire [31:0] fid_diag      = {fbkpt2, 11'd0, fdbg_hit_wp, fdbg_hit_wp, fdbg_hit_bkpt, 1'b0, fid_bkpt_en};
+
+    // Mux debug status back to the GP0 DEBUG registers on the active core.
+    assign sdbg_stat     = cpu_sel ? fid_stat      : tdbg_stat;
+    assign sdbg_pc       = cpu_sel ? fid_snap_pc   : tdbg_pc;
+    assign sdbg_axys     = cpu_sel ? fid_snap_axys : tdbg_axys;
+    assign sdbg_psh      = cpu_sel ? fid_snap_psh  : tdbg_psh;
+    assign sdbg_icnt     = cpu_sel ? fid_icnt      : tdbg_icnt;
+    assign sdbg_trc_wptr = cpu_sel ? fid_trc_wptr  : tdbg_trc_wptr;
+    assign sdbg_trc_pc   = cpu_sel ? fid_trc_pc    : tdbg_trc_pc;
+    assign sdbg_trc_axys = cpu_sel ? fid_trc_axys  : tdbg_trc_axys;
+    assign sdbg_trc_p    = cpu_sel ? fid_trc_p     : tdbg_trc_p;
+    assign sdbg_diag     = cpu_sel ? fid_diag      : tdbg_diag;
 
     // ROM-init wires (driven by sally_rom_loader when USE_PS_BD is set;
     // tied to 0 below in the OOC stub path).  Both branches need the
@@ -759,6 +1346,32 @@ module fpga_xt_top (
     `endif
 
     // ---- sally_mem -------------------------------------------------------
+    // TEMP diag: A9 6502-RAM peek via the ANTIC DMA BRAM port (no extra port, no CDC — all
+    // clk_sys). Set OVL_BASE = {1'b1(en), 15'b0, addr[15:0]} (0x43C00204); while en=1 the DMA
+    // port reads mem[addr] instead of ANTIC's fetch (display glitches — that's fine), and the
+    // byte appears in DIAG7 (0x43C00418) low byte, [31:16]=addr echo. OVL_BASE=0 -> normal.
+    wire        peek_en      = overlay_base[31];
+    wire [15:0] mem_dma_addr = peek_en ? overlay_base[15:0] : antic_bram_addr;
+
+    // ---- Display-shadow copy of the flat 64 KB --------------------------
+    // Write-mirrored from sally_mem's single BRAM write site (CPU stores +
+    // ROM-load port); read exclusively by the compositor.  See
+    // display_shadow.sv for the CDC story (the RAMB port clocks ARE the CDC).
+    wire        mirror_we_w;
+    wire [15:0] mirror_addr_w;
+    wire [7:0]  mirror_din_w;
+    display_shadow u_display_shadow (
+        .clk_cpu  (clk_sally),
+        .mir_we   (mirror_we_w),
+        .mir_addr (mirror_addr_w),
+        .mir_din  (mirror_din_w),
+        .tm_addr  (tm_mem_addr),
+        .tm_data  (tm_mem_rdata),
+        .clk_disp (clk_sys),
+        .rd_addr  (antic_cmpram_addr),
+        .rd_data  (shadow_rdata)
+    );
+
     sally_mem #(
         .OS_ROM_HEX_PATH ("rsrc/sally-boot.hex"),
         .SELFTEST_HEX_PATH ("rsrc/selftest.hex"),  // XL self-test ROM ($5000-$57FF via PORTB[7])
@@ -776,7 +1389,9 @@ module fpga_xt_top (
         .data_in    (cpu_dout),
         .rw         (cpu_rw),
         .data_out   (cpu_din),
-        .rdy        (sally_rdy),
+        .data_out_zero (cpu_din_zero),
+        .rdy        (mem_rdy),       // steps with the ACTIVE core (turbo: sally_rdy; fid: early-window pulse)
+        .cold       (sallyrst_sync[1]),  // SALLYRST: drop the $4000 aperture overlay
         .stack_op   (cpu_stack_op),
         .s_high     (cpu_s_high),
         .busy       (mem_busy_n),
@@ -837,8 +1452,11 @@ module fpga_xt_top (
         .rom_addr    (rom_load_addr),
         .rom_data    (rom_load_data),
         .rom_we      (rom_load_we),
-        .dma_clk     (clk_sys),       // ANTIC reads sally_mem's BRAM at clk_bus
-        .dma_addr    (antic_bram_addr),
+        .mirror_we_q   (mirror_we_w),
+        .mirror_addr_q (mirror_addr_w),
+        .mirror_din_q  (mirror_din_w),
+        .dma_clk     (clk_sys),       // dl_parser (+ A9 peek) reads sally_mem's BRAM at clk_bus
+        .dma_addr    (mem_dma_addr),       // TEMP: peek hijacks this (peek_en) else ANTIC's fetch
         .dma_rdata   (scrn_shadow_rdata)   // muxed with screen_bank ANTIC-BRAM above
     );
 
@@ -865,40 +1483,74 @@ module fpga_xt_top (
     wire        is_xtc_ctl     = (cpu_addr[15:1] == 15'h6AE0);   // $D5C0-$D5C1
     wire        hwreg_cdc_rd   = hwreg_page_rd & ~is_blitter_reg & ~is_xtc_ctl;
 
-    wire        hwreg_wr_full_unused;
-    wire        hwreg_rd_empty;
-    wire [23:0] hwreg_rd_data;
-    // Pause the write-FIFO drain while the CDC owns the bus for a read.
-    wire        hwreg_rd_en = ~hwreg_rd_empty & ~cdc_bus_read;
+    // ---- Deterministic mesochronous SALLY->ANTIC register-write handoff ----
+    // clk_sally (100 MHz) and clk_sys (133.3 MHz) are BOTH outputs of one MMCM
+    // (u_mmcm1, VCO 1200: /12 and /9) => phase-locked 3:4 mesochronous, NOT
+    // asynchronous.  A $D0xx/$D4xx write is a single event bounded by phi2
+    // (~1.5 MHz) => >=~112 clk_sally apart, so at most ONE is ever in flight and
+    // an async FIFO (with its gray-pointer variable drain latency) is both
+    // unnecessary and the wrong idiom for mesochronous clocks.  Cross the write
+    // deterministically instead: a TOGGLE event (2-FF synced + edge-detected ->
+    // a 1-cycle apply strobe at a FIXED clk_sys latency) plus a PAYLOAD register
+    // held STABLE across the crossing (a mesochronous data bus; constrain
+    // set_max_delay -datapath_only in the xdc).  The apply cycle is then a known
+    // constant (residual sub-cycle sync uncertainty ~1 clk_sys ~= 7.5 ns << a
+    // 6502 cycle) that the ANTIC-side timing model can compensate.
 
-    cdc_fifo_1w1r #(.DATA_W(24), .ADDR_W(2)) u_hwreg_cdc (
-        .src_clk  (clk_sally),
-        .src_rst  (rst_sally),
-        .wr_en    (hwreg_we),
-        .wr_data  ({hwreg_addr, hwreg_din}),
-        .wr_full  (hwreg_wr_full_unused),
-        .dst_clk  (clk_sys),
-        .dst_rst  (rst_sys),
-        .rd_en    (hwreg_rd_en),
-        .rd_data  (hwreg_rd_data),
-        .rd_empty (hwreg_rd_empty)
-    );
+    // clk_sally: latch {addr,data} + toggle a request on the write pulse.
+    logic [23:0] hwreg_wr_payload_q;
+    logic        hwreg_wr_tog_q;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally) begin
+            hwreg_wr_payload_q <= 24'h0;
+            hwreg_wr_tog_q     <= 1'b0;
+        end else if (hwreg_we) begin
+            hwreg_wr_payload_q <= {hwreg_addr, hwreg_din};
+            hwreg_wr_tog_q     <= ~hwreg_wr_tog_q;
+        end
+    end
 
-    // Generate 1-cycle write strobe on clk_sys.  rd_en pulses high whenever
-    // the FIFO is non-empty; we capture the popped descriptor and present
-    // it (with bus_rw low) to antic_top for one clk_sys cycle.
+    // clk_sys: 2-FF sync the toggle, edge-detect, and apply for one cycle.  If
+    // the read bridge owns the bus (cdc_bus_read) the apply is held pending
+    // until the bus frees — preserving the read/write mutual exclusion the old
+    // FIFO drain had, but with a deterministic (single-entry) apply.
+    logic        hwreg_wr_tog_s0, hwreg_wr_tog_s1, hwreg_wr_tog_s2;
+    logic        hwreg_wr_pending;
     logic        antic_we_q;
     logic [15:0] bus_addr_antic_q;
     logic [7:0]  bus_data_in_antic_q;
-    always_ff @(posedge clk_sys) begin
+    always_ff @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
+            hwreg_wr_tog_s0     <= 1'b0;
+            hwreg_wr_tog_s1     <= 1'b0;
+            hwreg_wr_tog_s2     <= 1'b0;
+            hwreg_wr_pending    <= 1'b0;
             antic_we_q          <= 1'b0;
             bus_addr_antic_q    <= 16'h0000;
             bus_data_in_antic_q <= 8'h00;
         end else begin
-            antic_we_q          <= hwreg_rd_en;
-            bus_addr_antic_q    <= hwreg_rd_data[23:8];
-            bus_data_in_antic_q <= hwreg_rd_data[7:0];
+            hwreg_wr_tog_s0 <= hwreg_wr_tog_q;
+            hwreg_wr_tog_s1 <= hwreg_wr_tog_s0;
+            hwreg_wr_tog_s2 <= hwreg_wr_tog_s1;
+            if (hwreg_wr_tog_s1 ^ hwreg_wr_tog_s2) begin
+                // new write event: apply now if the bus is free, else hold pending.
+                if (!cdc_bus_read) begin
+                    antic_we_q          <= 1'b1;
+                    bus_addr_antic_q    <= hwreg_wr_payload_q[23:8];
+                    bus_data_in_antic_q <= hwreg_wr_payload_q[7:0];
+                    hwreg_wr_pending    <= 1'b0;
+                end else begin
+                    hwreg_wr_pending    <= 1'b1;
+                    antic_we_q          <= 1'b0;
+                end
+            end else if (hwreg_wr_pending && !cdc_bus_read) begin
+                antic_we_q          <= 1'b1;
+                bus_addr_antic_q    <= hwreg_wr_payload_q[23:8];
+                bus_data_in_antic_q <= hwreg_wr_payload_q[7:0];
+                hwreg_wr_pending    <= 1'b0;
+            end else begin
+                antic_we_q          <= 1'b0;
+            end
         end
     end
 
@@ -918,7 +1570,7 @@ module fpga_xt_top (
     // SALLY hwreg reads cross to clk_sys, get presented to ANTIC's
     // combinational read mux, and the byte crosses back.  bus_idle gates
     // the read start so a draining register write can't collide on the bus.
-    wire        hwreg_bus_idle = hwreg_rd_empty & ~antic_we_q;
+    wire        hwreg_bus_idle = ~hwreg_wr_pending & ~antic_we_q;
     hwreg_rd_cdc u_hwreg_rd_cdc (
         .clk_sally (clk_sally),
         .rst_sally (rst_sally),
@@ -979,6 +1631,13 @@ module fpga_xt_top (
     // snoop_we_screen inside antic_top.
     wire [7:0]  antic_bus_data_out;
     wire        antic_bus_data_oe;
+    wire [15:0] rw_tune;           // CTRL_RWTUNE -> antic_gtia cycle offsets
+    wire [15:0] dbg_beampc;        // GP0 DBG_BEAMPC (clk_sys)
+    wire [15:0] beampc_sally;      // ...carried into the CPU's domain
+    wire [6:0]  rw_hcount;         // rewrite beam X, for DBG_BEAM
+    wire [7:0]  rw_vcount_sys;     // rewrite VCOUNT/NMIST (clk_sys); the
+    wire [7:0]  rw_nmist_sys;      // clk_sally copies are declared up by fid_din_mux
+    wire [7:0]  antic_rdata_top;   // legacy ANTIC's ungated read mux
     wire [7:0]  antic_rdata_int;   // ANTIC's UNGATED read mux for the internal CPU's
                                    // hwreg read-back CDC (bus_data_out is ext-bus-gated)
     wire        antic_nmi_n, antic_halt_n, antic_rdy_n, antic_irq_n;
@@ -1029,11 +1688,48 @@ module fpga_xt_top (
     wire [7:0]  antic_wb_pal_idx;
     wire [23:0] antic_wb_pal_rgb;
 
+    // ================================================================
+    // ANTIC/GTIA rewrite (docs/ANTIC-rewrite.md)
+    // ================================================================
+    // Runs alongside the legacy path rather than replacing it: antic_top is
+    // the whole chipset -- POKEY, PIA, the sprite engine and the writeback tap
+    // all live in there -- so the rewrite covers only the display chips and
+    // takes AUTHORITY per sallyrst[3], the same shape as the timing machine on
+    // bit 2.  Power-on 0 keeps every existing path in charge, so a bitstream
+    // carrying this is no riskier to boot than one without it.
+    // The DISPLAY half is no longer a choice: the legacy raster is not built
+    // (LEGACY_RASTER in antic_top), so its writeback tap and fetch address are
+    // tied off and selecting them would give a blank screen.  Leaving this on
+    // sallyrst[3] would have meant the board booting to nothing by default and
+    // looking bricked.
+    //
+    // The TIMING authority further down stays on sallyrst[3], because the
+    // legacy vcount/wsync/NMI generators are NOT part of the compositor and are
+    // still built -- so rdy/steal/NMI can still be A/B'd against them.
+    wire        rw_auth_sys = 1'b1;
+    wire [15:0] rw_mem_addr;
+    wire [7:0]  rw_rdata;
+    wire        rw_steal, rw_rdy_n, rw_nmi_n;
+    wire        rw_lb_wr, rw_lb_line_start;
+    wire [7:0]  rw_lb_color;
+    wire [8:0]  rw_line;
+    wire        rw_wb_pix_valid, rw_wb_row_flush;
+    wire [7:0]  rw_wb_pix_pair, rw_wb_color_lo, rw_wb_color_hi, rw_wb_atari_row;
+    wire [31:0] antic_dbg_gtia;   // TEMP: {colpf0,colpf1,colpf2,colbk}  -> diag8 @ GP0 0x41C
+    wire [31:0] antic_dbg_antic;  // TEMP: {colpf3,prior,chbase,dmactl}  -> diag9 @ GP0 0x420
+    // ANTIC timebase debug probe (DBG_TB_*) between xt_gp0_regs and antic_top.
+    wire [28:0] antic_dbg_tb_cfg;   // cfg out of GP0 -> antic_top (2-FF synced inside antic_top)
+    wire [31:0] antic_dbg_tb_stat;  // status  antic_top -> GP0 (2-FF synced inside GP0)
+    wire [24:0] antic_dbg_tb_cap;   // capture antic_top -> GP0 (2-FF synced inside GP0)
+
     antic_top #(
         .POKEY_CLK_BUS_HZ (150_000_000)     // clk_sys nominal (150 MHz)
     ) u_antic_top (
         .clk_bus            (clk_sys),
         .rst_n              (rst_sys_n),
+        .sally_cold         (sallyrst[0]),      // cold-boot: power-on-clear NMIEN/DMACTL
+        .joy_ovr            (joy_ovr),          // keypad->joystick override (CTRL 0x20; clk_sys)
+        .consol_keys        (consol_keys),      // CONSOL keys (CTRL 0x24; kernel holds OPTION to keep BASIC off)
         .bus_addr           (bus_addr_antic),
         .bus_data_in        (bus_data_in_antic),
         .bus_rw             (bus_rw_antic),
@@ -1041,11 +1737,13 @@ module fpga_xt_top (
         .d4xx_n             (d4xx_n_antic),
         .bus_data_out       (antic_bus_data_out),
         .bus_data_oe        (antic_bus_data_oe),
-        .bus_rdata_int      (antic_rdata_int),   // ungated read mux for hwreg_rd_cdc
+        .bus_rdata_int      (antic_rdata_top),   // ungated read mux for hwreg_rd_cdc
 
+        .phi2_level_o       (antic_phi2_level),  // timing master → fid-core pacing (clk_sally CDC)
         .nmi_n              (antic_nmi_n),
         .halt_n             (antic_halt_n),
         .rdy_n              (antic_rdy_n),
+        .wsync_write_immune (antic_wsync_write_immune),
         .dma_steal          (antic_dma_steal_w),
         .dmactl_honor       (gp0_ctrl[4]),    // PS opt-in: honour DMACTL screen-blank
         .unlock_antic       (xt_unlock[UNLK_ANTIC]),  // mirror-conditional $D4xx decode:
@@ -1076,8 +1774,10 @@ module fpga_xt_top (
         .joy_spi_cs_n       (),
         .joy_spi_int_n      (1'b1),
         // ANTIC's BRAM read port — connects to sally_mem's dma port.
-        .bram_addr          (antic_bram_addr),
+        .bram_addr          (antic_bram_addr_top),
         .bram_rdata         (antic_bram_rdata),
+        .cmp_bram_addr      (antic_cmpram_addr_top),
+        .cmp_bram_rdata     (antic_cmpram_rdata),
         // PORTB state — consumed by sally_mem for ROM vs RAM control.
         .portb_q            (portb_q),
         // ANTIC render tap → DDR3 writeback (HP3, see antic_writeback below).
@@ -1091,6 +1791,11 @@ module fpga_xt_top (
         .wb_pal_we          (antic_wb_pal_we),
         .wb_pal_idx         (antic_wb_pal_idx),
         .wb_pal_rgb         (antic_wb_pal_rgb),
+        .dbg_gtia           (antic_dbg_gtia),
+        .dbg_antic          (antic_dbg_antic),
+        .dbg_tb_cfg         (antic_dbg_tb_cfg),
+        .dbg_tb_stat        (antic_dbg_tb_stat),
+        .dbg_tb_cap         (antic_dbg_tb_cap),
         // Zynq build: sally_* / xlat_phys_addr removed (no shadow SALLY core).
         .adc_bclk_o         (),
         .adc_lrck_o         (),
@@ -1152,18 +1857,222 @@ module fpga_xt_top (
         .disp_vbi    (fb_vbi_start)            // scan-out entered vblank: adopt newest
     );
 
+    // ================================================================
+    // ANTIC/GTIA rewrite — clk_sys, paced by the legacy ANTIC's phi2
+    // ================================================================
+    // It shares the timing master rather than generating its own: two rasters
+    // free-running against each other would put the steal gate on a phase the
+    // CPU never sees.  Edge-detecting antic_phi2_level keeps them in lockstep
+    // whichever holds authority.
+    reg  rw_phi2_q;
+    always_ff @(posedge clk_sys) rw_phi2_q <= antic_phi2_level;
+    wire rw_tick = antic_phi2_level & ~rw_phi2_q;
+
+    // Four hi-res pixels to a machine cycle.  At 150 MHz against 1.79 MHz that
+    // is ~84 clk_sys per cycle, so ~21 per pixel and ~42 per colour clock --
+    // gtia_stage needs 26 of those.  The counter restarts on every tick, so it
+    // re-locks each machine cycle and cannot drift.
+    reg [6:0] rw_px_cnt;
+    always_ff @(posedge clk_sys) begin
+        if (rw_tick)                  rw_px_cnt <= 7'd0;
+        else if (rw_px_cnt != 7'd127) rw_px_cnt <= rw_px_cnt + 7'd1;
+    end
+    wire rw_px_tick = rw_tick || (rw_px_cnt == 7'd20)
+                              || (rw_px_cnt == 7'd41)
+                              || (rw_px_cnt == 7'd62);
+
+    // ---- the display core --------------------------------------------------
+    // antic_gtia (default) or the unified antic2 shell (antic2_fabric) --
+    // phase 2 of docs/antic-unification-plan.md.  The shell is the
+    // ACID-validated core (55/58, zero fails) behind the same ports; the
+    // authority muxes below don't change.  DO NOT flip the default without a
+    // board A/B (XL window render + ACID-in-fabric + textured-background
+    // fidelity): the two cores' cycle grids differ (antic_gtia ran NMIST/NMI
+    // at 8/9 under tune compensation; antic2 pins 6/7 against ACID) and only
+    // hardware can arbitrate the pacing.  Known phase-2 gap: bus_byte_stb
+    // feeds the shell's last-bus latch from ANTIC-page register writes only,
+    // not every snooped data phase -- virtual-playfield/phantom-P/M fidelity
+    // on the fabric side is phase 3 work.
+    localparam bit USE_ANTIC2_FABRIC = 1'b0;
+
+    generate if (USE_ANTIC2_FABRIC) begin : g_antic2_fab
+    antic2_fabric u_antic2_fab (
+        .clk(clk_sys), .rst(rst_sys), .cold(sallyrst[0]),
+        .tick(rw_tick), .px_tick(rw_px_tick),
+        .cs_antic(~d4xx_n_antic), .cs_gtia(~d0xx_n_antic),
+        .addr(bus_addr_antic[7:0]),
+        .we(~bus_rw_antic & (~d4xx_n_antic | ~d0xx_n_antic)),
+        .cpu_writing(~bus_rw_antic),
+        .wdata(bus_data_in_antic),
+        .rdata(rw_rdata),
+        .rdy_n(rw_rdy_n), .nmi_n(rw_nmi_n), .dma_steal(rw_steal),
+        .mem_addr(rw_mem_addr), .mem_data(scrn_shadow_rdata),
+        .bus_byte(bus_data_in_antic),
+        .bus_byte_stb(~bus_rw_antic & (~d4xx_n_antic | ~d0xx_n_antic)),
+        .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
+        .pal_sense(8'h0F), .consol_keys(consol_keys),
+        .tune(rw_tune),
+        .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
+        .lb_line_start(rw_lb_line_start),
+        .hcount(rw_hcount), .line(rw_line), .vcount(rw_vcount_sys),
+        .nmist_o(rw_nmist_sys)
+    );
+    end else begin : g_antic_gtia
+    antic_gtia u_antic_gtia (
+        .clk(clk_sys), .rst(rst_sys), .cold(sallyrst[0]),
+        .tick(rw_tick), .px_tick(rw_px_tick),
+        .cs_antic(~d4xx_n_antic), .cs_gtia(~d0xx_n_antic),
+        .addr(bus_addr_antic[7:0]),
+        .we(~bus_rw_antic & (~d4xx_n_antic | ~d0xx_n_antic)),
+        .wdata(bus_data_in_antic),
+        .rdata(rw_rdata),
+        .rdy_n(rw_rdy_n), .nmi_n(rw_nmi_n), .dma_steal(rw_steal),
+        // sally_mem's DMA port -- the REAL 64 K, ROM included.  Not the
+        // compositor's display shadow: that is write-MIRRORED, so it carries
+        // what the CPU has stored but not the OS character set at $E000.  With
+        // the shadow, mode 2 rendered correctly and every glyph came back $00,
+        // which put a uniform COLPF2 blue on screen -- the right colour for a
+        // GR.0 background, with no text on it.  The legacy dl_parser used this
+        // port for the same reason, and it is free now.
+        .mem_addr(rw_mem_addr), .mem_data(scrn_shadow_rdata),
+        // TRIG0-3 released. The legacy path feeds these from the PIA joystick
+        // (antic_top's trig_high); nothing in ACID presses one, but a game
+        // would need them threaded through here.
+        .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
+        // $D014 PAL: $0F = NTSC, and this machine IS NTSC —
+        // LINES_PER_FRAME is 262, so VCOUNT only ever reaches 130.  Reporting
+        // $0E told software it was PAL while the beam kept NTSC time, and
+        // antic_vcount HUNG on it for ever: it reads $D014, picks 155 as the
+        // last VCOUNT of a PAL frame, and then waits for a value that cannot
+        // occur.  antic_top says `.pal_sense_in(8'h0F), // NTSC` and this must
+        // agree with it — the OS reads the same register to set up VBI timing.
+        .pal_sense(8'h0F), .consol_keys(consol_keys),
+        .tune(rw_tune),
+        .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
+        .lb_line_start(rw_lb_line_start),
+        .hcount(rw_hcount), .line(rw_line), .vcount(rw_vcount_sys), .line_start(), .dlpc(),
+        .nmist_o(rw_nmist_sys)
+    );
+    end endgenerate
+
+    // ---- VCOUNT/NMIST across to the CPU's clock -------------------------
+    // The rewrite lives in clk_sys; the fid core reads these in clk_sally and
+    // needs them in the SAME machine cycle (see fid_din_mux).  Both change at
+    // most once a scanline, which is ~6,400 clk_sys -- three orders of
+    // magnitude slower than the crossing -- so xt_mbit_cdc's stability
+    // constraint is met with enormous margin.  ONE 16-bit crossing, not two
+    // 8-bit ones, so a read can never mix a new VCOUNT with an old NMIST.
+    xt_mbit_cdc #(.W(16)) u_rw_vn_cdc (
+        .src_clk (clk_sys),    .src_rst (rst_sys),
+        .src_data({rw_nmist_sys, rw_vcount_sys}),
+        .dst_clk (clk_sally),  .dst_rst (rst_sally),
+        .dst_data(rw_vn_sally)
+    );
+
+
+    // ---- DBG_BEAM: where the beam was when the core stopped ---------------
+    // /bin/6502 halts the CPU at an instruction boundary; this latches ANTIC's
+    // position at that moment, so an instruction can be read off against the
+    // cycle numbers ACID annotates its kernels with (104, 105, ... 113, 0, 1).
+    // Every remaining timing failure is of the form "this instruction ran one
+    // cycle early/late" and until now there was no way to see WHICH cycle any
+    // instruction actually ran on -- the trace ring records PC, not the beam.
+    //
+    // Only the halt flag crosses (one bit, 2-FF); the beam itself is sampled in
+    // its own domain on the synchronised edge, so nothing multi-bit crosses.
+    //
+    // DBG_BEAM2 is the same idea WITHOUT halting: it stamps the beam when the
+    // core reaches DBG_BEAMPC.  That is what makes an INTERVAL measurable, and
+    // an interval is what every remaining timing failure is about.  Two beam
+    // readings from two separate xexloads cannot be subtracted -- the test
+    // lands on a different scanline each run (measured: the same instruction on
+    // lines 253, 254, 259, 260) -- and two halts in one run do not work either,
+    // because the beam keeps running while the CPU is stopped.  Stamping one
+    // instruction in flight and halting on a later one gives both ends of the
+    // interval from a single run.
+    (* ASYNC_REG = "TRUE" *) reg [1:0] beam_halt_s;
+    reg [31:0] rw_beam_q;
+    always_ff @(posedge clk_sys or posedge rst_sys) begin
+        if (rst_sys) begin
+            beam_halt_s <= 2'b00;
+            rw_beam_q   <= 32'd0;
+        end else begin
+            beam_halt_s <= {beam_halt_s[0], fdbg_cpu_halt};
+            if (beam_halt_s[0] & ~beam_halt_s[1])       // rising edge of "halted"
+                rw_beam_q <= {9'd0, rw_hcount, 7'd0, rw_line};
+        end
+    end
+
+    // beampc is quasi-static (written once per experiment) but it is still 16
+    // bits crossing a domain, so it goes through the tested crossing rather
+    // than a hand-rolled 2-FF.
+    xt_mbit_cdc #(.W(16)) u_beampc_cdc (
+        .src_clk(clk_sys),   .src_rst(rst_sys),  .src_data(dbg_beampc),
+        .dst_clk(clk_sally), .dst_rst(rst_sally),.dst_data(beampc_sally)
+    );
+
+    // fid_sync_d is already maintained by the icnt counter above; reuse it
+    // rather than keeping a second copy of the same edge.
+    wire fid_bnd  = fid_sync & ~fid_sync_d;              // instruction boundary
+    reg  beam_tgl;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally)                                   beam_tgl <= 1'b0;
+        else if (fid_bnd && (fdbg_pc == beampc_sally))   beam_tgl <= ~beam_tgl;
+    end
+
+    (* ASYNC_REG = "TRUE" *) reg [2:0] beam_tgl_s;
+    reg [31:0] rw_beam2_q;
+    always_ff @(posedge clk_sys or posedge rst_sys) begin
+        if (rst_sys) begin
+            beam_tgl_s <= 3'b000;
+            rw_beam2_q <= 32'd0;
+        end else begin
+            beam_tgl_s <= {beam_tgl_s[1:0], beam_tgl};
+            if (beam_tgl_s[2] ^ beam_tgl_s[1])
+                rw_beam2_q <= {9'd0, rw_hcount, 7'd0, rw_line};
+        end
+    end
+
+    // Whoever holds authority drives the fetch address and answers reads.
+    assign antic_bram_addr   = rw_auth_sys ? rw_mem_addr : antic_bram_addr_top;
+    assign antic_cmpram_addr = antic_cmpram_addr_top;
+    // The rewrite answers ONLY the two pages it decodes.  antic_rdata_top is
+    // not "the legacy raster's read mux" -- it is antic_top's WHOLE-CHIPSET mux
+    // ($D0xx GTIA, $D2xx POKEY, $D3xx PIA, $D4xx ANTIC), and antic_top is the
+    // whole chipset.  Handing every read to the rewrite therefore answered
+    // POKEY and PIA out of a block that does not decode them: PACTL read back
+    // $FF instead of $3F, RANDOM read $FF so the polys looked frozen, and every
+    // IRQST poll saw "no interrupt".  That is ~10 ACID failures with nothing
+    // wrong in the rewrite -- pia_basic/pia_irq, six pokey_*, cpu_clisei,
+    // mmu_xlbanking (PORTB), and antic_wsync, which reads RANDOM before it ever
+    // reaches WSYNC.  Gate on the same decode that drives cs_antic/cs_gtia.
+    wire rw_serves_rd = ~d4xx_n_antic | ~d0xx_n_antic;
+    assign antic_rdata_int   = (rw_auth_sys & rw_serves_rd) ? rw_rdata
+                                                            : antic_rdata_top;
+
+    antic_wb_adapt u_antic_wb_adapt (
+        .clk(clk_sys), .rst(rst_sys),
+        .overscan(xl_win_ovs),
+        .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
+        .lb_line_start(rw_lb_line_start), .line(rw_line),
+        .pix_valid(rw_wb_pix_valid), .pix_pair(rw_wb_pix_pair),
+        .color_lo(rw_wb_color_lo), .color_hi(rw_wb_color_hi),
+        .atari_row(rw_wb_atari_row), .row_flush(rw_wb_row_flush)
+    );
+
     // The scan-out palette is baked in via the ANTIC_PALETTE_HEX macro in
     // antic_writeback.sv (Atari NTSC table); $D483-$D486 can override at runtime.
     antic_writeback u_antic_writeback (
         .clk_sys      (clk_sys),
         .rst_sys      (rst_sys),
         // Render tap (clk_sys) from antic_top
-        .pix_valid    (antic_wb_pix_valid),
-        .pix_pair     (antic_wb_pix_pair),
-        .color_lo     (antic_wb_color_lo),
-        .color_hi     (antic_wb_color_hi),
-        .atari_row    (antic_wb_atari_row),
-        .row_flush    (antic_wb_row_flush & ddr_warm),   // held off until DDR/AXI up
+        .pix_valid    (rw_auth_sys ? rw_wb_pix_valid : antic_wb_pix_valid),
+        .pix_pair     (rw_auth_sys ? rw_wb_pix_pair  : antic_wb_pix_pair),
+        .color_lo     (rw_auth_sys ? rw_wb_color_lo  : antic_wb_color_lo),
+        .color_hi     (rw_auth_sys ? rw_wb_color_hi  : antic_wb_color_hi),
+        .atari_row    (rw_auth_sys ? rw_wb_atari_row : antic_wb_atari_row),
+        .row_flush    ((rw_auth_sys ? rw_wb_row_flush
+                                    : antic_wb_row_flush) & ddr_warm),   // held off until DDR/AXI up
         // Palette writes (mirror ANTIC's palette)
         .pal_we       (antic_wb_pal_we),
         .pal_idx      (antic_wb_pal_idx),
@@ -1240,7 +2149,7 @@ module fpga_xt_top (
         .cpu_bank_wval(scrn_bank_wval),.cpu_bank_we(scrn_cpu_bank_we),
         .ready        (scrn_ready),
         .clk_antic    (clk_sys),
-        .antic_addr   (antic_bram_addr[12:0]), .antic_rdata (scrn_antic_rdata),
+        .antic_addr   (antic_cmpram_addr[12:0]), .antic_rdata (scrn_antic_rdata),
         .antic_bank_wval(scrn_bank_wval), .antic_bank_we (scrn_antic_bank_we),
         .vbi          (antic_wb_frame_done),   .antic_banked (scrn_antic_banked),
         .e_axi_araddr (sb_araddr),  .e_axi_arlen (sb_arlen),  .e_axi_arsize (sb_arsize),
@@ -1271,31 +2180,124 @@ module fpga_xt_top (
     wire        math_done_we   = 1'b0;
 `endif
 
-    math_cop #(.STACK_BASE(32'h2080_0000), .APERTURE_LOG2(13)) u_math_cop (
-        .clk          (clk_sys),       .rst        (rst_sys),
-        .clk_cpu      (clk_sally),
-        .cpu_addr     (scrn_cpu_addr), .cpu_we     (math_cpu_we), .cpu_wdata (scrn_cpu_wdata),
-        .cpu_rden     (sally_rdy),     // freeze the page read register while the CPU stalls
-        .cpu_rdata    (math_cpu_rdata),
-        .exec_we      (math_exec_we),
-        .chunk_wval   (scrn_bank_wval), .chunk_we  (math_chunk_we),
-        .math_done    (math_done),
-        .math_busy    (math_busy),
-        .chunk_ready  (math_chunk_ready),
-        .evt_data     (math_evt_data),  .evt_pop   (math_evt_pop),
-        .evt_irq      (math_irq),
-        .done_word    (math_done_word), .done_we   (math_done_we),
-        .stat_word    (math_stat_word),
-        .e_axi_araddr (mc_araddr),  .e_axi_arlen (mc_arlen),  .e_axi_arsize (mc_arsize),
-        .e_axi_arburst(mc_arburst), .e_axi_arvalid(mc_arvalid),.e_axi_arready(mc_arready),
-        .e_axi_rdata  (mc_rdata),   .e_axi_rvalid(mc_rvalid),  .e_axi_rlast (mc_rlast),
-        .e_axi_rready (mc_rready),
-        .e_axi_awaddr (mc_awaddr),  .e_axi_awlen (mc_awlen),  .e_axi_awsize (mc_awsize),
-        .e_axi_awburst(mc_awburst), .e_axi_awvalid(mc_awvalid),.e_axi_awready(mc_awready),
-        .e_axi_wdata  (mc_wdata),   .e_axi_wstrb (mc_wstrb),  .e_axi_wlast (mc_wlast),
-        .e_axi_wvalid (mc_wvalid),  .e_axi_wready(mc_wready),
-        .e_axi_bvalid (mc_bvalid),  .e_axi_bready(mc_bready)
-    );
+    // ---- SIO mailbox data window (0xAxx) ----------------------------------
+    // Same PS-BD-only shape as the mailbox strobes above: the A9 drives these
+    // through xt_gp0_regs, and the OOC/sim path ties them off.
+    wire [31:0] sio_rdata;
+`ifdef USE_PS_BD
+    wire [8:0]  sio_ptr;
+    wire        sio_ptr_we;
+    wire [31:0] sio_wdata;
+    wire        sio_we;
+    wire        sio_rd;
+`else
+    wire [8:0]  sio_ptr    = 9'd0;
+    wire        sio_ptr_we = 1'b0;
+    wire [31:0] sio_wdata  = 32'd0;
+    wire        sio_we     = 1'b0;
+    wire        sio_rd     = 1'b0;
+`endif
+
+    // ================================================================
+    // Math coprocessor — NOT BUILT
+    // ================================================================
+    // Dropped with the turbo core: the maths co-pro and the code/data banking
+    // exist for supersally and nothing else uses them, so they go together
+    // (docs/ANTIC-rewrite.md, the reset decision).  Gated by a generate rather
+    // than deleted -- the instantiation and every connection stay exactly as
+    // they were, so bringing it back is one bit.
+    //
+    // A module with live AXI master outputs is NOT pruned by tying its inputs
+    // off, which is why this needs the generate: the engine would sit there
+    // occupying slices in a design already at 99.62%.
+    localparam bit ENABLE_MATH_COP = 1'b0;
+
+    generate
+    if (ENABLE_MATH_COP) begin : g_math_cop
+        // With the maths engine back, IT owns the $D5C6/$D5C7/$D5C8 + $4000
+        // contract and the SIO mailbox is not built, so its window reads 0.
+        // NOTE: paravirtual SIO does not work in this configuration — the boot
+        // stub's page would be math_cop's DDR-backed one again, which also means
+        // flipping MC_SIO_VIA_MBOX to 0 in mathcop.h.
+        assign sio_rdata = 32'd0;
+        math_cop #(.STACK_BASE(32'h2080_0000), .APERTURE_LOG2(13)) u_math_cop (
+            .clk          (clk_sys),       .rst        (rst_sys),
+            .clk_cpu      (clk_sally),
+            .cpu_addr     (scrn_cpu_addr), .cpu_we     (math_cpu_we), .cpu_wdata (scrn_cpu_wdata),
+            .cpu_rden     (sally_rdy),     // freeze the page read register while the CPU stalls
+            .cpu_rdata    (math_cpu_rdata),
+            .exec_we      (math_exec_we),
+            .chunk_wval   (scrn_bank_wval), .chunk_we  (math_chunk_we),
+            .math_done    (math_done),
+            .math_busy    (math_busy),
+            .chunk_ready  (math_chunk_ready),
+            .evt_data     (math_evt_data),  .evt_pop   (math_evt_pop),
+            .evt_irq      (math_irq),
+            .done_word    (math_done_word), .done_we   (math_done_we),
+            .stat_word    (math_stat_word),
+            .e_axi_araddr (mc_araddr),  .e_axi_arlen (mc_arlen),  .e_axi_arsize (mc_arsize),
+            .e_axi_arburst(mc_arburst), .e_axi_arvalid(mc_arvalid),.e_axi_arready(mc_arready),
+            .e_axi_rdata  (mc_rdata),   .e_axi_rvalid(mc_rvalid),  .e_axi_rlast (mc_rlast),
+            .e_axi_rready (mc_rready),
+            .e_axi_awaddr (mc_awaddr),  .e_axi_awlen (mc_awlen),  .e_axi_awsize (mc_awsize),
+            .e_axi_awburst(mc_awburst), .e_axi_awvalid(mc_awvalid),.e_axi_awready(mc_awready),
+            .e_axi_wdata  (mc_wdata),   .e_axi_wstrb (mc_wstrb),  .e_axi_wlast (mc_wlast),
+            .e_axi_wvalid (mc_wvalid),  .e_axi_wready(mc_wready),
+            .e_axi_bvalid (mc_bvalid),  .e_axi_bready(mc_bready)
+        );
+    end else begin : g_no_math_cop
+        // ------------------------------------------------------------------
+        // No maths engine — but the $D5C6/$D5C7/$D5C8 + $4000 aperture contract
+        // is NOT the maths engine's alone: the XL OS boot stub borrows it to
+        // reach the A9 for paravirtual SIO.  Tying math_done to 1'b0 here (the
+        // first cut of this drop) is exactly the bit that stub polls, so every
+        // cold boot wedged at $CB8A and no .xex or .atr could be launched.
+        //
+        // xt_sio_mbox serves that contract on its own: 512 B of dual-port BRAM
+        // and a two-toggle handshake, no DDR engine, no AXI master.  See
+        // hdl/xt_sio_mbox.sv.
+        xt_sio_mbox #(.APERTURE_LOG2(13), .MBOX_LOG2(9)) u_sio_mbox (
+            .clk        (clk_sys),        .rst      (rst_sys),
+            .evt_data   (math_evt_data),  .evt_pop  (math_evt_pop),
+            .evt_irq    (math_irq),
+            .done_we    (math_done_we),   .stat_word(math_stat_word),
+            .a9_ptr     (sio_ptr),        .a9_ptr_we(sio_ptr_we),
+            .a9_wdata   (sio_wdata),      .a9_we    (sio_we),
+            .a9_rd      (sio_rd),         .a9_rdata (sio_rdata),
+            .clk_cpu    (clk_sally),      .rst_cpu  (rst_sally),
+            .cpu_addr   (scrn_cpu_addr),  .cpu_we   (math_cpu_we),
+            .cpu_wdata  (scrn_cpu_wdata),
+            // mem_rdy, NOT sally_rdy: this gate exists so the page read register
+            // tracks sally_mem's bram_dout_q exactly, and sally_mem steps on
+            // mem_rdy.  The two are the same signal only for the turbo core;
+            // for the fid core (the one that is built) mem_rdy is the
+            // early-window pulse, so math_cop's original .cpu_rden(sally_rdy)
+            // would have frozen on the wrong edge and returned neighbouring
+            // bytes on any stalled cycle.
+            .cpu_rden   (mem_rdy),        .cpu_rdata(math_cpu_rdata),
+            .exec_we    (math_exec_we),
+            .done       (math_done),      .busy     (math_busy),
+            .chunk_ready(math_chunk_ready)
+        );
+        assign mc_araddr       = '0;
+        assign mc_arlen        = 4'd0;
+        assign mc_arsize       = 3'd0;
+        assign mc_arburst      = 2'd0;
+        assign mc_arvalid      = 1'b0;
+        assign mc_rready       = 1'b0;
+        assign mc_awaddr       = '0;
+        assign mc_awlen        = 4'd0;
+        assign mc_awsize       = 3'd0;
+        assign mc_awburst      = 2'd0;
+        assign mc_awvalid      = 1'b0;
+        assign mc_wdata        = 32'd0;
+        assign mc_wstrb        = 4'd0;
+        assign mc_wlast        = 1'b0;
+        assign mc_wvalid       = 1'b0;
+        assign mc_bready       = 1'b0;
+    end
+    endgenerate
+
 
     gp0_axi_mux u_gp0_axi_mux (
         .clk        (clk_sys),      .rst        (rst_sys),
@@ -1390,7 +2392,7 @@ module fpga_xt_top (
         if (hp0_overrun)    desk_overrun_cnt <= desk_overrun_cnt + 16'd1;
     end
     wire [31:0] diag6_word = {xl_abort_cnt, desk_abort_cnt};
-    wire [31:0] diag7_word = {desk_overrun_cnt, xl_overrun_cnt};
+    wire [31:0] diag7_word = {overlay_base[15:0], 8'h00, scrn_shadow_rdata}; // TEMP: peek addr echo + byte@mem[addr]
 
     // ---- ROM-window upload diagnostic (TEMP, localises the dead-upload bug) --
     // The upload logic is sim-clean (tb_rom_integ) but the board's 6502 never
@@ -1420,12 +2422,49 @@ module fpga_xt_top (
         ad_s0 <= romdiag_addr; ad_s1 <= ad_s0;
         da_s0 <= romdiag_data; da_s1 <= da_s0;
     end
-    assign diag8_word = {romdiag_axi, we_s1};                 // [31:16]=AXI accepts, [15:0]=rom_we
-    assign diag9_word = {8'd0, ad_s1, da_s1};                 // [23:8]=last addr, [7:0]=last data
+    assign diag8_word = antic_dbg_antic;   // TEMP: ANTIC-side DLI diag {nmien_q,nmist_q,dli_cnt,mode}
+    assign diag9_word = dli_diag_word;     // TEMP: fid-side DLI-delivery instrumentation
 `else
-    assign diag8_word = 32'd0;
-    assign diag9_word = 32'd0;
+    assign diag8_word = antic_dbg_antic;
+    assign diag9_word = dli_diag_word;
 `endif
+
+    // ---- TEMP DLI-delivery diagnostic (clk_sally) ------------------------
+    // The ACID800 DLI cluster fails "DLIs did not fire" even though the DLI
+    // GENERATION path is proven correct in sim.  Instrument the fid core's view
+    // of NMI delivery + dispatch:
+    //   [31:24] NMIs the fid core saw   (nmi_n_sync falling edges)
+    //   [23:16] $D40F (NMIST) reads that returned bit7=1 (a DLI to dispatch)
+    //   [15:8]  $D40F reads total
+    //   [7:0]   last NMIST byte the CPU actually read
+    // If the core sees NMIs but never reads bit7=1, the DLI status never
+    // reaches the CPU (readback path); if it reads bit7=1 but dli1 still never
+    // runs, the bug is past the read.
+    // Name the code that clears NMIEN[7]. On the fid write to $D40E (clk_sally,
+    // captured once at the data sub-cycle), track whether bit7 was ever set;
+    // the FIRST write that clears it after that latches the writing PC + value.
+    // That PC is the instruction the DLI cluster's "DLIs did not fire" hinges on.
+    (* keep = "true" *) reg [15:0] clr_pc    = 16'd0;   // PC that cleared NMIEN[7]
+    (* keep = "true" *) reg  [7:0] clr_val   = 8'd0;    // value it wrote
+    (* keep = "true" *) reg  [7:0] nmien_wr_cnt = 8'd0; // total $D40E writes seen
+    reg        saw_nmien7 = 1'b0;                        // bit7 was set at some point
+    reg        clr_captured = 1'b0;
+    reg        d40e_wr_q = 1'b0;
+    wire       d40e_wr = (fid_addr == 16'hD40E) & ~fid_rw & (fid_sub == 8'd49);
+    always_ff @(posedge clk_sally) begin
+        d40e_wr_q <= d40e_wr;
+        if (d40e_wr && !d40e_wr_q) begin           // one capture per write
+            nmien_wr_cnt <= nmien_wr_cnt + 8'd1;
+            if (fid_dout[7]) saw_nmien7 <= 1'b1;
+            else if (saw_nmien7 && !clr_captured) begin
+                clr_pc       <= fdbg_pc;
+                clr_val      <= fid_dout;
+                clr_captured <= 1'b1;
+            end
+        end
+    end
+    // {PC that cleared NMIEN[7], value written, total NMIEN writes}
+    wire [31:0] dli_diag_word = {clr_pc, clr_val, nmien_wr_cnt};
 
     // ====================================================================
     // Display: plane compositor (vbeam + plane_fetch x N + plane_compositor)
@@ -1849,6 +2888,7 @@ module fpga_xt_top (
     // xl_win_en=0 -> legacy gp0_ctrl-scale centred placement below.
     wire [11:0] xl_win_x, xl_win_y, xl_win_w, xl_win_h;
     wire [2:0]  xl_win_scale;
+    wire        xl_win_ovs;      // XLCTL SCALE bit 3: overscan capture
     wire        xl_win_en;
     wire        xl_win_we;          // commit strobe (clk_sys)
     // Cross the XL-window rect to clk_pix on the commit strobe — multi-bit, so a
@@ -2680,10 +3720,18 @@ module fpga_xt_top (
     // into /dev/urandom.  clk_sys is always-on (unlike clk_pix, which the new
     // video-sleep bit can gate), so entropy keeps flowing with the display asleep.
     wire [31:0] trng_word;
+    wire [5:0] trng_bits_avail;
+    wire       trng_fresh;
+    wire       trng_rd_pop;
+    wire [31:0] trng_stat_word = {23'd0, trng_fresh, 2'd0, trng_bits_avail};
+
     xt_trng #(.N_RO(24), .STAGES(3)) u_trng (
-        .clk   (clk_sys),
-        .rst_n (rst_sys_n),
-        .rnd   (trng_word)
+        .clk        (clk_sys),
+        .rst_n      (rst_sys_n),
+        .rnd        (trng_word),
+        .rd_stb     (trng_rd_pop),
+        .bits_avail (trng_bits_avail),
+        .fresh      (trng_fresh)
     );
 
     xt_gp0_regs u_axi_bridge (
@@ -2729,11 +3777,15 @@ module fpga_xt_top (
         .diag7_word      (diag7_word),
         .diag8_word      (diag8_word),
         .diag9_word      (diag9_word),
+        .trng_stat_word (trng_stat_word),
+        .trng_rd_pop    (trng_rd_pop),
         .trng_word       (trng_word),        // ring-oscillator entropy (0x7xx)
         .clock_mult      (eff_clock_mult_sys), // effective $D4CA speed, read back at GP0 offset 0x1E
         .gp0_ctrl        (gp0_ctrl),
         .cmpcfg          (cmpcfg),           // compositor plane arrangement (CTRL 0x18)
         .sallyrst        (sallyrst),         // SALLY reset hold (CTRL 0x1C)
+        .joy_ovr         (joy_ovr),          // keypad->joystick override (CTRL 0x20)
+        .consol_keys     (consol_keys),      // CONSOL keys (CTRL 0x24)
         .xt_unlock_we    (xt_unlock_we),     // A9 unlock write strobe (offset 0x20)
         .xt_unlock_state (xt_unlock),        // effective unlock, read-back at 0x20
         .overlay_base    (overlay_base),     // drag-overlay config (offsets 0x21-0x2F)
@@ -2748,13 +3800,58 @@ module fpga_xt_top (
         .xl_win_w        (xl_win_w),
         .xl_win_h        (xl_win_h),
         .xl_win_scale    (xl_win_scale),
+        .xl_win_ovs      (xl_win_ovs),
         .xl_win_en       (xl_win_en),
         .xl_win_we       (xl_win_we),
         .math_evt_data   (math_evt_data),    // math-coprocessor mailbox (0x6xx)
         .math_evt_pop    (math_evt_pop),
         .math_done_word  (math_done_word),
         .math_done_we    (math_done_we),
-        .math_stat_word  (math_stat_word)
+        .math_stat_word  (math_stat_word),
+        .sio_ptr         (sio_ptr),          // paravirtual SIO mailbox window (0xAxx)
+        .sio_ptr_we      (sio_ptr_we),
+        .sio_wdata       (sio_wdata),
+        .sio_we          (sio_we),
+        .sio_rd          (sio_rd),
+        .sio_rdata       (sio_rdata),
+        .rw_tune         (rw_tune),          // ANTIC-rewrite cycle tune (0xCTRL+0x28)
+        // ---- 6502 debugger control/status (0x8xx) ----
+        .dbg_halt_tog    (gdbg_halt_tog),
+        .dbg_go_tog      (gdbg_go_tog),
+        .dbg_step_tog    (gdbg_step_tog),
+        .dbg_commit_tog  (gdbg_commit_tog),
+        .dbg_cfg         (gdbg_cfg),
+        .dbg_bkpt_addr   (gdbg_bkpt),
+        .dbg_wp_addr     (gdbg_wp),
+        .dbg_wp_cfg      (gdbg_wpcfg),
+        .dbg_diag        (sdbg_diag),
+        .dbg_step_count  (gdbg_stepcnt),
+        .dbg_wpc         (gdbg_wpc),
+        .dbg_waxys       (gdbg_waxys),
+        .dbg_wpsh        (gdbg_wpsh),
+        .dbg_stat        (sdbg_stat),
+        .dbg_snap_pc     (sdbg_pc),
+        .dbg_snap_axys   (sdbg_axys),
+        .dbg_snap_psh    (sdbg_psh),
+        .dbg_icnt        (sdbg_icnt),
+        .dbg_beam        (rw_beam_q),        // ANTIC beam at the halt boundary
+        .dbg_beampc      (dbg_beampc),
+        .dbg_beam2       (rw_beam2_q),       // ANTIC beam at DBG_BEAMPC (no halt)
+        .dbg_trc_ctrl    (gdbg_trc_ctrl),
+        .dbg_trc_idx     (gdbg_trc_idx),
+        .dbg_trc_wptr    (sdbg_trc_wptr),
+        .dbg_trc_pc      (sdbg_trc_pc),
+        .dbg_trc_axys    (sdbg_trc_axys),
+        .dbg_trc_p       (sdbg_trc_p),
+        .dbg_strm_ctrl   (gdbg_strm_ctrl),   // FID streaming trace (0x860..0x874)
+        .dbg_strm_raddr  (gdbg_strm_raddr),
+        .dbg_strm_flush  (sdbg_strm_flush),
+        .dbg_strm_wptr   (sdbg_strm_wptr),
+        .dbg_strm_rd     (sdbg_strm_rd),
+        // ANTIC timebase debug probe (DBG_TB_*, 0x878..0x880)
+        .dbg_tb_cfg      (antic_dbg_tb_cfg),
+        .dbg_tb_stat     (antic_dbg_tb_stat),
+        .dbg_tb_cap      (antic_dbg_tb_cap)
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.

@@ -188,6 +188,14 @@ module tb_boot;
     // ====================================================================
     // sally_mem (fpga_xt_top lines ~576-631) — OS ROM path overridden.
     // ====================================================================
+    // Display-shadow mirror + compositor-port nets (declared ahead of both
+    // instances that use them).
+    wire        mirror_we_w;
+    wire [15:0] mirror_addr_w;
+    wire [7:0]  mirror_din_w;
+    wire [15:0] antic_cmpram_addr;
+    wire [7:0]  antic_cmpram_rdata;
+
     sally_mem #(
         .OS_ROM_HEX_PATH ("../rsrc/sally-boot.hex"),
         .SELFTEST_HEX_PATH ("../rsrc/selftest.hex"),
@@ -196,6 +204,7 @@ module tb_boot;
     ) u_sally_mem (
         .clk        (clk_sally),
         .rst        (rst_sally),
+        .cold       (1'b0),
         .addr       (cpu_addr),
         .data_in    (cpu_dout),
         .rw         (cpu_rw),
@@ -242,9 +251,26 @@ module tb_boot;
         .rom_addr    (rom_load_addr),
         .rom_data    (rom_load_data),
         .rom_we      (rom_load_we),
+        .mirror_we_q   (mirror_we_w),
+        .mirror_addr_q (mirror_addr_w),
+        .mirror_din_q  (mirror_din_w),
         .dma_clk     (clk_sys),
         .dma_addr    (antic_bram_addr),
         .dma_rdata   (antic_bram_rdata)
+    );
+
+    // Display-shadow copy — wired exactly like fpga_xt_top (write-mirrored
+    // from sally_mem's single write site; compositor reads it).
+    display_shadow u_display_shadow (
+        .clk_cpu  (clk_sally),
+        .mir_we   (mirror_we_w),
+        .mir_addr (mirror_addr_w),
+        .mir_din  (mirror_din_w),
+        .tm_addr  (16'h0000),
+        .tm_data  (),
+        .clk_disp (clk_sys),
+        .rd_addr  (antic_cmpram_addr),
+        .rd_data  (antic_cmpram_rdata)
     );
 
     // ====================================================================
@@ -314,36 +340,57 @@ module tb_boot;
     wire        is_xtc_ctl     = (cpu_addr[15:1] == 15'h6AE0);   // $D5C0-$D5C1
     wire        hwreg_cdc_rd   = hwreg_page_rd & ~is_blitter_reg & ~is_xtc_ctl;
 
-    wire        hwreg_wr_full_unused;
-    wire        hwreg_rd_empty;
-    wire [23:0] hwreg_rd_data;
-    wire        hwreg_rd_en = ~hwreg_rd_empty & ~cdc_bus_read;
+    // Deterministic mesochronous SALLY->ANTIC register-write handoff — mirrors
+    // fpga_xt_top exactly (replaced the old cdc_fifo_1w1r).  See fpga_xt_top for
+    // the rationale (phase-locked 3:4 clocks, single write in flight).
+    logic [23:0] hwreg_wr_payload_q;
+    logic        hwreg_wr_tog_q;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally) begin
+            hwreg_wr_payload_q <= 24'h0;
+            hwreg_wr_tog_q     <= 1'b0;
+        end else if (hwreg_we) begin
+            hwreg_wr_payload_q <= {hwreg_addr, hwreg_din};
+            hwreg_wr_tog_q     <= ~hwreg_wr_tog_q;
+        end
+    end
 
-    cdc_fifo_1w1r #(.DATA_W(24), .ADDR_W(2)) u_hwreg_cdc (
-        .src_clk  (clk_sally),
-        .src_rst  (rst_sally),
-        .wr_en    (hwreg_we),
-        .wr_data  ({hwreg_addr, hwreg_din}),
-        .wr_full  (hwreg_wr_full_unused),
-        .dst_clk  (clk_sys),
-        .dst_rst  (rst_sys),
-        .rd_en    (hwreg_rd_en),
-        .rd_data  (hwreg_rd_data),
-        .rd_empty (hwreg_rd_empty)
-    );
-
+    logic        hwreg_wr_tog_s0, hwreg_wr_tog_s1, hwreg_wr_tog_s2;
+    logic        hwreg_wr_pending;
     logic        antic_we_q;
     logic [15:0] bus_addr_antic_q;
     logic [7:0]  bus_data_in_antic_q;
-    always_ff @(posedge clk_sys) begin
+    always_ff @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
+            hwreg_wr_tog_s0     <= 1'b0;
+            hwreg_wr_tog_s1     <= 1'b0;
+            hwreg_wr_tog_s2     <= 1'b0;
+            hwreg_wr_pending    <= 1'b0;
             antic_we_q          <= 1'b0;
             bus_addr_antic_q    <= 16'h0000;
             bus_data_in_antic_q <= 8'h00;
         end else begin
-            antic_we_q          <= hwreg_rd_en;
-            bus_addr_antic_q    <= hwreg_rd_data[23:8];
-            bus_data_in_antic_q <= hwreg_rd_data[7:0];
+            hwreg_wr_tog_s0 <= hwreg_wr_tog_q;
+            hwreg_wr_tog_s1 <= hwreg_wr_tog_s0;
+            hwreg_wr_tog_s2 <= hwreg_wr_tog_s1;
+            if (hwreg_wr_tog_s1 ^ hwreg_wr_tog_s2) begin
+                if (!cdc_bus_read) begin
+                    antic_we_q          <= 1'b1;
+                    bus_addr_antic_q    <= hwreg_wr_payload_q[23:8];
+                    bus_data_in_antic_q <= hwreg_wr_payload_q[7:0];
+                    hwreg_wr_pending    <= 1'b0;
+                end else begin
+                    hwreg_wr_pending    <= 1'b1;
+                    antic_we_q          <= 1'b0;
+                end
+            end else if (hwreg_wr_pending && !cdc_bus_read) begin
+                antic_we_q          <= 1'b1;
+                bus_addr_antic_q    <= hwreg_wr_payload_q[23:8];
+                bus_data_in_antic_q <= hwreg_wr_payload_q[7:0];
+                hwreg_wr_pending    <= 1'b0;
+            end else begin
+                antic_we_q          <= 1'b0;
+            end
         end
     end
 
@@ -358,7 +405,7 @@ module tb_boot;
                              : ~(antic_we_q && (bus_addr_antic_q[15:8] == 8'hD4));
 
     // ---- Register read-back CDC bridge (fpga_xt_top lines ~705-719) -----
-    wire        hwreg_bus_idle = hwreg_rd_empty & ~antic_we_q;
+    wire        hwreg_bus_idle = ~hwreg_wr_pending & ~antic_we_q;
     wire [7:0]  antic_rd_ungated;   // antic_top.bus_rdata_int — ungated internal read mux (driven below)
     hwreg_rd_cdc u_hwreg_rd_cdc (
         .clk_sally (clk_sally),
@@ -419,6 +466,10 @@ module tb_boot;
     ) u_antic_top (
         .clk_bus            (clk_sys),
         .rst_n              (rst_sys_n),
+        .joy_ovr            (32'd0),   // keypad->joystick override off (default)
+        // Must be driven, not floating: the WSYNC release cycle is tuned from
+        // this register, and an X there stops /RDY ever releasing.
+        .dbg_tb_cfg         (29'd0),
         .bus_addr           (bus_addr_antic),
         .bus_data_in        (bus_data_in_antic),
         .bus_rw             (bus_rw_antic),
@@ -466,6 +517,8 @@ module tb_boot;
         .joy_spi_int_n      (1'b1),
         .bram_addr          (antic_bram_addr),
         .bram_rdata         (antic_bram_rdata),
+        .cmp_bram_addr      (antic_cmpram_addr),
+        .cmp_bram_rdata     (antic_cmpram_rdata),
         .portb_q            (portb_q),
         .wb_pix_valid       (wb_pix_valid),
         .wb_pix_pair        (wb_pix_pair),

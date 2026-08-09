@@ -151,9 +151,26 @@ static xtld_obj *reg_find(const char *soname)
     return NULL;
 }
 
+/* Resolve a name against the SHARED LIBRARIES only.
+ *
+ * Main programs must not take part. Every program here is statically linked
+ * against the same helper code and re-EXPORTS it — gethostbyname is defined by
+ * fujinetd, desktop, dropbear, ssh, toybox and more — while this registry is
+ * global, not per-process. Including executables therefore let the FIRST
+ * program to start capture a name for every program that started later: the
+ * desktop's own gethostbyname call bound to fujinetd's copy (registered first,
+ * because FujiNet boots before Desktop), ran fujinetd's code, and wrote
+ * fujinetd's globals. Those pages are not user-accessible from the desktop's
+ * address space, so it died on a permission fault — deterministic, and
+ * dependent on nothing but boot order, which is why it appeared the moment the
+ * set of running services changed.
+ *
+ * A DT_SONAME is exactly the "I am a shared library" marker, so use it: shared
+ * objects are genuinely shared, executables are private to their process. */
 static uintptr_t reg_resolve(const char *name)
 {
     for (int i = 0; i < g_nobjs; i++) {
+        if (!g_objs[i]->soname) continue;          /* executable: private scope */
         uintptr_t a = xtld_sym(g_objs[i], name);
         if (a) return a;
     }

@@ -22,7 +22,19 @@ module xt_trng #(
 ) (
     input  wire        clk,       // sample + pool clock (clk_sys — always-on, NOT clk_pix)
     input  wire        rst_n,
-    output reg  [31:0] rnd        // whitened pool snapshot (free-running)
+    output reg  [31:0] rnd,       // whitened pool snapshot (free-running)
+
+    // ---- entropy accounting ---------------------------------------------
+    // `rnd` is a free-running snapshot with no notion of freshness, and the
+    // pool only absorbs ~32 debiased bits per microsecond (133 MHz raw, ~25%
+    // von-Neumann yield, so ~128 clk per 32 bits).  A back-to-back AXI read is
+    // 100-300 ns, so software can drain the pool 3-10x faster than it fills and
+    // gets an LFSR-stretched value instead of fresh entropy — silently, because
+    // everything after the von-Neumann stage is linear.  These outputs let the
+    // consumer gate on real freshness instead of guessing.
+    input  wire        rd_stb,    // 1-clk: TRNG_RND was read — consume, restart the count
+    output reg  [5:0]  bits_avail,// debiased bits stirred since that read (saturates at 32)
+    output wire        fresh      // bits_avail >= 32: a fully re-seeded word
 );
     // ---- raw entropy bus -------------------------------------------------
     // ALLOW_COMBINATORIAL_LOOPS on the loop nets tells Vivado the feedback is
@@ -93,5 +105,17 @@ module xt_trng #(
     always @(posedge clk or negedge rst_n)
         if (!rst_n) rnd <= 32'h0;
         else        rnd <= pool;
+
+    // Count debiased bits since the last consume.  Saturates at 32 — beyond a
+    // full word there is nothing more to promise.  A read in the same cycle as
+    // a stir counts the stir (the read samples `rnd`, registered from the pool
+    // BEFORE this bit landed), so the reload starts from that bit.
+    always @(posedge clk or negedge rst_n)
+        if (!rst_n)          bits_avail <= 6'd0;
+        else if (rd_stb)     bits_avail <= vn_valid ? 6'd1 : 6'd0;
+        else if (vn_valid && bits_avail != 6'd32)
+                             bits_avail <= bits_avail + 6'd1;
+
+    assign fresh = (bits_avail == 6'd32);
 endmodule
 `default_nettype wire

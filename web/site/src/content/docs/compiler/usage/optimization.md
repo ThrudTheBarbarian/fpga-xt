@@ -3,10 +3,10 @@ title: Optimisation
 description: What -O0 through -O3 add, the tuning knobs (-Fli, -Flu), how to read the optimiser's summary line.
 ---
 
-xtc has four optimisation levels, plus two tuning knobs that modulate the most expensive transforms (leaf inlining and loop unrolling). The default is `-O0` because optimised builds are slower to compile and take work to debug at the assembly level — opt in deliberately when you want the cycles and bytes.
+xtc has four optimisation levels, plus two tuning knobs that modulate the most expensive transforms (leaf inlining and loop unrolling). **The default is `-O3`** — the production level, and what the fixture corpus is validated at. The lower levels are debugging aids: drop to `-O0` when you want the generated code to correspond line-for-line with the source, not because `-O3` is something to opt into.
 
 ```bash
-xtc -O3 game.xt -o game.xex
+xcc -O3 game.xc -o game.xex
 ```
 
 ```
@@ -17,9 +17,9 @@ The "before / after" instruction count is printed when any optimisation pass act
 
 ## The four levels
 
-### `-O0` — no optimisation (default)
+### `-O0` — no optimisation
 
-Straight codegen. Every variable gets a stable home, every expression evaluates left-to-right with intermediate stores, every JSR / RTS pair is emitted. The output is **predictable** — what you see in the source is roughly what comes out — which makes single-stepping in `xts` and reasoning about code paths much easier. Use during development and for asm debugging.
+Straight codegen. Every variable gets a stable home, every expression evaluates left-to-right with intermediate stores, every JSR / RTS pair is emitted. The output is **predictable** — what you see in the source is roughly what comes out — which makes single-stepping in `xcc-sim-6502` and reasoning about code paths much easier. Use during development and for asm debugging.
 
 ### `-O1` (`-O`) — peephole + register tracking
 
@@ -43,7 +43,7 @@ Adds, on top of `-O1`:
 
 `-O2` is the recommended baseline for shipped programs.
 
-### `-O3` — aggressive
+### `-O3` — aggressive (the default)
 
 Adds, on top of `-O2`:
 
@@ -60,7 +60,7 @@ Adds, on top of `-O2`:
 ### `-Fli` — leaf inline cap
 
 ```bash
-xtc -O2 -Fli 200 app.xt -o app.xex
+xcc -O2 -Fli 200 app.xc -o app.xex
 ```
 
 Maximum leaf-function size, **in 6502 instructions**, that the inliner will expand at a call site. Default: 100. Requires `-O2+`.
@@ -70,7 +70,7 @@ A leaf function is one that calls no other functions in its body. The inliner pi
 ### `-Flu` — loop-unroll cap
 
 ```bash
-xtc -O2 -Flu 16 app.xt -o app.xex
+xcc -O2 -Flu 16 app.xc -o app.xex
 ```
 
 Auto-unroll counted `for` loops whose trip count is **≤ `<n>`** at compile time. Default: 5 at `-O2+`, 0 below. Set to 0 to disable.

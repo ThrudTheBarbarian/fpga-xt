@@ -33,3 +33,20 @@ Selection is via the ANTIC `MODE` register, bit 0: `MODE_SNOOP`.
 Note that in high-memory-use graphics modes (eg: BASIC "GRAPHICS 8"), ANTIC could 'steal' roughly 47% of the CPU memory-bus bandwidth by /HALT-ing the CPU so it could fetch memory for the screen.
 
 With the current CPU implementation, SALLY runs at 100 MHz, or roughly 56× the speed of the original Atari X{L|E}, and with Snoop mode enabled the effective speed-up in DMA-heavy modes (e.g. GR.8) is more like **~105×**. (The CPU core path itself closes at ~120 MHz; production `clk_sally` backed off to 100 MHz as the design grew around the blitter — recoverable as a later floorplan/fmax task.)
+
+## Conformance
+
+Cycle-level ANTIC/GTIA/POKEY behaviour is validated against **Avery Lee's
+Acid800 suite**: the `antic2` core passes **55 of the 58 scored tests with
+zero failures** (the remainder are three legitimately-skipped tests and
+keypress-waiting demo modules with no verdict). That covers WSYNC release
+edges (including a write landing *on* the release cycle), DLI/NMI
+recognition alignment, display-list timing, P/M DMA, and the POKEY timer,
+init-mode, and serial-output timing families.
+
+:::note
+Two ANTIC implementations currently coexist — the Acid800-validated `antic2`
+core (simulation) and the fabric pipeline in the bitstream. They are being
+unified with `antic2` as the survivor; see `docs/antic-unification-plan.md`
+in the repo for the phase plan.
+:::

@@ -49,6 +49,10 @@ static inline long sys_devmem(unsigned long addr, unsigned long val, int write)
 static inline long sys_devmem_sz(unsigned long addr, unsigned long val, int write, int size)
 { return __syscall(SYS_devmem, (long)addr, (long)val, (long)((write & 1) | ((size & 0xFF) << 8))); }
 static inline long sys_getpid(void) { return __syscall(SYS_getpid, 0, 0, 0); }
+/* grab the on-screen frame of HW compositor plane `plane` (XT_PLANE_*) into buf
+ * (>= 320*192*4 for the XL/6502 plane); returns (w<<16)|h or -errno. See SYS_plane_grab. */
+static inline long sys_plane_grab(int plane, void *buf)
+{ return __syscall(SYS_plane_grab, plane, (long)buf, 0); }
 /* drain one pending XTOS system message into msg[8] (int16). 1 = filled, 0 = none.
  * GUI apps loop this each evnt_multi (see gem/aes) -> surfaced as AES MU_MESAG. */
 static inline long sys_xtos_recv(void *msg8) { return __syscall(SYS_xtos_recv, (long)msg8, 0, 0); }
@@ -86,6 +90,11 @@ static inline long sys_readdir(const char *path, int index, struct xt_dirent *en
 static inline long sys_mkdir(const char *path, int mode)
 { return __syscall(SYS_mkdir, (long)path, mode, 0); }
 static inline long sys_chdir(const char *path) { return __syscall(SYS_chdir, (long)path, 0, 0); }
+/* the kernel CSPRNG -> bytes written, or -errno (-EIO = the TRNG never went
+ * fresh; the clock-seeded bytes you would otherwise get are offered only to a
+ * caller who asks with GRND_NONBLOCK and so knows what they are taking) */
+static inline long sys_getrandom(void *buf, unsigned len, unsigned flags)
+{ return __syscall(SYS_getrandom, (long)buf, (long)len, (long)flags); }
 static inline long sys_getcwd(char *buf, unsigned size)
 { return __syscall(SYS_getcwd, (long)buf, (long)size, 0); }
 static inline long sys_rename(const char *oldp, const char *newp)
@@ -214,6 +223,20 @@ static inline long sys_overlay(int x, int y, int w, int h, int en) {
  * through the paravirtual SIO).  path=NULL = eject + cold boot to BASIC. */
 static inline long sys_xl_boot(const char *path, int drive) {
     return __syscall(SYS_xl_boot, (long)path, drive, 0);
+}
+/* Cold-reset the fabric 6502 KEEPING mounted media (a real power-cycle, fresh OS
+ * image): basic!=0 -> BASIC on; basic=0 -> OPTION held across the coldstart so
+ * the XL OS maps BASIC out (auto-released once sampled). */
+static inline long sys_xl_reset(int basic) {
+    return __syscall(SYS_xl_reset, basic, 0, 0);
+}
+/* Run a standalone Atari executable (.xex / DOS binary) on the fabric 6502: the
+ * kernel boots the XL OS with a 1-sector fake disk, then (as the host, via the
+ * GP0 debug facility) loads the segments and drives the INIT/RUN vectors -- the
+ * way atari800 does it.  flags {bit0=turbo, bit1=hold}: turbo core (else fidelity,
+ * cycle-exact default); hold halts at acid800 _testEnd ($1D93) on the result screen. */
+static inline long sys_xexload(const char *path, int flags) {
+    return __syscall(SYS_xexload, (long)path, flags, 0);
 }
 static inline long sys_plane_window(int plane, int x, int y, int w, int h, int scale, int en) {
     return __syscall(SYS_plane_window,

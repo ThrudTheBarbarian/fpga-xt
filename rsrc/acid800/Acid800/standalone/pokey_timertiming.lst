@@ -1,0 +1,4271 @@
+mads 2.1.0 build 8 (23 Dec 19)
+Source: pokey_timertiming.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 FFFF0001					_SAP_HEADER "POKEY: Init timing"
+Macro: _SAP_HEADER [Source: library.s]
+Source: pokey_timertiming.s
+    23
+    24 						opt		h+o+
+    25
+    26 						icl		'library.s'
+Source: library.s
+     1 				; Altirra Acid800 test suite
+     2 				; Copyright (C) 2010 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				;==========================================================================
+    23 				; MEMORY MAP (800)
+    24 				;
+    25 				;	$0000-007F		OS zero page
+    26 				;	$0080-00BF		Module zero page
+    27 				;	$00C0-00DF		Library zero page
+    28 				;	$00E0-00EF		80-column zero page
+    29 				;	$0100-01FF		6502 stack
+    30 				;	$0200-03FF		OS database
+    31 				;	$0400-09FF		Boot loader / unused
+    32 				;	$0A00-0AFF		Boot loader / Veronica support resident page
+    33 				;	$0B00-0BFF		Boot loader / sector load buffer
+    34 				;	$0C00-0FFF		Boot loader / 16K display
+    35 				;	$1000-18FF		Resident test driver (full suite only)
+    36 				;	$1900-19FF		Segment tables (full suite only)
+    37 				;	$1A00-1FFF		Library code
+    38 				;	$2000-3FFF		Module run area
+    39 				;	$4000-5FFF		Segment load area / Extended memory window
+    40 				;	$6000-7FFF		80-column screen A / Extended memory window
+    41 				;	$9000-9BFF		80-column driver
+    42 				;	$9C00-9FFF		Unused (display list if cart)
+    43 				;	$A000-BFFF		80-column screen B
+    44 				;
+    45 				; MEMORY MAP (5200)
+    46 				;
+    47 				;	$0000-001F		OS zero page
+    48 				;	$0020-003F		Display zero page
+    49 				;	$0080-00BF		Module zero page
+    50 				;	$00C0-00DF		Library zero page
+    51 				;	$0100-01FF		6502 stack
+    52 				;	$0200-021F		OS database
+    53 				;	$0220-027F		Unused
+    54 				;	$0280-02FF		Library database
+    55 				;	$0300-07FF		Display memory
+    56 				;	$0800-0FFF		Unused
+    57 				;	$1000-1FFF		LZ decompression history window
+    58 				;	$2000-3FFF		Module run area
+    59 				;	$4000-BFFF		Cartridge library code and module store
+    60 				;
+    61 				; MEMORY MAP (SAP)
+    62 				;
+    63 				;	$0080-00BF		Module zero page
+    64 				;	$00C0-00DF		Library zero page
+    65 				;	$0280-02FF		Library database
+    66 				;	$0300-07FF		Display memory
+    67 				;	$2000-3FFF		Module run area
+    68 				;	$4000-BFFF		Module store
+    69
+    70 				;==========================================================================
+    71 				; CONFIGURATION
+    72 				;
+    73 						.ifndef SYS800
+    74 						SEGS_IN_ROM = 1
+    75 						.else
+    76 = 0001					SEGS_MIN_MEM = 1
+    77 						.endif
+    78 						
+    79 						.ifdef SYS5200
+    80 						SEGS_LZPACK = 1
+    81 						.endif
+    82
+    83 				;==========================================================================
+    84 				; HARDWARE INCLUDES
+    85 				;
+    86 				.ifdef SYS5200
+    87 				;GTIA
+    88 				gtia = $c000
+    89 				m0pf	equ	$c000
+    90 				m1pf	equ	$c001
+    91 				m2pf	equ	$c002
+    92 				m3pf	equ	$c003
+    93 				p0pf	equ	$c004
+    94 				p1pf	equ	$c005
+    95 				p2pf	equ	$c006
+    96 				p3pf	equ	$c007
+    97 				m0pl	equ	$c008
+    98 				m1pl	equ	$c009
+    99 				m2pl	equ	$c00a
+   100 				m3pl	equ	$c00b
+   101 				p0pl	equ	$c00c
+   102 				p1pl	equ	$c00d
+   103 				p2pl	equ	$c00e
+   104 				p3pl	equ	$c00f
+   105 				hposp0	equ	$c000
+   106 				hposp1	equ	$c001
+   107 				hposp2	equ	$c002
+   108 				hposp3	equ	$c003
+   109 				hposm0	equ	$c004
+   110 				hposm1	equ	$c005
+   111 				hposm2	equ	$c006
+   112 				hposm3	equ	$c007
+   113 				sizep0	equ	$c008
+   114 				sizep1	equ	$c009
+   115 				sizep2	equ	$c00a
+   116 				sizep3	equ	$c00b
+   117 				sizem	equ	$c00c
+   118 				grafp0	equ	$c00d
+   119 				grafp1	equ	$c00e
+   120 				grafp2	equ	$c00f
+   121 				grafp3	equ	$c010
+   122 				trig0	equ	$c010
+   123 				grafm	equ	$c011
+   124 				colpm0	equ	$c012
+   125 				colpm1	equ	$c013
+   126 				colpm2	equ	$c014
+   127 				pal		equ	$c014
+   128 				colpm3	equ	$c015
+   129 				colpf0	equ	$c016
+   130 				colpf1	equ	$c017
+   131 				colpf2	equ	$c018
+   132 				colpf3	equ	$c019
+   133 				colbk	equ	$c01a
+   134 				prior	equ	$c01b
+   135 				vdelay	equ	$c01c
+   136 				gractl	equ	$c01d
+   137 				hitclr	equ	$c01e
+   138 				consol	equ	$c01f
+   139
+   140 				;POKEY
+   141 				pokey = $e800
+   142 				audf1	equ	$e800
+   143 				audc1	equ	$e801
+   144 				audf2	equ	$e802
+   145 				audc2	equ	$e803
+   146 				audf3	equ	$e804
+   147 				audc3	equ	$e805
+   148 				audf4	equ	$e806
+   149 				audc4	equ	$e807
+   150 				audctl	equ	$e808
+   151 				stimer	equ	$e809
+   152 				random	equ	$e80a
+   153 				skres	equ	$e80a
+   154 				serin	equ	$e80d
+   155 				serout	equ	$e80d
+   156 				irqen	equ	$e80e
+   157 				irqst	equ	$e80e
+   158 				skctl	equ	$e80f
+   159 				skstat	equ	$e80f
+   160 				.else
+   161 				;GTIA
+   162 = D000			gtia = $d000
+   163 = D000			m0pf	equ	$d000
+   164 = D001			m1pf	equ	$d001
+   165 = D002			m2pf	equ	$d002
+   166 = D003			m3pf	equ	$d003
+   167 = D004			p0pf	equ	$d004
+   168 = D005			p1pf	equ	$d005
+   169 = D006			p2pf	equ	$d006
+   170 = D007			p3pf	equ	$d007
+   171 = D008			m0pl	equ	$d008
+   172 = D009			m1pl	equ	$d009
+   173 = D00A			m2pl	equ	$d00a
+   174 = D00B			m3pl	equ	$d00b
+   175 = D00C			p0pl	equ	$d00c
+   176 = D00D			p1pl	equ	$d00d
+   177 = D00E			p2pl	equ	$d00e
+   178 = D00F			p3pl	equ	$d00f
+   179 = D000			hposp0	equ	$d000
+   180 = D001			hposp1	equ	$d001
+   181 = D002			hposp2	equ	$d002
+   182 = D003			hposp3	equ	$d003
+   183 = D004			hposm0	equ	$d004
+   184 = D005			hposm1	equ	$d005
+   185 = D006			hposm2	equ	$d006
+   186 = D007			hposm3	equ	$d007
+   187 = D008			sizep0	equ	$d008
+   188 = D009			sizep1	equ	$d009
+   189 = D00A			sizep2	equ	$d00a
+   190 = D00B			sizep3	equ	$d00b
+   191 = D00C			sizem	equ	$d00c
+   192 = D00D			grafp0	equ	$d00d
+   193 = D00E			grafp1	equ	$d00e
+   194 = D00F			grafp2	equ	$d00f
+   195 = D010			grafp3	equ	$d010
+   196 = D010			trig0	equ	$d010
+   197 = D011			grafm	equ	$d011
+   198 = D012			colpm0	equ	$d012
+   199 = D013			colpm1	equ	$d013
+   200 = D014			colpm2	equ	$d014
+   201 = D014			pal		equ	$d014
+   202 = D015			colpm3	equ	$d015
+   203 = D016			colpf0	equ	$d016
+   204 = D017			colpf1	equ	$d017
+   205 = D018			colpf2	equ	$d018
+   206 = D019			colpf3	equ	$d019
+   207 = D01A			colbk	equ	$d01a
+   208 = D01B			prior	equ	$d01b
+   209 = D01C			vdelay	equ	$d01c
+   210 = D01D			gractl	equ	$d01d
+   211 = D01E			hitclr	equ	$d01e
+   212 = D01F			consol	equ	$d01f
+   213
+   214 				;POKEY
+   215 = D200			pokey = $d200
+   216 = D200			audf1	equ	$d200
+   217 = D201			audc1	equ	$d201
+   218 = D202			audf2	equ	$d202
+   219 = D203			audc2	equ	$d203
+   220 = D204			audf3	equ	$d204
+   221 = D205			audc3	equ	$d205
+   222 = D206			audf4	equ	$d206
+   223 = D207			audc4	equ	$d207
+   224 = D208			audctl	equ	$d208
+   225 = D209			stimer	equ	$d209
+   226 = D209			kbcode	equ	$d209
+   227 = D20A			random	equ	$d20a
+   228 = D20A			skres	equ	$d20a
+   229 = D20D			serin	equ	$d20d
+   230 = D20D			serout	equ	$d20d
+   231 = D20E			irqen	equ	$d20e
+   232 = D20E			irqst	equ	$d20e
+   233 = D20F			skctl	equ	$d20f
+   234 = D20F			skstat	equ	$d20f
+   235
+   236 				;PIA
+   237 = D300			porta	equ	$d300
+   238 = D301			portb	equ	$d301
+   239 = D302			pactl	equ	$d302
+   240 = D303			pbctl	equ	$d303
+   241 				.endif
+   242
+   243 				;ANTIC
+   244 = D400			dmactl	equ	$d400
+   245 = D401			chactl	equ	$d401
+   246 = D402			dlistl	equ	$d402
+   247 = D403			dlisth	equ	$d403
+   248 = D404			hscrol	equ	$d404
+   249 = D405			vscrol	equ	$d405
+   250 = D407			pmbase	equ	$d407
+   251 = D409			chbase	equ	$d409
+   252 = D40A			wsync	equ	$d40a
+   253 = D40B			vcount	equ	$d40b
+   254 = D40E			nmien	equ	$d40e
+   255 = D40F			nmires	equ	$d40f
+   256 = D40F			nmist	equ	$d40f
+   257
+   258 				;==========================================================================
+   259 				; OS INCLUDES (5200)
+   260 				;
+   261 				.ifdef SYS5200
+   262 				pokmsk	equ		$00
+   263 				rtclok	equ		$01
+   264 				;		equ		$02
+   265 				critic	equ		$03
+   266 				atract	equ		$04
+   267 				sdlstl	equ		$05
+   268 				sdlsth	equ		$06
+   269 				sdmctl	equ		$07
+   270 				pcolr0	equ		$08
+   271 				pcolr1	equ		$09
+   272 				pcolr2	equ		$0a
+   273 				pcolr3	equ		$0b
+   274 				color0	equ		$0c
+   275 				color1	equ		$0d
+   276 				color2	equ		$0e
+   277 				color3	equ		$0f
+   278 				color4	equ		$10
+   279
+   280 				vimirq	equ		$0200		;IRQ immediate vector
+   281 				vvblki	equ		$0202		;VBI immediate vector
+   282 				vvblkd	equ		$0204		;VBI deferred vector
+   283 				vdslst	equ		$0206		;display list vector
+   284 				vkybdi	equ		$0208		;keyboard immediate vector
+   285 				vkybdf	equ		$020a		;keyboard deferred vector
+   286 				.endif
+   287
+   288 				;==========================================================================
+   289 				; OS INCLUDES (800)
+   290 				;
+   291 				.ifndef SYS5200
+   292 = 0010			pokmsk	equ	$10
+   293 = 0012			rtclok	equ	$12
+   294 = 0058			savmsc	equ	$58
+   295 = 006A			ramtop	equ	$6a
+   296
+   297 = 0200			vdslst	equ	$0200
+   298 = 0208			vkeybd	equ	$0208
+   299 = 0216			vimirq	equ	$0216
+   300 = 0218			cdtmv1	equ	$0218
+   301 = 0222			vvblki	equ	$0222
+   302 = 0224			vvblkd	equ	$0224
+   303 = 0226			cdtma1	equ	$0226
+   304 = 022F			sdmctl	equ	$022f
+   305 = 0230			sdlstl	equ	$0230
+   306 = 0231			sdlsth	equ	$0231
+   307 = 0232			sskctl	equ	$0232
+   308 = 02E0			runad	equ	$02e0
+   309 = 02E2			initad	equ	$02e2
+   310 = 02E5			memtop	equ	$02e5
+   311 = 02F2			ch1		equ	$02f2
+   312 = 02FC			ch		equ	$02fc
+   313
+   314 = 0300			ddevic	equ	$0300
+   315 = 0301			dunit	equ	$0301
+   316 = 0302			dcomnd	equ	$0302
+   317 = 0303			dstats	equ	$0303
+   318 = 0304			dbuflo	equ	$0304
+   319 = 0305			dbufhi	equ	$0305
+   320 = 0306			dtimlo	equ	$0306
+   321 = 0308			dbytlo	equ	$0308
+   322 = 0309			dbythi	equ	$0309
+   323 = 030A			daux1	equ	$030a
+   324 = 030B			daux2	equ	$030b
+   325
+   326 = 0340			ichid	equ	$0340
+   327 = 0342			iccmd	equ	$0342
+   328 = 0344			icbal	equ	$0344
+   329 = 0345			icbah	equ	$0345
+   330 = 0346			icptl	equ	$0346
+   331 = 0347			icpth	equ	$0347
+   332 = 0348			icbll	equ	$0348
+   333 = 0349			icblh	equ	$0349
+   334 = 034A			icax1	equ	$034a
+   335 = 034B			icax2	equ	$034b
+   336
+   337 = 03F8			basicf	equ	$03f8
+   338
+   339 = E453			dskinv	equ	$e453
+   340 = E456			ciov	equ	$e456
+   341 = E459			siov	equ	$e459
+   342 = E462			xitvbv	equ	$e462
+   343 				.endif
+   344
+   345 				;==========================================================================
+   346 				; LIBRARY ZP
+   347 				;
+   348 = 00C0			a0		equ	$c0
+   349 = 00C2			a1		equ	$c2
+   350 = 00C4			a2		equ	$c4
+   351 = 00C6			a3		equ	$c6
+   352 = 00C8			d0		equ	$c8
+   353 = 00C9			d1		equ	$c9
+   354 = 00CA			d2		equ	$ca
+   355 = 00CB			d3		equ	$cb
+   356 = 00CC			d4		equ	$cc
+   357 = 00CD			d5		equ	$cd
+   358 = 00CE			d6		equ	$ce
+   359 = 00CF			d7		equ	$cf
+   360
+   361 				;==========================================================================
+   362 				; LIBRARY VARS
+   363 				;
+   364 						opt o-
+   365
+   366 				.ifdef SYS5200
+   367 						opt f-
+   368 				.else
+   369 				.ifdef STANDALONE
+   370 						opt o+
+   371 				.endif
+   372 				.ifdef GENLIBRARY
+   373 						opt o+
+   374 				.endif
+   375 				.endif
+   376
+   377 						.ifdef SYSSAP
+   378 						org	$0280
+   379 						.endif
+   380 						
+   381 						.ifdef SYS5200
+   382 						org	$0280
+   383 						.endif
+   384 						
+   385 						.ifdef SYS800
+   386 						org	$1a20
+   387 						.endif		
+   388 FFFF> 1A20-1F30> 00	_intsOff	dta		0
+   389 1A21 00			_scrnOff	dta		0
+   390 1A22 00 00		_prevIRQ	dta		a(0)
+   391 1A24 00 00		_prevVBI	dta		a(0)
+   392 1A26 00 00		_exitTest	dta		a(0)
+   393 1A28 FF			_exitTestS	dta		$ff
+   394 1A29 00 00		_vputchar	dta		a(0)
+   395
+   396 						.ifdef SYS800
+   397 1A2B 00 00		_vputunhook	dta		a(0)
+   398 						.endif
+   399
+   400 = 0000				CPUMODE_6502 = 0
+   401 = 0001				CPUMODE_65C02 = 1
+   402 = 0080				CPUMODE_65C816_16 = 0x80
+   403 = 0081				CPUMODE_65C816_24 = 0x81
+   404 1A2D 00			_cpuMode	dta		0
+   405
+   406 1A2E 00			_veronica	dta		0
+   407
+   408 						.ifdef SYS5200
+   409 				sskctl		dta		0
+   410 				ch			dta		0
+   411 				keydel		dta		0
+   412
+   413 							org		$02e0
+   414 				runad		dta		a(0)
+   415 				initad		dta		a(0)
+   416 						.endif
+   417
+   418 						.ifdef SEGS_IN_ROM
+   419 				_lastMod	dta		0
+   420 						.endif
+   421 						.ifdef SEGS_MIN_MEM
+   422 1A2F 00			_lastMod	dta		0
+   423 						.endif
+   424
+   425 						.ifdef SYS5200
+   426 						.ifdef STANDALONE
+   427 						opt o+f+
+   428 						.endif
+   429 						.ifdef GENLIBRARY
+   430 						opt o+f+
+   431 						.endif
+   432
+   433 						.ifdef LIBBASE
+   434 						org	LIBBASE
+   435 						.else
+   436 						org	$4000
+   437 						.endif
+   438 						.endif
+   439 						
+   440 						.ifdef SYSSAP
+   441 						org		$4000
+   442 						.endif
+   443
+   444 				;==========================================================================
+   445 				; MACROS
+   446 				;
+   447 				.macro _INITTEST
+   448 					jsr		_imTestInit
+   449 					dta		:1,0
+   450 				.endm
+   451
+   452 				.macro _ASSERT1
+   453 					lda	:1
+   454 					cmp	#:2
+   455 					beq	pass
+   456 					
+   457 					sta	d1
+   458 					jsr	_testFailed
+   459 					dta	:3,0
+   460 				pass:
+   461 				.endm
+   462
+   463 				.macro _ASSERT1_DUAL
+   464 					lda	:1
+   465 					cmp	#:2
+   466 					beq	pass
+   467 					cmp	#:3
+   468 					beq	pass
+   469 					
+   470 					sta	d1
+   471 					jsr	_testFailed
+   472 					dta	:4,0
+   473 				pass:
+   474 				.endm
+   475
+   476 				.macro _ASSERTA
+   477 					cmp	#:1
+   478 					beq	pass
+   479 					
+   480 					sta	d1
+   481 					jsr	_testFailed
+   482 					dta	:2,0
+   483 				pass:
+   484 				.endm
+   485
+   486 				.macro _ASSERTX
+   487 					cpx	#:1
+   488 					beq	pass
+   489 					
+   490 					stx	d1
+   491 					jsr	_testFailed
+   492 					dta	:2,0
+   493 				pass:
+   494 				.endm
+   495
+   496 				.macro _ASSERTY
+   497 					cpy	#:1
+   498 					beq	pass
+   499 					
+   500 					sty	d1
+   501 					jsr	_testFailed
+   502 					dta	:2,0
+   503 				pass:
+   504 				.endm
+   505
+   506 				.macro _FAIL
+   507 					jsr		_testFailed
+   508 					dta		:1,0
+   509 				.endm
+   510
+   511 				.macro _SKIP
+   512 					jsr		_testSkipped
+   513 					dta		:1,0
+   514 				.endm
+   515
+   516 				.macro _SAP_HEADER
+   517 					.ifdef GENSAP
+   518 						opt		o+h-f-
+   519 						org		$0700
+   520 						dta		c"SAP",$0d,$0a
+   521 						dta		c"AUTHOR ",$22,c"Avery Lee",$22,$0d,$0a
+   522 						dta		c"NAME ",$22,c":1",$22,$0d,$0a
+   523 						dta		c"TYPE D",$0d,$0a
+   524 						dta		c"INIT 2000",$0d,$0a
+   525 						dta		c"TIME 00:",c"05",$0d,$0a
+   526 						dta		a($ffff)
+   527 					.endif
+   528 				.endm
+   529
+   530 				;==========================================================================
+   531 1A30			.nowarn .proc	_crt0init
+   532 				.ifdef SYSSAP
+   533 					jsr		_crt0init_sap
+   534 				.endif
+   535
+   536 					;clear zero page and database
+   537 				.ifdef SYS5200
+   538 					ldx		#$20
+   539 					lda		#0
+   540 				zploop:
+   541 					sta		0,x
+   542 					inx
+   543 					bne		zploop
+   544 					ldx		#$80
+   545 				dbloop:
+   546 					sta		$0200,x
+   547 					inx
+   548 					bne		dbloop
+   549 				.endif
+   550
+   551 					;clear options (keep in sync with options.s)
+   552 1A30 A2 06			ldx		#6
+   553 1A32 A9 00			lda		#0
+   554 					.ifdef SYS5200
+   555 					sta:rpl	$02f0,x-
+   556 					.else
+   557 1A34 9D 00 1A CA 10 FA		sta:rpl	$1a00,x-
+   558 					.endif
+   559 					
+   560 					;detect CPU
+   561 1A3A A0 00			ldy		#CPUMODE_6502
+   562 1A3C F8				sed
+   563 1A3D A9 99			lda		#$99
+   564 1A3F 18				clc
+   565 1A40 69 01			adc		#$01
+   566 1A42 D8				cld
+   567 1A43 D0 1E			bne		detdone
+   568 					
+   569 					;we have at least a 65C02... check for 65C816
+   570 1A45 A0 01			ldy		#CPUMODE_65C02
+   571
+   572 1A47 38				sec
+   573 					opt		c+
+   574 1A48 C2 01			rep		#$01
+   575 1A4A B0 17			bcs		detdone
+   576 1A4C E2 01			sep		#$01
+   577 1A4E 90 13			bcc		detdone
+   578 					
+   579 1A50 A0 80			ldy		#CPUMODE_65C816_16
+   580 					
+   581 					;check for 24-bit addressing
+   582 1A52 AF CB 00 01			lda		d3+$10000
+   583 1A56 AA				tax
+   584 1A57 49 F5			eor		#$f5
+   585 1A59 85 CB			sta		d3
+   586 1A5B 8A				txa
+   587 1A5C CF CB 00 01			cmp		d3+$10000
+   588 1A60 D0 01			sne
+   589 1A62 C8				iny
+   590 					
+   591 					opt		c-
+   592 					
+   593 1A63			detdone:
+   594 1A63 8C 2D 1A			sty		_cpuMode
+   595
+   596 				.ifdef SYS5200
+   597 					jsr		_crt0init_5200
+   598 				.endif
+   599
+   600 				.ifdef SYS800
+   601 					;init putchar handler
+   602 1A66 AD 46 03 8D 29 1A + 	mwa		icptl _vputchar
+   603 1A72 EE 29 1A D0 03 EE + 	inw		_vputchar
+   604 				.endif
+   605
+   606 1A7A 60				rts
+   607 				.endp
+   608
+   609 				;==========================================================================
+   610 1A7B			.nowarn .proc	_interruptsOff
+   611 1A7B AD 20 1A			lda	_intsOff
+   612 1A7E 30 12			bmi	xit
+   613 1A80 78				sei
+   614 1A81 AD 16 02 8D 22 1A + 	mwa	vimirq _prevIRQ
+   615 1A8D A9 FF 8D 20 1A		mva	#$ff _intsOff
+   616 1A92			xit:
+   617 1A92 60				rts
+   618 				.endp
+   619
+   620 				;==========================================================================
+   621 1A93			.nowarn .proc	_interruptsOn
+   622 1A93 AD 20 1A			lda	_intsOff
+   623 1A96 10 18			bpl	xit
+   624 1A98 78				sei
+   625 1A99 AD 22 1A 8D 16 02 + 	mwa	_prevIRQ vimirq
+   626 1AA5 A5 10 8D 0E D2		mva	pokmsk irqen
+   627 1AAA A9 00 8D 20 1A		mva	#$00 _intsOff
+   628 1AAF 58				cli
+   629 1AB0			xit:
+   630 1AB0 60				rts
+   631 				.endp
+   632
+   633 				;==========================================================================
+   634 1AB1			.nowarn .proc _screenOn
+   635 					.ifndef SYSSAP
+   636 1AB1 AD 21 1A			lda	_scrnOff
+   637 1AB4 10 40			bpl	xit
+   638 					
+   639 1AB6 20 1F 1B			jsr	_waitVBL
+   640 					
+   641 1AB9 78				sei
+   642 1ABA A9 00			lda	#0
+   643 1ABC 8D 0A D4			sta	wsync
+   644 1ABF 8D 0E D4			sta	nmien
+   645 1AC2 A9 22 8D 00 D4		mva	#$22 dmactl
+   646 1AC7 AD 30 02 8D 02 D4 + 	mwa	sdlstl dlistl
+   647 1AD3 AD 24 1A 8D 22 02 + 	mwa	_prevVBI vvblki
+   648 1ADF A9 40			lda	#$40
+   649 1AE1 8D 0E D4			sta	nmien
+   650 1AE4 58				cli
+   651 					
+   652 1AE5 20 1F 1B			jsr	_waitVBL
+   653 1AE8 8D 0A D4			sta	wsync
+   654 1AEB 8D 0A D4			sta	wsync
+   655 1AEE 20 1F 1B			jsr	_waitVBL
+   656 					.endif
+   657
+   658 1AF1 A9 00 8D 21 1A		mva	#$00 _scrnOff
+   659 1AF6			xit:
+   660 1AF6 60				rts
+   661 				.endp
+   662
+   663 				;==========================================================================
+   664 1AF7			.nowarn .proc _screenOff
+   665 					.ifndef SYSSAP
+   666 1AF7 AD 21 1A			lda	_scrnOff
+   667 1AFA 30 22			bmi	xit
+   668 					
+   669 1AFC 20 1F 1B			jsr	_waitVBL
+   670 						
+   671 1AFF 08				php
+   672 1B00 78				sei
+   673 1B01 A9 00			lda	#0
+   674 1B03 8D 0A D4			sta	wsync
+   675 1B06 8D 0E D4			sta	nmien
+   676 1B09 8D 00 D4			sta	dmactl
+   677 1B0C AD 22 02 8D 24 1A + 	mwa	vvblki _prevVBI
+   678 1B18 28				plp
+   679 					.endif
+   680
+   681 1B19 A9 FF 8D 21 1A		mva	#$ff _scrnOff
+   682 1B1E			xit:
+   683 1B1E 60				rts
+   684 				.endp
+   685
+   686 				;==========================================================================
+   687 1B1F			.nowarn .proc _waitVBL
+   688 1B1F A9 7B			lda	#123
+   689 1B21 CD 0B D4 D0 FB		cmp:rne vcount
+   690 1B26 CD 0B D4 F0 FB		cmp:req vcount
+   691 1B2B 60				rts
+   692 				.endp
+   693
+   694 				;==========================================================================
+   695 1B2C			.nowarn .proc _waitFrame
+   696 1B2C EE 0A D4			inc	wsync
+   697 1B2F EE 0A D4			inc	wsync
+   698 1B32 4C 1F 1B			jmp	_waitVBL
+   699 				.endp
+   700
+   701 				;==========================================================================
+   702 1B35			.nowarn .proc _waitKeyPrompt
+   703 1B35 20 7B 1B			jsr		_imprint
+   704 1B38 50 72 65 73 73 20 + 	dta		c"Press a key...",0
+   705 					.ifdef SYS5200
+   706 					mva		#$ff ch
+   707 					lda:rmi	ch
+   708 					.else
+   709 1B47 A9 00			lda		#0
+   710 1B49 8D FC 02			sta		ch
+   711 1B4C 8D F2 02			sta		ch1
+   712 1B4F AD FC 02 F0 FB		lda:req	ch
+   713 					.endif
+   714 1B54 20 7B 1B			jsr		_imprint
+   715 1B57 9C 00			dta		$9c,0
+   716 1B59 60				rts
+   717 				.endp
+   718
+   719 				;==========================================================================
+   720 1B5A			.nowarn .proc _resetAV
+   721 1B5A A9 00			lda	#0
+   722 1B5C 8D 1D D0			sta	gractl
+   723 1B5F 8D 0D D0			sta	grafp0
+   724 1B62 8D 0E D0			sta	grafp1
+   725 1B65 8D 0F D0			sta	grafp2
+   726 1B68 8D 10 D0			sta	grafp3
+   727 1B6B 8D 11 D0			sta	grafm
+   728 1B6E 8D 01 D2			sta	audc1
+   729 1B71 8D 03 D2			sta	audc2
+   730 1B74 8D 05 D2			sta	audc3
+   731 1B77 8D 07 D2			sta	audc4
+   732 1B7A 60				rts
+   733 				.endp
+   734
+   735 				;==========================================================================
+   736 1B7B			.nowarn .proc _imprint
+   737 1B7B 68				pla
+   738 1B7C AA				tax
+   739 1B7D 68				pla
+   740 1B7E A8				tay
+   741 1B7F E8				inx
+   742 1B80 D0 01 C8			sne:iny
+   743 1B83 8A				txa
+   744 1B84 20 A1 1B			jsr	_print
+   745 1B87 A5 C1			lda	a0+1
+   746 1B89 48				pha
+   747 1B8A A5 C0			lda	a0
+   748 1B8C 48				pha
+   749 1B8D 60				rts	
+   750 				.endp
+   751
+   752 				;==========================================================================
+   753 1B8E			.nowarn .proc _imprintf
+   754 1B8E 68				pla
+   755 1B8F AA				tax
+   756 1B90 68				pla
+   757 1B91 A8				tay
+   758 1B92 E8				inx
+   759 1B93 D0 01 C8			sne:iny
+   760 1B96 8A				txa
+   761 1B97 20 BE 1B			jsr	_printf
+   762 1B9A A5 C1			lda	a0+1
+   763 1B9C 48				pha
+   764 1B9D A5 C0			lda	a0
+   765 1B9F 48				pha
+   766 1BA0 60				rts	
+   767 				.endp
+   768
+   769 				;==========================================================================
+   770 1BA1			.nowarn .proc _print
+   771 1BA1 85 C0			sta	a0
+   772 1BA3 84 C1			sty	a0+1
+   773 1BA5			charloop:
+   774 1BA5 A0 00			ldy	#0
+   775 1BA7 B1 C0			lda	(a0),y
+   776 1BA9 F0 0C			beq	done
+   777 1BAB E6 C0 D0 02 E6 C1		inw	a0
+   778 1BB1 20 0F 1D			jsr	_printf.putbyte
+   779 1BB4 4C A5 1B			jmp	charloop
+   780 1BB7			done:
+   781 1BB7 60				rts
+   782 				.endp
+   783
+   784 				;==========================================================================
+   785 1BB8			.nowarn .proc _println
+   786 1BB8 20 7B 1B			jsr		_imprint
+   787 1BBB 9B 00			dta		$9b,0
+   788 1BBD 60				rts
+   789 				.endp
+   790 				;==========================================================================
+   791 1BBE			.nowarn .proc _printf
+   792 1BBE 85 C0			sta	a0
+   793 1BC0 84 C1			sty	a0+1
+   794 1BC2 A0 00			ldy	#0
+   795 1BC4 84 C8			sty	d0
+   796 1BC6			charloop:
+   797 1BC6 B1 C0			lda	(a0),y
+   798 1BC8 F0 12			beq	done
+   799 1BCA E6 C0 D0 02 E6 C1		inw	a0
+   800 1BD0 C9 25			cmp	#'%'
+   801 1BD2 F0 09			beq	special
+   802 1BD4			escaped:
+   803 1BD4 20 0F 1D			jsr	putbyte
+   804 1BD7			nextchar:
+   805 1BD7 A0 00			ldy	#0
+   806 1BD9 4C C6 1B			jmp	charloop
+   807 1BDC			done:
+   808 1BDC 60				rts
+   809 1BDD			special:
+   810 1BDD E6 C8			inc	d0
+   811 1BDF A6 C8			ldx	d0
+   812 1BE1 B1 C0			lda	(a0),y
+   813 1BE3 E6 C0 D0 02 E6 C1		inw	a0
+   814 1BE9 C9 64			cmp #'d'
+   815 1BEB D0 47			bne	notdec
+   816 1BED 98				tya
+   817 1BEE 84 C2			sty	a1
+   818 1BF0 A0 06			ldy	#6
+   819 1BF2 78				sei
+   820 1BF3 F8				sed
+   821 1BF4			decloop1:
+   822 1BF4 36 C8			rol	d0,x
+   823 1BF6 65 C2			adc	a1
+   824 1BF8 85 C2			sta	a1
+   825 1BFA 88				dey
+   826 1BFB D0 F7			bne	decloop1
+   827 1BFD 84 C3			sty	a1+1
+   828 1BFF A0 02			ldy	#2
+   829 1C01			decloop2:
+   830 1C01 36 C8			rol	d0,x
+   831 1C03 65 C2			adc	a1
+   832 1C05 85 C2			sta	a1
+   833 1C07 26 C3			rol	a1+1
+   834 1C09 88				dey
+   835 1C0A D0 F5			bne	decloop2
+   836 1C0C D8				cld
+   837 1C0D 58				cli
+   838 1C0E A5 C3			lda	a1+1
+   839 1C10 F0 0F			beq	decdigit2
+   840 1C12 AA				tax
+   841 1C13 BD 21 1F			lda	_hexdig,x
+   842 1C16 20 0F 1D			jsr	putbyte
+   843 1C19 A5 C2			lda	a1
+   844 1C1B 20 F9 1C			jsr	puthex
+   845 1C1E 4C D7 1B			jmp	nextchar
+   846 1C21			decdigit2:
+   847 1C21 A5 C2			lda	a1
+   848 1C23 C9 10			cmp	#$10
+   849 1C25 90 06			bcc	decdigit1
+   850 1C27 20 F9 1C			jsr	puthex
+   851 1C2A 4C D7 1B			jmp	nextchar
+   852 1C2D			decdigit1:
+   853 1C2D AA				tax
+   854 1C2E BD 21 1F			lda	_hexdig,x
+   855 1C31 4C D4 1B			jmp	escaped
+   856
+   857 1C34			notdec:
+   858 1C34 C9 78			cmp	#'x'
+   859 1C36 D0 08			bne	nothex
+   860 1C38 B5 C8			lda	d0,x
+   861 1C3A 20 F9 1C			jsr	puthex
+   862 1C3D 4C D7 1B			jmp	nextchar
+   863
+   864 1C40			nothex:
+   865 1C40 C9 58			cmp	#'X'
+   866 1C42 D0 11			bne	nothexword
+   867 1C44 E6 C8			inc	d0
+   868 1C46 B5 C9			lda	d1,x
+   869 1C48 20 F9 1C			jsr	puthex
+   870 1C4B A6 C8			ldx	d0
+   871 1C4D B5 C7			lda	d0-1,x
+   872 1C4F 20 F9 1C			jsr	puthex
+   873 1C52 4C D7 1B			jmp	nextchar
+   874
+   875 1C55			nothexword:
+   876 1C55 C9 44			cmp #'D'
+   877 1C57 D0 5F			bne	notdecword
+   878
+   879 1C59 A0 08			ldy	#8
+   880 1C5B A9 00			lda	#0
+   881 1C5D 85 C2			sta	a1
+   882 1C5F 85 C3			sta a1+1
+   883 1C61 85 C4			sta	a2
+   884 1C63 78				sei
+   885 1C64 F8				sed
+   886 1C65			decword1:
+   887 1C65 36 C9			rol	d1,x
+   888 1C67 A5 C2			lda	a1
+   889 1C69 65 C2			adc	a1
+   890 1C6B 85 C2			sta	a1
+   891 1C6D A5 C3			lda	a1+1
+   892 1C6F 65 C3			adc	a1+1
+   893 1C71 85 C3			sta	a1+1
+   894 1C73 88				dey
+   895 1C74 D0 EF			bne	decword1
+   896 					
+   897 1C76 A0 08			ldy	#8
+   898 1C78			decword2:
+   899 1C78 36 C8			rol	d0,x
+   900 1C7A A5 C2			lda	a1
+   901 1C7C 65 C2			adc	a1
+   902 1C7E 85 C2			sta	a1
+   903 1C80 A5 C3			lda	a1+1
+   904 1C82 65 C3			adc	a1+1
+   905 1C84 85 C3			sta	a1+1
+   906 1C86 A5 C4			lda	a2
+   907 1C88 65 C4			adc	a2
+   908 1C8A 85 C4			sta	a2
+   909 1C8C 88				dey
+   910 1C8D D0 E9			bne	decword2
+   911 1C8F D8				cld
+   912 1C90 58				cli
+   913 					
+   914 1C91 AA				tax
+   915 1C92 F0 10			beq	decword3
+   916 1C94 20 EE 1C			jsr	puthexcond
+   917 1C97 A5 C3			lda	a1+1
+   918 1C99 20 F9 1C			jsr	puthex
+   919 1C9C A5 C2			lda	a1
+   920 1C9E 20 F9 1C			jsr	puthex
+   921 1CA1 4C D7 1B			jmp	nextchar
+   922
+   923 1CA4			decword3:
+   924 1CA4 A5 C3			lda	a1+1
+   925 1CA6 F0 08			beq	decword4
+   926 1CA8 A5 C2			lda	a1
+   927 1CAA 20 F9 1C			jsr	puthex
+   928 1CAD 4C D7 1B			jmp	nextchar
+   929 					
+   930 1CB0			decword4:
+   931 1CB0 A5 C2			lda	a1
+   932 1CB2 20 F9 1C			jsr	puthex
+   933 1CB5 4C D7 1B			jmp	nextchar
+   934
+   935 1CB8			notdecword:
+   936 1CB8 C9 63			cmp #'c'
+   937 1CBA D0 0A			bne	notchar
+   938 1CBC E6 C8			inc	d0
+   939 1CBE B5 C8			lda	d0,x
+   940 1CC0 20 0F 1D			jsr	putbyte
+   941 1CC3 4C D7 1B			jmp	nextchar
+   942 					
+   943 1CC6			notchar:
+   944 1CC6 C9 73			cmp #'s'
+   945 1CC8 D0 1F			bne	notstr
+   946 					
+   947 1CCA E6 C8			inc	d0
+   948 1CCC B5 C8			lda	d0,x
+   949 1CCE 85 C2			sta	a1
+   950 1CD0 B5 C9			lda	d0+1,x
+   951 1CD2 85 C3			sta	a1+1
+   952
+   953 1CD4			strloop:
+   954 1CD4 A0 00			ldy	#0
+   955 1CD6 B1 C2			lda	(a1),y
+   956 1CD8 F0 0C			beq	strdone
+   957 1CDA 20 15 1D			jsr	putbyte2
+   958 1CDD E6 C2 D0 02 E6 C3		inw	a1
+   959 1CE3 4C D4 1C			jmp	strloop
+   960
+   961 1CE6			strdone:
+   962 1CE6 4C D7 1B			jmp	nextchar
+   963 					
+   964 1CE9			notstr:
+   965 1CE9 C6 C8			dec	d0
+   966 1CEB 4C D4 1B			jmp	escaped
+   967 					
+   968 1CEE			puthexcond:
+   969 1CEE C9 10			cmp	#$10
+   970 1CF0 B0 07			bcs	puthex
+   971 1CF2 AA				tax
+   972 1CF3 BD 21 1F			lda	_hexdig,x
+   973 1CF6 4C 0F 1D			jmp	putbyte	
+   974 1CF9			puthex:	
+   975 1CF9 48				pha
+   976 1CFA 4A				lsr
+   977 1CFB 4A				lsr
+   978 1CFC 4A				lsr
+   979 1CFD 4A				lsr
+   980 1CFE AA				tax
+   981 1CFF BD 21 1F			lda	_hexdig,x
+   982 1D02 20 0F 1D			jsr	putbyte
+   983 1D05 68				pla
+   984 1D06 29 0F			and	#$0f
+   985 1D08 AA				tax
+   986 1D09 BD 21 1F			lda	_hexdig,x
+   987 1D0C 4C 0F 1D			jmp	putbyte
+   988
+   989 1D0F			putbyte:
+   990 1D0F AA				tax
+   991 1D10 20 15 1D			jsr	putbyte2
+   992 1D13 8A				txa
+   993 1D14 60				rts
+   994 					
+   995 1D15			putbyte2:
+   996 1D15 6C 29 1A			jmp	(_vputchar)
+   997 				.endp
+   998
+   999 				;==========================================================================
+  1000 1D18			.nowarn .proc	_jam
+  1001 1D18			loop:
+  1002 1D18 4C 18 1D			jmp	loop
+  1003 				.endp
+  1004
+  1005 				;==========================================================================
+  1006 1D1B			.nowarn .proc	_waitVCount
+  1007 1D1B CD 0B D4 D0 FB		cmp:rne	vcount
+  1008 1D20 60				rts
+  1009 				.endp
+  1010
+  1011 				;=========================================================================
+  1012 1D21			.nowarn .proc	_imTestInit
+  1013 1D21 68				pla
+  1014 1D22 85 C0			sta		a0
+  1015 1D24 A8				tay
+  1016 1D25 68				pla
+  1017 1D26 85 C1			sta		a0+1
+  1018 					
+  1019 1D28 E6 C0 D0 02 E6 C1		inw		a0
+  1020
+  1021 1D2E A9 00 85 C2			mva		#0 a1
+  1022 1D32 A5 C1 85 C3			mva		a0+1 a1+1	
+  1023 1D36			skiploop:
+  1024 1D36 B1 C2			lda		(a1),y
+  1025 1D38 F0 08			beq		skipdone
+  1026 1D3A C8				iny
+  1027 1D3B D0 02 E6 C3			sne:inc a1+1
+  1028 1D3F 4C 36 1D			jmp		skiploop
+  1029 1D42			skipdone:
+  1030 1D42 A5 C3			lda		a1+1
+  1031 1D44 48				pha
+  1032 1D45 98				tya
+  1033 1D46 48				pha
+  1034 1D47 A5 C0			lda		a0
+  1035 1D49 A4 C1			ldy		a0+1
+  1036 1D4B 4C 4E 1D			jmp		_testInit
+  1037 				.endp
+  1038
+  1039 				;=========================================================================
+  1040 1D4E			.nowarn .proc	_testInit
+  1041 					.ifdef STANDALONE
+  1042 1D4E 48				pha
+  1043 1D4F 98				tya
+  1044 1D50 48				pha
+  1045
+  1046 				.ifdef SYS800
+  1047 					;MaxFlash carts run executables with E: closed. Check for this and
+  1048 					;reopen it if necessary.
+  1049 1D51 AD 40 03			lda		ichid
+  1050 1D54 10 1C			bpl		iocb0_open
+  1051
+  1052 					;reopen IOCB 0
+  1053 1D56 A9 03 8D 42 03		mva		#$03 iccmd
+  1054 1D5B A9 91 8D 44 03 A9 + 	mwa		#e_name icbal
+  1055 1D65 A2 00			ldx		#0
+  1056 1D67 8E 4A 03			stx		icax1
+  1057 1D6A A9 0C 8D 4B 03		mva		#$0c icax2
+  1058 1D6F 20 56 E4			jsr		ciov
+  1059 					
+  1060 1D72			iocb0_open:
+  1061 				.endif
+  1062
+  1063 1D72 20 30 1A			jsr		_crt0init
+  1064 					
+  1065 1D75 68				pla
+  1066 1D76 A8				tay
+  1067 1D77 68				pla
+  1068 					.endif
+  1069 					
+  1070 1D78 20 A1 1B			jsr	_print
+  1071 1D7B 20 7B 1B			jsr	_imprint
+  1072 1D7E 2E 2E 2E 00			dta	c"...",0
+  1073 					
+  1074 					.ifdef STANDALONE
+  1075 1D82 A9 93 8D 26 1A A9 + 	mwa	#_testEnd _exitTest
+  1076 					.else
+  1077 					:10 nop
+  1078 					.endif
+  1079 					
+  1080 1D8C 60				rts
+  1081 					
+  1082 1D8D			msg:
+  1083 1D8D 2E 2E 2E 00			dta	c"...",0
+  1084 1D91			e_name:
+  1085 1D91 45 9B			dta		'E',$9B
+  1086 				.endp
+  1087
+  1088 				;=========================================================================
+  1089 1D93			.nowarn .proc	_testEnd
+  1090 					.ifdef SYSSAP
+  1091 						.ifdef STANDALONE
+  1092 							jmp	_sap_testEnd
+  1093 						.else
+  1094 							jmp	_jam
+  1095 						.endif
+  1096 					.else
+  1097 						.ifdef SYS5200
+  1098 							jmp	_jam
+  1099 						.else
+  1100 							;wait for key
+  1101 1D93 78						sei
+  1102 1D94 A9 00					lda		#0
+  1103 1D96 8D 0E D4					sta		nmien
+  1104 1D99 8D 0E D2					sta		irqen
+  1105 1D9C A9 03 8D 0F D2				mva		#3 skctl
+  1106 1DA1 A9 40 8D 0E D2				mva		#$40 irqen
+  1107 1DA6 2C 0E D2 D0 FB				bit:rne	irqst
+  1108 							
+  1109 							;initiate soft reset
+  1110 1DAB 6C FC FF					jmp		($fffc)
+  1111 						.endif
+  1112 					.endif
+  1113 				.endp
+  1114
+  1115 				;=========================================================================
+  1116 1DAE			.nowarn .proc	_testRestore
+  1117 1DAE D8				cld
+  1118 1DAF 08				php
+  1119 1DB0 78				sei
+  1120 					
+  1121 					;check if the screen is off; if so, make sure we kill DLIs
+  1122 1DB1 AD 21 1A			lda		_scrnOff
+  1123 1DB4 F0 08			beq		scrnOK
+  1124 					
+  1125 1DB6 A9 00			lda		#0
+  1126 1DB8 EE 0A D4			inc		wsync
+  1127 1DBB 8D 0E D4			sta		nmien
+  1128 					
+  1129 1DBE			scrnOK:
+  1130
+  1131 1DBE AD 32 02 8D 0F D2		mva		sskctl skctl
+  1132 						
+  1133 					.ifdef SYSSAP
+  1134 					;kill PIA port A interrupt
+  1135 					mva		#$3c pactl
+  1136 					
+  1137 					;force kernel ROMs back _out_
+  1138 					mva		#$38 pbctl
+  1139 					mva		#$ff portb
+  1140 					mva		#$3c pbctl
+  1141 					mva		#$82 portb
+  1142 					.endif
+  1143 					
+  1144 					.ifdef SYS5200
+  1145 					mva		#$00 prior
+  1146 					mva		#$f8 chbase
+  1147 					mva		#$02 chactl
+  1148 					mva		#$04 consol
+  1149 					.endif
+  1150 					
+  1151 					.ifdef SYS800
+  1152 					;kill PIA port A interrupt
+  1153 1DC4 A9 3C 8D 02 D3		mva		#$3c pactl
+  1154 					
+  1155 					;force kernel ROMs back in	
+  1156 1DC9 A9 38 8D 03 D3		mva		#$38 pbctl
+  1157 1DCE A9 00 8D 01 D3		mva		#$00 portb
+  1158 1DD3 A9 3C 8D 03 D3		mva		#$3c pbctl
+  1159 1DD8 A9 83 8D 01 D3		mva		#$83 portb
+  1160 					
+  1161 					;kill OS timer 1
+  1162 1DDD A2 FF			ldx		#$ff
+  1163 1DDF 8E 0A D4			stx		wsync
+  1164 1DE2 8E 18 02			stx		cdtmv1
+  1165 1DE5 E8				inx
+  1166 1DE6 8E 18 02			stx		cdtmv1
+  1167 1DE9 8E 19 02			stx		cdtmv1+1
+  1168 					.endif
+  1169
+  1170 1DEC 28				plp
+  1171 1DED 20 93 1A			jsr	_interruptsOn
+  1172 1DF0 20 B1 1A			jsr	_screenOn
+  1173 1DF3 20 5A 1B			jsr	_resetAV
+  1174 					
+  1175 					;unmask interrupts
+  1176 1DF6 58				cli
+  1177 1DF7 60				rts
+  1178 				.endp
+  1179
+  1180 				;=========================================================================
+  1181 1DF8			.nowarn .proc	_testPassed
+  1182 1DF8 20 AE 1D			jsr	_testRestore
+  1183
+  1184 1DFB 20 7B 1B			jsr	_imprint
+  1185 1DFE 50 61 73 73 9B 00		dta	c"Pass",$9b,0
+  1186 					
+  1187 1E04 AE 28 1A			ldx	_exitTestS
+  1188 1E07 9A				txs
+  1189 1E08 A0 00			ldy	#0
+  1190 1E0A 6C 26 1A			jmp	(_exitTest)
+  1191 				.endp
+  1192
+  1193 				;=========================================================================
+  1194 1E0D			.nowarn .proc	_testFailed
+  1195 1E0D 20 AE 1D			jsr	_testRestore
+  1196
+  1197 1E10 20 7B 1B			jsr	_imprint
+  1198 1E13 46 41 49 4C 2E 9B + 	dta	c"FAIL.",$9b,0
+  1199
+  1200 1E1A			nomsgentry:
+  1201 1E1A 68				pla
+  1202 1E1B AA				tax
+  1203 1E1C 68				pla
+  1204 1E1D A8				tay
+  1205 1E1E E8				inx
+  1206 1E1F D0 01 C8			sne:iny
+  1207 1E22 8A				txa
+  1208 1E23 20 BE 1B			jsr	_printf
+  1209 1E26 20 B8 1B			jsr	_println
+  1210 					
+  1211 1E29 AE 28 1A			ldx	_exitTestS
+  1212 1E2C 9A				txs
+  1213 1E2D A0 80			ldy	#$80
+  1214 1E2F 6C 26 1A			jmp	(_exitTest)
+  1215
+  1216 1E32			msg2:
+  1217 1E32 9B 00			dta	$9b,0
+  1218 				.endp
+  1219
+  1220 				;=========================================================================
+  1221 1E34			.nowarn .proc	_testFailed2
+  1222 1E34 20 AE 1D			jsr	_testRestore
+  1223 1E37 4C 1A 1E			jmp	_testFailed.nomsgentry
+  1224 				.endp
+  1225
+  1226 				;=========================================================================
+  1227 1E3A			.nowarn .proc	_testSkipped
+  1228 1E3A 20 AE 1D			jsr		_testRestore
+  1229
+  1230 1E3D 20 7B 1B			jsr		_imprint
+  1231 1E40 53 6B 69 70 70 65 + 	dta		c"Skipped",$9b,0
+  1232 					
+  1233 1E49 68				pla
+  1234 1E4A AA				tax
+  1235 1E4B 68				pla
+  1236 1E4C A8				tay
+  1237 1E4D E8				inx
+  1238 1E4E D0 01 C8			sne:iny
+  1239 1E51 8A				txa
+  1240 1E52 20 BE 1B			jsr		_printf
+  1241 					
+  1242 1E55 20 B8 1B			jsr		_println
+  1243 					
+  1244 1E58 AE 28 1A			ldx		_exitTestS
+  1245 1E5B 9A				txs
+  1246 1E5C A0 40			ldy		#$40
+  1247 1E5E 6C 26 1A			jmp		(_exitTest)
+  1248 				.endp
+  1249
+  1250 				;==========================================================================
+  1251 				; _loadSeg()
+  1252 				;
+  1253 				; Module loader.
+  1254 				;
+  1255 				;	X = index of module to load
+  1256 				;
+  1257 				.ifdef SEGS_MIN_MEM
+  1258 1E61			.nowarn .proc	_loadSeg
+  1259 					;get starting sector
+  1260 1E61 BD 00 19 8D 0A 03		mva		segaddrlo,x	daux1
+  1261 1E67 BD 80 19 8D 0B 03		mva		segaddrhi,x	daux2
+  1262 						
+  1263 					;get ending sector
+  1264 1E6D BD 01 19			lda		segaddrlo+1,x
+  1265 1E70 38 ED 0A 03			sub		daux1
+  1266 1E74 85 CF			sta		d7
+  1267
+  1268 					;setup sector load command and relocation
+  1269 1E76 A9 52 8D 02 03		mva		#'R' dcomnd
+  1270 1E7B A9 01 8D 01 03		mva		#1 dunit
+  1271 1E80 A9 00			lda		#$00
+  1272 1E82 8D 04 03			sta		dbuflo
+  1273 1E85 85 C0			sta		a0
+  1274 1E87 8D E1 02			sta		runad+1
+  1275 1E8A A9 0B			lda		#$0b
+  1276 1E8C 8D 05 03			sta		dbufhi
+  1277 1E8F 85 C1			sta		a0+1
+  1278 					
+  1279 					;preload first two sectors
+  1280 1E91 20 FE 1E			jsr		step_sector
+  1281 1E94			relocloop:
+  1282 					;load starting address
+  1283 1E94 B1 C0 85 C2			mva		(a0),y a1
+  1284 1E98 C8 D0 03 20 FE 1E		iny:sne:jsr step_sector
+  1285 1E9E B1 C0 85 C3			mva		(a0),y a1+1
+  1286 1EA2 C8 D0 03 20 FE 1E		iny:sne:jsr step_sector
+  1287 					
+  1288 					;skip $ffff words
+  1289 1EA8 A5 C2			lda		a1
+  1290 1EAA 25 C3			and		a1+1
+  1291 1EAC C9 FF			cmp		#$ff
+  1292 1EAE F0 E4			beq		relocloop
+  1293 					
+  1294 					;load ending address
+  1295 1EB0 B1 C0 85 C4			mva		(a0),y a2
+  1296 1EB4 C8 D0 03 20 FE 1E		iny:sne:jsr step_sector
+  1297 1EBA B1 C0 85 C5			mva		(a0),y a2+1
+  1298 1EBE C8 D0 03 20 FE 1E		iny:sne:jsr step_sector
+  1299 1EC4 E6 C4 D0 02 E6 C5		inw		a2
+  1300
+  1301 1ECA A9 1D 8D E2 02 A9 + 	mwa		#definit initad
+  1302 					
+  1303 					;copy data (slow, but oh well)
+  1304 1ED4 A2 00			ldx		#0
+  1305 1ED6			copyloop:
+  1306 1ED6 B1 C0			lda		(a0),y
+  1307 1ED8 81 C2			sta		(a1,x)
+  1308 1EDA C8 D0 03 20 FE 1E		iny:sne:jsr step_sector
+  1309 1EE0 E6 C2 D0 02 E6 C3		inw		a1
+  1310 1EE6 A5 C2			lda		a1
+  1311 1EE8 C5 C4			cmp		a2
+  1312 1EEA D0 EA			bne		copyloop
+  1313 1EEC A5 C3			lda		a1+1
+  1314 1EEE C5 C5			cmp		a2+1
+  1315 1EF0 D0 E4			bne		copyloop
+  1316 					
+  1317 					;init a segment
+  1318 1EF2 20 FB 1E			jsr		doinit
+  1319 					
+  1320 					;check if we're done
+  1321 1EF5 AD E1 02			lda		runad+1
+  1322 1EF8 F0 9A			beq		relocloop
+  1323 1EFA 60				rts
+  1324
+  1325 1EFB			doinit:
+  1326 1EFB 6C E2 02			jmp		(initad)
+  1327 					
+  1328 1EFE			step_sector:
+  1329 1EFE A5 CF			lda		d7
+  1330 1F00 F0 17			beq		no_sectors_left
+  1331 1F02 20 53 E4			jsr		dskinv
+  1332 1F05 C6 CF			dec		d7
+  1333 1F07 EE 0A 03 D0 03 EE + 	inw		daux1
+  1334 1F0F AD 04 03			lda		dbuflo
+  1335 1F12 49 80			eor		#$80
+  1336 1F14 8D 04 03			sta		dbuflo
+  1337 1F17 D0 E5			bne		step_sector
+  1338 1F19			no_sectors_left:
+  1339 1F19 A0 00			ldy		#0
+  1340 1F1B A2 00			ldx		#0
+  1341 1F1D			definit:
+  1342 1F1D 60				rts
+  1343 				.endp
+  1344 				.else
+  1345 				.nowarn .proc	_loadSeg
+  1346 				.ifdef SEGS_IN_ROM
+  1347 					stx		_lastMod
+  1348 					rts
+  1349 				.else
+  1350 					;get starting sector
+  1351 					mva		segaddrlo,x	daux1
+  1352 					mva		segaddrhi,x	daux2
+  1353 						
+  1354 					;get ending sector
+  1355 					mva		segaddrlo+1,x	a0
+  1356 					mva		segaddrhi+1,x	a0+1
+  1357
+  1358 					;load sectors starting at $4000
+  1359 				sectorloop:
+  1360 					mva		#'R' dcomnd
+  1361 					mva		#1 dunit
+  1362 					mwa		#$4000 dbuflo
+  1363 						
+  1364 					jsr		dskinv
+  1365 					tya
+  1366 					bmi		sectorloop
+  1367 					
+  1368 					lda		#$80
+  1369 					eor		dbuflo
+  1370 					sta		dbuflo
+  1371 					sne:inc	dbufhi
+  1372 					
+  1373 					inc		daux1
+  1374 					sne:inc	daux2
+  1375 					
+  1376 					lda		daux1
+  1377 					cmp		a0
+  1378 					bne		sectorloop
+  1379 					lda		daux2
+  1380 					cmp		a0+1
+  1381 					bne		sectorloop
+  1382 					rts
+  1383 				.endif
+  1384 				.endp
+  1385 				.endif
+  1386
+  1387 				;==========================================================================
+  1388 				; _runSeg()
+  1389 				;
+  1390 				; Module relocator and executor.
+  1391 				;
+  1392 				; The last segment loaded by _loadSeg() is relocated and executed.
+  1393 				;
+  1394
+  1395 				.ifdef SEGS_MIN_MEM
+  1396
+  1397 				;-----------------------------------------------
+  1398 				; Minimum memory implementation.
+  1399 1F1E			.nowarn .proc _runSeg
+  1400 1F1E 6C E0 02			jmp		(runad)
+  1401 				.endp
+  1402
+  1403 				.else
+  1404
+  1405 				;-----------------------------------------------
+  1406 				.nowarn .proc _runSeg
+  1407 					
+  1408 					;begin relocation
+  1409 					mwa		#relocloop runad
+  1410
+  1411 					.ifdef SEGS_IN_ROM
+  1412 					ldx		_lastMod
+  1413 					mva		segaddrlo,x a0
+  1414 					mva		segaddrhi,x a0+1
+  1415 					.else
+  1416 					mwa		#$4000 a0
+  1417 					.endif
+  1418 					
+  1419 					.ifndef SEGS_LZPACK
+  1420 					
+  1421 					;==== uncompressed version
+  1422
+  1423 					ldy		#0
+  1424 				relocloop:
+  1425 					;load starting address
+  1426 					mva		(a0),y a1
+  1427 					inw		a0
+  1428 					mva		(a0),y a1+1
+  1429 					inw		a0
+  1430 					
+  1431 					;skip $ffff words
+  1432 					lda		a1
+  1433 					and		a1+1
+  1434 					cmp		#$ff
+  1435 					beq		relocloop
+  1436 					
+  1437 					;load ending address
+  1438 					mva		(a0),y a2
+  1439 					inw		a0
+  1440 					mva		(a0),y a2+1
+  1441 					inw		a0
+  1442 					inw		a2
+  1443 					
+  1444 					;copy data (slow, but oh well)
+  1445 				copyloop:
+  1446 					lda		(a0),y
+  1447 					sta		(a1),y
+  1448 					inw		a0
+  1449 					inw		a1
+  1450 					lda		a1
+  1451 					cmp		a2
+  1452 					bne		copyloop
+  1453 					lda		a1+1
+  1454 					cmp		a2+1
+  1455 					bne		copyloop
+  1456 					
+  1457 					;init a segment
+  1458 					mwa		#definit initad
+  1459 					jsr		doinit
+  1460 					jmp		(runad)
+  1461
+  1462 				doinit:
+  1463 					jmp		(initad)
+  1464 					
+  1465 				definit:
+  1466 					rts
+  1467
+  1468 					.else
+  1469 					
+  1470 					;==== compressed version
+  1471 					;
+  1472 					;loader:
+  1473 					;	a3		destination
+  1474 					;	d6/d7	segment end address
+  1475 					;
+  1476 					;decompressor:
+  1477 					;	a0		raw source stream
+  1478 					;	a1		run source pointer
+  1479 					;	a2		window pointer ($1000-1fff)
+  1480 					;	d0		literal/run flag bits
+  1481 					;	d1		remaining flag bits shifter
+  1482 					;	d2		run length counter
+  1483 					;	d3		temporary
+  1484 					;	d4		superflag bits
+  1485 					;	d5		superflag shifter
+  1486
+  1487 					lda		#0
+  1488 					sta		d0
+  1489 					sta		d1
+  1490 					sta		d2
+  1491 					sta		d5
+  1492 					sta		a2
+  1493 					lda		#$10
+  1494 					sta		a2+1
+  1495 				relocloop:
+  1496 					ldy		#0
+  1497 					;load starting address
+  1498 					jsr		getbyte
+  1499 					sta		a3
+  1500 					jsr		getbyte
+  1501 					sta		a3+1
+  1502 					
+  1503 					;skip $ffff words
+  1504 					and		a3
+  1505 					cmp		#$ff
+  1506 					beq		relocloop
+  1507 					
+  1508 					;load ending address
+  1509 					jsr		getbyte
+  1510 					sta		d6
+  1511 					jsr		getbyte
+  1512 					sta		d7
+  1513 					inw		d6
+  1514 					
+  1515 					;copy data (slow, but oh well)
+  1516 				copyloop:
+  1517 					jsr		getbyte
+  1518 					sta		(a3),y
+  1519 					inw		a3
+  1520 					lda		a3
+  1521 					cmp		d6
+  1522 					bne		copyloop
+  1523 					lda		a3+1
+  1524 					cmp		d7
+  1525 					bne		copyloop
+  1526 					
+  1527 					;init a segment
+  1528 					mwa		#definit initad
+  1529 					jsr		doinit
+  1530 					jmp		(runad)
+  1531
+  1532 				doinit:
+  1533 					jmp		(initad)
+  1534 					
+  1535 				getbyte:
+  1536 					;check if we have a run in progress
+  1537 					lda		d2
+  1538 					bne		getrunbyte
+  1539
+  1540 					;check if we need to reload flag bits
+  1541 					asl		d1
+  1542 					bne		havebits
+  1543 					
+  1544 					;check if we need to reload superflag bits
+  1545 					asl		d5
+  1546 					bne		havesuperbits
+  1547 					
+  1548 					;load next superflag byte
+  1549 					jsr		getrawbyte
+  1550 					sta		d4
+  1551 					lda		#$7f
+  1552 					sta		d5
+  1553 					
+  1554 				havesuperbits:
+  1555 					;pull next superflag and check if it's all literals (0)
+  1556 					asl		d4
+  1557 					bcc		all_literals
+  1558 					
+  1559 					;nope... read next byte as flags byte
+  1560 					jsr		getrawbyte
+  1561 					sta		d0
+  1562
+  1563 				all_literals:
+  1564 					lda		#$7f
+  1565 					sta		d1
+  1566 				havebits:
+  1567 					asl		d0
+  1568 					bcs		isrun
+  1569 					
+  1570 					;store byte into window
+  1571 					jsr		getrawbyte
+  1572 					jmp		putwinbyte
+  1573
+  1574 				isrun:
+  1575 					;load offset/run bytes
+  1576 					jsr		getrawbyte
+  1577 					sta		d3
+  1578 					jsr		getrawbyte
+  1579 					sta		d2
+  1580 					
+  1581 					;compute run source from current position and offset
+  1582 					lda		a2
+  1583 					clc
+  1584 					sbc		d3
+  1585 					sta		a1
+  1586 					lda		a2+1
+  1587 					sbc		d2
+  1588 					and		#$0f
+  1589 					ora		#$10
+  1590 					sta		a1+1
+  1591 					
+  1592 					;compute length and stash run length
+  1593 					lda		d2
+  1594 					lsr
+  1595 					lsr
+  1596 					lsr
+  1597 					lsr
+  1598 					add		#3
+  1599 					sta		d2
+  1600 				getrunbyte:
+  1601 					dec		d2
+  1602 					ldy		#0
+  1603 					lda		(a1),y
+  1604 					inc		a1
+  1605 					bne		putwinbyte
+  1606 					inc		a1+1
+  1607 					pha
+  1608 					lda		a1+1
+  1609 					and		#$0f
+  1610 					ora		#$10
+  1611 					sta		a1+1
+  1612 					pla
+  1613 					jmp		putwinbyte
+  1614 					
+  1615 				getrawbyte:
+  1616 					lda		(a0),y
+  1617 					inw		a0
+  1618 					rts
+  1619 					
+  1620 				putwinbyte:
+  1621 					sta		(a2),y
+  1622 					inc		a2
+  1623 					seq:rts
+  1624 					ldy		a2+1
+  1625 					iny
+  1626 					cpy		#$20
+  1627 					sne:ldy	#$10
+  1628 					sty		a2+1
+  1629 					ldy		#0
+  1630 				definit:
+  1631 					rts	
+  1632 					
+  1633 					.endif
+  1634 				.endp
+  1635 				.endif
+  1636
+  1637 				;==========================================================================
+  1638 1F21 30 31 32 33 34 35 + _hexdig	dta		c"0123456789ABCDEF"
+  1639
+  1640 				;==========================================================================
+  1641 				; segment table
+  1642 				;
+  1643 				.ifndef SYS800
+  1644 				segaddrlo	equ	$bf00
+  1645 				segaddrhi	equ	$bf80
+  1646 				.else
+  1647 = 1900			segaddrlo	equ	$1900
+  1648 = 1980			segaddrhi	equ	$1980
+  1649 				.endif
+  1650
+  1651 = 0900			_veronicaLaunch = $0900
+  1652
+  1653 				;==========================================================================
+  1654 				; platform-specific library
+  1655 				;
+  1656 				.ifdef SYS5200
+  1657 					icl		'lib5200.s'
+  1658 				.endif
+  1659 				.ifdef SYSSAP
+  1660 					icl		'libsap.s'
+  1661 				.endif
+  1662
+  1663 				;==========================================================================
+  1664 				.ifndef STANDALONE
+  1665 				.ifdef SYS5200
+  1666 					opt	o+
+  1667 				.else
+  1668 					opt	h+o+
+  1669 				.endif
+  1670 				.endif
+    27
+    28 				.macro _DELAY_CYCLES_X
+    29 					;validate parameters
+    30 					.if :0 != 1
+    31 					.error "Cycle count required." c' '
+    32 					.endif
+    33 						
+    34 					.if :1 < 2
+    35 					.error "Cycle count must be at least 2." c' '
+    36 					.endif
+    37 					
+    38 					.if :1 > 1000
+    39 					.error "Cycle count is too large." c' '
+    40 					.endif
+    41 					
+    42 					.def ?cycles = :1
+    43 					
+    44 					.if ?cycles == 660 || ?cycles >= 662
+    45 						.def ?cycles = ?cycles - 660
+    46 						jsr		delay660
+    47 					.endif
+    48 				
+    49 					.if ?cycles == 408 || ?cycles >= 410
+    50 						.def ?cycles = ?cycles - 408
+    51 						jsr		delay408
+    52 					.endif
+    53 				
+    54 					.if ?cycles == 252 || ?cycles >= 254
+    55 						.def ?cycles = ?cycles - 252
+    56 						jsr		delay252
+    57 					.endif
+    58 				
+    59 					.if ?cycles == 156 || ?cycles >= 158
+    60 						.def ?cycles = ?cycles - 156
+    61 						jsr		delay156
+    62 					.endif
+    63 				
+    64 					.if ?cycles == 96 || ?cycles >= 98
+    65 						.def ?cycles = ?cycles - 96
+    66 						jsr		delay96
+    67 					.endif
+    68 				
+    69 					.if ?cycles == 60 || ?cycles >= 62
+    70 						.def ?cycles = ?cycles - 60
+    71 						jsr		delay60
+    72 					.endif
+    73 				
+    74 					.if ?cycles == 36 || ?cycles >= 38
+    75 						.def ?cycles = ?cycles - 36
+    76 						jsr		delay36
+    77 					.endif
+    78 				
+    79 					.if ?cycles == 24 || ?cycles >= 26
+    80 						.def ?cycles = ?cycles - 24
+    81 						jsr		delay24
+    82 					.endif
+    83 				
+    84 					;14-23 cycles we can hit exactly
+    85 					.if ?cycles >= 23
+    86 						.def ?cycles = ?cycles - 23
+    87 						jsr		delay23
+    88 					.endif
+    89 				
+    90 					.if ?cycles >= 22
+    91 						.def ?cycles = ?cycles - 22
+    92 						jsr		delay22
+    93 					.endif
+    94 				
+    95 					.if ?cycles >= 21
+    96 						.def ?cycles = ?cycles - 21
+    97 						jsr		delay21
+    98 					.endif
+    99 				
+   100 					.if ?cycles >= 20
+   101 						.def ?cycles = ?cycles - 20
+   102 						jsr		delay20
+   103 					.endif
+   104 				
+   105 					.if ?cycles >= 19
+   106 						.def ?cycles = ?cycles - 19
+   107 						jsr		delay19
+   108 					.endif
+   109 				
+   110 					.if ?cycles >= 18
+   111 						.def ?cycles = ?cycles - 18
+   112 						jsr		delay18
+   113 					.endif
+   114 				
+   115 					.if ?cycles >= 17
+   116 						.def ?cycles = ?cycles - 17
+   117 						jsr		delay17
+   118 					.endif
+   119 				
+   120 					.if ?cycles >= 16
+   121 						.def ?cycles = ?cycles - 16
+   122 						jsr		delay16
+   123 					.endif
+   124 				
+   125 					.if ?cycles >= 15
+   126 						.def ?cycles = ?cycles - 15
+   127 						jsr		delay15
+   128 					.endif
+   129 				
+   130 					.if ?cycles >= 14
+   131 						.def ?cycles = ?cycles - 14
+   132 						jsr		delay14
+   133 					.endif
+   134 				
+   135 					;12 cycles we can hit exactly
+   136 					.if ?cycles == 12
+   137 						.def ?cycles = ?cycles - 12
+   138 						jsr		delay12
+   139 					.endif
+   140 					
+   141 					;At this point we have 2-11 or 13 cycles, which we handle through combinations of
+   142 					;nop + jmp to avoid changing any state. This can take up to 4 JMPs and two NOPs.
+   143 					.if ?cycles > 4 || ?cycles == 3
+   144 						.def ?cycles = ?cycles - 3
+   145 						jmp		*+3
+   146 					.endif
+   147 					.if ?cycles > 4 || ?cycles == 3
+   148 						.def ?cycles = ?cycles - 3
+   149 						jmp		*+3
+   150 					.endif
+   151 					.if ?cycles > 4 || ?cycles == 3
+   152 						.def ?cycles = ?cycles - 3
+   153 						jmp		*+3
+   154 					.endif
+   155 					.if ?cycles > 4 || ?cycles == 3
+   156 						.def ?cycles = ?cycles - 3
+   157 						jmp		*+3
+   158 					.endif
+   159 					.if ?cycles == 4
+   160 						nop
+   161 						nop
+   162 					.elseif ?cycles == 2
+   163 						nop
+   164 					.elseif ?cycles != 0
+   165 						.error "Internal error" c' '
+   166 					.endif
+   167 				.endm
+   168
+   169 				;==========================================================================
+   170 				; POKEY timer timing tests
+   171 				;
+   172 				; Many timings are given below in the form XX/YY where XX and YY are cycles
+   173 				; after a write to STIMER. They indicate a tight cycle count bound for when
+   174 				; an event occurs. For instance, 15c/16c for IRQST bit 0 means that IRQST
+   175 				; bit 0 is deasserted (1) when read 15 cycles after the cycle on which
+   176 				; STIMER is written, and asserted (0) when read 16 cycles after. Thus, the
+   177 				; second number indicates the first cycle on which the change is visible.
+   178 				; These are also the two cycle offsets at which the test checks to
+   179 				; precisely check the cycle delay.
+   180 				;
+   181 				; *extrapolated means timing values that are not directly measured due to
+   182 				; difficulty, i.e. 6502 not fast enough, but are inferred from the measured
+   183 				; cases.
+   184 				;
+   185
+   186 1F31					org		$2000
+   187
+   188 2000			.nowarn .proc main
+   189 2000					_INITTEST c"POKEY: Timer timing"
+Macro: _INITTEST [Source: library.s]
+     1 2000-3912> 20 21 1D		jsr		_imTestInit
+     2 2003 50 4F 4B 45 59 3A + 	dta		c"POKEY: Timer timing",0
+Source: pokey_timertiming.s
+   190
+   191 						;turn interrupts off
+   192 2017 20 F7 1A				jsr		_screenOff
+   193 201A 20 7B 1A				jsr		_interruptsOff
+   194 						
+   195 						;set timer 1 for 1.79MHz
+   196 201D A9 40 8D 08 D2			mva		#$40 audctl
+   197 2022 A9 10 8D 00 D2			mva		#$10 audf1
+   198 2027 A9 00 8D 02 D2			mva		#$00 audf2
+   199
+   200 						;====== 8-bit timer IRQST tests ===================================
+   201 						; Checks the cycle at which the IRQ bit is asserted in IRQST.
+   202 						; A/B values are cycles after STIMER write before/after bit 0 is
+   203 						; cleared for timer 1.
+   204 						;
+   205 						;			IRQST1		IRQST2
+   206 						; AUDF1=0	 7c/ 8c		11c/12c		*extrapolated
+   207 						; AUDF1=16	23c/24c		43c/44c
+   208 						;
+   209
+   210 						;------------------------------------------------------------------
+   211 						;check for early 1.79MHz 8-bit timer
+   212 202C 8D 0A D4				sta		wsync
+   213 202F 8D 0A D4				sta		wsync
+   214 2032					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2032 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   215 2035 8D 09 D2				sta		stimer
+   216 2038 A9 00 8D 0E D2			mva		#0 irqen
+   217 203D A9 01 8D 0E D2			mva		#$01 irqen
+   218 2042					_DELAY_CYCLES_X 19-12
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 19-12
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 2042 4C 45 20				jmp		*+3
+   132 2045 EA					nop
+   133 2046 EA					nop
+Source: pokey_timertiming.s
+   219
+   220 2047 AD 0E D2				lda		irqst
+   221 204A 29 01				and		#$01
+   222 204C					_ASSERTA $01, c"1.79MHz 8-bit timer triggered too early (loop #1)."
+Macro: _ASSERTA [Source: library.s]
+     1 204C C9 01			cmp	#$01
+     2 204E F0 38			beq	pass
+     4 2050 85 C9			sta	d1
+     5 2052 20 0D 1E			jsr	_testFailed
+     6 2055 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 8-bit timer triggered too early (loop #1).",0
+     7 2088			pass:
+Source: pokey_timertiming.s
+   223 						
+   224 						;------------------------------------------------------------------
+   225 						;check for late 1.79MHz 8-bit timer
+   226 2088 8D 0A D4				sta		wsync
+   227 208B 8D 0A D4				sta		wsync
+   228 208E					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 208E 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   229 2091 8D 09 D2				sta		stimer
+   230 2094 A9 00 8D 0E D2			mva		#0 irqen
+   231 2099 A9 01 8D 0E D2			mva		#$01 irqen
+   232 209E					_DELAY_CYCLES_X 20-12
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0008				.def ?cycles = 20-12
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 209E 4C A1 20				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 20A1 4C A4 20				jmp		*+3
+   135 20A4 EA					nop
+Source: pokey_timertiming.s
+   233 20A5 AD 0E D2				lda		irqst
+   234 20A8 29 01				and		#$01
+   235 20AA					_ASSERTA $00, c"1.79MHz 8-bit timer triggered too late (loop #1)."
+Macro: _ASSERTA [Source: library.s]
+     1 20AA C9 00			cmp	#$00
+     2 20AC F0 37			beq	pass
+     4 20AE 85 C9			sta	d1
+     5 20B0 20 0D 1E			jsr	_testFailed
+     6 20B3 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 8-bit timer triggered too late (loop #1).",0
+     7 20E5			pass:
+Source: pokey_timertiming.s
+   236
+   237 						;------------------------------------------------------------------
+   238 						;check for early 1.79MHz 8-bit timer (loop 2)
+   239 20E5 8D 0A D4				sta		wsync
+   240 20E8 8D 0A D4				sta		wsync
+   241 20EB					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 20EB 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   242 20EE 8D 09 D2				sta		stimer
+   243 20F1 A9 00 8D 0E D2			mva		#0 irqen
+   244 20F6					_DELAY_CYCLES_X 12
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000C				.def ?cycles = 12
+   109 = 0000					.def ?cycles = ?cycles - 12
+   110 20F6 20 04 39				jsr		delay12
+Source: pokey_timertiming.s
+   245 20F9 A9 01 8D 0E D2			mva		#$01 irqen
+   246 20FE					_DELAY_CYCLES_X 39-24
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000F				.def ?cycles = 39-24
+    98 = 0000					.def ?cycles = ?cycles - 15
+    99 20FE 20 0F 39				jsr		delay15
+Source: pokey_timertiming.s
+   247 						
+   248 2101 AD 0E D2				lda		irqst
+   249 2104 29 01				and		#$01
+   250 2106					_ASSERTA $01, c"1.79MHz 8-bit timer triggered too early (loop #2)."
+Macro: _ASSERTA [Source: library.s]
+     1 2106 C9 01			cmp	#$01
+     2 2108 F0 38			beq	pass
+     4 210A 85 C9			sta	d1
+     5 210C 20 0D 1E			jsr	_testFailed
+     6 210F 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 8-bit timer triggered too early (loop #2).",0
+     7 2142			pass:
+Source: pokey_timertiming.s
+   251 						
+   252 						;------------------------------------------------------------------
+   253 						;check for late 1.79MHz 8-bit timer (loop 2)
+   254 2142 8D 0A D4				sta		wsync
+   255 2145 8D 0A D4				sta		wsync
+   256 2148					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2148 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   257 214B 8D 09 D2				sta		stimer
+   258 214E A9 00 8D 0E D2			mva		#0 irqen
+   259 2153					_DELAY_CYCLES_X 12
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000C				.def ?cycles = 12
+   109 = 0000					.def ?cycles = ?cycles - 12
+   110 2153 20 04 39				jsr		delay12
+Source: pokey_timertiming.s
+   260 2156 A9 01 8D 0E D2			mva		#$01 irqen
+   261 215B					_DELAY_CYCLES_X 40-24
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0010				.def ?cycles = 40-24
+    93 = 0000					.def ?cycles = ?cycles - 16
+    94 215B 20 08 39				jsr		delay16
+Source: pokey_timertiming.s
+   262 215E AD 0E D2				lda		irqst
+   263 2161 29 01				and		#$01
+   264 2163					_ASSERTA $00, c"1.79MHz 8-bit timer triggered too late (loop #2)."
+Macro: _ASSERTA [Source: library.s]
+     1 2163 C9 00			cmp	#$00
+     2 2165 F0 37			beq	pass
+     4 2167 85 C9			sta	d1
+     5 2169 20 0D 1E			jsr	_testFailed
+     6 216C 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 8-bit timer triggered too late (loop #2).",0
+     7 219E			pass:
+Source: pokey_timertiming.s
+   265 						
+   266 						;====== 16-bit timer tests ========================================
+   267 						; Checks the cycle at which the IRQ bit is asserted in IRQST.
+   268 						; A/B values are cycles after STIMER write before/after bit 0/1 is
+   269 						; cleared for timer 1/2. In general, the timer 1 values are similar
+   270 						; to the 8-bit case except for the additional 3 cycles on the
+   271 						; period, and the timer 2 values lag the timer 1 values by 3 cycles.
+   272 						;
+   273 						;					IRQST1		IRQST2
+   274 						; AUDF=$0000 T1		 7c/ 8c		14c/15c		*extrapolated
+   275 						; AUDF=$0000 T2		10c/11c		17c/18c		*extrapolated
+   276 						; AUDF=$0010 T1		23c/24c		43c/44c
+   277 						; AUDF=$0010 T2		26c/27c		46c/47c
+   278 						;
+   279 						
+   280 						;switch to linked timers
+   281 219E A9 50 8D 08 D2			mva		#$50 audctl
+   282 						
+   283 						;------------------------------------------------------------------
+   284 						;check for early 1.79MHz 16-bit lo timer
+   285 21A3 8D 0A D4				sta		wsync
+   286 21A6 8D 0A D4				sta		wsync
+   287 21A9					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 21A9 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   288 21AC 8D 09 D2				sta		stimer
+   289 21AF A9 00 8D 0E D2			mva		#0 irqen
+   290 21B4 A9 01 8D 0E D2			mva		#$01 irqen
+   291 21B9					_DELAY_CYCLES_X 19-12
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 19-12
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 21B9 4C BC 21				jmp		*+3
+   132 21BC EA					nop
+   133 21BD EA					nop
+Source: pokey_timertiming.s
+   292 						
+   293 21BE AD 0E D2				lda		irqst
+   294 21C1 29 01				and		#$01
+   295 21C3					_ASSERTA $01, c"1.79MHz 16-bit lo timer triggered too early (loop #1)."
+Macro: _ASSERTA [Source: library.s]
+     1 21C3 C9 01			cmp	#$01
+     2 21C5 F0 3C			beq	pass
+     4 21C7 85 C9			sta	d1
+     5 21C9 20 0D 1E			jsr	_testFailed
+     6 21CC 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit lo timer triggered too early (loop #1).",0
+     7 2203			pass:
+Source: pokey_timertiming.s
+   296 						
+   297 						;------------------------------------------------------------------
+   298 						;check for late 1.79MHz 16-bit lo timer
+   299 2203 8D 0A D4				sta		wsync
+   300 2206 8D 0A D4				sta		wsync
+   301 2209					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2209 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   302 220C 8D 09 D2				sta		stimer
+   303 220F A9 00 8D 0E D2			mva		#0 irqen
+   304 2214 A9 01 8D 0E D2			mva		#$01 irqen
+   305 2219					_DELAY_CYCLES_X 20-12
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0008				.def ?cycles = 20-12
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 2219 4C 1C 22				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 221C 4C 1F 22				jmp		*+3
+   135 221F EA					nop
+Source: pokey_timertiming.s
+   306 2220 AD 0E D2				lda		irqst
+   307 2223 29 01				and		#$01
+   308 2225					_ASSERTA $00, c"1.79MHz 16-bit lo timer triggered too late (loop #1)."
+Macro: _ASSERTA [Source: library.s]
+     1 2225 C9 00			cmp	#$00
+     2 2227 F0 3B			beq	pass
+     4 2229 85 C9			sta	d1
+     5 222B 20 0D 1E			jsr	_testFailed
+     6 222E 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit lo timer triggered too late (loop #1).",0
+     7 2264			pass:
+Source: pokey_timertiming.s
+   309
+   310 						;------------------------------------------------------------------
+   311 						;check for early 1.79MHz 16-bit lo timer (loop 2)
+   312 2264 8D 0A D4				sta		wsync
+   313 2267 8D 0A D4				sta		wsync
+   314 226A					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 226A 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   315 226D 8D 09 D2				sta		stimer
+   316 2270 A9 00 8D 0E D2			mva		#0 irqen
+   317 2275					_DELAY_CYCLES_X 15
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000F				.def ?cycles = 15
+    98 = 0000					.def ?cycles = ?cycles - 15
+    99 2275 20 0F 39				jsr		delay15
+Source: pokey_timertiming.s
+   318 2278 A9 01 8D 0E D2			mva		#$01 irqen
+   319 227D					_DELAY_CYCLES_X 42-27
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000F				.def ?cycles = 42-27
+    98 = 0000					.def ?cycles = ?cycles - 15
+    99 227D 20 0F 39				jsr		delay15
+Source: pokey_timertiming.s
+   320 						
+   321 2280 AD 0E D2				lda		irqst
+   322 2283 29 01				and		#$01
+   323 2285					_ASSERTA $01, c"1.79MHz 16-bit lo timer triggered too early (loop #2)."
+Macro: _ASSERTA [Source: library.s]
+     1 2285 C9 01			cmp	#$01
+     2 2287 F0 3C			beq	pass
+     4 2289 85 C9			sta	d1
+     5 228B 20 0D 1E			jsr	_testFailed
+     6 228E 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit lo timer triggered too early (loop #2).",0
+     7 22C5			pass:
+Source: pokey_timertiming.s
+   324 						
+   325 						;------------------------------------------------------------------
+   326 						;check for late 1.79MHz 16-bit lo timer (loop 2)
+   327 22C5 8D 0A D4				sta		wsync
+   328 22C8 8D 0A D4				sta		wsync
+   329 22CB					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 22CB 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   330 22CE 8D 09 D2				sta		stimer
+   331 22D1 A9 00 8D 0E D2			mva		#0 irqen
+   332 22D6					_DELAY_CYCLES_X 15
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000F				.def ?cycles = 15
+    98 = 0000					.def ?cycles = ?cycles - 15
+    99 22D6 20 0F 39				jsr		delay15
+Source: pokey_timertiming.s
+   333 22D9 A9 01 8D 0E D2			mva		#$01 irqen
+   334 22DE					_DELAY_CYCLES_X 43-27
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0010				.def ?cycles = 43-27
+    93 = 0000					.def ?cycles = ?cycles - 16
+    94 22DE 20 08 39				jsr		delay16
+Source: pokey_timertiming.s
+   335 22E1 AD 0E D2				lda		irqst
+   336 22E4 29 01				and		#$01
+   337 22E6					_ASSERTA $00, c"1.79MHz 16-bit lo timer triggered too late (loop #2)."
+Macro: _ASSERTA [Source: library.s]
+     1 22E6 C9 00			cmp	#$00
+     2 22E8 F0 3B			beq	pass
+     4 22EA 85 C9			sta	d1
+     5 22EC 20 0D 1E			jsr	_testFailed
+     6 22EF 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit lo timer triggered too late (loop #2).",0
+     7 2325			pass:
+Source: pokey_timertiming.s
+   338
+   339 						;------------------------------------------------------------------
+   340 						;check for early 1.79MHz 16-bit hi timer
+   341 2325 8D 0A D4				sta		wsync
+   342 2328 8D 0A D4				sta		wsync
+   343 232B					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 232B 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   344 232E 8D 09 D2				sta		stimer
+   345 2331 A9 00 8D 0E D2			mva		#0 irqen
+   346 2336 A9 02 8D 0E D2			mva		#$02 irqen
+   347 233B					_DELAY_CYCLES_X 22-12
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000A				.def ?cycles = 22-12
+   116 = 0007					.def ?cycles = ?cycles - 3
+   117 233B 4C 3E 23				jmp		*+3
+   120 = 0004					.def ?cycles = ?cycles - 3
+   121 233E 4C 41 23				jmp		*+3
+   132 2341 EA					nop
+   133 2342 EA					nop
+Source: pokey_timertiming.s
+   348 						
+   349 2343 AD 0E D2				lda		irqst
+   350 2346 29 02				and		#$02
+   351 2348					_ASSERTA $02, c"1.79MHz 16-bit hi timer triggered too early (loop #1)."
+Macro: _ASSERTA [Source: library.s]
+     1 2348 C9 02			cmp	#$02
+     2 234A F0 3C			beq	pass
+     4 234C 85 C9			sta	d1
+     5 234E 20 0D 1E			jsr	_testFailed
+     6 2351 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit hi timer triggered too early (loop #1).",0
+     7 2388			pass:
+Source: pokey_timertiming.s
+   352 						
+   353 						;------------------------------------------------------------------
+   354 						;check for late 1.79MHz 16-bit hi timer
+   355 2388 8D 0A D4				sta		wsync
+   356 238B 8D 0A D4				sta		wsync
+   357 238E					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 238E 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   358 2391 8D 09 D2				sta		stimer
+   359 2394 A9 00 8D 0E D2			mva		#0 irqen
+   360 2399 A9 02 8D 0E D2			mva		#$02 irqen
+   361 239E					_DELAY_CYCLES_X 23-12
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000B				.def ?cycles = 23-12
+   116 = 0008					.def ?cycles = ?cycles - 3
+   117 239E 4C A1 23				jmp		*+3
+   120 = 0005					.def ?cycles = ?cycles - 3
+   121 23A1 4C A4 23				jmp		*+3
+   124 = 0002					.def ?cycles = ?cycles - 3
+   125 23A4 4C A7 23				jmp		*+3
+   135 23A7 EA					nop
+Source: pokey_timertiming.s
+   362 23A8 AD 0E D2				lda		irqst
+   363 23AB 29 02				and		#$02
+   364 23AD					_ASSERTA $00, c"1.79MHz 16-bit hi timer triggered too late (loop #1)."
+Macro: _ASSERTA [Source: library.s]
+     1 23AD C9 00			cmp	#$00
+     2 23AF F0 3B			beq	pass
+     4 23B1 85 C9			sta	d1
+     5 23B3 20 0D 1E			jsr	_testFailed
+     6 23B6 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit hi timer triggered too late (loop #1).",0
+     7 23EC			pass:
+Source: pokey_timertiming.s
+   365
+   366 						;------------------------------------------------------------------
+   367 						;check for early 1.79MHz 16-bit hi timer (loop 2)
+   368 23EC 8D 0A D4				sta		wsync
+   369 23EF 8D 0A D4				sta		wsync
+   370 23F2					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 23F2 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   371 23F5 8D 09 D2				sta		stimer
+   372 23F8 A9 00 8D 0E D2			mva		#0 irqen
+   373 23FD					_DELAY_CYCLES_X 21
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0015				.def ?cycles = 21
+    68 = 0000					.def ?cycles = ?cycles - 21
+    69 23FD 20 0C 39				jsr		delay21
+Source: pokey_timertiming.s
+   374 2400 A9 02 8D 0E D2			mva		#$02 irqen
+   375 2405					_DELAY_CYCLES_X 45-33
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000C				.def ?cycles = 45-33
+   109 = 0000					.def ?cycles = ?cycles - 12
+   110 2405 20 04 39				jsr		delay12
+Source: pokey_timertiming.s
+   376 						
+   377 2408 AD 0E D2				lda		irqst
+   378 240B 29 02				and		#$02
+   379 240D					_ASSERTA $02, c"1.79MHz 16-bit hi timer triggered too early (loop #2)."
+Macro: _ASSERTA [Source: library.s]
+     1 240D C9 02			cmp	#$02
+     2 240F F0 3C			beq	pass
+     4 2411 85 C9			sta	d1
+     5 2413 20 0D 1E			jsr	_testFailed
+     6 2416 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit hi timer triggered too early (loop #2).",0
+     7 244D			pass:
+Source: pokey_timertiming.s
+   380 						
+   381 						;------------------------------------------------------------------
+   382 						;check for late 1.79MHz 16-bit hi timer (loop 2)
+   383 244D 8D 0A D4				sta		wsync
+   384 2450 8D 0A D4				sta		wsync
+   385 2453					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2453 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   386 2456 8D 09 D2				sta		stimer
+   387 2459 A9 00 8D 0E D2			mva		#0 irqen
+   388 245E					_DELAY_CYCLES_X 21
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0015				.def ?cycles = 21
+    68 = 0000					.def ?cycles = ?cycles - 21
+    69 245E 20 0C 39				jsr		delay21
+Source: pokey_timertiming.s
+   389 2461 A9 02 8D 0E D2			mva		#$02 irqen
+   390 2466					_DELAY_CYCLES_X 46-33
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000D				.def ?cycles = 46-33
+   116 = 000A					.def ?cycles = ?cycles - 3
+   117 2466 4C 69 24				jmp		*+3
+   120 = 0007					.def ?cycles = ?cycles - 3
+   121 2469 4C 6C 24				jmp		*+3
+   124 = 0004					.def ?cycles = ?cycles - 3
+   125 246C 4C 6F 24				jmp		*+3
+   132 246F EA					nop
+   133 2470 EA					nop
+Source: pokey_timertiming.s
+   391 2471 AD 0E D2				lda		irqst
+   392 2474 29 02				and		#$02
+   393 2476					_ASSERTA $00, c"1.79MHz 16-bit hi timer triggered too late (loop #2)."
+Macro: _ASSERTA [Source: library.s]
+     1 2476 C9 00			cmp	#$00
+     2 2478 F0 3B			beq	pass
+     4 247A 85 C9			sta	d1
+     5 247C 20 0D 1E			jsr	_testFailed
+     6 247F 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit hi timer triggered too late (loop #2).",0
+     7 24B5			pass:
+Source: pokey_timertiming.s
+   394 						
+   395 						;====== 8-bit timer reprogramming tests ===========================
+   396 						; AUDF1 setting is $10, for a period of $14 (20) cycles. We are
+   397 						; testing for the last cycle where AUDF1 can be changed to $12
+   398 						; without raising the period of the next cycle to 22 cycles.
+   399 						;
+   400 						; The timing verified by the below is as follows:
+   401 						;
+   402 						; - Writes to AUDF1 up to 18 cycles after write to STIMER do affect
+   403 						;   the second loop and cause IRQST bit 1 to assert 2 cycles
+   404 						;   later starting at 46 cycles past STIMER (4 + 20 + 22).
+   405 						;
+   406 						; - Writes to AUDF1 at 19 cycles after write to STIMER do not affect
+   407 						;   the second loop and cause IRQST bit 1 to assert starting at
+   408 						;   44 cycles past STIMER (4 + 20 + 20).
+   409 						;
+   410 						; Timing:
+   411 						;
+   412 						;	          1         2         3         4         5        6
+   413 						;	012345678901234567890123456789012345678901234567890123456789
+   414 						;	S F                   F I                   1 2
+   415 						;
+   416 						;	S = write to STIMER with AUDF1=$10
+   417 						;	F = last cycle AUDF1 can be written to affect next period
+   418 						;	I = 1st cycle IRQST[0]=0 for first period (22c)
+   419 						;	1 = 1st cycle IRQST[0]=0 for second period when AUDF1=$12 written <=22c
+   420 						;	2 = 1st cycle IRQST[0]=0 for second period when AUDF1=$12 not changed <=22c
+   421 						;
+   422 						; AUDF1=0		 6c/ 7c		*extrapolated
+   423 						; AUDF1=16		22c/23c
+   424 						;
+   425 						
+   426 						;set timer 1 for 1.79MHz
+   427 24B5 A9 40 8D 08 D2			mva		#$40 audctl
+   428
+   429 24BA A0 12				ldy		#$12
+   430
+   431 						;------------------------------------------------------------------
+   432 						;check for early 1.79MHz 8-bit timer
+   433 24BC A9 10 8D 00 D2			mva		#$10 audf1
+   434 24C1 8D 0A D4				sta		wsync
+   435 24C4 8D 0A D4				sta		wsync
+   436 24C7					_DELAY_CYCLES_X 60			;104-49
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 24C7 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   437 24CA 8D 09 D2				sta		stimer				; 50-53
+   438 24CD A9 00 8D 0E D2			mva		#0 irqen			; 54-59   + 6c past STIMER write
+   439 24D2 A2 01 8E 0E D2			mvx		#$01 irqen			; 60-65   +12c
+   440 24D7					_DELAY_CYCLES_X 6			; 66-71   +18c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0006				.def ?cycles = 6
+   116 = 0003					.def ?cycles = ?cycles - 3
+   117 24D7 4C DA 24				jmp		*+3
+   120 = 0000					.def ?cycles = ?cycles - 3
+   121 24DA 4C DD 24				jmp		*+3
+Source: pokey_timertiming.s
+   441 24DD 8C 00 D2				sty		audf1				; 72-75   +22c (written in time to affect second period)
+   442 24E0 8D 0E D2				sta		irqen				; 76-79   +26c
+   443 24E3 8E 0E D2				stx		irqen				; 80-83   +30c
+   444 24E6					_DELAY_CYCLES_X 11			; 84-94   +41c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000B				.def ?cycles = 11
+   116 = 0008					.def ?cycles = ?cycles - 3
+   117 24E6 4C E9 24				jmp		*+3
+   120 = 0005					.def ?cycles = ?cycles - 3
+   121 24E9 4C EC 24				jmp		*+3
+   124 = 0002					.def ?cycles = ?cycles - 3
+   125 24EC 4C EF 24				jmp		*+3
+   135 24EF EA					nop
+Source: pokey_timertiming.s
+   445 24F0 AD 0E D2				lda		irqst				; 95-98   +45c (should be last cycle not fired)
+   446 24F3 29 01				and		#$01
+   447 24F5					_ASSERTA $01, c"1.79MHz 8-bit timer fired too early after 22c change (<46c)."
+Macro: _ASSERTA [Source: library.s]
+     1 24F5 C9 01			cmp	#$01
+     2 24F7 F0 42			beq	pass
+     4 24F9 85 C9			sta	d1
+     5 24FB 20 0D 1E			jsr	_testFailed
+     6 24FE 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 8-bit timer fired too early after 22c change (<46c).",0
+     7 253B			pass:
+Source: pokey_timertiming.s
+   448 						
+   449 						;------------------------------------------------------------------
+   450 						;check for late 1.79MHz 8-bit timer
+   451 253B A9 10 8D 00 D2			mva		#$10 audf1
+   452 2540 8D 0A D4				sta		wsync
+   453 2543 8D 0A D4				sta		wsync
+   454 2546					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2546 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   455 2549 8D 09 D2				sta		stimer
+   456 254C A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write
+   457 2551 A2 01 8E 0E D2			mvx		#$01 irqen			;+12c
+   458 2556					_DELAY_CYCLES_X 6			;+18c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0006				.def ?cycles = 6
+   116 = 0003					.def ?cycles = ?cycles - 3
+   117 2556 4C 59 25				jmp		*+3
+   120 = 0000					.def ?cycles = ?cycles - 3
+   121 2559 4C 5C 25				jmp		*+3
+Source: pokey_timertiming.s
+   459 255C 8C 00 D2				sty		audf1				;+22c (written in time to affect second period)
+   460 255F 8D 0E D2				sta		irqen				;+26c
+   461 2562 8E 0E D2				stx		irqen				;+30c
+   462 2565					_DELAY_CYCLES_X 12			;+42c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000C				.def ?cycles = 12
+   109 = 0000					.def ?cycles = ?cycles - 12
+   110 2565 20 04 39				jsr		delay12
+Source: pokey_timertiming.s
+   463 2568 AD 0E D2				lda		irqst				;+46c (should be first cycle fired)
+   464 256B 29 01				and		#$01
+   465 256D					_ASSERTA $00, c"1.79MHz 8-bit timer fired too late after 22c change (>46c)."
+Macro: _ASSERTA [Source: library.s]
+     1 256D C9 00			cmp	#$00
+     2 256F F0 41			beq	pass
+     4 2571 85 C9			sta	d1
+     5 2573 20 0D 1E			jsr	_testFailed
+     6 2576 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 8-bit timer fired too late after 22c change (>46c).",0
+     7 25B2			pass:
+Source: pokey_timertiming.s
+   466
+   467 						;------------------------------------------------------------------
+   468 						; Check for early 1.79MHz 8-bit timer.
+   469 						;
+   470 						; If this test fails, either the IRQ is asserting too early, or
+   471 						; the change to AUDF1 is taking effect too late.
+   472 						;
+   473 25B2 A9 10 8D 00 D2			mva		#$10 audf1
+   474 25B7 8D 0A D4				sta		wsync
+   475 25BA 8D 0A D4				sta		wsync
+   476 25BD					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 25BD 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   477 25C0 8D 09 D2				sta		stimer
+   478 25C3 A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write
+   479 25C8 A2 01 8E 0E D2			mvx		#$01 irqen			;+12c
+   480 25CD					_DELAY_CYCLES_X 7			;+19c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 7
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 25CD 4C D0 25				jmp		*+3
+   132 25D0 EA					nop
+   133 25D1 EA					nop
+Source: pokey_timertiming.s
+   481 25D2 8C 00 D2				sty		audf1				;+23c (written too late to affect second period)
+   482 25D5 8D 0E D2				sta		irqen				;+27c
+   483 25D8 8E 0E D2				stx		irqen				;+31c
+   484 25DB					_DELAY_CYCLES_X 8			;+39c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0008				.def ?cycles = 8
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 25DB 4C DE 25				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 25DE 4C E1 25				jmp		*+3
+   135 25E1 EA					nop
+Source: pokey_timertiming.s
+   485 25E2 AD 0E D2				lda		irqst				;+43c (should be last cycle not fired)
+   486 25E5 29 01				and		#$01
+   487 25E7					_ASSERTA $01, c"1.79MHz 8-bit timer fired too early after 23c change (<44c)."
+Macro: _ASSERTA [Source: library.s]
+     1 25E7 C9 01			cmp	#$01
+     2 25E9 F0 42			beq	pass
+     4 25EB 85 C9			sta	d1
+     5 25ED 20 0D 1E			jsr	_testFailed
+     6 25F0 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 8-bit timer fired too early after 23c change (<44c).",0
+     7 262D			pass:
+Source: pokey_timertiming.s
+   488 						
+   489 						;------------------------------------------------------------------
+   490 						; Check for late 1.79MHz 8-bit timer after late change.
+   491 						;
+   492 						; If this test fails, either the IRQ is asserting too late, or
+   493 						; the change to AUDF1 is taking effect too soon.
+   494 						;
+   495 262D A9 10 8D 00 D2			mva		#$10 audf1
+   496 2632 8D 0A D4				sta		wsync
+   497 2635 8D 0A D4				sta		wsync
+   498 2638					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2638 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   499 263B 8D 09 D2				sta		stimer
+   500 263E A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write
+   501 2643 A2 01 8E 0E D2			mvx		#$01 irqen			;+12c
+   502 2648					_DELAY_CYCLES_X 7			;+19c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 7
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 2648 4C 4B 26				jmp		*+3
+   132 264B EA					nop
+   133 264C EA					nop
+Source: pokey_timertiming.s
+   503 264D 8C 00 D2				sty		audf1				;+23c (written too late to affect second period)
+   504 2650 8D 0E D2				sta		irqen				;+27c
+   505 2653 8E 0E D2				stx		irqen				;+31c
+   506 2656					_DELAY_CYCLES_X 9			;+40c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0009				.def ?cycles = 9
+   116 = 0006					.def ?cycles = ?cycles - 3
+   117 2656 4C 59 26				jmp		*+3
+   120 = 0003					.def ?cycles = ?cycles - 3
+   121 2659 4C 5C 26				jmp		*+3
+   124 = 0000					.def ?cycles = ?cycles - 3
+   125 265C 4C 5F 26				jmp		*+3
+Source: pokey_timertiming.s
+   507 265F AD 0E D2				lda		irqst				;+44c (should be first cycle fired)
+   508 2662 29 01				and		#$01
+   509 2664					_ASSERTA $00, c"1.79MHz 8-bit timer fired too late after 23c change (>44c)."
+Macro: _ASSERTA [Source: library.s]
+     1 2664 C9 00			cmp	#$00
+     2 2666 F0 41			beq	pass
+     4 2668 85 C9			sta	d1
+     5 266A 20 0D 1E			jsr	_testFailed
+     6 266D 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 8-bit timer fired too late after 23c change (>44c).",0
+     7 26A9			pass:
+Source: pokey_timertiming.s
+   510
+   511 						;====== 16-bit lo timer reprogramming tests========================
+   512 						; AUDF1/2 setting is $000D, for a period of 13 + 7 = 20 cycles. We
+   513 						; are testing for the last cycle where AUDF1 can be changed to $0F
+   514 						; without raising the period of the next cycle to 22 cycles.
+   515 						;
+   516 						; The timing verified by the below is as follows:
+   517 						;
+   518 						; - Writes to AUDF1 up to 18 cycles after write to STIMER do affect
+   519 						;   the second loop and cause IRQST bit 1 to assert 2 cycles
+   520 						;   later starting at 43 cycles past STIMER (1 + 20 + 22).
+   521 						;
+   522 						; - Writes to AUDF1 at 19 cycles after write to STIMER do not
+   523 						;   affect the first two loops and cause IRQST bit 1 to assert
+   524 						;   starting at 41 cycles past STIMER (1 + 20 + 20). This is 3
+   525 						;   cycles before IRQST bit 2.
+   526 						;
+   527 						; The IRQST bit 1 timing is the same from the start of each loop
+   528 						; as for an unlinked 8-bit timer given equivalent AUDF1 values,
+   529 						; but 3 cycles earlier here because AUDF1 is set 3 lower here to
+   530 						; account for the extra linked timer delay. The deadline timing
+   531 						; for writes to AUDF1 is the same as unlinked from the END of the
+   532 						; loop, presumably due to the late reset from channel 2.
+   533 						;
+   534 						; AUDF1=0	 9c/10c		*extrapolated
+   535 						; AUDF1=13	22c/23c
+   536 						;
+   537 26A9 A9 50 8D 08 D2			mva		#$50 audctl
+   538 26AE A0 0F				ldy		#$0f
+   539
+   540 						;------------------------------------------------------------------
+   541 						;lower bound 1.79MHz 16-bit lo IRQST timing, latest AUDF1 write to take effect
+   542 26B0 A9 0D 8D 00 D2			mva		#$0d audf1
+   543 26B5 8D 0A D4				sta		wsync
+   544 26B8 8D 0A D4				sta		wsync
+   545 26BB					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 26BB 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   546 26BE 8D 09 D2				sta		stimer
+   547 26C1 A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write
+   548 26C6 A2 01 8E 0E D2			mvx		#$01 irqen			;+12c
+   549 26CB					_DELAY_CYCLES_X 6			;+18c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0006				.def ?cycles = 6
+   116 = 0003					.def ?cycles = ?cycles - 3
+   117 26CB 4C CE 26				jmp		*+3
+   120 = 0000					.def ?cycles = ?cycles - 3
+   121 26CE 4C D1 26				jmp		*+3
+Source: pokey_timertiming.s
+   550 26D1 8C 00 D2				sty		audf1				;+22c
+   551 26D4 8D 0E D2				sta		irqen				;+26c
+   552 26D7 8E 0E D2				stx		irqen				;+30c
+   553 26DA					_DELAY_CYCLES_X 8			;+38c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0008				.def ?cycles = 8
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 26DA 4C DD 26				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 26DD 4C E0 26				jmp		*+3
+   135 26E0 EA					nop
+Source: pokey_timertiming.s
+   554 26E1 AD 0E D2				lda		irqst				;+42c (should be last cycle not fired)
+   555 26E4 29 01				and		#$01
+   556 26E6					_ASSERTA $01, c"1.79MHz 16-bit lo timer fired too early after 22c change (<43c)."
+Macro: _ASSERTA [Source: library.s]
+     1 26E6 C9 01			cmp	#$01
+     2 26E8 F0 46			beq	pass
+     4 26EA 85 C9			sta	d1
+     5 26EC 20 0D 1E			jsr	_testFailed
+     6 26EF 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit lo timer fired too early after 22c change (<43c).",0
+     7 2730			pass:
+Source: pokey_timertiming.s
+   557 						
+   558 						;------------------------------------------------------------------
+   559 						;upper bound 1.79MHz 16-bit lo IRQST timing, latest AUDF1 write to take effect
+   560 2730 A9 0D 8D 00 D2			mva		#$0d audf1
+   561 2735 8D 0A D4				sta		wsync
+   562 2738 8D 0A D4				sta		wsync
+   563 273B					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 273B 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   564 273E 8D 09 D2				sta		stimer
+   565 2741 A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write
+   566 2746 A2 01 8E 0E D2			mvx		#$01 irqen			;+12c
+   567 274B					_DELAY_CYCLES_X 6			;+18c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0006				.def ?cycles = 6
+   116 = 0003					.def ?cycles = ?cycles - 3
+   117 274B 4C 4E 27				jmp		*+3
+   120 = 0000					.def ?cycles = ?cycles - 3
+   121 274E 4C 51 27				jmp		*+3
+Source: pokey_timertiming.s
+   568 2751 8C 00 D2				sty		audf1				;+22c
+   569 2754 8D 0E D2				sta		irqen				;+26c
+   570 2757 8E 0E D2				stx		irqen				;+30c
+   571 275A					_DELAY_CYCLES_X 9			;+39c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0009				.def ?cycles = 9
+   116 = 0006					.def ?cycles = ?cycles - 3
+   117 275A 4C 5D 27				jmp		*+3
+   120 = 0003					.def ?cycles = ?cycles - 3
+   121 275D 4C 60 27				jmp		*+3
+   124 = 0000					.def ?cycles = ?cycles - 3
+   125 2760 4C 63 27				jmp		*+3
+Source: pokey_timertiming.s
+   572 2763 AD 0E D2				lda		irqst				;+43c (should be first cycle fired)
+   573 2766 29 01				and		#$01
+   574 2768					_ASSERTA $00, c"1.79MHz 16-bit lo timer fired too late after 22c change (>43c)."
+Macro: _ASSERTA [Source: library.s]
+     1 2768 C9 00			cmp	#$00
+     2 276A F0 45			beq	pass
+     4 276C 85 C9			sta	d1
+     5 276E 20 0D 1E			jsr	_testFailed
+     6 2771 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit lo timer fired too late after 22c change (>43c).",0
+     7 27B1			pass:
+Source: pokey_timertiming.s
+   575
+   576 						;------------------------------------------------------------------
+   577 						;lower bound 1.79MHz 16-bit lo IRQST timing, earliest AUDF1 write to be too late
+   578 27B1 A9 0D 8D 00 D2			mva		#$0d audf1
+   579 27B6 8D 0A D4				sta		wsync
+   580 27B9 8D 0A D4				sta		wsync
+   581 27BC					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 27BC 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   582 27BF 8D 09 D2				sta		stimer
+   583 27C2 A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write
+   584 27C7 A2 01 8E 0E D2			mvx		#$01 irqen			;+12c
+   585 27CC					_DELAY_CYCLES_X 7			;+19c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 7
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 27CC 4C CF 27				jmp		*+3
+   132 27CF EA					nop
+   133 27D0 EA					nop
+Source: pokey_timertiming.s
+   586 27D1 8C 00 D2				sty		audf1				;+23c
+   587 27D4 8D 0E D2				sta		irqen				;+27c
+   588 27D7 8E 0E D2				stx		irqen				;+31c
+   589 27DA					_DELAY_CYCLES_X 5			;+36c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0005				.def ?cycles = 5
+   116 = 0002					.def ?cycles = ?cycles - 3
+   117 27DA 4C DD 27				jmp		*+3
+   135 27DD EA					nop
+Source: pokey_timertiming.s
+   590 27DE AD 0E D2				lda		irqst				;+40c (should be last cycle not fired)
+   591 27E1 29 01				and		#$01
+   592 27E3					_ASSERTA $01, c"1.79MHz 16-bit lo timer fired too early after 23c change (<41c)."
+Macro: _ASSERTA [Source: library.s]
+     1 27E3 C9 01			cmp	#$01
+     2 27E5 F0 46			beq	pass
+     4 27E7 85 C9			sta	d1
+     5 27E9 20 0D 1E			jsr	_testFailed
+     6 27EC 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit lo timer fired too early after 23c change (<41c).",0
+     7 282D			pass:
+Source: pokey_timertiming.s
+   593 						
+   594 						;------------------------------------------------------------------
+   595 						;upper bound 1.79MHz 16-bit lo IRQST timing, earliest AUDF1 write to be too late
+   596 282D A9 0D 8D 00 D2			mva		#$0d audf1
+   597 2832 8D 0A D4				sta		wsync
+   598 2835 8D 0A D4				sta		wsync
+   599 2838					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2838 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   600 283B 8D 09 D2				sta		stimer
+   601 283E A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write
+   602 2843 A2 01 8E 0E D2			mvx		#$01 irqen			;+12c
+   603 2848					_DELAY_CYCLES_X 7			;+19c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 7
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 2848 4C 4B 28				jmp		*+3
+   132 284B EA					nop
+   133 284C EA					nop
+Source: pokey_timertiming.s
+   604 284D 8C 00 D2				sty		audf1				;+23c
+   605 2850 8D 0E D2				sta		irqen				;+27c
+   606 2853 8E 0E D2				stx		irqen				;+31c
+   607 2856					_DELAY_CYCLES_X 6			;+37c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0006				.def ?cycles = 6
+   116 = 0003					.def ?cycles = ?cycles - 3
+   117 2856 4C 59 28				jmp		*+3
+   120 = 0000					.def ?cycles = ?cycles - 3
+   121 2859 4C 5C 28				jmp		*+3
+Source: pokey_timertiming.s
+   608 285C AD 0E D2				lda		irqst				;+41c (should be first cycle fired)
+   609 285F 29 01				and		#$01
+   610 2861					_ASSERTA $00, c"1.79MHz 16-bit lo timer fired too late after 23c change (>41c)."
+Macro: _ASSERTA [Source: library.s]
+     1 2861 C9 00			cmp	#$00
+     2 2863 F0 45			beq	pass
+     4 2865 85 C9			sta	d1
+     5 2867 20 0D 1E			jsr	_testFailed
+     6 286A 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit lo timer fired too late after 23c change (>41c).",0
+     7 28AA			pass:
+Source: pokey_timertiming.s
+   611
+   612 						;====== 16-bit hi timer reprogramming tests========================
+   613 						; AUDF1/2 setting is $000D, for a period of 13 + 7 = 20 cycles. We
+   614 						; are testing for the last cycle where AUDF2 can be changed to $01
+   615 						; without raising the period of the next cycle to 276 cycles.
+   616 						;
+   617 						; The timing verified by the below is as follows:
+   618 						;
+   619 						; - Writes to AUDF2 up to 18 cycles after write to STIMER do affect
+   620 						;   the second loop and cause IRQST bit 2 to assert 256 cycles
+   621 						;   later starting at 300 cycles past STIMER (4 + 20 + 276).
+   622 						;
+   623 						; - Writes to AUDF2 at 19 cycles after write to STIMER do not
+   624 						;   affect the first two loops and cause IRQST bit 2 to assert
+   625 						;   starting at 44 cycles past STIMER (4 + 20 + 20). This is 3 cycles
+   626 						;   after IRQST bit 1.
+   627 						;
+   628 						; AUDF1=0	 9c/10c		*extrapolated
+   629 						; AUDF1=13	22c/23c
+   630
+   631 28AA A9 50 8D 08 D2			mva		#$50 audctl
+   632 28AF A9 0D 8D 00 D2			mva		#$0d audf1
+   633 28B4 A0 01				ldy		#$01
+   634
+   635 						;------------------------------------------------------------------
+   636 						;lower bound 1.79MHz 16-bit hi IRQST timing, latest AUDF2 write to take effect
+   637 28B6 A9 00 8D 02 D2			mva		#$00 audf2
+   638 28BB 8D 0A D4				sta		wsync
+   639 28BE 8D 0A D4				sta		wsync
+   640 28C1					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 28C1 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   641 28C4 8D 09 D2				sta		stimer
+   642 28C7 A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write
+   643 28CC A2 02 8E 0E D2			mvx		#$02 irqen			;+12c
+   644 28D1					_DELAY_CYCLES_X 6			;+18c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0006				.def ?cycles = 6
+   116 = 0003					.def ?cycles = ?cycles - 3
+   117 28D1 4C D4 28				jmp		*+3
+   120 = 0000					.def ?cycles = ?cycles - 3
+   121 28D4 4C D7 28				jmp		*+3
+Source: pokey_timertiming.s
+   645 28D7 8C 02 D2				sty		audf2				;+22c
+   646 28DA 8D 0E D2				sta		irqen				;+26c
+   647 28DD 8E 0E D2				stx		irqen				;+30c
+   648 28E0					_DELAY_CYCLES_X 247			;+295c (+18c from refresh cycles)
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 00F7				.def ?cycles = 247
+    32 = 005B					.def ?cycles = ?cycles - 156
+    33 28E0 20 F5 38				jsr		delay156
+    42 = 001F					.def ?cycles = ?cycles - 60
+    43 28E3 20 FB 38				jsr		delay60
+    52 = 0007					.def ?cycles = ?cycles - 24
+    53 28E6 20 01 39				jsr		delay24
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 28E9 4C EC 28				jmp		*+3
+   132 28EC EA					nop
+   133 28ED EA					nop
+Source: pokey_timertiming.s
+   649 28EE AD 0E D2				lda		irqst				;+299c (should be last cycle not fired)
+   650 28F1 29 02				and		#$02
+   651 28F3					_ASSERTA $02, c"1.79MHz 16-bit hi timer fired too early after 24c change (<300c)."
+Macro: _ASSERTA [Source: library.s]
+     1 28F3 C9 02			cmp	#$02
+     2 28F5 F0 47			beq	pass
+     4 28F7 85 C9			sta	d1
+     5 28F9 20 0D 1E			jsr	_testFailed
+     6 28FC 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit hi timer fired too early after 24c change (<300c).",0
+     7 293E			pass:
+Source: pokey_timertiming.s
+   652 						
+   653 						;------------------------------------------------------------------
+   654 						;upper bound 1.79MHz 16-bit hi IRQST timing, latest AUDF2 write to take effect
+   655 293E A9 00 8D 02 D2			mva		#$00 audf2
+   656 2943 8D 0A D4				sta		wsync
+   657 2946 8D 0A D4				sta		wsync
+   658 2949					_DELAY_CYCLES_X 60			;cycle 104-58 (skip 9 refresh cycles)
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2949 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   659 294C 8D 09 D2				sta		stimer				;cycles 59-63
+   660 294F A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write for last cycle
+   661 2954 A2 02 8E 0E D2			mvx		#$02 irqen			;+12c
+   662 2959					_DELAY_CYCLES_X 6			;+18c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0006				.def ?cycles = 6
+   116 = 0003					.def ?cycles = ?cycles - 3
+   117 2959 4C 5C 29				jmp		*+3
+   120 = 0000					.def ?cycles = ?cycles - 3
+   121 295C 4C 5F 29				jmp		*+3
+Source: pokey_timertiming.s
+   663 295F 8C 02 D2				sty		audf2				;+22c
+   664 2962 8D 0E D2				sta		irqen				;+26c
+   665 2965 8E 0E D2				stx		irqen				;+30c
+   666 2968					_DELAY_CYCLES_X 248			;+296c (+18c from refresh cycles)
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 00F8				.def ?cycles = 248
+    32 = 005C					.def ?cycles = ?cycles - 156
+    33 2968 20 F5 38				jsr		delay156
+    42 = 0020					.def ?cycles = ?cycles - 60
+    43 296B 20 FB 38				jsr		delay60
+    52 = 0008					.def ?cycles = ?cycles - 24
+    53 296E 20 01 39				jsr		delay24
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 2971 4C 74 29				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 2974 4C 77 29				jmp		*+3
+   135 2977 EA					nop
+Source: pokey_timertiming.s
+   667 2978 AD 0E D2				lda		irqst				;+300c (should be first cycle fired)
+   668 297B 29 02				and		#$02
+   669 297D					_ASSERTA $00, c"1.79MHz 16-bit hi timer fired too late after 22c change (>300c)."
+Macro: _ASSERTA [Source: library.s]
+     1 297D C9 00			cmp	#$00
+     2 297F F0 46			beq	pass
+     4 2981 85 C9			sta	d1
+     5 2983 20 0D 1E			jsr	_testFailed
+     6 2986 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit hi timer fired too late after 22c change (>300c).",0
+     7 29C7			pass:
+Source: pokey_timertiming.s
+   670
+   671 						;------------------------------------------------------------------
+   672 						;lower bound 1.79MHz 16-bit hi IRQST timing, earliest AUDF2 write to be too late
+   673 29C7 A9 00 8D 02 D2			mva		#$00 audf2
+   674 29CC 8D 0A D4				sta		wsync
+   675 29CF 8D 0A D4				sta		wsync
+   676 29D2					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 29D2 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   677 29D5 8D 09 D2				sta		stimer
+   678 29D8 A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write for last cycle
+   679 29DD A2 02 8E 0E D2			mvx		#$02 irqen			;+12c
+   680 29E2					_DELAY_CYCLES_X 7			;+19c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 7
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 29E2 4C E5 29				jmp		*+3
+   132 29E5 EA					nop
+   133 29E6 EA					nop
+Source: pokey_timertiming.s
+   681 29E7 8C 02 D2				sty		audf2				;+23c
+   682 29EA 8D 0E D2				sta		irqen				;+27c
+   683 29ED 8E 0E D2				stx		irqen				;+31c
+   684 29F0					_DELAY_CYCLES_X 8			;+39c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0008				.def ?cycles = 8
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 29F0 4C F3 29				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 29F3 4C F6 29				jmp		*+3
+   135 29F6 EA					nop
+Source: pokey_timertiming.s
+   685 29F7 AD 0E D2				lda		irqst				;+43c (should be last cycle not fired)
+   686 29FA 29 02				and		#$02
+   687 29FC					_ASSERTA $02, c"1.79MHz 16-bit hi timer fired too early after 22c change (<44c)."
+Macro: _ASSERTA [Source: library.s]
+     1 29FC C9 02			cmp	#$02
+     2 29FE F0 46			beq	pass
+     4 2A00 85 C9			sta	d1
+     5 2A02 20 0D 1E			jsr	_testFailed
+     6 2A05 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit hi timer fired too early after 22c change (<44c).",0
+     7 2A46			pass:
+Source: pokey_timertiming.s
+   688 						
+   689 						;------------------------------------------------------------------
+   690 						;upper bound 1.79MHz 16-bit hi IRQST timing, earliest AUDF2 write to be too late
+   691 2A46 A9 00 8D 02 D2			mva		#$00 audf2
+   692 2A4B 8D 0A D4				sta		wsync
+   693 2A4E 8D 0A D4				sta		wsync
+   694 2A51					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2A51 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   695 2A54 8D 09 D2				sta		stimer
+   696 2A57 A9 00 8D 0E D2			mva		#0 irqen			;+ 6c past STIMER write for last cycle
+   697 2A5C A2 02 8E 0E D2			mvx		#$02 irqen			;+12c
+   698 2A61					_DELAY_CYCLES_X 7			;+19c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 7
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 2A61 4C 64 2A				jmp		*+3
+   132 2A64 EA					nop
+   133 2A65 EA					nop
+Source: pokey_timertiming.s
+   699 2A66 8C 02 D2				sty		audf2				;+23c
+   700 2A69 8D 0E D2				sta		irqen				;+27c
+   701 2A6C 8E 0E D2				stx		irqen				;+31c
+   702 2A6F					_DELAY_CYCLES_X 9			;+40c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0009				.def ?cycles = 9
+   116 = 0006					.def ?cycles = ?cycles - 3
+   117 2A6F 4C 72 2A				jmp		*+3
+   120 = 0003					.def ?cycles = ?cycles - 3
+   121 2A72 4C 75 2A				jmp		*+3
+   124 = 0000					.def ?cycles = ?cycles - 3
+   125 2A75 4C 78 2A				jmp		*+3
+Source: pokey_timertiming.s
+   703 2A78 AD 0E D2				lda		irqst				;+44c (should be first cycle fired)
+   704 2A7B 29 02				and		#$02
+   705 2A7D					_ASSERTA $00, c"1.79MHz 16-bit hi timer fired too late after 25c change (>44c)."
+Macro: _ASSERTA [Source: library.s]
+     1 2A7D C9 00			cmp	#$00
+     2 2A7F F0 45			beq	pass
+     4 2A81 85 C9			sta	d1
+     5 2A83 20 0D 1E			jsr	_testFailed
+     6 2A86 31 2E 37 39 4D 48 + 	dta	c"1.79MHz 16-bit hi timer fired too late after 25c change (>44c).",0
+     7 2AC6			pass:
+Source: pokey_timertiming.s
+   706 						
+   707 						;====== 8-bit STIMER preemption tests =============================
+   708 						;Checks for the last cycle that STIMER can be strobed to prevent
+   709 						;the timer from firing.
+   710 						;
+   711 						;			STIMER1		STIMER2
+   712 						; AUDF1=0	 4c/ 5c		 8c/ 9c		*extrapolated
+   713 						; AUDF1=8	12c/13c		24c/25c
+   714 						;
+   715
+   716 2AC6 A9 40 8D 08 D2			mva		#$40 audctl
+   717 2ACB A9 08 8D 00 D2			mva		#8 audf1
+   718
+   719 2AD0 A9 00				lda		#0
+   720 2AD2 A2 01				ldx		#1
+   721 2AD4 8D 0E D2				sta		irqen
+   722 2AD7 EE 0A D4				inc		wsync
+   723 2ADA					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2ADA 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   724 2ADD 8D 09 D2				sta		stimer
+   725 2AE0 8E 0E D2				stx		irqen			;+4c
+   726 2AE3					_DELAY_CYCLES_X 4		;+7c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0004				.def ?cycles = 4
+   132 2AE3 EA					nop
+   133 2AE4 EA					nop
+Source: pokey_timertiming.s
+   727 2AE5 8D 09 D2				sta		stimer			;+12c
+   728 2AE8					_DELAY_CYCLES_X 4
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0004				.def ?cycles = 4
+   132 2AE8 EA					nop
+   133 2AE9 EA					nop
+Source: pokey_timertiming.s
+   729 2AEA AD 0E D2				lda		irqst
+   730 2AED 29 01				and		#1
+   731 2AEF					_ASSERTA $01, c"STIMER did not preempt AUDF1=8 at +12c.",0
+Macro: _ASSERTA [Source: library.s]
+     1 2AEF C9 01			cmp	#$01
+     2 2AF1 F0 2D			beq	pass
+     4 2AF3 85 C9			sta	d1
+     5 2AF5 20 0D 1E			jsr	_testFailed
+     6 2AF8 53 54 49 4D 45 52 + 	dta	c"STIMER did not preempt AUDF1=8 at +12c.",0
+     7 2B20			pass:
+Source: pokey_timertiming.s
+   732
+   733 2B20 A9 00				lda		#0
+   734 2B22 8D 0E D2				sta		irqen
+   735 2B25 EE 0A D4				inc		wsync
+   736 2B28					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2B28 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   737 2B2B 8D 09 D2				sta		stimer
+   738 2B2E 8E 0E D2				stx		irqen			;+4c
+   739 2B31					_DELAY_CYCLES_X 5		;+8c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0005				.def ?cycles = 5
+   116 = 0002					.def ?cycles = ?cycles - 3
+   117 2B31 4C 34 2B				jmp		*+3
+   135 2B34 EA					nop
+Source: pokey_timertiming.s
+   740 2B35 8D 09 D2				sta		stimer			;+13c
+   741 2B38					_DELAY_CYCLES_X 4
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0004				.def ?cycles = 4
+   132 2B38 EA					nop
+   133 2B39 EA					nop
+Source: pokey_timertiming.s
+   742 2B3A AD 0E D2				lda		irqst
+   743 2B3D 29 01				and		#1
+   744 2B3F					_ASSERTA $00, c"STIMER should not have preempted AUDF1=8 at +13c.",0
+Macro: _ASSERTA [Source: library.s]
+     1 2B3F C9 00			cmp	#$00
+     2 2B41 F0 37			beq	pass
+     4 2B43 85 C9			sta	d1
+     5 2B45 20 0D 1E			jsr	_testFailed
+     6 2B48 53 54 49 4D 45 52 + 	dta	c"STIMER should not have preempted AUDF1=8 at +13c.",0
+     7 2B7A			pass:
+Source: pokey_timertiming.s
+   745
+   746 2B7A A9 00				lda		#0
+   747 2B7C 8D 0E D2				sta		irqen
+   748 2B7F EE 0A D4				inc		wsync
+   749 2B82					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2B82 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   750 2B85 8D 09 D2				sta		stimer
+   751 2B88					_DELAY_CYCLES_X 12		;+12c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000C				.def ?cycles = 12
+   109 = 0000					.def ?cycles = ?cycles - 12
+   110 2B88 20 04 39				jsr		delay12
+Source: pokey_timertiming.s
+   752 2B8B 8E 0E D2				stx		irqen			;+16c
+   753 2B8E					_DELAY_CYCLES_X 4		;+20c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0004				.def ?cycles = 4
+   132 2B8E EA					nop
+   133 2B8F EA					nop
+Source: pokey_timertiming.s
+   754 2B90 8D 09 D2				sta		stimer			;+24c
+   755 2B93					_DELAY_CYCLES_X 4
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0004				.def ?cycles = 4
+   132 2B93 EA					nop
+   133 2B94 EA					nop
+Source: pokey_timertiming.s
+   756 2B95 AD 0E D2				lda		irqst
+   757 2B98 29 01				and		#1
+   758 2B9A					_ASSERTA $01, c"STIMER did not preempt AUDF1=8 at +24c.",0
+Macro: _ASSERTA [Source: library.s]
+     1 2B9A C9 01			cmp	#$01
+     2 2B9C F0 2D			beq	pass
+     4 2B9E 85 C9			sta	d1
+     5 2BA0 20 0D 1E			jsr	_testFailed
+     6 2BA3 53 54 49 4D 45 52 + 	dta	c"STIMER did not preempt AUDF1=8 at +24c.",0
+     7 2BCB			pass:
+Source: pokey_timertiming.s
+   759
+   760 2BCB A9 00				lda		#0
+   761 2BCD 8D 0E D2				sta		irqen
+   762 2BD0 EE 0A D4				inc		wsync
+   763 2BD3					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2BD3 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   764 2BD6 8D 09 D2				sta		stimer
+   765 2BD9					_DELAY_CYCLES_X 12		;+12c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000C				.def ?cycles = 12
+   109 = 0000					.def ?cycles = ?cycles - 12
+   110 2BD9 20 04 39				jsr		delay12
+Source: pokey_timertiming.s
+   766 2BDC 8E 0E D2				stx		irqen			;+16c
+   767 2BDF					_DELAY_CYCLES_X 5		;+21c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0005				.def ?cycles = 5
+   116 = 0002					.def ?cycles = ?cycles - 3
+   117 2BDF 4C E2 2B				jmp		*+3
+   135 2BE2 EA					nop
+Source: pokey_timertiming.s
+   768 2BE3 8D 09 D2				sta		stimer			;+25c
+   769 2BE6					_DELAY_CYCLES_X 4
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0004				.def ?cycles = 4
+   132 2BE6 EA					nop
+   133 2BE7 EA					nop
+Source: pokey_timertiming.s
+   770 2BE8 AD 0E D2				lda		irqst
+   771 2BEB 29 01				and		#1
+   772 2BED					_ASSERTA $00, c"STIMER should not have preempted AUDF1=8 at +25c.",0
+Macro: _ASSERTA [Source: library.s]
+     1 2BED C9 00			cmp	#$00
+     2 2BEF F0 37			beq	pass
+     4 2BF1 85 C9			sta	d1
+     5 2BF3 20 0D 1E			jsr	_testFailed
+     6 2BF6 53 54 49 4D 45 52 + 	dta	c"STIMER should not have preempted AUDF1=8 at +25c.",0
+     7 2C28			pass:
+Source: pokey_timertiming.s
+   773
+   774 						;====== two-tone test prep ========================================
+   775 						;
+   776 						; We need to use timer 1 for 8-bit two tone tests to have access
+   777 						; to the 1.79MHz clock, but there is no direct way to reset the
+   778 						; serial output state, which is not affected by init mode or
+   779 						; serial reset (they can halt the shifter, but not clear it).
+   780 						; Therefore, we need to push a byte through to ensure that the
+   781 						; shifter has completed the stop bit, and therefore output a 1.
+   782 						; After that, we can use force break to get a 0 as needed.
+   783
+   784 2C28 A0 00				ldy		#0
+   785 2C2A 8C 0F D2				sty		skctl			;reset serial port as much as we can
+   786 2C2D 8C 04 D2				sty		audf3
+   787 2C30 8C 06 D2				sty		audf4
+   788 2C33 8C 0E D2				sty		irqen
+   789 2C36 A9 23 8D 0F D2			mva		#$23 skctl		;ch4 transmit synchronous
+   790 2C3B A9 28 8D 08 D2			mva		#$28 audctl		;ch3+4 linked 1.79MHz
+   791 2C40 A9 18 8D 0E D2			mva		#$18 irqen		;serial output ready + complete
+   792 2C45 8C 0D D2				sty		serout			;write dummy byte (~140-153 cycles)
+   793 2C48 8D 0A D4				sta		wsync
+   794 2C4B 8D 0A D4				sta		wsync
+   795 2C4E 8D 0A D4				sta		wsync
+   796 2C51 AD 0E D2				lda		irqst
+   797 2C54 29 18				and		#$18
+   798 2C56					_ASSERTA $00, c"Unable to reset serial output for 2tn tests.",0
+Macro: _ASSERTA [Source: library.s]
+     1 2C56 C9 00			cmp	#$00
+     2 2C58 F0 32			beq	pass
+     4 2C5A 85 C9			sta	d1
+     5 2C5C 20 0D 1E			jsr	_testFailed
+     6 2C5F 55 6E 61 62 6C 65 + 	dta	c"Unable to reset serial output for 2tn tests.",0
+     7 2C8C			pass:
+Source: pokey_timertiming.s
+   799
+   800 						;====== 8-bit two-tone timer 1 IRQST tests ========================
+   801 						;
+   802 						; IRQST is set at the same time for the first period after STIMER.
+   803 						; Second and subsequent periods are two cycles longer.
+   804 						;
+   805 						; AUDF1=0	 7c/ 8c		13c/14c		*extrapolated
+   806 						; AUDF1=8	15c/16c		29c/30c
+   807 						;
+   808
+   809 2C8C A9 00 8D 0F D2			mva		#0 skctl
+   810
+   811 2C91 A9 40 8D 08 D2			mva		#$40 audctl
+   812 2C96 A9 0B 8D 0F D2			mva		#$0b skctl
+   813 2C9B A9 08 8D 00 D2			mva		#8 audf1
+   814 2CA0 A9 FF 8D 02 D2			mva		#$ff audf2
+   815 2CA5 8D 09 D2				sta		stimer
+   816
+   817 2CA8 A9 00				lda		#0
+   818 2CAA A2 FF				ldx		#$ff
+   819 2CAC 8D 0E D2				sta		irqen
+   820 2CAF EE 0A D4				inc		wsync
+   821 2CB2					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2CB2 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   822 2CB5 8D 09 D2				sta		stimer
+   823 2CB8 8E 0E D2				stx		irqen			;+4c
+   824 2CBB					_DELAY_CYCLES_X 7		;+11c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 7
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 2CBB 4C BE 2C				jmp		*+3
+   132 2CBE EA					nop
+   133 2CBF EA					nop
+Source: pokey_timertiming.s
+   825 2CC0 AC 0E D2				ldy		irqst			;+15c
+   826 2CC3 8D 0E D2				sta		irqen			;+19c
+   827 2CC6 8E 0E D2				stx		irqen			;+23c
+   828 2CC9 EA					nop						;+25c
+   829 2CCA AD 0E D2				lda		irqst			;+29c
+   830 2CCD 4A					lsr
+   831 2CCE 98					tya
+   832 2CCF 29 01				and		#1
+   833 2CD1 D0 39				bne		ttn_ok1
+   834 2CD3					_FAIL	c"AUDF1=8 timer 1 2tn should not have been set at +15c.",0
+Macro: _FAIL [Source: library.s]
+     1 2CD3 20 0D 1E			jsr		_testFailed
+     2 2CD6 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn should not have been set at +15c.",0
+Source: pokey_timertiming.s
+   835 2D0C			ttn_ok1:
+   836 2D0C B0 39				bcs		ttn_ok2
+   837 2D0E					_FAIL	c"AUDF1=8 timer 1 2tn should not have been set at +29c.",0
+Macro: _FAIL [Source: library.s]
+     1 2D0E 20 0D 1E			jsr		_testFailed
+     2 2D11 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn should not have been set at +29c.",0
+Source: pokey_timertiming.s
+   838 2D47			ttn_ok2:
+   839
+   840 2D47 A9 00				lda		#0
+   841 2D49 8D 0E D2				sta		irqen
+   842 2D4C EE 0A D4				inc		wsync
+   843 2D4F					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2D4F 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   844 2D52 8D 09 D2				sta		stimer
+   845 2D55 8E 0E D2				stx		irqen			;+4c
+   846 2D58					_DELAY_CYCLES_X 8		;+12c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0008				.def ?cycles = 8
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 2D58 4C 5B 2D				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 2D5B 4C 5E 2D				jmp		*+3
+   135 2D5E EA					nop
+Source: pokey_timertiming.s
+   847 2D5F AC 0E D2				ldy		irqst			;+16c
+   848 2D62 8D 0E D2				sta		irqen			;+20c
+   849 2D65 8E 0E D2				stx		irqen			;+24c
+   850 2D68 EA					nop						;+26c
+   851 2D69 AD 0E D2				lda		irqst			;+30c
+   852 2D6C 4A					lsr
+   853 2D6D 98					tya
+   854 2D6E 29 01				and		#1
+   855 2D70 F0 35				beq		ttn_ok3
+   856 2D72					_FAIL	c"AUDF1=8 timer 1 2tn should have been set at +16c.",0
+Macro: _FAIL [Source: library.s]
+     1 2D72 20 0D 1E			jsr		_testFailed
+     2 2D75 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn should have been set at +16c.",0
+Source: pokey_timertiming.s
+   857 2DA7			ttn_ok3:
+   858 2DA7 90 35				bcc		ttn_ok4
+   859 2DA9					_FAIL	c"AUDF1=8 timer 1 2tn should have been set at +30c.",0
+Macro: _FAIL [Source: library.s]
+     1 2DA9 20 0D 1E			jsr		_testFailed
+     2 2DAC 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn should have been set at +30c.",0
+Source: pokey_timertiming.s
+   860 2DDE			ttn_ok4:
+   861
+   862 						;====== 8-bit two-tone timer 1 reprogramming tests ================
+   863 						;Changes AUDF1 on the fly in 8-bit two-tone mode and measure
+   864 						;the last cycle on which we can affect the timing of the next IRQ.
+   865 						;
+   866 						;				AUDF1*1		AUDF1*2
+   867 						; AUDF1=0		 8c/ 9c		14c/15c		*extrapolated
+   868 						; AUDF1=8		16c/17c		30c/31c
+   869 						; AUDF1=10		18c/19c		34c/35c
+   870 						;
+   871
+   872 2DDE A9 40 8D 08 D2			mva		#$40 audctl
+   873 2DE3 A9 0B 8D 0F D2			mva		#$0b skctl
+   874 2DE8 A2 FF 8E 02 D2			mvx		#$ff audf2
+   875 2DED A0 00				ldy		#0
+   876
+   877 2DEF A9 08 8D 00 D2			mva		#8 audf1
+   878 2DF4 8C 0E D2				sty		irqen
+   879 2DF7 EE 0A D4				inc		wsync
+   880 2DFA					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2DFA 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   881 2DFD 8D 09 D2				sta		stimer
+   882 2E00					_DELAY_CYCLES_X 12		;+12c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000C				.def ?cycles = 12
+   109 = 0000					.def ?cycles = ?cycles - 12
+   110 2E00 20 04 39				jsr		delay12
+Source: pokey_timertiming.s
+   883 2E03 8E 00 D2				stx		audf1			;+16c
+   884 2E06					_DELAY_CYCLES_X 6		;+22c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0006				.def ?cycles = 6
+   116 = 0003					.def ?cycles = ?cycles - 3
+   117 2E06 4C 09 2E				jmp		*+3
+   120 = 0000					.def ?cycles = ?cycles - 3
+   121 2E09 4C 0C 2E				jmp		*+3
+Source: pokey_timertiming.s
+   885 2E0C 8E 0E D2				stx		irqen			;+26c
+   886 2E0F AD 0E D2				lda		irqst			;+30c
+   887 2E12 4A					lsr
+   888 2E13 B0 3D				bcs		ttnrp_ok1
+   889 2E15					_FAIL	c"AUDF1=8 timer 1 2tn refreq should have succeeded at +16c.",0
+Macro: _FAIL [Source: library.s]
+     1 2E15 20 0D 1E			jsr		_testFailed
+     2 2E18 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn refreq should have succeeded at +16c.",0
+Source: pokey_timertiming.s
+   890 2E52			ttnrp_ok1:
+   891
+   892 2E52 A9 08 8D 00 D2			mva		#8 audf1
+   893 2E57 8C 0E D2				sty		irqen
+   894 2E5A EE 0A D4				inc		wsync
+   895 2E5D					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2E5D 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   896 2E60 8D 09 D2				sta		stimer
+   897 2E63					_DELAY_CYCLES_X 13		;+13c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000D				.def ?cycles = 13
+   116 = 000A					.def ?cycles = ?cycles - 3
+   117 2E63 4C 66 2E				jmp		*+3
+   120 = 0007					.def ?cycles = ?cycles - 3
+   121 2E66 4C 69 2E				jmp		*+3
+   124 = 0004					.def ?cycles = ?cycles - 3
+   125 2E69 4C 6C 2E				jmp		*+3
+   132 2E6C EA					nop
+   133 2E6D EA					nop
+Source: pokey_timertiming.s
+   898 2E6E 8E 00 D2				stx		audf1			;+17c
+   899 2E71					_DELAY_CYCLES_X 5		;+22c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0005				.def ?cycles = 5
+   116 = 0002					.def ?cycles = ?cycles - 3
+   117 2E71 4C 74 2E				jmp		*+3
+   135 2E74 EA					nop
+Source: pokey_timertiming.s
+   900 2E75 8E 0E D2				stx		irqen			;+26c
+   901 2E78 AD 0E D2				lda		irqst			;+30c
+   902 2E7B 4A					lsr
+   903 2E7C 90 41				bcc		ttnrp_ok2
+   904 2E7E					_FAIL	c"AUDF1=8 timer 1 2tn refreq should not have succeeded at +17c.",0
+Macro: _FAIL [Source: library.s]
+     1 2E7E 20 0D 1E			jsr		_testFailed
+     2 2E81 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn refreq should not have succeeded at +17c.",0
+Source: pokey_timertiming.s
+   905 2EBF			ttnrp_ok2:
+   906
+   907 2EBF A9 08 8D 00 D2			mva		#8 audf1
+   908 2EC4 8C 0E D2				sty		irqen
+   909 2EC7 EE 0A D4				inc		wsync
+   910 2ECA					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2ECA 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   911 2ECD 8D 09 D2				sta		stimer
+   912 2ED0					_DELAY_CYCLES_X 26		;+26c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 001A				.def ?cycles = 26
+    52 = 0002					.def ?cycles = ?cycles - 24
+    53 2ED0 20 01 39				jsr		delay24
+   135 2ED3 EA					nop
+Source: pokey_timertiming.s
+   913 2ED4 8E 00 D2				stx		audf1			;+30c
+   914 2ED7					_DELAY_CYCLES_X 8		;+38c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0008				.def ?cycles = 8
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 2ED7 4C DA 2E				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 2EDA 4C DD 2E				jmp		*+3
+   135 2EDD EA					nop
+Source: pokey_timertiming.s
+   915 2EDE 8E 0E D2				stx		irqen			;+42c
+   916 2EE1 AD 0E D2				lda		irqst			;+46c
+   917 2EE4 4A					lsr
+   918 2EE5 B0 3D				bcs		ttnrp_ok3
+   919 2EE7					_FAIL	c"AUDF1=8 timer 1 2tn refreq should have succeeded at +30c.",0
+Macro: _FAIL [Source: library.s]
+     1 2EE7 20 0D 1E			jsr		_testFailed
+     2 2EEA 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn refreq should have succeeded at +30c.",0
+Source: pokey_timertiming.s
+   920 2F24			ttnrp_ok3:
+   921
+   922 2F24 A9 08 8D 00 D2			mva		#8 audf1
+   923 2F29 8C 0E D2				sty		irqen
+   924 2F2C EE 0A D4				inc		wsync
+   925 2F2F					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2F2F 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   926 2F32 8D 09 D2				sta		stimer
+   927 2F35					_DELAY_CYCLES_X 27		;+27c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 001B				.def ?cycles = 27
+    52 = 0003					.def ?cycles = ?cycles - 24
+    53 2F35 20 01 39				jsr		delay24
+   116 = 0000					.def ?cycles = ?cycles - 3
+   117 2F38 4C 3B 2F				jmp		*+3
+Source: pokey_timertiming.s
+   928 2F3B 8E 00 D2				stx		audf1			;+31c
+   929 2F3E					_DELAY_CYCLES_X 7		;+38c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 7
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 2F3E 4C 41 2F				jmp		*+3
+   132 2F41 EA					nop
+   133 2F42 EA					nop
+Source: pokey_timertiming.s
+   930 2F43 8E 0E D2				stx		irqen			;+42c
+   931 2F46 AD 0E D2				lda		irqst			;+46c
+   932 2F49 4A					lsr
+   933 2F4A 90 41				bcc		ttnrp_ok4
+   934 2F4C					_FAIL	c"AUDF1=8 timer 1 2tn refreq should not have succeeded at +31c.",0
+Macro: _FAIL [Source: library.s]
+     1 2F4C 20 0D 1E			jsr		_testFailed
+     2 2F4F 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn refreq should not have succeeded at +31c.",0
+Source: pokey_timertiming.s
+   935 2F8D			ttnrp_ok4:
+   936
+   937 2F8D A9 0A 8D 00 D2			mva		#10 audf1
+   938 2F92 8C 0E D2				sty		irqen
+   939 2F95 EE 0A D4				inc		wsync
+   940 2F98					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2F98 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   941 2F9B 8D 09 D2				sta		stimer
+   942 2F9E					_DELAY_CYCLES_X 14		;+14c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000E				.def ?cycles = 14
+   103 = 0000					.def ?cycles = ?cycles - 14
+   104 2F9E 20 09 39				jsr		delay14
+Source: pokey_timertiming.s
+   943 2FA1 8E 00 D2				stx		audf1			;+18c
+   944 2FA4					_DELAY_CYCLES_X 8		;+26c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0008				.def ?cycles = 8
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 2FA4 4C A7 2F				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 2FA7 4C AA 2F				jmp		*+3
+   135 2FAA EA					nop
+Source: pokey_timertiming.s
+   945 2FAB 8E 0E D2				stx		irqen			;+30c
+   946 2FAE AD 0E D2				lda		irqst			;+34c
+   947 2FB1 4A					lsr
+   948 2FB2 B0 3E				bcs		ttnrp_ok5
+   949 2FB4					_FAIL	c"AUDF1=10 timer 1 2tn refreq should have succeeded at +18c.",0
+Macro: _FAIL [Source: library.s]
+     1 2FB4 20 0D 1E			jsr		_testFailed
+     2 2FB7 41 55 44 46 31 3D + 	dta		c"AUDF1=10 timer 1 2tn refreq should have succeeded at +18c.",0
+Source: pokey_timertiming.s
+   950 2FF2			ttnrp_ok5:
+   951
+   952 2FF2 A9 0A 8D 00 D2			mva		#10 audf1
+   953 2FF7 8C 0E D2				sty		irqen
+   954 2FFA EE 0A D4				inc		wsync
+   955 2FFD					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 2FFD 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   956 3000 8D 09 D2				sta		stimer
+   957 3003					_DELAY_CYCLES_X 15		;+15c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000F				.def ?cycles = 15
+    98 = 0000					.def ?cycles = ?cycles - 15
+    99 3003 20 0F 39				jsr		delay15
+Source: pokey_timertiming.s
+   958 3006 8E 00 D2				stx		audf1			;+19c
+   959 3009					_DELAY_CYCLES_X 7		;+26c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 7
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 3009 4C 0C 30				jmp		*+3
+   132 300C EA					nop
+   133 300D EA					nop
+Source: pokey_timertiming.s
+   960 300E 8E 0E D2				stx		irqen			;+30c
+   961 3011 AD 0E D2				lda		irqst			;+34c
+   962 3014 4A					lsr
+   963 3015 90 42				bcc		ttnrp_ok6
+   964 3017					_FAIL	c"AUDF1=10 timer 1 2tn refreq should not have succeeded at +19c.",0
+Macro: _FAIL [Source: library.s]
+     1 3017 20 0D 1E			jsr		_testFailed
+     2 301A 41 55 44 46 31 3D + 	dta		c"AUDF1=10 timer 1 2tn refreq should not have succeeded at +19c.",0
+Source: pokey_timertiming.s
+   965 3059			ttnrp_ok6:
+   966
+   967 3059 A9 0A 8D 00 D2			mva		#10 audf1
+   968 305E 8C 0E D2				sty		irqen
+   969 3061 EE 0A D4				inc		wsync
+   970 3064					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 3064 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   971 3067 8D 09 D2				sta		stimer
+   972 306A					_DELAY_CYCLES_X 30		;+30c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 001E				.def ?cycles = 30
+    52 = 0006					.def ?cycles = ?cycles - 24
+    53 306A 20 01 39				jsr		delay24
+   116 = 0003					.def ?cycles = ?cycles - 3
+   117 306D 4C 70 30				jmp		*+3
+   120 = 0000					.def ?cycles = ?cycles - 3
+   121 3070 4C 73 30				jmp		*+3
+Source: pokey_timertiming.s
+   973 3073 8E 00 D2				stx		audf1			;+34c
+   974 3076					_DELAY_CYCLES_X 10		;+44c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000A				.def ?cycles = 10
+   116 = 0007					.def ?cycles = ?cycles - 3
+   117 3076 4C 79 30				jmp		*+3
+   120 = 0004					.def ?cycles = ?cycles - 3
+   121 3079 4C 7C 30				jmp		*+3
+   132 307C EA					nop
+   133 307D EA					nop
+Source: pokey_timertiming.s
+   975 307E 8E 0E D2				stx		irqen			;+48c
+   976 3081 AD 0E D2				lda		irqst			;+52c
+   977 3084 4A					lsr
+   978 3085 B0 3E				bcs		ttnrp_ok7
+   979 3087					_FAIL	c"AUDF1=10 timer 1 2tn refreq should have succeeded at +34c.",0
+Macro: _FAIL [Source: library.s]
+     1 3087 20 0D 1E			jsr		_testFailed
+     2 308A 41 55 44 46 31 3D + 	dta		c"AUDF1=10 timer 1 2tn refreq should have succeeded at +34c.",0
+Source: pokey_timertiming.s
+   980 30C5			ttnrp_ok7:
+   981
+   982 30C5 A9 0A 8D 00 D2			mva		#10 audf1
+   983 30CA 8C 0E D2				sty		irqen
+   984 30CD EE 0A D4				inc		wsync
+   985 30D0					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 30D0 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+   986 30D3 8D 09 D2				sta		stimer
+   987 30D6					_DELAY_CYCLES_X 31		;+31c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 001F				.def ?cycles = 31
+    52 = 0007					.def ?cycles = ?cycles - 24
+    53 30D6 20 01 39				jsr		delay24
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 30D9 4C DC 30				jmp		*+3
+   132 30DC EA					nop
+   133 30DD EA					nop
+Source: pokey_timertiming.s
+   988 30DE 8E 00 D2				stx		audf1			;+35c
+   989 30E1					_DELAY_CYCLES_X 9		;+44c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0009				.def ?cycles = 9
+   116 = 0006					.def ?cycles = ?cycles - 3
+   117 30E1 4C E4 30				jmp		*+3
+   120 = 0003					.def ?cycles = ?cycles - 3
+   121 30E4 4C E7 30				jmp		*+3
+   124 = 0000					.def ?cycles = ?cycles - 3
+   125 30E7 4C EA 30				jmp		*+3
+Source: pokey_timertiming.s
+   990 30EA 8E 0E D2				stx		irqen			;+48c
+   991 30ED AD 0E D2				lda		irqst			;+52c
+   992 30F0 4A					lsr
+   993 30F1 90 42				bcc		ttnrp_ok8
+   994 30F3					_FAIL	c"AUDF1=10 timer 1 2tn refreq should not have succeeded at +35c.",0
+Macro: _FAIL [Source: library.s]
+     1 30F3 20 0D 1E			jsr		_testFailed
+     2 30F6 41 55 44 46 31 3D + 	dta		c"AUDF1=10 timer 1 2tn refreq should not have succeeded at +35c.",0
+Source: pokey_timertiming.s
+   995 3135			ttnrp_ok8:
+   996
+   997 						;====== 8-bit two-tone timer 1 STIMER preemption tests ==============
+   998 						;Measures the last cycle on which STIMER can be strobed to affect
+   999 						;the timing of the next IRQ.
+  1000 						;
+  1001 						;			AUDF1*2		AUDF1*3
+  1002 						; AUDF1=0	10c/11c		16c/17c		*extrapolated
+  1003 						; AUDF1=8	26c/27c		40c/41c
+  1004 						; AUDF1=10	30c/31c		46c/47c
+  1005
+  1006 3135 A9 40 8D 08 D2			mva		#$40 audctl
+  1007 313A A9 0B 8D 0F D2			mva		#$0b skctl
+  1008 313F A9 FF 8D 02 D2			mva		#$ff audf2
+  1009
+  1010 3144 A9 00				lda		#0
+  1011 3146 A2 FF				ldx		#$ff
+  1012 3148 8D 0E D2				sta		irqen
+  1013 314B EE 0A D4				inc		wsync
+  1014 314E					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 314E 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1015 3151 8E 00 D2				stx		audf1			;set long period to establish IRQ safe window
+  1016 3154 8D 09 D2				sta		stimer			;reset timer 1
+  1017 3157 8E 0E D2				stx		irqen			;enable timer 1 IRQ
+  1018 315A 8D 00 D2				sta		audf1			;change period to 0
+  1019 315D 8D 09 D2				sta		stimer			;reset timers
+  1020 3160 8D 09 D2				sta		stimer			;+4c
+  1021 3163 AD 0E D2				lda		irqst			;+8c
+  1022 3166 4A					lsr
+  1023 3167 B0 3D				bcs		ttnst_ok0a
+  1024 3169					_FAIL	c"AUDF1=0 timer 1 2tn STIMER should not have worked at +4c.",0
+Macro: _FAIL [Source: library.s]
+     1 3169 20 0D 1E			jsr		_testFailed
+     2 316C 41 55 44 46 31 3D + 	dta		c"AUDF1=0 timer 1 2tn STIMER should not have worked at +4c.",0
+Source: pokey_timertiming.s
+  1025 31A6			ttnst_ok0a:
+  1026
+  1027 31A6 A9 08 8D 00 D2			mva		#8 audf1
+  1028 31AB A9 00				lda		#0
+  1029 31AD A2 FF				ldx		#$ff
+  1030 31AF 8D 0E D2				sta		irqen
+  1031 31B2 EE 0A D4				inc		wsync
+  1032 31B5					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 31B5 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1033 31B8 8D 09 D2				sta		stimer
+  1034 31BB 8E 0E D2				stx		irqen			;+4c
+  1035 31BE					_DELAY_CYCLES_X 10		;+14c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000A				.def ?cycles = 10
+   116 = 0007					.def ?cycles = ?cycles - 3
+   117 31BE 4C C1 31				jmp		*+3
+   120 = 0004					.def ?cycles = ?cycles - 3
+   121 31C1 4C C4 31				jmp		*+3
+   132 31C4 EA					nop
+   133 31C5 EA					nop
+Source: pokey_timertiming.s
+  1036 31C6 8D 0E D2				sta		irqen			;+18c	IRQ asserts at +16c, recleared here
+  1037 31C9 8E 0E D2				stx		irqen			;+22c
+  1038 31CC 8D 09 D2				sta		stimer			;+26c
+  1039 31CF 4C D2 31				jmp		*+3				;+29c
+  1040 31D2 AD 0E D2				lda		irqst			;+33c	IRQ at +30c suppressed by STIMER
+  1041 31D5 4A					lsr
+  1042 31D6 B0 3A				bcs		ttnst_ok1
+  1043 31D8					_FAIL	c"AUDF1=8 timer 1 2tn STIMER should have worked at +26c.",0
+Macro: _FAIL [Source: library.s]
+     1 31D8 20 0D 1E			jsr		_testFailed
+     2 31DB 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn STIMER should have worked at +26c.",0
+Source: pokey_timertiming.s
+  1044 3212			ttnst_ok1:
+  1045
+  1046 3212 A9 00				lda		#0
+  1047 3214 8D 0E D2				sta		irqen
+  1048 3217 EE 0A D4				inc		wsync
+  1049 321A					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 321A 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1050 321D 8D 09 D2				sta		stimer
+  1051 3220 8E 0E D2				stx		irqen			;+4c
+  1052 3223					_DELAY_CYCLES_X 11		;+15c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000B				.def ?cycles = 11
+   116 = 0008					.def ?cycles = ?cycles - 3
+   117 3223 4C 26 32				jmp		*+3
+   120 = 0005					.def ?cycles = ?cycles - 3
+   121 3226 4C 29 32				jmp		*+3
+   124 = 0002					.def ?cycles = ?cycles - 3
+   125 3229 4C 2C 32				jmp		*+3
+   135 322C EA					nop
+Source: pokey_timertiming.s
+  1053 322D 8D 0E D2				sta		irqen			;+19c	IRQ asserts at +16c, recleared here
+  1054 3230 8E 0E D2				stx		irqen			;+23c
+  1055 3233 8D 09 D2				sta		stimer			;+27c
+  1056 3236 EA					nop						;+29c
+  1057 3237 AD 0E D2				lda		irqst			;+33c	IRQ at +30c asserted
+  1058 323A 4A					lsr
+  1059 323B 90 3E				bcc		ttnst_ok3
+  1060 323D					_FAIL	c"AUDF1=8 timer 1 2tn STIMER should not have worked at +27c.",0
+Macro: _FAIL [Source: library.s]
+     1 323D 20 0D 1E			jsr		_testFailed
+     2 3240 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn STIMER should not have worked at +27c.",0
+Source: pokey_timertiming.s
+  1061 327B			ttnst_ok3:
+  1062
+  1063 327B A9 00				lda		#0
+  1064 327D A2 FF				ldx		#$ff
+  1065 327F 8D 0E D2				sta		irqen
+  1066 3282 EE 0A D4				inc		wsync
+  1067 3285					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 3285 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1068 3288 8D 09 D2				sta		stimer
+  1069 328B					_DELAY_CYCLES_X 32		;+32c	IRQ at +30c suppressed by IRQST=0
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0020				.def ?cycles = 32
+    52 = 0008					.def ?cycles = ?cycles - 24
+    53 328B 20 01 39				jsr		delay24
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 328E 4C 91 32				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 3291 4C 94 32				jmp		*+3
+   135 3294 EA					nop
+Source: pokey_timertiming.s
+  1070 3295 8E 0E D2				stx		irqen			;+36c
+  1071 3298 8D 09 D2				sta		stimer			;+40c
+  1072 329B 4C 9E 32				jmp		*+3				;+43c
+  1073 329E AD 0E D2				lda		irqst			;+47c	IRQ at +44c suppressed by STIMER
+  1074 32A1 4A					lsr
+  1075 32A2 B0 3A				bcs		ttnst_ok2
+  1076 32A4					_FAIL	c"AUDF1=8 timer 1 2tn STIMER should have worked at +40c.",0
+Macro: _FAIL [Source: library.s]
+     1 32A4 20 0D 1E			jsr		_testFailed
+     2 32A7 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn STIMER should have worked at +40c.",0
+Source: pokey_timertiming.s
+  1077 32DE			ttnst_ok2:
+  1078
+  1079 32DE A9 00				lda		#0
+  1080 32E0 8D 0E D2				sta		irqen
+  1081 32E3 EE 0A D4				inc		wsync
+  1082 32E6					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 32E6 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1083 32E9 8D 09 D2				sta		stimer
+  1084 32EC					_DELAY_CYCLES_X 33		;+33c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0021				.def ?cycles = 33
+    52 = 0009					.def ?cycles = ?cycles - 24
+    53 32EC 20 01 39				jsr		delay24
+   116 = 0006					.def ?cycles = ?cycles - 3
+   117 32EF 4C F2 32				jmp		*+3
+   120 = 0003					.def ?cycles = ?cycles - 3
+   121 32F2 4C F5 32				jmp		*+3
+   124 = 0000					.def ?cycles = ?cycles - 3
+   125 32F5 4C F8 32				jmp		*+3
+Source: pokey_timertiming.s
+  1085 32F8 8E 0E D2				stx		irqen			;+37c
+  1086 32FB 8D 09 D2				sta		stimer			;+41c
+  1087 32FE EA					nop						;+43c
+  1088 32FF AD 0E D2				lda		irqst			;+47c	IRQ at +44c asserted
+  1089 3302 4A					lsr
+  1090 3303 90 3E				bcc		ttnst_ok4
+  1091 3305					_FAIL	c"AUDF1=8 timer 1 2tn STIMER should not have worked at +41c.",0
+Macro: _FAIL [Source: library.s]
+     1 3305 20 0D 1E			jsr		_testFailed
+     2 3308 41 55 44 46 31 3D + 	dta		c"AUDF1=8 timer 1 2tn STIMER should not have worked at +41c.",0
+Source: pokey_timertiming.s
+  1092 3343			ttnst_ok4:
+  1093
+  1094 3343 A9 0A 8D 00 D2			mva		#10 audf1
+  1095
+  1096 3348 A9 00				lda		#0
+  1097 334A A2 FF				ldx		#$ff
+  1098 334C 8D 0E D2				sta		irqen
+  1099 334F EE 0A D4				inc		wsync
+  1100 3352					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 3352 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1101 3355 8D 09 D2				sta		stimer
+  1102 3358					_DELAY_CYCLES_X 22		;+22c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0016				.def ?cycles = 22
+    63 = 0000					.def ?cycles = ?cycles - 22
+    64 3358 20 05 39				jsr		delay22
+Source: pokey_timertiming.s
+  1103 335B 8E 0E D2				stx		irqen			;+26c
+  1104 335E 8D 09 D2				sta		stimer			;+30c
+  1105 3361 4C 64 33				jmp		*+3				;+33c
+  1106 3364 AD 0E D2				lda		irqst			;+37c
+  1107 3367 4A					lsr
+  1108 3368 B0 3B				bcs		ttnst_ok5
+  1109 336A					_FAIL	c"AUDF1=10 timer 1 2tn STIMER should have worked at +30c.",0
+Macro: _FAIL [Source: library.s]
+     1 336A 20 0D 1E			jsr		_testFailed
+     2 336D 41 55 44 46 31 3D + 	dta		c"AUDF1=10 timer 1 2tn STIMER should have worked at +30c.",0
+Source: pokey_timertiming.s
+  1110 33A5			ttnst_ok5:
+  1111
+  1112 33A5 A9 00				lda		#0
+  1113 33A7 8D 0E D2				sta		irqen
+  1114 33AA EE 0A D4				inc		wsync
+  1115 33AD					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 33AD 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1116 33B0 8D 09 D2				sta		stimer
+  1117 33B3					_DELAY_CYCLES_X 23		;+23c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0017				.def ?cycles = 23
+    58 = 0000					.def ?cycles = ?cycles - 23
+    59 33B3 20 0B 39				jsr		delay23
+Source: pokey_timertiming.s
+  1118 33B6 8E 0E D2				stx		irqen			;+27c
+  1119 33B9 8D 09 D2				sta		stimer			;+31c
+  1120 33BC EA					nop						;+33c
+  1121 33BD AD 0E D2				lda		irqst			;+37c
+  1122 33C0 4A					lsr
+  1123 33C1 90 3F				bcc		ttnst_ok6
+  1124 33C3					_FAIL	c"AUDF1=10 timer 1 2tn STIMER should not have worked at +31c.",0
+Macro: _FAIL [Source: library.s]
+     1 33C3 20 0D 1E			jsr		_testFailed
+     2 33C6 41 55 44 46 31 3D + 	dta		c"AUDF1=10 timer 1 2tn STIMER should not have worked at +31c.",0
+Source: pokey_timertiming.s
+  1125 3402			ttnst_ok6:
+  1126
+  1127 3402 A9 00				lda		#0
+  1128 3404 A2 FF				ldx		#$ff
+  1129 3406 8D 0E D2				sta		irqen
+  1130 3409 EE 0A D4				inc		wsync
+  1131 340C					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 340C 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1132 340F 8D 09 D2				sta		stimer
+  1133 3412					_DELAY_CYCLES_X 38		;+38c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0026				.def ?cycles = 38
+    47 = 0002					.def ?cycles = ?cycles - 36
+    48 3412 20 FE 38				jsr		delay36
+   135 3415 EA					nop
+Source: pokey_timertiming.s
+  1134 3416 8E 0E D2				stx		irqen			;+42c
+  1135 3419 8D 09 D2				sta		stimer			;+46c
+  1136 341C 4C 1F 34				jmp		*+3				;+49c
+  1137 341F AD 0E D2				lda		irqst			;+53c
+  1138 3422 4A					lsr
+  1139 3423 B0 3B				bcs		ttnst_ok7
+  1140 3425					_FAIL	c"AUDF1=10 timer 1 2tn STIMER should have worked at +46c.",0
+Macro: _FAIL [Source: library.s]
+     1 3425 20 0D 1E			jsr		_testFailed
+     2 3428 41 55 44 46 31 3D + 	dta		c"AUDF1=10 timer 1 2tn STIMER should have worked at +46c.",0
+Source: pokey_timertiming.s
+  1141 3460			ttnst_ok7:
+  1142
+  1143 3460 A9 00				lda		#0
+  1144 3462 8D 0E D2				sta		irqen
+  1145 3465 EE 0A D4				inc		wsync
+  1146 3468					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 3468 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1147 346B 8D 09 D2				sta		stimer
+  1148 346E					_DELAY_CYCLES_X 39		;+39c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0027				.def ?cycles = 39
+    47 = 0003					.def ?cycles = ?cycles - 36
+    48 346E 20 FE 38				jsr		delay36
+   116 = 0000					.def ?cycles = ?cycles - 3
+   117 3471 4C 74 34				jmp		*+3
+Source: pokey_timertiming.s
+  1149 3474 8E 0E D2				stx		irqen			;+43c
+  1150 3477 8D 09 D2				sta		stimer			;+47c
+  1151 347A EA					nop						;+49c
+  1152 347B AD 0E D2				lda		irqst			;+53c
+  1153 347E 4A					lsr
+  1154 347F 90 3F				bcc		ttnst_ok8
+  1155 3481					_FAIL	c"AUDF1=10 timer 1 2tn STIMER should not have worked at +47c.",0
+Macro: _FAIL [Source: library.s]
+     1 3481 20 0D 1E			jsr		_testFailed
+     2 3484 41 55 44 46 31 3D + 	dta		c"AUDF1=10 timer 1 2tn STIMER should not have worked at +47c.",0
+Source: pokey_timertiming.s
+  1156 34C0			ttnst_ok8:
+  1157
+  1158 						;====== 16-bit two-tone timer 2 0-bit IRQST tests ==================
+  1159 						;Measure IRQST timing for two-tone, 16-bit linked 1.79MHz with force
+  1160 						;break activated (resync 1+2 triggered only by timer 2).
+  1161 						;
+  1162 						; AUDF1=0	Timer1	 7c/ 8c		16c/17c		*extrapolated
+  1163 						; AUDF1=0	Timer2	10c/11c		19c/20c		*extrapolated
+  1164 						; AUDF1=8	Timer1	15c/16c		32c/33c
+  1165 						; AUDF1=8	Timer2	18c/19c		35c/36c
+  1166
+  1167 34C0 A9 50 8D 08 D2			mva		#$50 audctl
+  1168 34C5 A9 8B 8D 0F D2			mva		#$8b skctl
+  1169 34CA A9 08 8D 00 D2			mva		#8 audf1
+  1170 34CF A9 00 8D 02 D2			mva		#0 audf2
+  1171
+  1172 34D4 A9 00				lda		#0
+  1173 34D6 A2 FF				ldx		#$ff
+  1174 34D8 8D 0E D2				sta		irqen
+  1175 34DB EE 0A D4				inc		wsync
+  1176 34DE					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 34DE 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1177 34E1 8D 09 D2				sta		stimer
+  1178 34E4 8E 0E D2				stx		irqen			;+4c
+  1179 34E7					_DELAY_CYCLES_X 10		;+14c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000A				.def ?cycles = 10
+   116 = 0007					.def ?cycles = ?cycles - 3
+   117 34E7 4C EA 34				jmp		*+3
+   120 = 0004					.def ?cycles = ?cycles - 3
+   121 34EA 4C ED 34				jmp		*+3
+   132 34ED EA					nop
+   133 34EE EA					nop
+Source: pokey_timertiming.s
+  1180 34EF AC 0E D2				ldy		irqst			;+18c
+  1181 34F2 8D 0E D2				sta		irqen			;+22c
+  1182 34F5 8E 0E D2				stx		irqen			;+26c
+  1183 34F8 EA					nop						;+28c
+  1184 34F9 4C FC 34				jmp		*+3				;+31c
+  1185 34FC AD 0E D2				lda		irqst			;+35c
+  1186 34FF 4A					lsr
+  1187 3500 4A					lsr
+  1188 3501 98					tya
+  1189 3502 29 02				and		#2
+  1190 3504 D0 3E				bne		ttn16t2b0_ok1
+  1191 3506					_FAIL	c"AUDF1+2=8 timer 2 2tn 0b should not have been set at +18c.",0
+Macro: _FAIL [Source: library.s]
+     1 3506 20 0D 1E			jsr		_testFailed
+     2 3509 41 55 44 46 31 2B + 	dta		c"AUDF1+2=8 timer 2 2tn 0b should not have been set at +18c.",0
+Source: pokey_timertiming.s
+  1192 3544			ttn16t2b0_ok1:
+  1193 3544 B0 3E				bcs		ttn16t2b0_ok2
+  1194 3546					_FAIL	c"AUDF1+2=8 timer 2 2tn 0b should not have been set at +35c.",0
+Macro: _FAIL [Source: library.s]
+     1 3546 20 0D 1E			jsr		_testFailed
+     2 3549 41 55 44 46 31 2B + 	dta		c"AUDF1+2=8 timer 2 2tn 0b should not have been set at +35c.",0
+Source: pokey_timertiming.s
+  1195 3584			ttn16t2b0_ok2:
+  1196
+  1197 3584 A9 00				lda		#0
+  1198 3586 8D 0E D2				sta		irqen
+  1199 3589 EE 0A D4				inc		wsync
+  1200 358C					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 358C 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1201 358F 8D 09 D2				sta		stimer
+  1202 3592 8E 0E D2				stx		irqen			;+4c
+  1203 3595					_DELAY_CYCLES_X 11		;+15c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 000B				.def ?cycles = 11
+   116 = 0008					.def ?cycles = ?cycles - 3
+   117 3595 4C 98 35				jmp		*+3
+   120 = 0005					.def ?cycles = ?cycles - 3
+   121 3598 4C 9B 35				jmp		*+3
+   124 = 0002					.def ?cycles = ?cycles - 3
+   125 359B 4C 9E 35				jmp		*+3
+   135 359E EA					nop
+Source: pokey_timertiming.s
+  1204 359F AC 0E D2				ldy		irqst			;+19c
+  1205 35A2 8D 0E D2				sta		irqen			;+23c
+  1206 35A5 8E 0E D2				stx		irqen			;+27c
+  1207 35A8 EA					nop						;+29c
+  1208 35A9 4C AC 35				jmp		*+3				;+32c
+  1209 35AC AD 0E D2				lda		irqst			;+36c
+  1210 35AF 4A					lsr
+  1211 35B0 4A					lsr
+  1212 35B1 98					tya
+  1213 35B2 29 02				and		#2
+  1214 35B4 F0 3A				beq		ttn16t2b0_ok3
+  1215 35B6					_FAIL	c"AUDF1+2=8 timer 2 2tn 0b should have been set at +19c.",0
+Macro: _FAIL [Source: library.s]
+     1 35B6 20 0D 1E			jsr		_testFailed
+     2 35B9 41 55 44 46 31 2B + 	dta		c"AUDF1+2=8 timer 2 2tn 0b should have been set at +19c.",0
+Source: pokey_timertiming.s
+  1216 35F0			ttn16t2b0_ok3:
+  1217 35F0 90 3A				bcc		ttn16t2b0_ok4
+  1218 35F2					_FAIL	c"AUDF1+2=8 timer 2 2tn 0b should have been set at +36c.",0
+Macro: _FAIL [Source: library.s]
+     1 35F2 20 0D 1E			jsr		_testFailed
+     2 35F5 41 55 44 46 31 2B + 	dta		c"AUDF1+2=8 timer 2 2tn 0b should have been set at +36c.",0
+Source: pokey_timertiming.s
+  1219 362C			ttn16t2b0_ok4:
+  1220
+  1221 362C A9 00				lda		#0
+  1222 362E A2 FF				ldx		#$ff
+  1223 3630 8D 0E D2				sta		irqen
+  1224 3633 EE 0A D4				inc		wsync
+  1225 3636					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 3636 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1226 3639 8D 09 D2				sta		stimer
+  1227 363C 8E 0E D2				stx		irqen			;+4c
+  1228 363F					_DELAY_CYCLES_X 7		;+11c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0007				.def ?cycles = 7
+   116 = 0004					.def ?cycles = ?cycles - 3
+   117 363F 4C 42 36				jmp		*+3
+   132 3642 EA					nop
+   133 3643 EA					nop
+Source: pokey_timertiming.s
+  1229 3644 AC 0E D2				ldy		irqst			;+15c
+  1230 3647 8D 0E D2				sta		irqen			;+19c
+  1231 364A 8E 0E D2				stx		irqen			;+23c
+  1232 364D EA					nop						;+25c
+  1233 364E 4C 51 36				jmp		*+3				;+28c
+  1234 3651 AD 0E D2				lda		irqst			;+32c
+  1235 3654 4A					lsr
+  1236 3655 98					tya
+  1237 3656 29 01				and		#1
+  1238 3658 D0 3E				bne		ttn16t1b0_ok1
+  1239 365A					_FAIL	c"AUDF1+2=8 timer 1 2tn 0b should not have been set at +15c.",0
+Macro: _FAIL [Source: library.s]
+     1 365A 20 0D 1E			jsr		_testFailed
+     2 365D 41 55 44 46 31 2B + 	dta		c"AUDF1+2=8 timer 1 2tn 0b should not have been set at +15c.",0
+Source: pokey_timertiming.s
+  1240 3698			ttn16t1b0_ok1:
+  1241 3698 B0 3E				bcs		ttn16t1b0_ok2
+  1242 369A					_FAIL	c"AUDF1+2=8 timer 1 2tn 0b should not have been set at +32c.",0
+Macro: _FAIL [Source: library.s]
+     1 369A 20 0D 1E			jsr		_testFailed
+     2 369D 41 55 44 46 31 2B + 	dta		c"AUDF1+2=8 timer 1 2tn 0b should not have been set at +32c.",0
+Source: pokey_timertiming.s
+  1243 36D8			ttn16t1b0_ok2:
+  1244
+  1245 36D8 A9 00				lda		#0
+  1246 36DA 8D 0E D2				sta		irqen
+  1247 36DD EE 0A D4				inc		wsync
+  1248 36E0					_DELAY_CYCLES_X 60
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 003C				.def ?cycles = 60
+    42 = 0000					.def ?cycles = ?cycles - 60
+    43 36E0 20 FB 38				jsr		delay60
+Source: pokey_timertiming.s
+  1249 36E3 8D 09 D2				sta		stimer
+  1250 36E6 8E 0E D2				stx		irqen			;+4c
+  1251 36E9					_DELAY_CYCLES_X 8		;+12c
+Macro: _DELAY_CYCLES_X [Source: pokey_timertiming.s]
+    14 = 0008				.def ?cycles = 8
+   116 = 0005					.def ?cycles = ?cycles - 3
+   117 36E9 4C EC 36				jmp		*+3
+   120 = 0002					.def ?cycles = ?cycles - 3
+   121 36EC 4C EF 36				jmp		*+3
+   135 36EF EA					nop
+Source: pokey_timertiming.s
+  1252 36F0 AC 0E D2				ldy		irqst			;+16c
+  1253 36F3 8D 0E D2				sta		irqen			;+20c
+  1254 36F6 8E 0E D2				stx		irqen			;+24c
+  1255 36F9 EA					nop						;+26c
+  1256 36FA 4C FD 36				jmp		*+3				;+29c
+  1257 36FD AD 0E D2				lda		irqst			;+33c
+  1258 3700 4A					lsr
+  1259 3701 98					tya
+  1260 3702 29 01				and		#1
+  1261 3704 F0 3A				beq		ttn16t1b0_ok3
+  1262 3706					_FAIL	c"AUDF1+2=8 timer 1 2tn 0b should have been set at +16c.",0
+Macro: _FAIL [Source: library.s]
+     1 3706 20 0D 1E			jsr		_testFailed
+     2 3709 41 55 44 46 31 2B + 	dta		c"AUDF1+2=8 timer 1 2tn 0b should have been set at +16c.",0
+Source: pokey_timertiming.s
+  1263 3740			ttn16t1b0_ok3:
+  1264 3740 90 3A				bcc		ttn16t1b0_ok4
+  1265 3742					_FAIL	c"AUDF1+2=8 timer 1 2tn 0b should have been set at +33c.",0
+Macro: _FAIL [Source: library.s]
+     1 3742 20 0D 1E			jsr		_testFailed
+     2 3745 41 55 44 46 31 2B + 	dta		c"AUDF1+2=8 timer 1 2tn 0b should have been set at +33c.",0
+Source: pokey_timertiming.s
+  1266 377C			ttn16t1b0_ok4:
+  1267
+  1268 						;====== 8-bit two-tone cancellation tests =========================
+  1269 						; 
+  1270 						;
+  1271
+  1272 						;set timer 1 1.79MHz, timer 2 64KHz
+  1273 377C A9 40 8D 08 D2			mva		#$40 audctl
+  1274
+  1275 						;schedule timer 1 to expire one cycle after timer 2
+  1276 3781 A9 03 8D 02 D2			mva		#3 audf2		;24+28*3 = 108c after SKCTL write
+  1277 3786 A9 62 8D 00 D2			mva		#98 audf1		;105c after STIMER write / 109c after SKCTL write
+  1278
+  1279 378B A9 00 8D 0F D2			mva		#0 skctl
+  1280 3790 A9 8B				lda		#$8b
+  1281 3792 8D 0A D4				sta		wsync
+  1282 3795 8D 0A D4				sta		wsync
+  1283 3798 8D 0F D2				sta		skctl
+  1284 379B 8D 09 D2				sta		stimer
+  1285 379E A9 00 8D 0E D2			mva		#0 irqen
+  1286 37A3 A9 03 8D 0E D2			mva		#3 irqen
+  1287 37A8 8D 0A D4				sta		wsync
+  1288
+  1289 						;timer 1+2 should fire
+  1290 37AB 2D 0E D2				and		irqen
+  1291 37AE					_ASSERTA 0,	c"Two-tone timer 1 did not fire at +1c from timer 2 w/resync: %x",0
+Macro: _ASSERTA [Source: library.s]
+     1 37AE C9 00			cmp	#0
+     2 37B0 F0 44			beq	pass
+     4 37B2 85 C9			sta	d1
+     5 37B4 20 0D 1E			jsr	_testFailed
+     6 37B7 54 77 6F 2D 74 6F + 	dta	c"Two-tone timer 1 did not fire at +1c from timer 2 w/resync: %x",0
+     7 37F6			pass:
+Source: pokey_timertiming.s
+  1292
+  1293 						;schedule timer 1 two cycles after timer 2
+  1294 37F6 A9 03 8D 02 D2			mva		#3 audf2		;24+28*3 = 108c after SKCTL write
+  1295 37FB A9 63 8D 00 D2			mva		#99 audf1		;106c after STIMER write / 110c after SKCTL write
+  1296
+  1297 3800 A9 00 8D 0F D2			mva		#0 skctl
+  1298 3805 A9 8B				lda		#$8b
+  1299 3807 8D 0A D4				sta		wsync
+  1300 380A 8D 0A D4				sta		wsync
+  1301 380D 8D 0F D2				sta		skctl
+  1302 3810 8D 09 D2				sta		stimer
+  1303 3813 A9 00 8D 0E D2			mva		#0 irqen
+  1304 3818 A9 03 8D 0E D2			mva		#3 irqen
+  1305 381D 8D 0A D4				sta		wsync
+  1306
+  1307 						;only timer 2 should fire
+  1308 3820 2D 0E D2				and		irqen
+  1309 3823					_ASSERTA 1, c"Two-tone timer 1 should not have fired at +2c from timer 2 w/resync: %x",0
+Macro: _ASSERTA [Source: library.s]
+     1 3823 C9 01			cmp	#1
+     2 3825 F0 4D			beq	pass
+     4 3827 85 C9			sta	d1
+     5 3829 20 0D 1E			jsr	_testFailed
+     6 382C 54 77 6F 2D 74 6F + 	dta	c"Two-tone timer 1 should not have fired at +2c from timer 2 w/resync: %x",0
+     7 3874			pass:
+Source: pokey_timertiming.s
+  1310
+  1311 						;schedule timer 1 three cycles after timer 2
+  1312 3874 A9 03 8D 02 D2			mva		#3 audf2		;24+28*3 = 108c after SKCTL write
+  1313 3879 A9 64 8D 00 D2			mva		#100 audf1		;107c after STIMER write / 111c after SKCTL write
+  1314
+  1315 387E A9 00 8D 0F D2			mva		#0 skctl
+  1316 3883 A9 8B				lda		#$8b
+  1317 3885 8D 0A D4				sta		wsync
+  1318 3888 8D 0A D4				sta		wsync
+  1319 388B 8D 0F D2				sta		skctl
+  1320 388E 8D 09 D2				sta		stimer
+  1321 3891 A9 00 8D 0E D2			mva		#0 irqen
+  1322 3896 A9 01 8D 0E D2			mva		#1 irqen
+  1323 389B 8D 0A D4				sta		wsync
+  1324
+  1325 						;only timer 2 should fire
+  1326 389E 2D 0E D2				and		irqen
+  1327 38A1					_ASSERTA 1, c"Two-tone timer 1 did not fire at +3c from timer 2 w/resync: %x",0
+Macro: _ASSERTA [Source: library.s]
+     1 38A1 C9 01			cmp	#1
+     2 38A3 F0 44			beq	pass
+     4 38A5 85 C9			sta	d1
+     5 38A7 20 0D 1E			jsr	_testFailed
+     6 38AA 54 77 6F 2D 74 6F + 	dta	c"Two-tone timer 1 did not fire at +3c from timer 2 w/resync: %x",0
+     7 38E9			pass:
+Source: pokey_timertiming.s
+  1328
+  1329 						;====== all done ==================================================
+  1330
+  1331 38E9 4C F8 1D				jmp		_testPassed
+  1332 				.endp
+  1333
+  1334 38EC			delay660:
+  1335 38EC 20 F2 38				jsr		delay252
+  1336 38EF			delay408:
+  1337 38EF 20 F5 38				jsr		delay156
+  1338 38F2			delay252:
+  1339 38F2 20 F8 38				jsr		delay96
+  1340 38F5			delay156:
+  1341 38F5 20 FB 38				jsr		delay60
+  1342 38F8			delay96:
+  1343 38F8 20 FE 38				jsr		delay36
+  1344 38FB			delay60:
+  1345 38FB 20 01 39				jsr		delay24
+  1346 38FE			delay36:
+  1347 38FE 20 04 39				jsr		delay12
+  1348 3901			delay24:
+  1349 3901 20 04 39				jsr		delay12
+  1350 3904			delay12:
+  1351 3904 60					rts
+  1352
+  1353 3905			delay22:
+  1354 3905 EA					nop
+  1355 3906			delay20:
+  1356 3906 EA					nop
+  1357 3907			delay18:
+  1358 3907 EA					nop
+  1359 3908			delay16:
+  1360 3908 EA					nop
+  1361 3909			delay14:
+  1362 3909 EA					nop
+  1363 390A 60					rts
+  1364
+  1365 390B			delay23:
+  1366 390B EA					nop
+  1367 390C			delay21:
+  1368 390C EA					nop
+  1369 390D			delay19:
+  1370 390D EA					nop
+  1371 390E			delay17:
+  1372 390E EA					nop
+  1373 390F			delay15:
+  1374 390F 4C 12 39				jmp		*+3
+  1375 3912 60					rts
+  1376 					
+  1377 02E0-02E1> 00 20				run		$2000
+  1378 						end

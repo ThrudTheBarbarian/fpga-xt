@@ -1097,13 +1097,21 @@ static int client_dispatch(const gem_msg *m, aes_event *ev){
         post_msg(WM_MOVED,m->w[1],m->w[2],m->w[3],m->w[4],m->w[5]); return AES_MESAG;
     case GEM_MSG_CLOSED:                                   // the CLOSER was clicked. Closing is OURS.
         post_msg(WM_CLOSED,m->w[1],0,0,0,0); return AES_MESAG;
+    case GEM_MSG_WHEEL:                                    // a wheel with no window bar (route.c):
+        post_msg(WM_WHEEL,m->w[1],m->w[2],m->w[3],m->w[4],0); return AES_MESAG;  // hand it to the app
     case GEM_MSG_TBUTTON:                                  // a title button was pressed (§11): the
         post_msg(WM_TBUTTON,m->w[1],m->w[2],0,0,0);        // app learns WHICH, never WHERE
         return AES_MESAG;
     case GEM_MSG_MENUCLK: {                                // a press in OUR strip (§10): run the menu
         extern void menu_client_click(int x);
         menu_client_click(m->w[2]);
-        return 0;
+        // AES_MESAG, not 0: the pull-down appl_write()s MN_SELECTED, and "0" means "nothing to
+        // read" — so evnt_multi went straight back to sleep with the selection unread, and the app
+        // only acted on it when the NEXT input event happened to wake the loop.  That is the whole
+        // of "picking a Windows-menu item does nothing until I move another window".  Every other
+        // case that posts a message (MOVED / SIZED / CLOSED) already returns this.  Harmless when
+        // the menu was dismissed without a choice: the pipe is simply empty.
+        return AES_MESAG;
     }
     case GEM_MSG_GRAB_REVOKED: {                           // §9: the clock fired; dismiss whoever
         extern void menu_grab_revoked(void);              // held it (menu or dialog — exclusive)

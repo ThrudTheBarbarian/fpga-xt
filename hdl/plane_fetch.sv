@@ -222,7 +222,15 @@ module plane_fetch #(
     end
 
     // Row byte base = surface_base + row*stride (one multiply per line).
-    wire [31:0] row_base = surface_base + (32'(row_to_fetch) * 32'(stride_bytes));
+    // REGISTERED so the DSP multiply keeps an output register: the raw
+    // combinational product fed m_axi_araddr straight into the PS7 HP AR
+    // port — the design's worst clk_sys setup path (2 logic levels, ~72%
+    // logic delay, measured −17 ps).  row_to_fetch loads at line_start and
+    // S_FETCH begins two cycles later, so the one-cycle latency is absorbed
+    // before the first AR is offered.
+    logic [31:0] row_base;
+    always_ff @(posedge clk_sys)
+        row_base <= surface_base + (32'(row_to_fetch) * 32'(stride_bytes));
 
     // ---- AXI read (clk_sys) ---------------------------------------------
     assign m_axi_arsize  = 3'b011;     // 8 bytes/beat

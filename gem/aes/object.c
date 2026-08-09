@@ -356,6 +356,15 @@ static void draw_obj(OBJECT *t, int obj, int x, int y) {
             theme_draw(g_vh, g_th, "textfield", x, y, w, h);
             if (!te) break;
             int caret = -1, foc = objc_edit_state(t, obj, &caret);
+            if (foc) {                                   // focus ring: a 2px accent frame while editing.
+                vsl_color(g_vh, PEN_SEL); vsl_width(g_vh, 1);   // drawn inside the object rect so it
+                for (int d = 0; d < 2; d++) {                   // rides ed_redraw's clip + erases on blur
+                    int16_t r[10] = { (int16_t)(x+d),(int16_t)(y+d), (int16_t)(x+w-1-d),(int16_t)(y+d),
+                                      (int16_t)(x+w-1-d),(int16_t)(y+h-1-d), (int16_t)(x+d),(int16_t)(y+h-1-d),
+                                      (int16_t)(x+d),(int16_t)(y+d) };
+                    v_pline(g_vh, 5, r);
+                }
+            }
             char disp[160]; int dpos = 0;
             ted_display(te, disp, sizeof disp, foc ? caret : -1, &dpos);
             vst_color(g_vh, (st & OS_DISABLED) ? 9 : 1); vst_height(g_vh, 13, 0,0,0,0);

@@ -342,6 +342,18 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * because a resident init never exits. (It tried, and the machine
                                 * came up with no console at all — see docs/OS/gemd-plan.md.)
                                 * init(1) only; anyone else gets -EPERM. */
+#define SYS_getrandom    0x406 /* (buf, len, flags) -> bytes written, or -errno. The kernel
+                                * CSPRNG (xt_random.c): ChaCha20 keyed by SHA-256-conditioned
+                                * words gathered from the PL TRNG, each gated on TRNG_STAT[8].
+                                * On hardware the default (flags = 0) BLOCKS until a gather has
+                                * succeeded — the Linux contract — and returns -EIO rather than
+                                * clock-seeded bytes if the TRNG never comes good, so a caller
+                                * asking for entropy is never quietly handed less. GRND_NONBLOCK
+                                * (1) returns -EAGAIN instead of waiting, as on Linux. Where
+                                * there is no TRNG (qemu) there is nothing to wait for: neither
+                                * applies and the pool serves what it has. */
+#define GRND_NONBLOCK    0x0001 /* SYS_getrandom flags: -EAGAIN rather than wait for a gather */
+#define GRND_RANDOM      0x0002 /* accepted and ignored — one pool, as on modern Linux */
 
 /* networking control — block 0x800. Bringing the stack up is a BOOT-SCRIPT decision
  * (/boot/20-Networking runs /bin/netup), not kernel magic. */
@@ -387,6 +399,33 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * releases.  path=NULL = eject all media and cold
                                 * boot to BASIC.  The XL OS does the load itself —
                                 * the A9 never drives the 6502's PC. */
+#define SYS_plane_grab   0x607 /* (plane_id, void *buf) -> (w<<16)|h, or -errno: copy the
+                                * ON-SCREEN frame of HW compositor plane `plane_id` (XT_PLANE_*)
+                                * into buf (caller-supplied, >= w*h*4 bytes RGBA-8888, top-down).
+                                * Reads the exact triple-buffer slot the compositor is scanning
+                                * (DIAG4 = HP3 first-AR addr) so the grab is tear-free. The planes
+                                * are PL0-NONE (M7 gate), so this kernel copy is how a userland
+                                * screen-grab (/bin/graboverlay) reaches them. XL/6502 = plane 1. */
+#define SYS_xexload      0x608 /* (path, flags) -> 0/-errno: run a standalone Atari .xex
+                                * (DOS binary) on the fabric 6502.  Boots the XL OS with a
+                                * 1-sector fake disk, then -- as the HOST, via the GP0 debug
+                                * facility (breakpoint the boot continuation, inject PC/regs)
+                                * -- loads the segments into 6502 RAM and drives the INIT
+                                * ($02E2) and RUN ($02E0) vectors, the way atari800 does it.
+                                * flags {bit0=turbo, bit1=hold}: turbo=0 -> fidelity core
+                                * (cycle-exact, default), 1 -> turbo.  hold=1 arms a HW
+                                * breakpoint at the acid800 framework's _testEnd ($1D93) so
+                                * the core HALTS on its result screen instead of soft-resetting
+                                * -- `6502 status` Y then reads 00=pass / 80=fail.
+                                * (docs/OS/app-launch.md.) */
+#define SYS_xl_reset     0x609 /* (basic) -> 0/-errno: cold-reset the fabric 6502 KEEPING
+                                * mounted media — a real power-cycle (`6502 basic` /
+                                * `6502 nobasic`).  Rebuilds + re-uploads the patched OS
+                                * image (same clean power-on guarantee as a launch), then
+                                * drives CONSOL across the coldstart: basic!=0 releases
+                                * OPTION (BASIC on), basic=0 holds it (BASIC off; released
+                                * automatically once the XL OS has sampled it).  A mounted
+                                * disk reboots, like reset on a real XL with the drive on. */
 
 /* ---- services + multiplexing — block 0x500 ---------------------------------
  * The rendezvous XTOS did not have. Pipes need shared ancestry (SYS_spawn_fd), so two

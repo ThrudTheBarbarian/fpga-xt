@@ -56,7 +56,10 @@
 
 module pokey_regs (
     input  wire        clk,
+    // Machine-cycle strobe -- clocks the IRQST in-flight countdown.
+    input  wire        phi2_tick,
     input  wire        rst,
+    input  wire        cold_boot,   // SALLYRST cold-boot: power-on-clear IRQEN (+ latches)
 
     // Write port from bus_snoop.
     input  wire        we,                 // snoop_we_pokey
@@ -156,6 +159,12 @@ module pokey_regs (
     logic [7:0] kbcode_q;        // last received scan code (+ shift / ctrl)
     logic       key_latch_q;     // SKSTAT[5] — set on event, cleared on KBCODE read
     logic       key_down_q;      // SKSTAT[2] (active-low) — a key is currently held
+    // SKSTAT error latches (active-LOW: 1 = no error).  Set low on the
+    // event, returned high by an SKRES ($D20A) write — real POKEY / Altirra
+    // semantics (SKRES: mSKSTAT |= 0xE0; it does NOT touch IRQST).
+    logic       frame_err_n_q;   // SKSTAT[7] serial input framing error
+    logic       ser_ovr_n_q;     // SKSTAT[6] serial input overrun
+    logic       kbd_ovr_n_q;     // SKSTAT[5] keyboard overrun
     logic [7:0] skctl_q;         // $D20F write — debounce / scan rate / serial mode
 
     // M23-6 IRQ + serial
@@ -169,7 +178,12 @@ module pokey_regs (
     assign potgo_pulse   = we && (waddr[3:0] == 4'hB);
     assign stimer_pulse  = we && (waddr[3:0] == 4'h9);
     assign serout_strobe = we && (waddr[3:0] == 4'hD);
-    assign serout_byte   = serout_q;
+    // BYPASS THE REGISTER ON THE STROBE CYCLE.  serout_strobe is combinational
+    // on the write, but serout_q only takes wdata at the END of that cycle --
+    // so a consumer that latches on the strobe (pokey_serial does) sees the
+    // PREVIOUS byte.  pokey_twotone writes $fc and the shifter loaded $00, so
+    // its frame was all spaces and the two-tone hold had no marks to act on.
+    assign serout_byte   = serout_strobe ? wdata : serout_q;
     assign skctl_out     = skctl_q;
 
     // IRQ status: bit 3 is unlatched (live ser_out_complete level);
@@ -184,8 +198,29 @@ module pokey_regs (
                           irq_latch_q[2],     // TIMER 4
                           irq_latch_q[1],     // TIMER 2
                           irq_latch_q[0]};    // TIMER 1
-    // IRQ_n active low whenever any IRQEN-enabled pending bit is high.
-    assign irq_n         = ~|(irq_pending & irqen_q);
+    // IRQ_n active low whenever any IRQEN-enabled pending bit is high --
+    // but the LINE runs IRQ_LINE_LAG behind the STATUS BIT.  emu raise()
+    // (pokey_timer.c:541) arms it as IRQ_LINE_LAG + lag, so a fast timer's
+    // bit is readable at +24 and its /IRQ follows at +25; pokey_irqtiming
+    // measures the line, pokey_timertiming the bit.  Only the ASSERTING edge
+    // is delayed -- an acknowledge clears the line at once.
+    localparam int IRQ_LINE_LAG = 1;
+    wire  irq_now = |(irq_pending & irqen_q);
+    logic irq_dly_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)            irq_dly_q <= 1'b0;
+        else if (phi2_tick) irq_dly_q <= irq_now;
+    end
+    assign irq_n         = ~(irq_now & irq_dly_q);
+
+    // ---- IRQST delivery lag (emu pokey_timer.c:467, 505-545) ---------------
+    // fast_for_bit(): timer 4 follows AUDCTL[5] ($20), timers 1 and 2 follow
+    // AUDCTL[6] ($40).
+    localparam int IRQST_LAG = 4;
+    logic [2:0] st_lag_q   [0:2];
+    logic       st_armed_q [0:2];
+    wire [2:0]  tmr_pulse = {timer4_pulse, timer2_pulse, timer1_pulse};
+    wire [2:0]  tmr_fast  = {audctl_q[5], audctl_q[6], audctl_q[6]};
 
     assign audf1  = audf1_q;
     assign audf2  = audf2_q;
@@ -211,14 +246,30 @@ module pokey_regs (
             audc3_q     <= 8'h00;
             audc4_q     <= 8'h00;
             audctl_q    <= 8'h00;
+            for (int i = 0; i < 3; i++) begin
+                st_lag_q[i]   <= 3'd0;
+                st_armed_q[i] <= 1'b0;
+            end
             kbcode_q    <= 8'h00;
             key_latch_q <= 1'b0;
             key_down_q  <= 1'b0;
+            frame_err_n_q <= 1'b1;
+            ser_ovr_n_q   <= 1'b1;
+            kbd_ovr_n_q   <= 1'b1;
             skctl_q     <= 8'h00;
             irqen_q     <= 8'h00;
             irq_latch_q <= 8'h00;
             serout_q    <= 8'h00;
             serin_q     <= 8'h00;
+        end else if (cold_boot) begin
+            // SALLYRST cold-boot mimics a POKEY power-on reset: clear IRQEN and the
+            // IRQ latches so a freshly launched OS never inherits the previous
+            // session's IRQEN — which (with a pending source) holds IRQ_n low and
+            // derails the guest's reset before coldstart masks it. The 6502 is held
+            // during cold-boot, so this never races a real $D20E write. Pairs with
+            // the ANTIC NMIEN clear. See xl-coldstart-nmi-derail.
+            irqen_q     <= 8'h00;
+            irq_latch_q <= 8'h00;
         end else begin
             // ---- Keyboard event ingest (M23-4) -----
             if (kbd_event_valid) begin
@@ -234,6 +285,10 @@ module pokey_regs (
             // auto-repeat runs only while a key is genuinely held.
             if (kbd_event_valid)  key_down_q <= 1'b1;
             else if (kbd_release) key_down_q <= 1'b0;
+            // Keyboard overrun: a new key event while KBCODE is still unread.
+            if (kbd_event_valid && key_latch_q) kbd_ovr_n_q <= 1'b0;
+            if (ser_framing_err)   frame_err_n_q <= 1'b0;
+            if (ser_input_overrun) ser_ovr_n_q   <= 1'b0;
 
             // ---- Serial input byte capture (M23-6) -----
             if (ser_in_byte_pulse) serin_q <= ser_in_byte;
@@ -243,9 +298,75 @@ module pokey_regs (
             // IRQEN[bit]=1. Bit 3 (SER OUT COMPLETE) is *not*
             // latched — its IRQST contribution is the live
             // ser_out_complete input (see irq_pending above).
-            if (timer1_pulse         && irqen_q[0]) irq_latch_q[0] <= 1'b1;
-            if (timer2_pulse         && irqen_q[1]) irq_latch_q[1] <= 1'b1;
-            if (timer4_pulse         && irqen_q[2]) irq_latch_q[2] <= 1'b1;
+            // A FAST-CLOCKED TIMER'S STATUS BIT IS NOT READABLE THE CYCLE IT
+            // UNDERFLOWS -- IT IS IN FLIGHT FOR IRQST_LAG MACHINE CYCLES.
+            // emu pokey_timer.c:505-523 pins it from pokey_timertiming's two
+            // tables of the SAME timer: the STIMER-preemption table measures the
+            // UNDERFLOW (AUDF1=0 at 4, AUDF1=8 at 12, i.e. AUDF+4 with nothing
+            // extra on the first period) and the IRQST table measures when the
+            // BIT CAN BE READ (AUDF1=0 at 8, AUDF1=16 at 24) -- four later on
+            // every row they share.
+            //
+            // It belongs to the DELIVERY path, not the period: emu tried it as a
+            // longer first period and recorded that this "also delayed the
+            // underflow the preemption test strobes against -- and no value
+            // could then satisfy both tables."
+            //
+            // And it is a property of the 1.79 MHz tap alone (fast_for_bit):
+            // a base-clocked channel takes no lag at all, which is what keeps
+            // pokey_inittiming's 15 kHz acknowledge where it always was.
+            for (int i = 0; i < 3; i++) begin
+                if (tmr_pulse[i]) begin
+                    if (tmr_fast[i]) begin
+                        // In flight. Arming is sampled now; a masked raise still
+                        // flies (emu's st_armed / IRQEN_ARMS_INFLIGHT).
+                        // The full IRQST_LAG.  The CPU latches read data at the
+                        // END of the read cycle, so a bit that becomes visible on
+                        // the cycle the test samples reads as ALREADY PENDING --
+                        // pokey_timertiming's "triggered too early (loop #1)"
+                        // with d1=$00.  Do not shorten this to match a probe that
+                        // prints the latch's own set cycle; d1 is the ground truth.
+                        st_lag_q[i]   <= 3'(IRQST_LAG);
+                        st_armed_q[i] <= irqen_q[i];
+                    end else begin
+                        // A BASE-CLOCKED UNDERFLOW TAKES ONE CYCLE TO THE
+                        // STATUS BIT.  pokey_inittiming pins both clocks'
+                        // IRQST bits one cycle later than the release-phase
+                        // tick (15 kHz visible at SKCTL+85 off the +81
+                        // release, 64 kHz likewise), while pokey_timertiming's
+                        // resync schedule pins the TICKS themselves at 22/81
+                        // -- so the cycle belongs to delivery, not the phase.
+                        // Altirra spans the same gap as its general 3-cycle
+                        // borrow on the status path.  Masked raises still fly
+                        // (one cycle) and arming follows the fast-tap rule.
+                        st_lag_q[i]   <= 3'd1;
+                        st_armed_q[i] <= irqen_q[i];
+                    end
+                end else if (stimer_pulse && st_lag_q[i] == 3'(IRQST_LAG)) begin
+                    // A STIMER STROBE CANCELS AN INTERRUPT THAT HAS ONLY JUST
+                    // UNDERFLOWED.  emu pokey_timer.c:1005-1024 tabulates the
+                    // boundary and finds it is a ONE-CYCLE window, not the four
+                    // the bit is in flight for: "STIMER reaches the counter and
+                    // the first stage of the delay that carries the underflow to
+                    // IRQST, and nothing further along it."  A bit raised on the
+                    // last tick still has its full lag standing, so "st_lag still
+                    // at its maximum" IS "raised this tick", and dropping the
+                    // countdown is the whole cancellation -- IRQST is active low
+                    // and the bit has not been cleared yet.
+                    //
+                    // "At its maximum" is IRQST_LAG itself, measured: the strobe
+                    // reaches here one clk after the coincident underflow's
+                    // raise, before any phi2 decrement (st_lag0=4 in the +12c
+                    // preemption probe).  A strobe one bus cycle later arrives
+                    // after the first decrement and sees 3 -- IRQST_LAG-1 here
+                    // inverted both verdicts of the preemption pair.
+                    st_lag_q[i]   <= 3'd0;
+                    st_armed_q[i] <= 1'b0;
+                end else if (phi2_tick && st_lag_q[i] != 3'd0) begin
+                    st_lag_q[i] <= st_lag_q[i] - 3'd1;
+                    if (st_lag_q[i] == 3'd1 && st_armed_q[i]) irq_latch_q[i] <= 1'b1;
+                end
+            end
             if (ser_out_ready_pulse  && irqen_q[4]) irq_latch_q[4] <= 1'b1;
             if (ser_in_byte_pulse    && irqen_q[5]) irq_latch_q[5] <= 1'b1;
             if (kbd_event_valid      && irqen_q[6]) irq_latch_q[6] <= 1'b1;
@@ -264,11 +385,15 @@ module pokey_regs (
                     4'h7: audc4_q  <= wdata;
                     4'h8: audctl_q <= wdata;
                     4'hA: begin
-                        // SKRES — clears the latched serial IRQ bits
-                        // (bits 4 and 5). Bit 3 (output-complete) is
-                        // unlatched — it tracks ser_out_complete
-                        // directly and SKRES has no effect on it.
-                        irq_latch_q[5:4] <= 2'b00;
+                        // SKRES — returns the three SKSTAT error latches
+                        // (framing / serial overrun / keyboard overrun) to
+                        // the no-error state.  Real POKEY's SKRES does NOT
+                        // touch the IRQ latches (Altirra: mSKSTAT |= 0xE0
+                        // only; ACID800 pokey_skstat) — IRQ acks go through
+                        // the IRQEN write path.
+                        frame_err_n_q <= 1'b1;
+                        ser_ovr_n_q   <= 1'b1;
+                        kbd_ovr_n_q   <= 1'b1;
                     end
                     4'hD: serout_q <= wdata;       // SEROUT
                     4'hE: begin
@@ -277,6 +402,18 @@ module pokey_regs (
                         // Atari hardware-manual ack semantics).
                         irqen_q     <= wdata;
                         irq_latch_q <= irq_latch_q & wdata;
+                        // A MASKED UNDERFLOW STILL ENTERS THE DELAY, AND AN
+                        // ENABLE DURING ITS FLIGHT LETS IT SURFACE.  The rule
+                        // is asymmetric on purpose: an enable arms a bit
+                        // already in flight, a disable never disarms one (emu
+                        // pokey_timer.c:232-249, :1140-1147).  The two-tone
+                        // reprogramming section enables IRQEN on the very
+                        // cycle its second period underflows and reads the
+                        // bit four cycles later.
+                        for (int i = 0; i < 3; i++)
+                            if (wdata[i] && st_lag_q[i] != 3'd0 &&
+                                !st_armed_q[i])
+                                st_armed_q[i] <= 1'b1;
                     end
                     4'hF: skctl_q  <= wdata;       // SKCTL
                     // $D209 STIMER / $D20B POTGO — strobes (no state
@@ -322,12 +459,29 @@ module pokey_regs (
             //   bit 2 = KEY still pressed (active-low: 0 = a key is held).
             //           The OS auto-repeat reads this bit; it must release
             //           between taps or every key repeats forever.
-            //   bit 1 = SER INPUT BUSY  (1 = receiving)
+            //   bit 1 = SER INPUT SHIFT-REGISTER IDLE (active-low busy):
+            //           1 = idle (not shifting a byte in), 0 = a byte is
+            //           being received.  POKEY reports this bit *inverted*
+            //           vs. the internal `ser_input_busy` level — ACID800
+            //           pokey_skstat reads it as 1 while the port is idle
+            //           ("Serial input active bit was asserted when idle"
+            //           fires when it reads 0).  See Altirra §5.10.
             //   bit 0 = unused (always 0)
-            4'hF: rdata = {kbcode_q[6], 1'b0, key_latch_q,
-                           ser_framing_err, ser_input_overrun,
-                           ~key_down_q, ser_input_busy, 1'b0};
-            default: rdata = 8'h00;
+            4'hF: rdata = {frame_err_n_q,       // b7 framing error (0=err)
+                           ser_ovr_n_q,         // b6 serial input overrun (0=err)
+                           kbd_ovr_n_q,         // b5 keyboard overrun (0=err)
+                           1'b1,                // b4 direct serial in (idle mark)
+                           1'b1,                // b3 shift held (0=held; live state
+                                                //    not plumbed — KBCODE b6 carries
+                                                //    shift for typed keys)
+                           ~key_down_q,         // b2 key still pressed (0=held)
+                           ~ser_input_busy,     // b1 serial input busy (0=busy)
+                           1'b1};               // b0 unused, reads 1
+            // $D20B / $D20C are unused POKEY read addresses; the chip
+            // does not drive the data bus for them, so the Atari reads
+            // the pulled-up bus as $FF.  ACID800 pokey_default reads
+            // $D20C and asserts $FF ("POKEY default value wrong").
+            default: rdata = 8'hFF;
         endcase
     end
 

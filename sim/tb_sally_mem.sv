@@ -534,6 +534,36 @@ module tb_sally_mem;
             do_read(16'hC123, v); expect_eq("A.12 rom_we->read $C123", v, 8'h5A);
         end
 
+        // A.13: SELF-TEST ROM WRITE-BLOCK ($5000-$57FF).  When the XL self-test
+        // ROM is banked in (PORTB[7]=0 && PORTB[0]=1) the $5000-$57FF window is a
+        // read-only slice of OS ROM: a CPU write must be ignored and must NOT
+        // fall through to the RAM beneath it.  ACID800 mmu_xlbanking asserts this
+        // ("Write through self-test ROM was not blocked"): it writes through the
+        // ROM, banks it out, then reads the RAM back and expects the ORIGINAL
+        // value.  With self-test OFF the same $5000 write must still reach RAM.
+        $display("[A.13] self-test ROM write-block at $5000");
+        begin
+            logic [7:0] v;
+            // 1) self-test OFF: a $5000 write must reach the RAM (seed with $11).
+            portb = 8'h02;          // bit7=1 (self-test off), bit0=0 (OS RAM)
+            #1;
+            do_write(16'h5000, 8'h11);
+            do_read (16'h5000, v);
+            expect_eq("A.13 self-test OFF: $5000 write reaches RAM", v, 8'h11);
+
+            // 2) self-test ON: the $5000 write must be BLOCKED (not reach RAM).
+            portb = 8'h01;          // bit7=0 (self-test on), bit0=1 (OS ROM on)
+            #1;
+            do_write(16'h5000, 8'h22);
+
+            // 3) self-test OFF again: RAM must still read the ORIGINAL $11,
+            //    proving the write while self-test was active never landed.
+            portb = 8'h02;
+            #1;
+            do_read (16'h5000, v);
+            expect_eq("A.13 self-test write blocked (RAM unchanged)", v, 8'h11);
+        end
+
         // Reset portb to default for any subsequent tests.
         portb = 8'h02;
         #1;

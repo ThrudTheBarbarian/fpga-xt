@@ -85,6 +85,14 @@ signals (NextSteps §6502, [[xt6502_clean_sheet]]). `pb_sally` already does this
 the floorplan investment worth making is exactly this one pblock, not a whole-design
 partition.
 
+**But PR is now the *fallback*, not the default, for the turbo↔fidelity swap.** The
+pragmatic first cut is both cores resident + a bus mux (no RP, no fence) —
+docs/Design/dual-cpu-resident-mux.md. It reuses `sally_clock` as the fidelity cycle-
+enable and the `xt6502_debug` inject ports as the state handoff, costing only the idle
+core's (negligible) area + one 2:1 LUT on this binding loop. The RP fence below is
+worth formalizing only if that LUT-level won't close — i.e. PR earns its flow cost
+only when the mux can't.
+
 ### 1.5 The two long-poles (full-path review, 2026-06-27)
 Both binding paths are ~60% route, so the lever differs by *whether the route is a
 cross-region crossing (floorplan helps) or local congestion (logic restructure)*:

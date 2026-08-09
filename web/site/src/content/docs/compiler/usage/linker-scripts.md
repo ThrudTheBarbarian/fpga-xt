@@ -10,9 +10,9 @@ The `.lnk` parser still understands the `[shadow]` and `[cloaked]` sections desc
 :::
 
 ```bash
-xtc -m ./my-layout.lnk app.xt -o app.xex     # use a custom layout
-xtc -m xt             app.xt -o app.xex      # use a shipped layout by name
-xtc --dump-layout -m xe                       # print a layout's diagram
+xcc -m ./my-layout.lnk app.xc -o app.xex     # use a custom layout
+xcc -m xt             app.xc -o app.xex      # use a shipped layout by name
+xcc --dump-layout -m xt                       # print a layout's diagram
 ```
 
 Custom hardware (cartridge slots, non-stock RAM expansions, smaller / larger screen areas) can be supported without touching the compiler — write a `.lnk` and pass it.
@@ -177,9 +177,9 @@ Validation rejects:
 - a single-bank form with `<n>` in the id (the placeholder has nothing to bind to),
 - duplicate ids across all `[cloaked]` blocks in the file (a `:cloaked(<id>)` annotation would be ambiguous).
 
-Each region's bank is also reserved with the page tracker so `:banked` decls aren't packed on top of cloaked code. Empty regions cost nothing — codegen + xta both skip zero-byte buffers — so a layout can over-declare its pool without runtime overhead. No shipped layout uses the pool form today.
+Each region's bank is also reserved with the page tracker so `:banked` decls aren't packed on top of cloaked code. Empty regions cost nothing — codegen + xcc-as both skip zero-byte buffers — so a layout can over-declare its pool without runtime overhead. No shipped layout uses the pool form today.
 
-`[cloaked]` is xe-family-only: layouts without PORTB-style banking (`xl`, `xt`) reject the section and any source-level `:cloaked` annotation on non-xe targets is a compile error.
+`[cloaked]` applied to the **retired** `xe`-family Atari models, which used PORTB-style banking. No shipped layout declares the section, so in practice it is inert — the parser still accepts it, and `xt` (which reaches its extra RAM through the two bank windows instead) rejects a `:cloaked` annotation.
 
 ### `[stack]` — xtc software stack
 
@@ -251,12 +251,12 @@ By convention, every shipped `.lnk` opens with a Unicode box-art comment showing
 # └──────────────────────────────────────────────┘
 ```
 
-The diagram is for the human reader — the linker doesn't parse it. `xtc --dump-layout -m <name>` reproduces the same diagram from the parsed config, which is how you confirm a custom file describes what you think it does.
+The diagram is for the human reader — the linker doesn't parse it. `xcc --dump-layout -m <name>` reproduces the same diagram from the parsed config, which is how you confirm a custom file describes what you think it does.
 
 ## Built-in models
 
 ```bash
-xtc -ll
+xcc -ll
 ```
 
 Prints every shipped layout grouped by platform. Each one is a `.lnk` file you can copy as a starting point for a custom variant.
@@ -271,10 +271,10 @@ See [Memory models](/compiler/usage/memory-models/) for what each one is for and
 
 The fastest path is **copy and modify**:
 
-1. Run `xtc --dump-layout -m <closest match>` to see the layout you're starting from.
+1. Run `xcc --dump-layout -m <closest match>` to see the layout you're starting from.
 2. Copy `support/<platform>/layouts/<closest>.lnk` to a new file.
 3. Edit the sections you need to change — typically `[memory]`, `[banking]` (if your hardware has different bank-bit pattern), and the comment-header diagram.
-4. Run `xtc --dump-layout -m ./your-file.lnk` and verify the printed diagram matches your intent.
+4. Run `xcc --dump-layout -m ./your-file.lnk` and verify the printed diagram matches your intent.
 5. Compile with `-m ./your-file.lnk`. If the file lives next to the shipped layouts under `support/<platform>/layouts/`, you can reference it by name without the path.
 
 If you write a layout for a piece of hardware that's likely to be useful to others (a memory expansion, a cartridge form factor, a unique screen-RAM placement), upstream it — every shipped `.lnk` was a custom layout once.

@@ -46,6 +46,7 @@ int *__errno(void) { static int mc_errno; return &mc_errno; }
  * clean as cheap insurance.  All spans here are 8 KB / 64 B aligned, so the
  * line-granular loop never touches a neighbour. */
 #define MC_CLINE 32u
+#include "pl310.h"
 #define L2CC_CACHE_SYNC     (*(volatile uint32_t *)0xF8F02730u)
 
 static inline void mc_dcache_inval(const volatile void *p, uint32_t len)  /* discard stale, then read fresh DDR */
@@ -54,6 +55,16 @@ static inline void mc_dcache_inval(const volatile void *p, uint32_t len)  /* dis
     uint32_t e = ((uint32_t)p + len + MC_CLINE - 1u) & ~(MC_CLINE - 1u);
     for (; a < e; a += MC_CLINE) __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(a) : "memory"); /* DCIMVAC */
     __asm__ volatile("dsb" ::: "memory");
+    /* ...and the OUTER cache, now that the PL310 is enabled: the PL wrote DDR
+     * directly, so a line still held in L2 is just as stale as one in L1.  The
+     * inner pass is repeated AFTER the outer one because between the two a
+     * speculative fetch can refill L1 from a line L2 had not yet discarded. */
+    pl310_inval((uint32_t)p & ~(MC_CLINE - 1u),
+                ((uint32_t)p + len + MC_CLINE - 1u & ~(MC_CLINE - 1u))
+                    - ((uint32_t)p & ~(MC_CLINE - 1u)));
+    a = (uint32_t)p & ~(MC_CLINE - 1u);
+    for (; a < e; a += MC_CLINE) __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(a) : "memory");
+    __asm__ volatile("dsb" ::: "memory");
 }
 static inline void mc_dcache_clean(const volatile void *p, uint32_t len)  /* push results to DDR */
 {
@@ -61,6 +72,11 @@ static inline void mc_dcache_clean(const volatile void *p, uint32_t len)  /* pus
     uint32_t e = ((uint32_t)p + len + MC_CLINE - 1u) & ~(MC_CLINE - 1u);
     for (; a < e; a += MC_CLINE) __asm__ volatile("mcr p15,0,%0,c7,c10,1" :: "r"(a) : "memory"); /* DCCMVAC */
     __asm__ volatile("dsb" ::: "memory");
+    /* INNER FIRST, then outer: the L1 clean pushes into L2, so cleaning L2
+     * before L1 would leave exactly the data we care about behind. */
+    pl310_clean((uint32_t)p & ~(MC_CLINE - 1u),
+                ((uint32_t)p + len + MC_CLINE - 1u & ~(MC_CLINE - 1u))
+                    - ((uint32_t)p & ~(MC_CLINE - 1u)));
     L2CC_CACHE_SYNC = 0u;                                     /* drain PL310 store buffer */
     __asm__ volatile("dsb" ::: "memory");
 }
@@ -493,6 +509,18 @@ static void mc_run_ops(volatile uint8_t *page, const uint32_t *ops, unsigned nop
 /* ---- run one chunk's program --------------------------------------------- */
 static void mc_run_chunk(uint8_t chunk)
 {
+#if MC_SIO_VIA_MBOX
+    /* Paravirtual SIO no longer shares the maths page: with math_cop dropped it
+     * has its own BRAM mailbox behind the GP0 0xAxx window, so route the SIO
+     * chunk out BEFORE touching MC_CHUNK_BASE — that DDR is not a mailbox in
+     * this build and invalidating/reading it would be meaningless work on a
+     * path the 6502 is spin-waiting on.  See hdl/xt_sio_mbox.sv. */
+    if (chunk == MC_SIO_CHUNK) {
+        extern void xl_sio_mbox_service(void);
+        xl_sio_mbox_service();
+        return;
+    }
+#endif
     volatile uint8_t *page =
         (volatile uint8_t *)(MC_CHUNK_BASE + (uint32_t)chunk * MC_CHUNK_SIZE);
     uint8_t st = 0;
@@ -504,6 +532,16 @@ static void mc_run_chunk(uint8_t chunk)
     unsigned op_count = page[MC_OFF_OPCOUNT] | ((unsigned)page[MC_OFF_OPCOUNT + 1] << 8);
     if (op_count > MC_MAX_OPS) { op_count = MC_MAX_OPS; st |= MC_ST_RANGE; }
 
+#ifdef XL_SIO_TRACE
+    { static int dn; if (dn < 30) { dn++;
+        char b[64]; int k=0; const char*hx="0123456789ABCDEF";
+        const char*p="[mc] doorbell chunk="; while(*p)b[k++]=*p++;
+        b[k++]=hx[(chunk>>4)&0xF]; b[k++]=hx[chunk&0xF];
+        p=" magic="; while(*p)b[k++]=*p++;
+        b[k++]=hx[(page[MC_OFF_SIO_MAGIC]>>4)&0xF]; b[k++]=hx[page[MC_OFF_SIO_MAGIC]&0xF];
+        b[k++]='\r'; b[k++]='\n'; b[k]=0; klog(b);
+    } }
+#endif
     /* SIO over the mailbox (mathcop.h): the compact stub flags a request with a
      * MAGIC byte rather than a 1-op math program (it must fit a small ROM
      * padding run).  Route it to xl_boot.c's mount table instead of the

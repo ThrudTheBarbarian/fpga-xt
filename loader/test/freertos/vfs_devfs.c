@@ -8,23 +8,17 @@
  * discipline and the console writer.
  *
  * Nodes: null (read EOF, write sink), zero (endless zeros), urandom/random
- * (xorshift stream re-stirred every 32 bits with genuine hardware entropy from
- * the PL ring-oscillator TRNG at GP0 0x7xx — clock-seeded fallback on qemu),
+ * (ChaCha20 keyed by SHA-256-conditioned words from the PL ring-oscillator
+ * TRNG, each gated on TRNG_STAT[8] so it carries 32 genuinely fresh debiased
+ * bits — see xt_random.c; clock-seeded fallback on qemu),
  * tty + console (the console), i2c-0 (the PS-I2C0 bus, Linux i2c-dev ioctl
  * surface — the toybox i2c tools speak it).
  */
 #include "vfs.h"
+#include "xt_random.h"
 #include <stdint.h>
 #include <string.h>
 
-extern int _gettimeofday(void *tv, void *tz);   /* kernel syscall primitive (syscalls.c) */
-
-#ifdef XT_HW
-/* PL ring-oscillator TRNG whitened word (xt_trng → GP0 TRNG_RND).  Reads return
- * fresh entropy — the fabric pool free-runs at clk_sys.  Used to keep /dev/urandom
- * genuinely unpredictable rather than a bare clock-seeded PRNG. */
-static inline uint32_t hw_entropy(void) { return *(volatile uint32_t *)0x43C00700u; }
-#endif
 extern int xt_i2c_send(uint8_t addr, const uint8_t *buf, int n);   /* hdmi.c (0=ok; qemu: -1) */
 extern int xt_i2c_recv(uint8_t addr, uint8_t *buf, int n);
 
@@ -56,18 +50,14 @@ static long dv_fb0_rd(vfs_file *f, void *buf, uint32_t n)
     return (long)n;
 }
 
+/* One shared CSPRNG, not a per-open stream. The old per-open xorshift emitted
+ * its own state as output, so a few bytes gave you the state and every byte
+ * before and after it; and two opens in the same microsecond got near-identical
+ * streams, because the only thing separating them was the clock. */
 static long dv_rand_rd(vfs_file *f, void *buf, uint32_t n)
 {
-    uint32_t s = (uint32_t)(uintptr_t)f->priv;
-    uint8_t *b = (uint8_t *)buf;
-    for (uint32_t i = 0; i < n; i++) {
-#ifdef XT_HW
-        if ((i & 3u) == 0) s ^= hw_entropy();   /* re-stir with fresh HW entropy each 32-bit word */
-#endif
-        s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-        b[i] = (uint8_t)s;
-    }
-    f->priv = (void *)(uintptr_t)s;
+    (void)f;
+    xt_random_bytes(buf, n);
     return (long)n;
 }
 
@@ -347,15 +337,9 @@ static int dv_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
         return 0;
     }
     if (d->rd == xt_input_dev_read) { xt_input_start(); f->priv = 0; return 0; }
-    if (d->rd == dv_rand_rd) {           /* per-open xorshift state, clock-seeded */
-        struct { long long sec, usec; } tv = { 0, 0 };   /* time_t is 64-bit here — must not undersize */
-        _gettimeofday(&tv, 0);
-        uint32_t s = (uint32_t)tv.usec ^ ((uint32_t)tv.sec << 12) ^ 0x9e3779b9u;
-#ifdef XT_HW
-        s ^= hw_entropy();               /* mix in hardware entropy at open */
-#endif
-        f->priv = (void *)(uintptr_t)(s ? s : 1);
-    } else f->priv = 0;
+    /* No per-open state: the random nodes share one keyed generator, so an open
+     * carries nothing an attacker could influence or predict. */
+    f->priv = 0;
     return 0;
 }
 

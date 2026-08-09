@@ -48,6 +48,9 @@ module tb_antic_display;
     wire [15:0]  bram_addr;
     logic [7:0]  bram_rdata_r;
     always_ff @(posedge clk_bus) bram_rdata_r <= amem[bram_addr];
+    wire [15:0]  cmp_bram_addr;
+    logic [7:0]  cmp_bram_rdata_r;
+    always_ff @(posedge clk_bus) cmp_bram_rdata_r <= amem[cmp_bram_addr];
 
     // ---- §5 render tap outputs ------------------------------------------
     wire        wb_pix_valid, wb_row_flush, wb_frame_done;
@@ -55,6 +58,7 @@ module tb_antic_display;
 
     antic_top u_dut (
         .clk_bus(clk_bus), .rst_n(rst_n),
+        .joy_ovr(32'd0),   // keypad->joystick override off (default)
         .bus_addr(bus_addr), .bus_data_in(bus_data_in), .bus_rw(bus_rw),
         .d0xx_n(d0xx_n), .d4xx_n(d4xx_n),
         .bus_data_out(bus_data_out), .bus_data_oe(bus_data_oe),
@@ -69,6 +73,7 @@ module tb_antic_display;
         .unlock_blit(1'b1),
         .kbd_event_valid(1'b0), .kbd_event_code(8'h00),
         .bram_addr(bram_addr), .bram_rdata(bram_rdata_r),
+        .cmp_bram_addr(cmp_bram_addr), .cmp_bram_rdata(cmp_bram_rdata_r),
         .wb_pix_valid(wb_pix_valid), .wb_pix_pair(wb_pix_pair),
         .wb_color_lo(wb_color_lo), .wb_color_hi(wb_color_hi),
         .wb_atari_row(wb_atari_row), .wb_row_flush(wb_row_flush),

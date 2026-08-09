@@ -144,6 +144,16 @@ module gtia_regs (
         end
     end
 
+    // ---- CONSOL ($D01F) read composition --------------------------------
+    // The low three CONSOL lines are open-drain. A 1 in the output latch
+    // (consol_w) pulls its line low (reads 0); a 0 releases the line so the
+    // read reflects the console-key input (consol_r_in, active-low: 1 =
+    // released). read[2:0] = ~consol_w[2:0] & consol_r_in[2:0]. Upper bits
+    // pass consol_r_in through. The OS reads keys by writing 0 first, so
+    // the kernel's OPTION-hold value is preserved on that path.
+    wire [7:0] consol_rd = {consol_r_in[7:3],
+                            consol_r_in[2:0] & ~consol_w[2:0]};
+
     // ---- Read side (combinational) --------------------------------------
     always_comb begin
         rdata = 8'h00;
@@ -170,17 +180,21 @@ module gtia_regs (
                 5'h12: rdata = trig_in[2];          // $D012 TRIG2
                 5'h13: rdata = trig_in[3];          // $D013 TRIG3
                 5'h14: rdata = pal_sense_in;        // $D014 PAL
-                5'h15: rdata = 8'h00;
-                5'h16: rdata = 8'h00;
-                5'h17: rdata = 8'h00;
-                5'h18: rdata = 8'h00;
-                5'h19: rdata = 8'h00;
-                5'h1A: rdata = 8'h00;
-                5'h1B: rdata = 8'h00;
-                5'h1C: rdata = 8'h00;
-                5'h1D: rdata = 8'h00;
-                5'h1E: rdata = 8'h00;
-                5'h1F: rdata = consol_r_in;         // $D01F CONSOL
+                // $D015-$D01E are write-only GTIA registers. The chip does
+                // not decode them for read, so it leaves D4-D7 at 0 and
+                // drives D0-D3 high: every read returns $0F (Altirra
+                // "GTIA default value" behaviour, acid800 gtia_default).
+                5'h15: rdata = 8'h0F;
+                5'h16: rdata = 8'h0F;
+                5'h17: rdata = 8'h0F;
+                5'h18: rdata = 8'h0F;
+                5'h19: rdata = 8'h0F;
+                5'h1A: rdata = 8'h0F;
+                5'h1B: rdata = 8'h0F;
+                5'h1C: rdata = 8'h0F;
+                5'h1D: rdata = 8'h0F;
+                5'h1E: rdata = 8'h0F;
+                5'h1F: rdata = consol_rd;           // $D01F CONSOL (see above)
             endcase
         end
         // Chiplet ext reads return 0 — no GTIA-side ext yet.

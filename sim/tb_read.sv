@@ -37,6 +37,8 @@ module tb_read;
     antic_top u_dut (
         .clk_bus                  (clk_bus),
         .rst_n                    (rst_n),
+        .joy_ovr                  (32'd0),   // keypad->joystick override off (default)
+        .consol_keys              (8'h07),   // no console key held (active-low)
         .unlock_antic             (1'b1),
         .unlock_sprite(1'b1),
         .unlock_blit(1'b1),
@@ -200,7 +202,7 @@ module tb_read;
         do_read_d0xx(8'h14, data, oe);
         expect_oe("A.PAL_SENSE.oe",  oe,   1'b1);
         // antic_top hardcodes pal_sense_in = 8'h02 (NTSC).
-        expect_eq("A.PAL_SENSE.val", data, 8'h02);
+        expect_eq("A.PAL_SENSE.val", data, 8'h0f);   // NTSC: sense bits high
 
         do_read_d0xx(8'h1F, data, oe);
         expect_oe("A.CONSOL_R.oe",   oe,   1'b1);

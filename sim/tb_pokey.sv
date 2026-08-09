@@ -82,7 +82,8 @@ module tb_pokey;
         end
     end
 
-    pokey #(.CLK_BUS_HZ(8), .REF_HZ_M23_1(4), .REF_HZ_LOW(2)) u_dut (
+    pokey #(.CLK_BUS_HZ(8), .REF_HZ_M23_1(4), .REF_HZ_LOW(2),
+            .REF_PHI2_HI(1), .REF_PHI2_LO(2), .REF_REL_HI(1), .REF_REL_LO(1), .REL_SKEW(0)) u_dut (
         .clk                  (clk),
         .rst                  (rst),
         .phi2_tick            (phi2_tick),
@@ -143,6 +144,65 @@ module tb_pokey;
         we    = 1'b0;
     endtask
 
+
+    // Probe the linked second-period machinery while the replica runs.
+    int probe_on = 0;
+    always @(posedge clk) if (probe_on && u_dut.u_audio.ch1_wrap)
+        $display("[Qp]   ch1_wrap: ch1_first=%b ext1_q=%b paired=%b reload=$%02h",
+                 u_dut.u_audio.ch1_first, u_dut.u_audio.ext1_q,
+                 u_dut.u_audio.ch12_paired, u_dut.u_audio.audf1_reload);
+
+    // ---- ACID800 pokey_timertiming replica ------------------------------
+    // Three hardware round-trips were spent on this test at ~1h each; running
+    // its exact sequence here means the model iterates in seconds.  It samples
+    // IRQST at precise machine-cycle offsets from STIMER, with IRQEN cleared
+    // and re-armed in between, so only underflows AFTER the re-arm can latch:
+    //     STIMER          t=0
+    //     IRQEN = 0       (clears the latch)
+    //     IRQEN = $01     t=rearm
+    //     read IRQST      t=t_lo (must be UNFIRED) and t=t_hi (must be FIRED)
+    // Valid in this testbench despite its scaled REF_* parameters because
+    // AUDCTL[6] selects the MACHINE clock, which counts phi2_tick directly.
+    task automatic acid_case(input [7:0] audctl_v, input [7:0] audf1_v,
+                             input string tag,
+                             input int rearm, input int t_lo, input int t_hi);
+        int  t, fire_at;
+        bit  fired_lo, fired_hi;
+        begin
+            do_write(8'h0E, 8'h00);          // IRQEN = 0
+            do_write(8'h08, audctl_v);       // AUDCTL
+            do_write(8'h00, audf1_v);        // AUDF1
+            do_write(8'h02, 8'h00);          // AUDF2
+            probe_on = 1;
+            do_write(8'h09, 8'h00);          // STIMER -> t = 0
+            t = 0; fired_lo = 1'b0; fired_hi = 1'b0; fire_at = -1;
+            while (t <= t_hi + 20) begin
+                @(posedge clk);
+                if (phi2_tick) begin
+                    t = t + 1;
+                    if (t == rearm) begin
+                        we = 1'b1; waddr = 8'h0E; wdata = 8'h01;
+                        @(posedge clk); we = 1'b0;
+                    end
+                    if (t == t_lo) fired_lo = u_dut.u_regs.irq_latch_q[0];
+                    if (t == t_hi) fired_hi = u_dut.u_regs.irq_latch_q[0];
+                    if (fire_at < 0 && u_dut.u_regs.irq_latch_q[0]) fire_at = t;
+                end
+            end
+            if (fired_lo) begin
+                $display("FAIL Q %s: fired by cycle %0d (too EARLY)", tag, t_lo);
+                fail_count++;
+            end
+            if (!fired_hi) begin
+                $display("FAIL Q %s: not fired by cycle %0d (too LATE)", tag, t_hi);
+                fail_count++;
+            end
+            probe_on = 0;
+            $display("[Q] %s: latch set at cycle %0d (want unfired %0d / fired %0d)",
+                     tag, fire_at, t_lo, t_hi);
+        end
+    endtask
+
     task automatic expect_eq(input string label,
                              input [31:0] got, input [31:0] want);
         if (got !== want) begin
@@ -201,6 +261,8 @@ module tb_pokey;
         // ~half-period = 8 clks; full period ≈ 16 clks; rising edges
         // every 16 clks. Over 800 clks we expect ~50 rising edges.
         $display("[B] frequency check");
+        do_write(8'h0F, 8'h03);    // SKCTL = $03: release init (the OS boot idiom);
+                                   // init holds the phi2-paced ref dividers preset
         // PURE square-wave mode: AUDC[7]=1 (NOT_5 bypass) + AUDC[5]=1
         // (PURE) + low nibble = volume → pattern $Av.
         // Clear AUDCTL (Phase A left it at $5A) so the M23-3 features
@@ -224,10 +286,13 @@ module tb_pokey;
             int t1, t2, t3, t4;
             // Drain any pending state.
             @(posedge clk);
-            count_toggles(1600, 0, t1);
-            count_toggles(1600, 1, t2);
-            count_toggles(1600, 2, t3);
-            count_toggles(1600, 3, t4);
+            // Window doubled: the ref dividers are phi2-paced now (hi = 1
+            // phi2 = 4 clks vs the old 2-clk direct divider), so 3200 clks
+            // spans the same ~800 hi-ref ticks the bands were written for.
+            count_toggles(3200, 0, t1);
+            count_toggles(3200, 1, t2);
+            count_toggles(3200, 2, t3);
+            count_toggles(3200, 3, t4);
             // Allow ±5 % for sampling jitter (enter-mid-cycle, etc).
             $display("[B] toggles: ch1=%0d ch2=%0d ch3=%0d ch4=%0d",
                      t1, t2, t3, t4);
@@ -263,6 +328,49 @@ module tb_pokey;
                 $display("FAIL C.silence: ch1_out=$%0h after vol=0", ch1_out);
                 fail_count++;
                 break;
+            end
+        end
+
+        // ===== Phase D0 — SKCTL init/reset holds RANDOM at $FF (M23-2) ===
+        // Atari OS idiom (mirrored by ACID800 pokey_noise / antic_wsync):
+        // SKCTL[1:0]==0 is POKEY "init" mode — the polynomial counters
+        // are held in reset and RANDOM ($D20A) reads $FF. Writing a
+        // non-zero SKCTL[1:0] (the OS uses $03) releases them to free
+        // run on the machine clock. We can't reproduce the exact ACID800
+        // phase-dependent values here (no ANTIC/WSYNC phase in this tb),
+        // but the init→$FF hold and the release→advance are checkable.
+        $display("[D0] SKCTL init holds RANDOM=$FF, release frees it");
+        begin
+            int unsigned r_init, r_run;
+            do_write(8'h0F, 8'h00);        // SKCTL = 0 → init/reset mode
+            repeat (64) @(posedge clk);    // several phi2 ticks (phi2 = 4 clks here)
+            @(negedge clk);
+            raddr = 8'h0A;
+            @(negedge clk);
+            r_init = rdata;
+            expect_eq("D0.RANDOM-init", r_init, 8'hFF);
+
+            // Release init (SKCTL=$03). The poly counters now free-run;
+            // RANDOM must leave $FF within a bounded window.
+            do_write(8'h0F, 8'h03);
+            r_run = 8'hFF;
+            begin
+                int guard;
+                guard = 0;
+                while (r_run == 8'hFF && guard < 4096) begin
+                    repeat (4) @(posedge clk);
+                    @(negedge clk);
+                    raddr = 8'h0A;
+                    @(negedge clk);
+                    r_run = rdata;
+                    guard++;
+                end
+            end
+            if (r_run == 8'hFF) begin
+                $display("FAIL D0.release: RANDOM stuck at $FF after SKCTL=$03");
+                fail_count++;
+            end else begin
+                $display("[D0] RANDOM: init=$%02x -> running=$%02x", r_init, r_run);
             end
         end
 
@@ -350,7 +458,7 @@ module tb_pokey;
         begin
             int t2;
             @(posedge clk);
-            count_toggles(16000, 1, t2);
+            count_toggles(32000, 1, t2);   // doubled: phi2-paced refs
             $display("[F] ch2 toggles in 16-bit pair mode: %0d (expected ~15)", t2);
             if (t2 < 10 || t2 > 20) begin
                 $display("FAIL F.pair12: %0d toggles, expected ~15 (linked-pair semantics broken)",
@@ -457,38 +565,59 @@ module tb_pokey;
                 fail_count++;
             end
 
-            // Read SKSTAT ($D20F) — KEY_LATCH bit (5) should be 1,
-            // SHIFT bit (7) should mirror kbcode_q[6] = 1.
+            // Read SKSTAT ($D20F) — real POKEY layout: b5 = keyboard
+            // overrun (active-low, no overrun yet -> 1); b7 = framing
+            // error latch (no error -> 1).  KEY_LATCH is internal only.
             @(negedge clk);
             raddr = 8'h0F;
             @(negedge clk);
             if (rdata[5] !== 1'b1) begin
-                $display("FAIL I.key_latch_set: SKSTAT=$%02x bit5=0", rdata);
+                $display("FAIL I.kbd_ovr_idle: SKSTAT=$%02x bit5=0 (no overrun yet)", rdata);
                 fail_count++;
             end
             if (rdata[7] !== 1'b1) begin
-                $display("FAIL I.shift: SKSTAT=$%02x bit7=0 (expected SHIFT=1)", rdata);
+                $display("FAIL I.frame_idle: SKSTAT=$%02x bit7=0 (no framing err)", rdata);
                 fail_count++;
             end
 
-            // Now simulate a KBCODE read pulse (re=1 + re_addr=$09).
-            // pokey_regs clears KEY_LATCH 1 cycle later.
+            // Second key event BEFORE KBCODE is read -> keyboard overrun
+            // latches low (ACID800 pokey_skstat semantics).
+            @(negedge clk);
+            kbd_event_valid = 1'b1;
+            kbd_event_code  = 8'h6B;
+            @(posedge clk);
+            @(negedge clk);
+            kbd_event_valid = 1'b0;
+            @(negedge clk);
+            raddr = 8'h0F;
+            @(negedge clk);
+            if (rdata[5] !== 1'b0) begin
+                $display("FAIL I.kbd_ovr_set: SKSTAT=$%02x bit5=1 (expected overrun)", rdata);
+                fail_count++;
+            end
+
+            // KBCODE read clears the internal latch but NOT the overrun
+            // flag; SKRES returns it to 1.
             @(negedge clk);
             re      = 1'b1;
             re_addr = 8'h09;
             @(posedge clk);
             @(negedge clk);
             re = 1'b0;
-            // Wait one cycle for the latch to clear.
             @(posedge clk);
-
-            // Re-read SKSTAT — KEY_LATCH should now be 0.
             @(negedge clk);
             raddr = 8'h0F;
             @(negedge clk);
             if (rdata[5] !== 1'b0) begin
-                $display("FAIL I.key_latch_clear: SKSTAT=$%02x bit5=1 after KBCODE read",
-                         rdata);
+                $display("FAIL I.kbd_ovr_sticky: SKSTAT=$%02x bit5=1 (KBCODE read must not clear)", rdata);
+                fail_count++;
+            end
+            do_write(8'h0A, 8'h00);   // SKRES
+            @(negedge clk);
+            raddr = 8'h0F;
+            @(negedge clk);
+            if (rdata[5] !== 1'b1) begin
+                $display("FAIL I.kbd_ovr_skres: SKSTAT=$%02x bit5=0 after SKRES", rdata);
                 fail_count++;
             end
         end
@@ -512,7 +641,7 @@ module tb_pokey;
                 begin
                     repeat (4) @(posedge clk);
                     do_write(8'h0B, 8'h00);
-                    repeat (8) @(posedge clk);
+                    repeat (32) @(posedge clk);
                 end
                 begin
                     repeat (16) @(posedge clk);
@@ -648,6 +777,9 @@ module tb_pokey;
             //          for ch1 to wrap. AUDF1=0 with ref ticks every
             //          2 clks → wraps every 2 clks; we'll see it
             //          almost immediately.
+            do_write(8'h0F, 8'h03);   // SKCTL = \$03: phase J's pot writes left
+                                      // init mode, which (faithfully) freezes
+                                      // the phi2-paced reference dividers
             do_write(8'h0E, 8'h01);   // IRQEN = bit 0 (TIMER 1)
             do_write(8'h00, 8'h00);   // AUDF1 = 0 — fastest divider
             do_write(8'h01, 8'hAF);   // AUDC1 = pure tone, vol 15
@@ -705,10 +837,10 @@ module tb_pokey;
                 fail_count++;
             end
 
-            // ---- K.6: SKRES clears the latched serial IRQ bits
-            //          (4 and 5) but leaves bit 6 (kbd) intact. Bit 3
-            //          is unlatched (live) and SKRES has no effect
-            //          on it.
+            // ---- K.6: SKRES does NOT touch the IRQ latches (real POKEY /
+            //          Altirra: SKRES only resets the SKSTAT error flags).
+            //          The pending ser-in latch from K.5 must survive an
+            //          SKRES and clear only via the IRQEN ack path.
             do_write(8'h0E, 8'h60);   // IRQEN = bit 5 + bit 6
             @(negedge clk);
             kbd_event_valid = 1'b1;
@@ -722,37 +854,77 @@ module tb_pokey;
             @(negedge clk);
             raddr = 8'h0E;
             @(negedge clk);
-            if (rdata[5] !== 1'b1) begin
-                $display("FAIL K.6: IRQST=$%02x bit5=0 (SKRES should clear ser-in)", rdata);
+            if (rdata[5] !== 1'b0) begin
+                $display("FAIL K.6: IRQST=$%02x bit5=1 (ser-in latch must SURVIVE SKRES)", rdata);
                 fail_count++;
             end
             if (rdata[6] !== 1'b0) begin
                 $display("FAIL K.6: IRQST=$%02x bit6=1 (kbd latch should survive SKRES)", rdata);
                 fail_count++;
             end
+            // IRQEN ack (drop bit 5) clears the ser-in latch.
+            do_write(8'h0E, 8'h40);
+            @(negedge clk);
+            raddr = 8'h0E;
+            @(negedge clk);
+            if (rdata[5] !== 1'b1) begin
+                $display("FAIL K.6b: IRQST=$%02x bit5=0 (IRQEN ack should clear)", rdata);
+                fail_count++;
+            end
 
-            // ---- K.7: SKSTAT serial-flag bits (4..2) reflect inputs.
+            // ---- K.7: SKSTAT error flags (real layout): framing = b7,
+            //          serial overrun = b6, LATCHED active-low; busy = b1
+            //          live active-low.
             do_write(8'h0E, 8'h00);   // ack everything
             ser_framing_err   = 1'b1;
             ser_input_overrun = 1'b0;
             ser_input_busy    = 1'b1;
             @(negedge clk);
+            @(negedge clk);
             raddr = 8'h0F;          // SKSTAT
             @(negedge clk);
-            if (rdata[4] !== 1'b1) begin
-                $display("FAIL K.7: SKSTAT=$%02x bit4=0 (framing err)", rdata);
+            if (rdata[7] !== 1'b0) begin
+                $display("FAIL K.7: SKSTAT=$%02x bit7=1 (framing err should latch low)", rdata);
                 fail_count++;
             end
-            if (rdata[3] !== 1'b0) begin
-                $display("FAIL K.7: SKSTAT=$%02x bit3=1 (overrun)", rdata);
+            if (rdata[6] !== 1'b1) begin
+                $display("FAIL K.7: SKSTAT=$%02x bit6=0 (no overrun)", rdata);
                 fail_count++;
             end
-            if (rdata[1] !== 1'b1) begin
-                $display("FAIL K.7: SKSTAT=$%02x bit1=0 (ser input busy)", rdata);
+            // bit 1 is active-LOW serial-input-busy: while ser_input_busy
+            // is asserted (a byte is shifting in) SKSTAT bit1 reads 0.
+            if (rdata[1] !== 1'b0) begin
+                $display("FAIL K.7: SKSTAT=$%02x bit1=1 (expected 0 while receiving)", rdata);
                 fail_count++;
             end
             ser_framing_err = 1'b0;
             ser_input_busy  = 1'b0;
+            // Idle again → bit1 must read back as 1 (ACID800 pokey_skstat:
+            // "Serial input active bit was asserted when idle").
+            @(negedge clk);
+            raddr = 8'h0F;
+            @(negedge clk);
+            if (rdata[1] !== 1'b1) begin
+                $display("FAIL K.7: SKSTAT=$%02x bit1=0 when idle (expected 1)", rdata);
+                fail_count++;
+            end
+
+            // Framing latch survives the input dropping; SKRES restores it.
+            @(negedge clk);
+            raddr = 8'h0F;
+            @(negedge clk);
+            if (rdata[7] !== 1'b0) begin
+                $display("FAIL K.7b: SKSTAT=$%02x bit7=1 (framing latch must stick)", rdata);
+                fail_count++;
+            end
+            do_write(8'h0A, 8'h00);   // SKRES
+            @(negedge clk);
+            raddr = 8'h0F;
+            @(negedge clk);
+            if (rdata[7] !== 1'b1) begin
+                $display("FAIL K.7c: SKSTAT=$%02x bit7=0 after SKRES", rdata);
+                fail_count++;
+            end
 
             // ---- K.8: bit 3 (SER OUT COMPLETE) is unlatched (Altirra
             //          §5.7). IRQST[3] must follow ser_out_complete
@@ -818,15 +990,28 @@ module tb_pokey;
             // Let the counter advance partway through its period.
             repeat (6) @(posedge clk);
             t1_before = u_dut.u_audio.ch1_cnt;
-            // STIMER write: $D209.
+            // STIMER write: $D209.  The reload lands on the FOURTH machine
+            // cycle after the write (Altirra reset-timers chain; ACID800
+            // pokey_timertiming first-assert contract): poll for the
+            // reload value and require it within the lag window.
             do_write(8'h09, 8'h00);
-            @(posedge clk);
-            t1_after = u_dut.u_audio.ch1_cnt;
-            // After STIMER, ch1_cnt should be the AUDF1 value ($0A).
-            if (t1_after !== 8'h0A) begin
-                $display("FAIL L: ch1_cnt after STIMER = $%0h (expected $0A; before=$%0h)",
-                         t1_after, t1_before);
-                fail_count++;
+            // The reload lands 4 machine cycles after the write (Altirra
+            // reset-timers chain).  Detect the reload EVENT: within a
+            // bounded window the counter must appear in the reload
+            // neighbourhood ($0A downward), which the pre-STIMER value
+            // ($F2 region) cannot reach by counting.
+            begin
+                int seen = 0;
+                for (int w = 0; w < 200 && !seen; w++) begin
+                    @(posedge clk);
+                    t1_after = u_dut.u_audio.ch1_cnt;
+                    if (t1_after <= 8'h0B) seen = 1;
+                end
+                if (!seen) begin
+                    $display("FAIL L: ch1_cnt never reloaded after STIMER (last=$%0h; before=$%0h)",
+                             t1_after, t1_before);
+                    fail_count++;
+                end
             end
             // ch1_state should be forced to 1.
             if (u_dut.u_audio.ch1_state !== 1'b1) begin
@@ -880,7 +1065,7 @@ module tb_pokey;
         // per rising edge = 128 fabric clks. Over 16384 clks → 128
         // rising edges. The OLD (no-fudge) model would give 16384 /
         // ((9 + 0 + 1) × 2 × 4) = 205 — distinguishable.
-        $display("[N] linked machine-clock N+7 period");
+        $display("[N] linked machine-clock N+4 period");
         begin
             int t2;
             do_write(8'h08, 8'h50);    // AUDCTL = $50 (PAIR12 + CH1_HF)
@@ -893,9 +1078,13 @@ module tb_pokey;
             do_write(8'h09, 8'h00);    // STIMER to align
             @(posedge clk);
             count_toggles(16384, 1, t2);
-            $display("[N] ch2 toggles in linked-MC mode: %0d (expected ~128, N+7 period)", t2);
-            if (t2 < 115 || t2 > 140) begin
-                $display("FAIL N: ch2 toggles=%0d outside [115,140] (linked MC period broken)",
+            // AUDF16 = 9 at 1.79MHz linked.  Period N+4 -> (9+4)*2*4 = 104
+            // fabric clks per rising edge -> 16384/104 ~= 158.  (The old
+            // N+7 model predicted 128; ACID800 pokey_timertiming brackets
+            // the real period at N+4 — see hdl/pokey_audio.sv.)
+            $display("[N] ch2 toggles in linked-MC mode: %0d (expected ~158, N+4 period)", t2);
+            if (t2 < 145 || t2 > 170) begin
+                $display("FAIL N: ch2 toggles=%0d outside [145,170] (linked MC period broken)",
                          t2);
                 fail_count++;
             end
@@ -906,6 +1095,90 @@ module tb_pokey;
             do_write(8'h02, 8'hFF);
             do_write(8'h03, 8'h00);
         end
+
+        // ===== Phase O — unused read addresses read $FF (pokey_default) ===
+        // POKEY does not drive the data bus for its unused read
+        // addresses $D20B / $D20C, so the Atari reads the pulled-up bus
+        // as $FF. ACID800 pokey_default reads $D20C and asserts $FF.
+        $display("[O] unused read addr default = $FF");
+        begin
+            @(negedge clk);
+            raddr = 8'h0C;
+            @(negedge clk);
+            expect_eq("O.D20C-default", rdata, 8'hFF);
+            @(negedge clk);
+            raddr = 8'h0B;
+            @(negedge clk);
+            expect_eq("O.D20B-default", rdata, 8'hFF);
+        end
+
+        // ===== Phase P — async receive suppresses TIMER 4 IRQ (asyncrecv) =
+        // ACID800 pokey_asyncrecv: with SKCTL async-receive mode ON
+        // (bit4 = $13) POKEY holds the timer 3+4 pair in reset awaiting
+        // a start bit, so TIMER 4 never fires. Toggling the mode off
+        // ($03) lets it fire again. TIMER 4 IRQ = IRQEN bit 2.
+        $display("[P] async receive suppresses TIMER 4 IRQ");
+        begin
+            // ---- P.1: async OFF ($03) → timer4 fires ----
+            do_write(8'h0F, 8'h03);   // SKCTL = $03 (async recv OFF)
+            do_write(8'h08, 8'h00);   // AUDCTL = 0 (unlinked, ref clock)
+            do_write(8'h07, 8'h00);   // AUDC4 = 0 (silent)
+            do_write(8'h06, 8'h02);   // AUDF4 = 2 → wrap every 3 ref ticks
+            do_write(8'h0E, 8'h00);   // IRQEN = 0
+            do_write(8'h09, 8'h00);   // STIMER — reload ch4
+            do_write(8'h0E, 8'h04);   // IRQEN = $04 (TIMER 4)
+            repeat (64) @(posedge clk);
+            if (irq_n !== 1'b0) begin
+                $display("FAIL P.1: irq_n=%0b, TIMER 4 IRQ did not fire (async OFF)", irq_n);
+                fail_count++;
+            end
+
+            // ---- P.2: async ON ($13) → timer4 suppressed ----
+            do_write(8'h0E, 8'h00);   // ack / clear latch
+            do_write(8'h0F, 8'h13);   // SKCTL = $13 (async recv ON)
+            do_write(8'h09, 8'h00);   // STIMER
+            do_write(8'h0E, 8'h04);   // IRQEN = $04 (TIMER 4)
+            repeat (64) @(posedge clk);
+            if (irq_n !== 1'b1) begin
+                $display("FAIL P.2: irq_n=%0b, TIMER 4 IRQ fired with async recv active", irq_n);
+                fail_count++;
+            end
+            @(negedge clk);
+            raddr = 8'h0E;            // IRQST
+            @(negedge clk);
+            if (rdata[2] !== 1'b1) begin
+                $display("FAIL P.2: IRQST=$%02x bit2=0 (TIMER 4 pending in async recv)", rdata);
+                fail_count++;
+            end
+
+            // ---- P.3: async OFF again → timer4 unlocks ----
+            do_write(8'h0F, 8'h03);   // SKCTL = $03 (async recv OFF)
+            do_write(8'h0E, 8'h00);
+            do_write(8'h09, 8'h00);   // STIMER
+            do_write(8'h0E, 8'h04);   // IRQEN = $04
+            repeat (64) @(posedge clk);
+            if (irq_n !== 1'b0) begin
+                $display("FAIL P.3: irq_n=%0b, TIMER 4 IRQ did not re-fire after async OFF", irq_n);
+                fail_count++;
+            end
+            // Park.
+            do_write(8'h0E, 8'h00);
+            do_write(8'h06, 8'hFF);
+            do_write(8'h0F, 8'h00);
+        end
+
+        // ===== Phase Q — ACID800 pokey_timertiming replica =================
+        $display("[Q] ACID pokey_timertiming replica");
+        // Offsets carry a +5 CALIBRATION: this bench counts phi2 ticks from
+        // when do_write() returns, whereas ACID counts from the cycle the
+        // STIMER write COMMITS, five machine cycles earlier.  Calibrated
+        // against 8-bit loop 1, which passes on hardware, so the three other
+        // cases are measured against a known-good reference rather than an
+        // assumption.
+        acid_case(8'h40, 8'h10, "8-bit  loop1", 12+5, 19+5, 20+5);
+        acid_case(8'h40, 8'h10, "8-bit  loop2", 24+5, 39+5, 40+5);
+        acid_case(8'h50, 8'h10, "16-bit loop1", 12+5, 19+5, 20+5);
+        acid_case(8'h50, 8'h10, "16-bit loop2", 27+5, 42+5, 43+5);
 
         if (fail_count == 0) begin
             $display("*** POKEY OK *** audio + RANDOM + AUDCTL + keyboard + POT + IRQ/serial + STIMER");

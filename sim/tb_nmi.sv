@@ -8,6 +8,9 @@
 // Phase 2: NMIEN[6] only — VBI fires, /NMI low, NMIST=$40, NMIRES clears
 // Phase 3: NMIEN=$00 — neither fires
 // Phase 4: simultaneous DLI + VBI: NMIST=$C0 after both pulses
+// Phase 5: one register write NMIEN=$C0 must gate BOTH the DLI /NMI and the
+//          VBI /NMI (bit7 survives the store AND reaches nmi_gen's DLI gate) —
+//          regression guard for the HW "DLIs never fire under $C0" class.
 
 `default_nettype none
 `timescale 1ns / 1ps
@@ -80,8 +83,13 @@ module tb_nmi;
     wire  [7:0]  nmi_dli_row;
     wire         nmi_dli_at;
 
+    logic w_frame = 1'b0, w_line = 1'b0, w_prep = 1'b0;
+
     dl_parser u_dl (
         .clk(clk), .rst(rst), .start_parse(dl_start),
+        .cold_abort(1'b0),
+        .frame_start(w_frame), .line_start(w_line), .prep_tick(w_prep),
+        .vs_dli_tick(1'b1), .vs_stop_tick(1'b1),
         .dlistl(8'h00), .dlisth(8'hD0),
         .vscrol(4'h0),
         .mem_raddr(dl_raddr), .mem_rdata(dl_rdata), .mem_req(), .mem_ready(1'b1),
@@ -98,6 +106,8 @@ module tb_nmi;
     // ---- nmi_gen ------------------------------------------------------
     logic        vbi_start    = 1'b0;
     logic        line_start   = 1'b0;
+    logic        vbi_status   = 1'b0;
+    logic        line_status  = 1'b0;
     logic [7:0]  atari_row_in = 8'h00;
     wire         nmi_n;
 
@@ -105,7 +115,10 @@ module tb_nmi;
         .clk(clk), .rst(rst),
         .nmien(nmien_q),
         .nmires_strobe(nmires_strobe),
+        .status_tick(1'b1),
+        .vbi_status(vbi_status),
         .vbi_start(vbi_start),
+        .line_status(line_status),
         .line_start(line_start),
         .cur_row(nmi_dli_row),
         .cur_row_dli(nmi_dli_at),
@@ -133,18 +146,36 @@ module tb_nmi;
     task automatic pulse_line(input logic [7:0] row);
         @(negedge clk);
         atari_row_in <= row;
-        line_start   <= 1'b1;
+        line_status  <= 1'b1;      // status tick (cycle 7 on HW)...
+        @(posedge clk);
+        @(negedge clk);
+        line_status  <= 1'b0;
+        line_start   <= 1'b1;      // ...then the /NMI tick (cycle 8)
         @(posedge clk);
         @(negedge clk);
         line_start   <= 1'b0;
     endtask
 
+    // Advance the live walker by one displayed row (prefetch then flip).
+    task automatic walker_step();
+        @(negedge clk); w_prep <= 1'b1;
+        @(negedge clk); w_prep <= 1'b0;
+        repeat (2) @(negedge clk);
+        w_line <= 1'b1;
+        @(negedge clk); w_line <= 1'b0;
+        @(negedge clk);
+    endtask
+
     task automatic pulse_vbi();
         @(negedge clk);
-        vbi_start <= 1'b1;
+        vbi_status <= 1'b1;
         @(posedge clk);
         @(negedge clk);
-        vbi_start <= 1'b0;
+        vbi_status <= 1'b0;
+        vbi_start  <= 1'b1;
+        @(posedge clk);
+        @(negedge clk);
+        vbi_start  <= 1'b0;
     endtask
 
     int fail_count = 0;
@@ -164,13 +195,14 @@ module tb_nmi;
         rst = 1'b0;
         repeat (2) @(posedge clk);
 
-        // DL: mode F line on row 0 (no DLI), mode F line + DLI on row 1.
-        // After parse: line_dli[0]=0, line_dli[1]=0, ..., line_dli[?]=1
-        // depending on where the DLI bit lands.
+        // DL: mode-F line + DLI on DL byte 0, plain mode-F line, JVB.
         //
-        // Mode F = 1 atari row per DL line. The DLI bit on a DL line
-        // fires NMI on the FIRST scan line of the NEXT DL line, so
-        // setting DLI on DL byte 0 makes line_dli[1] = 1.
+        // Mode F = 1 atari row per DL line.  A DLI on a VISIBLE mode line keeps
+        // the compositor-aligned convention (fires on the FIRST scan line of the
+        // NEXT DL line), so a DLI bit on DL byte 0 makes the NMI fire on row 1.
+        // nmi_gen reads the PHYSICAL DLI map (dli_at / line_dli_p) with the live
+        // raster row — that is the space that must agree on real hardware — so
+        // this checks line_dli_p, not the compressed compositor table line_dli.
         //
         // Build: $8F (mode F + DLI bit), $0F (mode F), JVB.
         load_byte(16'hD000, 8'h8F);     // DLI bit set on first DL line
@@ -186,11 +218,20 @@ module tb_nmi;
         wait (dl_done);
         @(posedge clk);
 
-        // Verify dl_parser exposes the DLI bit on row 1 only.
-        expect_eq("dl/row0_dli", {7'h0, u_dl.line_dli[0]}, 8'h00);
-        expect_eq("dl/row1_dli", {7'h0, u_dl.line_dli[1]}, 8'h01);
+        // Prime the walker for the frame.  Before its first line flip the
+        // current-row registers are empty, so dli_at reads 0; after stepping
+        // onto the first DL line ($8F: mode F + DLI, a 1-scanline line whose
+        // only row IS its last) dli_at asserts — real ANTIC raises the DLI
+        // on the LAST scan line of the flagged line.
+        @(negedge clk); w_frame <= 1'b1;
+        @(negedge clk); w_frame <= 1'b0;
+        repeat (2) @(negedge clk);
+        expect_eq("dl/preboot_dli", {7'h0, nmi_dli_at}, 8'h00);
 
-        // ===== Phase 1: NMIEN[7] only — DLI fires =========================
+        // ===== Phase 1: NMIEN[7] only — DLI fires, /NMI auto-releases =====
+        // The real OS DLI dispatch (JMP (VDSLST)) RTIs WITHOUT writing
+        // NMIRES, so /NMI MUST self-release as a pulse — otherwise the line
+        // pins low forever and no further NMI is ever taken.
         write_reg(8'h0E, 8'h80);                    // NMIEN = $80
         // Pulse line_start at row 0 — no DLI here.
         pulse_line(8'd0);
@@ -198,17 +239,41 @@ module tb_nmi;
         expect_eq("p1/row0/nmist", nmist_q, 8'h1F);
         expect_eq("p1/row0/nmi_n", {7'h0, nmi_n},  8'h01);     // /NMI high
 
+        // Step the walker onto the DLI line and PARK it there: dli_at is a
+        // level while the walker sits on a flagged last scan line, so each
+        // subsequent line pulse to nmi_gen re-fires a fresh /NMI edge.
+        walker_step();
+        expect_eq("dl/dli_row_level", {7'h0, nmi_dli_at}, 8'h01);
+
         // Pulse line_start at row 1 — DLI here, NMI fires.
         pulse_line(8'd1);
         @(negedge clk);
         expect_eq("p1/row1/nmist", nmist_q, 8'h9F);
         expect_eq("p1/row1/nmi_n", {7'h0, nmi_n},  8'h00);     // /NMI low
 
-        // CPU acks via NMIRES.
+        // Still low well into the pulse (must span >=1 fidelity-core
+        // machine cycle so a coarse sampler cannot miss it).
+        repeat (100) @(posedge clk);
+        expect_eq("p1/pulse/mid-low", {7'h0, nmi_n}, 8'h00);   // still low
+
+        // WITHOUT any NMIRES, /NMI returns high once the pulse window
+        // (256 cycles) expires. This is the fix — DLI never acks.
+        repeat (200) @(posedge clk);
+        @(negedge clk);
+        expect_eq("p1/pulse/auto-release", {7'h0, nmi_n}, 8'h01);  // high again
+        expect_eq("p1/pulse/nmist-sticky", nmist_q, 8'h9F);        // flag still set
+
+        // A second DLI produces a FRESH falling edge (line re-armed).
+        pulse_line(8'd1);
+        @(negedge clk);
+        expect_eq("p1b/edge2/nmi_n", {7'h0, nmi_n}, 8'h00);    // low again
+
+        // CPU acks via NMIRES → flags clear (nmi_n independent of ack now).
+        repeat (300) @(posedge clk);                // let pulse expire
         write_reg(8'h0F, 8'h00);
+        repeat (2) @(posedge clk);   // NMIRES applies at the status_tick boundary
         @(negedge clk);
         expect_eq("p1/ack/nmist", nmist_q, 8'h1F);
-        expect_eq("p1/ack/nmi_n", {7'h0, nmi_n},  8'h01);
 
         // ===== Phase 2: NMIEN[6] only — VBI fires =========================
         write_reg(8'h0E, 8'h40);                    // NMIEN = $40
@@ -216,51 +281,97 @@ module tb_nmi;
         @(negedge clk);
         expect_eq("p2/vbi/nmist", nmist_q, 8'h5F);
         expect_eq("p2/vbi/nmi_n", {7'h0, nmi_n},  8'h00);
-
+        repeat (300) @(posedge clk);
         write_reg(8'h0F, 8'h00);
+        repeat (2) @(posedge clk);   // NMIRES applies at the status_tick boundary
         @(negedge clk);
         expect_eq("p2/ack/nmist", nmist_q, 8'h1F);
 
-        // DLI should NOT fire while NMIEN[7]=0.
+        // A DLI must NOT assert /NMI while NMIEN[7]=0 — but real ANTIC still
+        // latches the NMIST status bit on the event REGARDLESS of NMIEN (the
+        // status latch is decoupled from the enable; only /NMI is gated).
+        // ACID800 antic_nmist: "DLI bit set in NMIST with DLIs disabled."
         pulse_line(8'd1);
         @(negedge clk);
-        expect_eq("p2/dli-masked", nmist_q, 8'h1F);
+        expect_eq("p2/dli-masked/nmist", nmist_q,          8'h9F);  // status set...
+        expect_eq("p2/dli-masked/nmi_n", {7'h0, nmi_n},    8'h01);  // ...but /NMI idle
+        repeat (300) @(posedge clk);
+        write_reg(8'h0F, 8'h00);                    // clear status for next phase
+        repeat (2) @(posedge clk);   // NMIRES applies at the status_tick boundary
+        @(negedge clk);
+        expect_eq("p2/dli-masked/ack", nmist_q, 8'h1F);
 
-        // ===== Phase 3: NMIEN=$00 — neither fires =========================
+        // ===== Phase 3: NMIEN=$00 — neither ASSERTS /NMI ==================
+        // Status still latches (decoupled from NMIEN); last cause wins and VBI
+        // takes the tie, so after a DLI then a VBI event NMIST reads $5F. The
+        // KEY property under test is that /NMI never asserts while NMIEN=$00.
         write_reg(8'h0E, 8'h00);
         pulse_line(8'd1);
         pulse_vbi();
         @(negedge clk);
-        expect_eq("p3/no-fire/nmist", nmist_q, 8'h1F);
+        expect_eq("p3/no-fire/nmist", nmist_q, 8'h5F);
+        repeat (300) @(posedge clk);
         expect_eq("p3/no-fire/nmi_n", {7'h0, nmi_n},  8'h01);
+        write_reg(8'h0F, 8'h00);                    // clear status for next phase
 
-        // ===== Phase 4: both enabled, both fire ===========================
+        // ===== Phase 4: last-cause — a VBI clears a pending DLI bit ========
+        // REQUIRED by the OS: a VBI NMI must read bit7=0 (else BPL
+        // mis-dispatches it as a DLI and the VBI/NMIRES body never runs).
         write_reg(8'h0E, 8'hC0);
+        pulse_line(8'd1);                           // DLI: flags -> $80
+        @(negedge clk);
+        expect_eq("p4/dli-first/nmist", nmist_q, 8'h9F);
+        pulse_vbi();                                // VBI: flags -> $40 (DLI cleared)
+        @(negedge clk);
+        expect_eq("p4/vbi-clears-dli/nmist", nmist_q, 8'h5F);   // bit7 == 0
+        expect_eq("p4/vbi/nmi_n", {7'h0, nmi_n},  8'h00);
+
+        // And the reverse: a DLI after a pending VBI presents bit7=1.
+        pulse_line(8'd1);                           // DLI: flags -> $80
+        @(negedge clk);
+        expect_eq("p4/dli-clears-vbi/nmist", nmist_q, 8'h9F);   // bit6 == 0
+        repeat (300) @(posedge clk);
+        write_reg(8'h0F, 8'h00);
+
+        // ===== Phase 5: one $C0 REGISTER write gates BOTH /NMIs ============
+        // Regression guard for the HW "DLIs never fire" bug (ACID800
+        // antic_nmist / antic_dlitiming / antic_pfst*timing).  The app enables
+        // DLI+VBI with a SINGLE write NMIEN=$C0.  Phases 1/2 proved $80 and $40
+        // in ISOLATION, and phase 4 wrote $C0 but only ever asserted NMIST (and
+        // the *VBI* /NMI).  Because the NMIST status latch is DECOUPLED from
+        // NMIEN, every phase-4 assertion passes even if NMIEN[7] were dropped on
+        // the way into nmi_gen — so nothing checked that $C0 actually asserts the
+        // *DLI* /NMI.  That is exactly the HW failure mode (dli_event fires,
+        // dli_nmi never, because nmien[7] reads 0 at the gate).  This phase
+        // drives $C0 through the REGISTER PATH (antic_regs, not a forced nmien),
+        // confirms the store keeps bit7, and asserts the DLI /NMI asserts
+        // alongside a VBI /NMI from that one write.
+        write_reg(8'h0F, 8'h00);                    // clear any stale flags
+        repeat (300) @(posedge clk);                // let any pulse expire
+        write_reg(8'h0E, 8'hC0);                    // NMIEN = $C0 (DLI + VBI), ONE write
+        @(negedge clk);
+        expect_eq("p5/store/nmien", nmien_q, 8'hC0);           // bit7 survives the store
+
+        // DLI event -> /NMI MUST assert.  nmi_n low here == dli_nmi ==
+        // dli_event && nmien[7], i.e. bit7 reached nmi_gen's DLI gate.
         pulse_line(8'd1);
+        @(negedge clk);
+        expect_eq("p5/dli/nmist", nmist_q,        8'h9F);
+        expect_eq("p5/dli/nmi_n", {7'h0, nmi_n},  8'h00);      // DLI /NMI low (bit7 gated in)
+        repeat (300) @(posedge clk);                           // DLI pulse expires
+        write_reg(8'h0F, 8'h00);                               // ack
+        @(negedge clk);
+
+        // VBI event under the SAME $C0 -> /NMI MUST also assert (bit6 intact).
         pulse_vbi();
         @(negedge clk);
-        expect_eq("p4/both/nmist", nmist_q, 8'hDF);
-        expect_eq("p4/both/nmi_n", {7'h0, nmi_n},  8'h00);
-
-        // ===== Phase 5: NMIRES + new DLI in same cycle → set wins ========
-        // Re-arm: ack first, then immediately fire DLI.
+        expect_eq("p5/vbi/nmist", nmist_q,        8'h5F);
+        expect_eq("p5/vbi/nmi_n", {7'h0, nmi_n},  8'h00);      // VBI /NMI low (bit6 gated in)
+        repeat (300) @(posedge clk);
         write_reg(8'h0F, 8'h00);
-        @(posedge clk);
-        // Manually engineer "set + clear in same cycle":
-        @(negedge clk);
-        atari_row_in <= 8'd1;
-        line_start   <= 1'b1;
-        waddr <= 8'h0F; wdata <= 8'h00; we <= 1'b1;
-        @(posedge clk);
-        @(negedge clk);
-        line_start <= 1'b0;
-        we         <= 1'b0;
-        @(posedge clk);
-        // NMIRES cleared on this cycle, but DLI also fired → NMIST=$80
-        expect_eq("p5/set-wins/nmist", nmist_q, 8'h9F);
 
         if (fail_count == 0) begin
-            $display("*** NMI OK *** DLI + VBI + NMIRES set-wins verified");
+            $display("*** NMI OK *** pulse auto-release + last-cause NMIST verified");
             $finish;
         end else begin
             $display("*** NMI FAIL *** %0d failures", fail_count);

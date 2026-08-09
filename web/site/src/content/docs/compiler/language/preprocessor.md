@@ -8,28 +8,28 @@ The preprocessor runs before the lexer and produces preprocessed source the rest
 ## File inclusion
 
 ```c
-#include <file.xt>      // search the system / -I paths only
-#include "file.xt"      // search next to the current file first
+#include <file.xc>      // search the system / -I paths only
+#include "file.xc"      // search next to the current file first
 
-#import  <Stdio.xt>     // include-once form, same search rules
-#import  "Sprite.xt"
+#import  <Stdio.xc>     // include-once form, same search rules
+#import  "Sprite.xc"
 ```
 
 The two quote forms select different search orders, matching C/C++ convention:
 
-- **`"file.xt"`** — look next to the file doing the include first, then fall through to the system directories and any `-I` paths. Use this for files that live alongside your source.
-- **`<file.xt>`** — skip the current source's directory and go straight to system / `-I` paths. Use this for library headers so a same-named file in your project can't silently shadow the real library.
+- **`"file.xc"`** — look next to the file doing the include first, then fall through to the system directories and any `-I` paths. Use this for files that live alongside your source.
+- **`<file.xc>`** — skip the current source's directory and go straight to system / `-I` paths. Use this for library headers so a same-named file in your project can't silently shadow the real library.
 
-Filename matching is **case-sensitive** even on case-insensitive filesystems. `#import <Sort.xt>` will never match a sibling `sort.xt`, even on macOS's HFS+/APFS — this prevents a classic collision where a user names their program after a library they import.
+Filename matching is **case-sensitive** even on case-insensitive filesystems. `#import <Sort.xc>` will never match a sibling `sort.xc`, even on macOS's HFS+/APFS — this prevents a classic collision where a user names their program after a library they import.
 
 `#import` is identical to `#include` except that the named file is included only once across the entire compilation unit. Library headers should always use `#import` so a user can `#import` them freely without two copies of the contents ending up in scope.
 
 ## Importing and promoting a class: `#use`
 
-`#use` is sugar for the common case of *"import a library class and let me call its static methods bare."* It expands to `#import "ClassName.xt"` followed by [`use ClassName;`](/compiler/language/classes/#bare-call-promotion-use-classname) (the language-level directive) — one line replaces two.
+`#use` is sugar for the common case of *"import a library class and let me call its static methods bare."* It expands to `#import "ClassName.xc"` followed by [`use ClassName;`](/compiler/language/classes/#bare-call-promotion-use-classname) (the language-level directive) — one line replaces two.
 
 ```c
-#use Stdio          // == #import "Stdio.xt" + use Stdio;
+#use Stdio          // == #import "Stdio.xc" + use Stdio;
 #use Math
 #use <Time>         // angle-bracket and quote forms also accepted
 #use "Sprite"
@@ -40,7 +40,7 @@ void main(void) {
 }
 ```
 
-The class name may be written bare (`#use Stdio`), in angle brackets (`#use <Stdio>`), or in quotes (`#use "Stdio"`). The trailing `.xt` extension is stripped automatically if you include it. The same `< >` vs `" "` search-order rule as `#include` / `#import` applies to the underlying file lookup.
+The class name may be written bare (`#use Stdio`), in angle brackets (`#use <Stdio>`), or in quotes (`#use "Stdio"`). The trailing `.xc` extension is stripped automatically if you include it. The same `< >` vs `" "` search-order rule as `#include` / `#import` applies to the underlying file lookup.
 
 After `#use Stdio`, calling `printf("hi")` resolves the same way as `Stdio.printf("hi")` would — the receiver class is implied. This is bare-call sugar only; explicit `Klass.method(...)` calls, free functions, and local variables are unaffected. The full resolution rules — overload scoring, ambiguity diagnostics when multiple `use`'d classes both expose a method with the same name, and the file-local scope of the promotion — live with the [language-level `use` directive](/compiler/language/classes/#bare-call-promotion-use-classname).
 
@@ -138,14 +138,53 @@ Likewise, a comma inside a string argument is part of that argument, not a separ
 Macros may be defined on the command line with `-D`:
 
 ```bash
-xtc app.xt -DENABLE_DOUBLE=0 -DDEBUG -o app.xex
+xcc app.xc -DENABLE_DOUBLE=0 -DDEBUG -o app.xex
 ```
+
+## Predefined macros
+
+The driver predefines an `ARCH_<arch>` sentinel for the target being built, so a
+single source file can serve every backend. This is how the standard library
+keeps one copy of each class:
+
+| Target | Defined |
+|---|---|
+| `-A arm64` | `ARCH_arm64` |
+| `-A x86_64` | `ARCH_x86_64` |
+| `-A win64` | `ARCH_x86_64` **and** `ARCH_win64` |
+| `-A arm9` | `ARCH_arm9` |
+| `-A m68k` | `ARCH_m68k` |
+| `-A 6502` | `ARCH_6502` |
+
+Windows defines both because it *is* the x86-64 instruction set: ISA-guarded
+code (inline assembly, register names) keys off `ARCH_x86_64`, while
+OS-specific code (calling convention, system calls) keys off `ARCH_win64`.
+
+```c
+#if ARCH_6502
+    // a byte-oriented path, and no i64 arithmetic
+#elif ARCH_win64
+    // kernel32, and the Microsoft x64 calling convention
+#else
+    // the 64-bit hosts
+#endif
+```
+
+Threading headers use exactly this to fail loudly rather than silently: on
+`xt6502` and `m68k`, `Thread.xc` is an `#error`, not a stub.
+
+Also predefined: `BANK_DATA`, `BANK_CODE`, `BANK_C` (selector constants for the
+`bank(…)` builtin), `XTC_POINTER_WIDTH`, and — on 6502 targets — a set of
+layout-derived addresses (`XT_PRINTF_BUF`, `XTC_HP_LO` …) that inline assembly
+in the runtime needs, since the preprocessor cannot test a memory-model
+property directly. Those come from the active `.lnk` file, so a custom layout
+changes them.
 
 ## Diagnostics from source
 
 ```c
 #warning need to implement doFrobble()
-#error neither ATARI nor C64 layout selected
+#error no supported target selected
 ```
 
 `#warning` produces a compile-time warning containing the text and lets the build continue. `#error` produces a fatal error and stops compilation. Both honour conditional compilation — use them inside `#if` chains to enforce build-configuration invariants.

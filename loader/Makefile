@@ -122,9 +122,10 @@ FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_gro
          $(FRPORT)/port.c \
          test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/vm.c test/freertos/stackguard.c test/freertos/gfxplane.c test/freertos/hdmi.c test/freertos/frtos_os.c test/freertos/uart1_rx.c test/freertos/sprite.c test/freertos/input_dev.c \
          test/freertos/mathcop.c test/freertos/xl_boot.c \
+         test/freertos/cpu1.c test/freertos/cpu1_core.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c test/freertos/blitter.c \
          newlib-pic/libm.a \
-         test/freertos/blkdev.c test/freertos/vfs.c test/freertos/vfs_romfs.c test/freertos/vfs_ramfs.c test/freertos/vfs_lockfs.c test/freertos/vfs_devfs.c test/freertos/vfs_procfs.c \
+         test/freertos/blkdev.c test/freertos/vfs.c test/freertos/vfs_romfs.c test/freertos/vfs_ramfs.c test/freertos/vfs_lockfs.c test/freertos/vfs_devfs.c test/freertos/xt_random.c test/freertos/vfs_procfs.c \
          test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c \
          test/freertos/storage/ff.c test/freertos/storage/ffsystem.c \
          test/freertos/storage/ffunicode.c test/freertos/storage/diskio.c \
@@ -134,7 +135,7 @@ FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_gro
          test/freertos/storage/xil_shim.c test/freertos/storage/sd.c \
          test/freertos/storage/vfs_fatfs.c \
          $(NETSRC) $(LWIPSRC)
-FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
+FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S test/freertos/cpu1_boot.S $(FRPORT)/portASM.S
 
 # Build the kernel ELF(s) WITHOUT launching qemu — for rebuilding to pick up a new
 # romfs (e.g. after dropping a lib into romfs-overlay/) then flashing or running it
@@ -177,7 +178,7 @@ $(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos
 # qemu intercepts above the guest — isn't available on metal). JTAG-load with
 # ps7_init; run vmtest/demandtest/faulttest to exercise tier-2 on real silicon.
 $(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/build_id.h $(BUILD)/hwromfs/romfs_blob.h | $(BUILD)
-	$(ARMCC) -I$(BUILD)/hwromfs $(FRCFLAGS) -DXT_HW_UART -DXT_HW -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
+	$(ARMCC) -I$(BUILD)/hwromfs $(FRCFLAGS) $(XTRACFLAGS) -DXT_HW_UART -DXT_HW -DXL_SIO_TRACE -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # Kernel-menu (runhost) testbed ELF for the toolchain — same sources, -DXT_KERNEL_SHELL.
 $(BUILD)/freertos-hosttest.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/build_id.h $(BUILD)/romfs_blob.h | $(BUILD)
@@ -223,11 +224,20 @@ newlib-check:
 
 # libc.so — PIC newlib (loader/newlib-pic/, built by tools/build-newlib-pic.sh)
 # linked into a loadable shared object; goes in the romfs at /OS/Library/libc.so
-$(BUILD)/libc.so: newlib-pic/libc.a libc-hide.map | $(BUILD)
+# libc-dirent.o — opendir/readdir/closedir, which newlib simply does not have
+# (its <dirent.h> is a hard #error).  They live HERE, in libc.so, so that any
+# program gets them: only toybox and dropbear link the posix shim, so before this
+# a program that walked a directory linked cleanly with UNDEFINED opendir and
+# died at load with no diagnostic.
+$(BUILD)/libc-dirent.o: libc-dirent.c kernel/xtsys.h test/qemu/usys.h | $(BUILD)
+	$(ARMCC) $(ARMCFLAGS) -Ilibc-compat -Itest/qemu -Ikernel -c $< -o $@
+
+$(BUILD)/libc.so: newlib-pic/libc.a libc-hide.map $(BUILD)/libc-dirent.o | $(BUILD)
 	$(ARMCC) -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -shared -nostdlib \
 	    -Wl,-z,max-page-size=0x100000 \
 	    -Wl,--version-script=libc-hide.map \
 	    -Wl,--whole-archive newlib-pic/libc.a -Wl,--no-whole-archive \
+	    $(BUILD)/libc-dirent.o \
 	    -Wl,-soname,libc.so -o $@
 
 # --- romfs: build the programs as .so, pack them into a blob, embed it ---
@@ -290,6 +300,7 @@ RSC_ENGINE_OBJ := $(BUILD)/gem_rsc.o
 GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(GEM)/img.c \
           $(wildcard $(GEM)/vdi/*.c) $(wildcard $(GEM)/aes/*.c) \
           $(GEM)/gemclient.c $(wildcard $(GEM)/gemd/*.c) \
+          $(GEM)/xg_settings.c \
           ../gem/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
 FTSRC  := $(wildcard $(FT)/tu/*.c)
 GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include -Ikernel -Itest/qemu
@@ -340,9 +351,16 @@ $(BUILD)/sqlite3.so: test/freertos/progs/sqlite3.c $(BUILD)/sqlite3.o $(BUILD)/s
 $(RSC_ENGINE_OBJ): $(FPGAGEM)/rsc.c $(GEM)/aes/aes.h | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -include aes/aes.h -c $< -o $@
 
-$(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
-	$(ARMCC) $(GEMCFLAGS) -shared -nostdlib -Wl,-soname,libGEM.so \
-	    $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
+# SQLite rides INSIDE libGEM.so rather than being linked into each program that wants the registry:
+# it is a shared library, so that is one copy for the whole system instead of one per app — and it
+# is what lets an XG app keep its preferences (xg_settings.c -> registry.c) by linking libGEM alone.
+# desktop.so therefore no longer links its own registry.o/sqlite3.o: two copies of sqlite_vfs.c in
+# one process would each register a VFS, and only one of them would hold the file state.
+$(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/registry.o $(BUILD)/sqlite3.o \
+                    $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -shared -nostdlib -Wl,-soname,libGEM.so \
+	    $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/registry.o $(BUILD)/sqlite3.o \
+	    $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so -o $@
 
 # gemd — THE WINDOW SERVER (M1). Thin: the loop lives in libGEM.so's gem/gemd/ half.
 $(BUILD)/gemd.so: test/freertos/progs/gemd.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
@@ -360,9 +378,11 @@ $(BUILD)/fujiclient.o: $(GEM)/fujiclient.c $(GEM)/fujiclient.h | $(BUILD)
 # desktop — THE desktop (AES-based). Was `desktop`; it took the name when the old
 # gem_wm demo `desktop` was retired. Keep this full link line -- the retired rule had a
 # much shorter one, and reusing that is the easy way to break this.
-$(BUILD)/desktop.so: test/freertos/progs/desktop.c $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+# registry.o + sqlite3.o + sqlite_vfs.o come from libGEM.so now (see its rule): one copy per system
+# rather than one per program, and — the part that matters — ONE registered VFS in the process.
+$(BUILD)/desktop.so: test/freertos/progs/desktop.c $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -DDESKTOP_BUILD='"$(BUILD_ID) $(BUILD_DATE)"' -c $< -o $(BUILD)/desktop.o
-	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/desktop.o $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/desktop.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
 
 # lua.so — /System/bin/lua: the Lua interpreter/REPL (real Lua 5.4 core from
 # xtos/lua + lua.c, linked against libc.so/libm.so). Boot scripts that are Lua
@@ -373,6 +393,67 @@ $(BUILD)/lua.so: test/freertos/progs/lua.c $(LUACORE) $(BUILD)/libc.so $(BUILD)/
 	$(ARMCC) $(PROGCFLAGS) -I$(LUA) -Inewlib-pic/include -fpic -shared -nostdlib \
 	    -Wl,--hash-style=sysv -Wl,-soname,lua.so \
 	    test/freertos/progs/lua.c $(LUACORE) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
+
+# acid.so -- /bin/acid: the SOFTWARE ATARI 800 (emu/) running the ACID800
+# conformance suite ON THE A9, natively.  Same sources as the Mac host build, no
+# fork: emu/test/acid.c is the harness there and here.
+#
+# -Ilibc-compat comes FIRST because the harness walks a directory and newlib-pic's
+# <dirent.h> is a hard #error -- libc-compat/dirent.h is the one xtos programs use.
+# One gcc call, like lua.so.
+EMU     := ../emu
+EMUSRC  := $(EMU)/system.c $(EMU)/xt6502.c $(EMU)/antic.c $(EMU)/antic_dma.c \
+           $(EMU)/gtia.c $(EMU)/pokey_rand.c $(EMU)/pokey_timer.c \
+           $(EMU)/pia.c $(EMU)/sio.c
+# acidprof.so -- same emulator, built with -DEMU_PROF so the per-cycle calls are
+# bracketed by PMU cycle reads. Separate target because the shipping acid.so must
+# not pay for the instrumentation.
+$(BUILD)/acidprof.so: $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(ARMCFLAGS) -mcpu=cortex-a9 -O2 -D__XTOS__ -DEMU_PROF -Ilibc-compat -Itest/qemu -Ikernel -I$(EMU) \
+	    -Inewlib-pic/include -fpic -shared -nostdlib \
+	    -Wl,--hash-style=sysv -Wl,-soname,acidprof.so \
+	    $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so -o $@
+
+$(BUILD)/acid.so: $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so | $(BUILD)
+	@# -O2 overrides ARMCFLAGS' -Os on purpose: this one is COMPUTE-BOUND and the
+	@# point of running it on the A9 is partly to find out what a frame costs.
+	@# -mcpu=cortex-a9: ARMCFLAGS does NOT set a CPU, so this defaults to the
+	@# toolchain's baseline ARM -- no movw/movt (every 32-bit constant becomes a
+	@# literal-pool LOAD rather than two immediates) and generic scheduling. For an
+	@# interpreter that is a real cost, and it is also what makes `isb` assemble
+	@# for the PMU reads. Measure before assuming the same is right for everything
+	@# else ARMCFLAGS builds.
+	$(ARMCC) $(ARMCFLAGS) $(XTRACFLAGS) -mcpu=cortex-a9 -O2 -D__XTOS__ -Ilibc-compat -Itest/qemu -Ikernel -I$(EMU) \
+	    -Inewlib-pic/include -fpic -shared -nostdlib \
+	    -Wl,--hash-style=sysv -Wl,-soname,acid.so \
+	    $(EMU)/test/acid.c $(EMUSRC) $(BUILD)/libc.so -o $@
+	@# GUARD, and it is load-bearing: `-shared -nostdlib` links UNDEFINED symbols
+	@# without complaint and they only bite when the program is loaded.  libc.so
+	@# exports no opendir/readdir, so the first board run exited instantly with no
+	@# output while a single named test ran fine.  Fail the BUILD instead.
+	@# Compare against every symbol libc.so DEFINES **or itself leaves undefined**:
+	@# the __aeabi_* compiler helpers are undefined in libc.so, toybox and lua too
+	@# and the runtime resolves them for everyone, so only a name that appears in
+	@# NEITHER set is genuinely missing.
+	@arm-none-eabi-nm -D $(BUILD)/libc.so | awk '{print $$NF}' | sort -u > $(BUILD)/.acid-libc-syms; \
+	 u=$$(arm-none-eabi-nm -u $@ | awk '{print $$NF}' | sort -u | \
+	      comm -23 - $(BUILD)/.acid-libc-syms); \
+	 rm -f $(BUILD)/.acid-libc-syms; \
+	 if [ -n "$$u" ]; then echo "acid.so: undefined at load:" $$u >&2; exit 1; fi
+
+# bssbench.so — memprobe's loops, but built as a LIBC PROGRAM rather than a raw
+# applet, to find out whether the two loader paths map a writable segment the
+# same way.  See the file's header.
+$(BUILD)/bssbench.so: test/freertos/progs/bssbench.c $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -O2 -Ilibc-compat -Inewlib-pic/include -c $< -o $(BUILD)/bssbench.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/bssbench.o $(BUILD)/libc.so
+
+# bssbencha.so — the SAME source as bssbench.so, built as a RAW APPLET with the
+# SAME flags, so the pair differs only in the LOAD PATH.  Without this the only
+# applet baseline was memprobe, which also differed in optimisation level.
+$(BUILD)/bssbencha.so: test/freertos/progs/bssbench.c | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -O2 -DAPPLET -c $< -o $(BUILD)/bssbencha.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/bssbencha.o
 
 # a program that uses libc (DT_NEEDED libc.so), compiled against the PIC newlib headers
 $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUILD)
@@ -568,7 +649,7 @@ ROMFS_ASSET_ARGS := /fonts/AovelSansRounded.ttf=../gem/fonts/AovelSansRounded.tt
 # copy at /System/OS/Apps/Desktop when there is no SD (qemu / a bare card).
 DESKTOP_RSC := ../gem/resources/desktop.rsc
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/desktop.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/speed.so $(BUILD)/scale.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libxtos.so $(BUILD)/libc.so test/freertos/Registry.db $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES) $(BUILD)/blittest.so
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/desktop.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/speed.so $(BUILD)/scale.so $(BUILD)/dbg6502.so $(BUILD)/xlboot.so $(BUILD)/xexload.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libxtos.so $(BUILD)/libc.so test/freertos/Registry.db $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES) $(BUILD)/blittest.so
 	$(BUILD)/mkromfs $@ \
 	    /OS/Apps/Desktop/desktop.rsc=$(DESKTOP_RSC) \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
@@ -620,6 +701,9 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUI
 	    /bin/mem=$(BUILD)/mem.so \
 	    /bin/speed=$(BUILD)/speed.so \
 	    /bin/scale=$(BUILD)/scale.so \
+	    /bin/6502=$(BUILD)/dbg6502.so \
+	    /bin/xlboot=$(BUILD)/xlboot.so \
+	    /bin/xexload=$(BUILD)/xexload.so \
 	    /bin/tnfs=$(BUILD)/tnfs.so \
 	    /bin/fujinetd=$(BUILD)/fujinetd.so \
 	    /bin/fuji=$(BUILD)/fuji.so \
@@ -645,7 +729,7 @@ $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 # base libraries every spawn needs (libc/libm), init + lua (the boot runner and
 # its #!/bin/lua scripts), motd, and the tier-2 test battery. ~6 MB of RAM back
 # vs the full image. qemu keeps the full romfs (no SD there).
-$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/speed.so $(BUILD)/scale.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libc.so $(BUILD)/blittest.so
+$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/speed.so $(BUILD)/scale.so $(BUILD)/dbg6502.so $(BUILD)/xlboot.so $(BUILD)/xexload.so $(BUILD)/graboverlay.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libc.so $(BUILD)/blittest.so
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -688,6 +772,10 @@ $(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/svctest.so
 	    /bin/mem=$(BUILD)/mem.so \
 	    /bin/speed=$(BUILD)/speed.so \
 	    /bin/scale=$(BUILD)/scale.so \
+	    /bin/6502=$(BUILD)/dbg6502.so \
+	    /bin/xlboot=$(BUILD)/xlboot.so \
+	    /bin/xexload=$(BUILD)/xexload.so \
+	    /bin/graboverlay=$(BUILD)/graboverlay.so \
 	    /bin/lua=$(BUILD)/lua.so \
 	    /bin/init=$(BUILD)/init.so \
 	    /bin/hello=$(BUILD)/hello.so \
@@ -717,9 +805,10 @@ $(BUILD)/hwromfs/romfs_blob.h: $(BUILD)/romfs-hw.bin
 # login shell exists before the links do)
 SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
-sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blitbench.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
+sdstage: $(BUILD)/acid.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blitbench.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	@rm -rf $(SDSTAGE)
-	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/fonts $(SDSTAGE)/OS/themes/Aristo2/1x $(SDSTAGE)/OS/Apps/Desktop/Spaces/1
+	@# /OS/var: the kernel writes the across-boot entropy seed there at startup
+	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/fonts $(SDSTAGE)/OS/themes/Aristo2/1x $(SDSTAGE)/OS/Apps/Desktop/Spaces/1 $(SDSTAGE)/OS/var
 	cp sd/boot/* $(SDSTAGE)/OS/boot/
 	cp $(DESKTOP_RSC) $(SDSTAGE)/OS/Apps/Desktop/desktop.rsc
 	cp $(BUILD)/toybox.so  $(SDSTAGE)/OS/bin/toybox
@@ -730,6 +819,14 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blit
 	cp $(BUILD)/gemd.so    $(SDSTAGE)/OS/bin/gemd
 	cp $(BUILD)/fbgrab.so  $(SDSTAGE)/OS/bin/fbgrab
 	cp $(BUILD)/blitbench.so $(SDSTAGE)/OS/bin/blitbench
+	@# the software Atari 800 + the ACID800 suite it runs, so the A9 can be
+	@# measured against the same 63 tests the Mac host build passes
+	cp $(BUILD)/acid.so    $(SDSTAGE)/OS/bin/acid
+	mkdir -p $(SDSTAGE)/OS/share/acid800
+	@# .lab as well as .xex -- the harness reads the suite's own symbol table
+	@# beside each test to find _testPassed/_testFailed/_testSkipped, and without
+	@# it every test reports `skip  0 cycles` having never run at all
+	cp ../rsrc/acid800/Acid800/standalone/*.xex ../rsrc/acid800/Acid800/standalone/*.lab $(SDSTAGE)/OS/share/acid800/
 	cp $(BUILD)/regtest.so $(SDSTAGE)/OS/bin/regtest
 	cp $(BUILD)/httpd.so   $(SDSTAGE)/OS/bin/httpd
 	cp $(BUILD)/tnfs.so    $(SDSTAGE)/OS/bin/tnfs
@@ -750,8 +847,14 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blit
 	# reachable in qemu but NOT on the card, so it could never be run on the real display.
 	# `-` because the directory is legitimately empty in a clean tree.
 	-cp romfs-overlay/bin/* $(SDSTAGE)/OS/bin/ 2>/dev/null || true
-	# font + theme atlas — user-modifiable content, off the read-only romfs
-	cp ../gem/fonts/AovelSansRounded.ttf $(SDSTAGE)/OS/fonts/AovelSansRounded.ttf
+	# font + theme atlas — user-modifiable content, off the read-only romfs.
+	# EVERY face in gem/fonts, not just the system one: vst_load_fonts maps the whole directory
+	# (id 2..N, sorted by name) and that map is what a font chooser lists, so a card carrying one
+	# font offers a choice of one.  Wildcarded so dropping a face into gem/fonts reaches the card
+	# on the next stage — the same "drop it in and it appears" the host build already gets.
+	# System.font names the face used as font id 1 (there are no symlinks on FAT).
+	cp ../gem/fonts/*.ttf $(SDSTAGE)/OS/fonts/
+	cp ../gem/fonts/System.font $(SDSTAGE)/OS/fonts/
 	cp ../gem/themes/Aristo2/1x/artwork.tex ../gem/themes/Aristo2/1x/locations.txt \
 	   ../gem/themes/Aristo2/1x/theme.ini $(SDSTAGE)/OS/themes/Aristo2/1x/
 	@printf 'Aristo2\n' > $(SDSTAGE)/OS/themes/Default   # read_default() -> theme name

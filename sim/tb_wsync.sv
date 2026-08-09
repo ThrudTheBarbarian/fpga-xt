@@ -55,13 +55,23 @@ module tb_wsync;
     wire         rdy_n;
     wire  [31:0] overdue;
 
+    // Every clk is a machine cycle here, so /RDY trails the latch by 2 clks.
     wsync_gen u_wsync_gen (
         .clk(clk), .rst(rst),
+        .phi2_tick(1'b1),
+        .phi2_fall(1'b1),
+        .shape_sel(3'b000),
+        .comb_sel(1'b0),
         .wsync_pending(wsync_pending),
         .line_start(line_start),
         .rdy_n(rdy_n),
         .wsync_overdue_count(overdue)
     );
+
+    // Let the two-stage /RDY output pipeline propagate.
+    task automatic settle();
+        repeat (5) @(posedge clk);
+    endtask
 
     task automatic write_reg(input logic [7:0] a, input logic [7:0] d);
         @(negedge clk);
@@ -106,6 +116,7 @@ module tb_wsync;
 
         // ===== Phase 2: WSYNC write asserts /RDY low ======================
         write_reg(8'h0A, 8'h00);
+        settle();
         @(negedge clk);
         expect_b("p2/asserted", rdy_n, 1'b0);
 
@@ -116,36 +127,42 @@ module tb_wsync;
 
         // line_start releases /RDY.
         pulse_line();
+        settle();
         @(negedge clk);
         expect_b("p2/released", rdy_n, 1'b1);
 
         // Subsequent line_start without WSYNC: /RDY stays high.
         pulse_line();
+        settle();
         @(negedge clk);
         expect_b("p2/idle-line", rdy_n, 1'b1);
 
-        // ===== Phase 3: WSYNC pulse + line_start same cycle → set wins ====
-        // antic_regs adds 1 cycle of delay between the $D40A write and
-        // the wsync_pending pulse, so to land them coincidently at
-        // wsync_gen we issue the write first, then pulse line_start on
-        // the cycle wsync_pending fires.
+        // ===== Phase 3: WSYNC write racing the release → CLEAR wins =======
+        // A WSYNC write racing the release must not start a fresh line-long
+        // stall (ACID800 antic_wsync's "Late INC WSYNC").  The set path is
+        // registered: the write arms wsync_pend, which drops the latch at the
+        // NEXT tick — so the true coincidence is line_start pulsing on that
+        // apply tick.  antic_regs adds 1 cycle between the $D40A write and
+        // the wsync_pending pulse, and pend adds one more.
         @(negedge clk);
         waddr <= 8'h0A; wdata <= 8'h00; we <= 1'b1;
-        @(posedge clk);     // write captured; wsync_pending will be 1 at next posedge
+        @(posedge clk);     // write captured; wsync_pending pulses at next posedge
         @(negedge clk);
         we         <= 1'b0;
-        line_start <= 1'b1; // visible on the next posedge alongside wsync_pending=1
+        @(posedge clk);     // wsync_pending=1 here → pend arms
+        @(negedge clk);
+        line_start <= 1'b1; // visible at the tick where pend applies: clear beats set
         @(posedge clk);
         @(negedge clk);
         line_start <= 1'b0;
-        // wsync_gen's set-wins rule: WSYNC dominates the same-cycle
-        // line_start, so /RDY stays low.
-        expect_b("p3/coincident", rdy_n, 1'b0);
-
-        // Next pulse_line with wsync_pending=0 should release.
-        pulse_line();
+        settle();
         @(negedge clk);
-        expect_b("p3/released", rdy_n, 1'b1);
+        expect_b("p3/coincident", rdy_n, 1'b1);
+
+        // ...and it must STAY released — no stall leaks out a cycle later.
+        repeat (8) @(posedge clk);
+        @(negedge clk);
+        expect_b("p3/still-released", rdy_n, 1'b1);
 
         // ===== Phase 4: overdue counter ====================================
         // Issue WSYNC, then withhold line_start past OVERDUE_THRESHOLD
@@ -160,6 +177,7 @@ module tb_wsync;
         end
         // Release.
         pulse_line();
+        settle();
         @(negedge clk);
         expect_b("p4/released", rdy_n, 1'b1);
 

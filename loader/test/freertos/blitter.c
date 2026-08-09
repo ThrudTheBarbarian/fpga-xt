@@ -190,6 +190,7 @@ static uint32_t surf_stride(int id)
  * Same DCCMVAC + PL310-drain shape as mathcop.c — the lesson there was that a bare
  * barrier over non-cacheable does NOT drain A9 writes; the explicit clean does. */
 #define BL_CLINE 32u
+#include "pl310.h"
 #define BL_L2CC_CACHE_SYNC (*(volatile uint32_t *)0xF8F02730u)
 static void bl_clean_rows(uint32_t base, uint32_t stride,
                           uint32_t x, uint32_t y, uint32_t w, uint32_t h)
@@ -201,6 +202,13 @@ static void bl_clean_rows(uint32_t base, uint32_t stride,
             __asm__ volatile("mcr p15,0,%0,c7,c10,1" :: "r"(a) : "memory");   /* DCCMVAC */
     }
     __asm__ volatile("dsb" ::: "memory");
+    /* ...then the OUTER cache, INNER FIRST so the L1 clean's output is included.
+     * With the PL310 enabled a clean to DDR is two steps, not one. */
+    for (uint32_t row = 0; row < h; row++) {
+        uint32_t a = (base + (y + row) * stride + x * 4u) & ~(BL_CLINE - 1u);
+        uint32_t e = (base + (y + row) * stride + (x + w) * 4u + BL_CLINE - 1u) & ~(BL_CLINE - 1u);
+        pl310_clean(a, e - a);
+    }
     BL_L2CC_CACHE_SYNC = 0u;                                  /* drain the PL310 store buffer */
     __asm__ volatile("dsb" ::: "memory");
 }
@@ -224,6 +232,18 @@ static void bl_cleaninval_rows(uint32_t base, uint32_t stride,
         uint32_t e = (base + (y + row) * stride + (x + w) * 4u + BL_CLINE - 1u) & ~(BL_CLINE - 1u);
         for (; a < e; a += BL_CLINE)
             __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(a) : "memory");   /* DCCIMVAC */
+    }
+    __asm__ volatile("dsb" ::: "memory");
+    /* Outer clean+invalidate over the same rows, then the inner pass AGAIN:
+     * between the two a speculative fetch can refill L1 from a line the outer
+     * cache had not yet dropped, and the engine's pixels would be shadowed. */
+    for (uint32_t row = 0; row < h; row++) {
+        uint32_t a = (base + (y + row) * stride + x * 4u) & ~(BL_CLINE - 1u);
+        uint32_t e = (base + (y + row) * stride + (x + w) * 4u + BL_CLINE - 1u) & ~(BL_CLINE - 1u);
+        pl310_clean(a, e - a);
+        pl310_inval(a, e - a);
+        for (uint32_t q = a; q < e; q += BL_CLINE)
+            __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(q) : "memory");
     }
     __asm__ volatile("dsb" ::: "memory");
     BL_L2CC_CACHE_SYNC = 0u;

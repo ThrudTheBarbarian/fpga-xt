@@ -24,6 +24,9 @@ typedef struct {
 } reg_desktop_icon;
 
 int  registry_open(const char *db_path);          // 0 ok, <0 fail
+// Same, but MAKES the database when it is absent — for a settings client, which has no registry to
+// report missing and simply wants somewhere to keep its preferences.  registry_open keeps failing.
+int  registry_open_or_create(const char *db_path);
 void registry_close(void);
 
 // Fill up to `max` desktop icons (ordered by id); returns the count, <0 on error.
@@ -33,6 +36,20 @@ int  registry_desktop_icons(reg_desktop_icon *out, int max);
 // when the key exists; otherwise copies `deflt` (may be NULL) and returns 0.  Used
 // for the desktop view defaults (e.g. 'viewMode' 1=icons/2=single/3=multi).
 int  registry_pref(const char *key, const char *deflt, char *out, int osz);
+
+// ── settings: (domain, key) -> value ────────────────────────────────────────
+// Application preferences, in a `settings` table created on first write (an existing board's
+// Registry.db predates it).  `domain` namespaces them per application — two apps may each keep a
+// 'fontSize' — and NULL or "" is the SHARED domain, the one that applies to everybody.  Values are
+// text; the caller decides what they mean.  deskPrefs is left to the desktop: these are apps'.
+//
+// A domain-specific read does NOT fall back to the shared domain here — that policy belongs to the
+// caller (XG's XGKeyValueStore does it, identically on every backend).
+int  registry_setting_get(const char *domain, const char *key, const char *deflt, char *out, int osz);
+int  registry_setting_set(const char *domain, const char *key, const char *value);      // 0 ok, <0 fail
+int  registry_setting_remove(const char *domain, const char *key);                      // 0 ok, <0 fail
+// The idx'th key in `domain`, alphabetically — for enumerating a domain (0 = no such index).
+int  registry_setting_key(const char *domain, int idx, char *out, int osz);
 
 // Pick the window icon for an entry named `name` of iconTypes id `type`: the
 // most-specific matching windowIcons.match wins ('%' = one char, '*' = a run;

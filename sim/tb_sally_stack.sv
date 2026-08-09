@@ -65,6 +65,7 @@ module tb_sally_stack;
         .rw                  (rw),
         .data_out            (data_out),
         .rdy                 (rdy),
+        .cold       (1'b0),
         .busy                (busy),
         .stack_op            (stack_op),
         .s_high              (s_high),

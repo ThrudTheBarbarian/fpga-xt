@@ -134,6 +134,7 @@ The iverilog testbench suite (`make` under `sim/`) passes. Highlights:
 | Area | Tests |
 |------|-------|
 | 6502 conformance | **Klaus** functional test — both SALLY (`klaus`) and xt6502 (`klaus_xt`) reach $3469 (~96M cycles) |
+| Chipset conformance | **Acid800** (Avery Lee's cycle-exactness suite) — 55/58 scored tests pass, **zero failures** (3 skips + verdict-less demos); covers ANTIC WSYNC/DLI/display-list timing, P/M DMA, GTIA collisions, POKEY timers/IRQ/init/serial, PIA, and XL PORTB ROM banking |
 | xt6502 | `sally_isa_xt` (29 ISA cases), `sally_xt` (vs the real `sally_mem`), `sally_stack` |
 | OS boot | `tb_boot` / `boot_xt` — cold boot of the real XL OS ROM to a rendered BASIC `READY`, golden-trace-checked against Atari800 |
 | ANTIC | `antic_raster`, `antic_seq`, `antic_modes`, `antic_display`, plus `dl_parse` / `prior` / `nmi` / `wsync` / `palette` / `dma_master` |

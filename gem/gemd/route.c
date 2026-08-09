@@ -201,8 +201,20 @@ void gemd_route(int type, const aes_event *ev)
     case AES_WHEEL:
         /* The wheel scrolls the window UNDER THE POINTER — the scrollbar is chrome, so this is
          * gemd's interaction, and the owner hears the consequence (WM_VSLID -> MSG_VSLID) like
-         * any other scroll. The AES's own handler does the work, exactly as the sizer does. */
-        wind_handle_wheel(ev->mx, ev->my, ev->wheel);
+         * any other scroll. The AES's own handler does the work, exactly as the sizer does.
+         * If the window has NO scrollbar (wind_handle_wheel returns 0), the wheel is nobody's
+         * chrome — forward it to the window's owner (window-local coords) so a client-drawn scroll
+         * region, e.g. a table with its own bar, can handle it. */
+        if (!wind_handle_wheel(ev->mx, ev->my, ev->wheel)) {
+            int hd = wind_find(ev->mx, ev->my);
+            if (hd) {
+                int lx, ly; to_local(hd, ev->mx, ev->my, &lx, &ly);
+                gem_msg m; memset(&m, 0, sizeof m);
+                m.w[0] = GEM_MSG_WHEEL; m.w[1] = (int16_t)hd;
+                m.w[2] = (int16_t)lx; m.w[3] = (int16_t)ly; m.w[4] = (int16_t)ev->wheel;
+                send_win(hd, &m);
+            }
+        }
         break;
 
     default: break;                                    /* TIMER / anything else: nothing to route */

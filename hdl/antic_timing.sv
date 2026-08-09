@@ -1,0 +1,706 @@
+// antic_timing.sv — the cycle-serial ANTIC timing machine.
+//
+// docs/Design/antic-timing-machine.md.  This module is (becoming) the sole
+// authority for everything the CPU can OBSERVE about ANTIC: VCOUNT, NMIST,
+// /NMI, /RDY (WSYNC), and the bus schedule (DMA stealing).  It is a direct
+// implementation of the chip's per-cycle state machine — one hcount/line
+// counter chain, a live display-list fetch FSM, a live row counter — in the
+// CPU's OWN clock domain on the CPU's OWN phi2 grid, so every CPU-visible
+// edge is same-domain and same-grid with the core: no CDC compensation, no
+// calibration constants, no phantom/carry patch mechanisms.
+//
+// It renders nothing.  The parse/walk/compositor pipeline keeps drawing the
+// frame; in migration phase 4 it consumes this machine's per-line decode.
+//
+// CYCLE CONVENTION.  Altirra processes ANTIC's events for cycle N before
+// the CPU acts in cycle N.  Here, state keyed `hc_next == N` updates on the
+// tick ENTERING cycle N, so it is visible to a CPU whose data cycle is N —
+// the same ordering.  A register write snooped during cycle K is in the
+// register before the tick entering K+1 (and, because snooping is per-clk,
+// before any event keyed on later cycles of the same line).
+//
+// Cycle anchors (Altirra source, verified this week; hcount 0-113):
+//   1        DL instruction fetch (DL DMA on, new line needed)
+//   6        DL address low + VSCROL sample for the DLI compare
+//              ("mLatchedVScroll2", used at 7)
+//   7        DL address high + NMIST change + NMI pending (DLI per rowStop
+//              compare with the cycle-6 sample; VBI at line 248)
+//   7-8      /NMI low pulse (2 cycles)
+//   25..57/4 memory refresh (9 slots)
+//   109      VSCROL row-stop latch window closes ("mLatchedVScroll":
+//              writes at hcount<109 pass through, later writes miss)
+//   111      the line counter advances (VCOUNT increment)
+//   112      row-advance decision: rowStop = vsExit ? latch109
+//              : (height-1); rowCounter++ or new DL line; latch re-samples
+//              after use
+//   line 248 VBI; DL control byte saved (mDLControlPrev), VS bit kept
+//   line 8   first display line: DL (re)starts, control byte restored
+//
+// WSYNC ($D40A write in cycle K): latch falls entering K+1, /RDY (one more
+// stage) falls entering K+2 — exactly one instruction cycle runs after the
+// write (Avery's delay slot).  Release: latch rises entering RELEASE (102),
+// /RDY rises entering 103 — the CPU's first executed cycle is 103 (Avery's
+// own annotations: `mva #$40 nmien ;*, 104, 105..` — the * is 103; MiSTer's
+// "105" uses a different hcount origin).  Same-domain: what you see is what
+// the core samples.  Clear beats set (the late-INC straddle).
+
+`default_nettype none
+
+module antic_timing #(
+    parameter [6:0] RELEASE_CYCLE = 7'd104,  // fid-effective resume = 104: the core's
+                                             // SUB_DATA sample sits one window ahead of
+                                             // its commit, so /RDY rising entering 105
+                                             // puts the first data-visible cycle at 104
+                                             // (measured: prog=7 d2 sample tm-110 at
+                                             // release 103 -> needs +1 for data@111)
+    parameter [8:0] VBI_LINE      = 9'd248,
+    parameter [8:0] RESTART_LINE  = 9'd8      // first display line
+) (
+    input  wire        clk,          // clk_sally
+    input  wire        rst,
+    input  wire        phi2_tick,    // machine-cycle grid (the tick the fid core paces on)
+    input  wire        cold,         // SALLYRST cold-boot: power-on-clear NMIEN/DMACTL
+                                     // (xexload relies on it; counters keep running)
+
+    // ---- Register write snoop (same-domain, pre-CDC) --------------------
+    input  wire        reg_we,       // 1-clk strobe: CPU write to $D4xx
+    input  wire [3:0]  reg_addr,
+    input  wire [7:0]  reg_wdata,
+
+    // ---- Stolen-slot memory read port -----------------------------------
+    // Held through OUR cycle (the CPU is halted then); rdata is sampled at
+    // the tick ending the cycle.
+    output logic        mem_req,
+    output logic [15:0] mem_addr,
+    input  wire  [7:0]  mem_rdata,
+
+    // ---- CPU-visible outputs --------------------------------------------
+    output wire  [7:0]  vcount,      // $D40B read value
+    output wire  [7:0]  nmist,      // $D40F read value
+    output logic        nmi_n,       // /NMI to the core (2-cycle low pulse)
+    output logic        rdy_n_q,     // /RDY (1 = ready), registered, same grid
+    output wire  [2:0]  cycle_type,  // bus owner for THIS cycle (combinational)
+    output logic [2:0]  cycle_type_q,// same, delayed one machine cycle
+
+    // ---- Playfield byte stream (streaming-GTIA source) -------------------
+    // docs/video/gtia-streaming.md.  antic_timing already SCHEDULES the
+    // playfield fetches (name_hit/data_hit); this actually performs them and
+    // emits the bytes in beam order, so a streaming GTIA stage can consume
+    // them per colour clock instead of a burst re-deriving the whole row.
+    output logic        pf_valid,     // 1-clk: pf_byte is a fresh playfield byte
+    output logic [7:0]  pf_byte,      // graphics byte (bitmap) / glyph (char)
+    output logic [7:0]  pf_code,      // char code that produced it (char modes)
+    output logic [6:0]  pf_hpos,      // ANTIC cycle the byte belongs to
+    output logic        pf_is_char,   // 1 = char mode (pf_code meaningful)
+
+    // ---- Debug / diff taps ----------------------------------------------
+    output wire  [6:0]  dbg_hcount,
+    output wire  [8:0]  dbg_line,
+    output wire  [3:0]  dbg_rowctr,
+    output wire  [7:0]  dbg_dlctl,
+    output wire [15:0]  dbg_dlpc
+);
+
+    localparam [2:0] CT_CPU     = 3'd0;
+    localparam [2:0] CT_DL      = 3'd1;
+    localparam [2:0] CT_PF      = 3'd2;   // phase-2d: schedule only
+    localparam [2:0] CT_PM      = 3'd3;
+    localparam [2:0] CT_REFRESH = 3'd4;
+
+    // =====================================================================
+    // Registers (snooped — zero latency, same domain as the CPU)
+    // =====================================================================
+    logic [7:0] dmactl_q, nmien_q, vscrol_q, hscrol_q;
+    logic [7:0] chbase_q, chactl_q;
+    // Playfield memory scan pointer.  Loaded from an LMS operand, then stepped
+    // once per fetched unit.  ANTIC wraps the scan within a 4K page (the low
+    // 12 bits), which is what antic_addresswrap exercises.
+    logic [15:0] scan_addr;
+    logic [7:0]  name_q;      // char code fetched at name_hit, awaiting its glyph
+    logic        name_pend;
+    logic [7:0] dlistl_q, dlisth_q;
+    logic       wsync_armed;
+
+    wire dl_dma_on = dmactl_q[5];
+
+    // =====================================================================
+    // Counter chain
+    // =====================================================================
+    logic [6:0] hcount;               // current cycle, 0..113
+    logic [8:0] line;                 // current line; advances entering 111
+    wire  [6:0] hc_next = (hcount == 7'd113) ? 7'd0 : hcount + 7'd1;
+    wire        line_wraps = (hc_next == 7'd0);
+
+    assign vcount     = line[8:1];
+    assign dbg_hcount = hcount;
+    assign dbg_line   = line;
+
+    // =====================================================================
+    // Display-list machine
+    // =====================================================================
+    logic [7:0]  dl_ctl, dl_ctl_prev; // live control byte + VBI-saved copy
+    logic [15:0] dl_pc;               // live DL PC (1K-wrap advance)
+    logic [3:0]  row_ctr;             // DCTR
+    logic [3:0]  row_height_m1;
+    logic        dl_active;           // 0 = parked (JVB wait) — DLI keeps firing
+    logic        need_inst;
+    logic        need_addr;
+    logic        is_jvb;
+    logic        vs_prev;             // previous DL line's VS bit
+    logic [3:0]  vs_latch6;           // DLI-compare sample (cycle 6)
+    logic [3:0]  vs_latch109;         // row-stop latch (write-through < 109)
+    logic [7:0]  inst_q;
+    logic [7:0]  addr_lo_q;
+
+    assign dbg_rowctr = row_ctr;
+    assign dbg_dlctl  = dl_ctl;
+    assign dbg_dlpc   = dl_pc;
+
+    function automatic [3:0] mode_height_m1(input [3:0] m);
+        case (m)
+            4'h0: mode_height_m1 = 4'd0;
+            4'h1: mode_height_m1 = 4'd0;
+            4'h2: mode_height_m1 = 4'd7;
+            4'h3: mode_height_m1 = 4'd9;
+            4'h4: mode_height_m1 = 4'd7;
+            4'h5: mode_height_m1 = 4'd15;
+            4'h6: mode_height_m1 = 4'd7;
+            4'h7: mode_height_m1 = 4'd15;
+            4'h8: mode_height_m1 = 4'd7;
+            4'h9: mode_height_m1 = 4'd3;
+            4'hA: mode_height_m1 = 4'd3;
+            4'hB: mode_height_m1 = 4'd1;
+            4'hC: mode_height_m1 = 4'd0;
+            4'hD: mode_height_m1 = 4'd1;
+            4'hE: mode_height_m1 = 4'd0;
+            4'hF: mode_height_m1 = 4'd0;
+        endcase
+    endfunction
+
+    function automatic [3:0] ctl_height_m1(input [7:0] c);
+        if (c[3:0] == 4'h0) ctl_height_m1 = {1'b0, c[6:4]};   // blank: count in 6:4
+        else                ctl_height_m1 = mode_height_m1(c[3:0]);
+    endfunction
+
+    wire [3:0] mode      = dl_ctl[3:0];
+    wire       vs_cur    = (mode >= 4'h2) && dl_ctl[5];
+    wire       vs_exit   = vs_prev && !vs_cur;
+    wire [3:0] stop_dli  = vs_exit ? vs_latch6   : row_height_m1;
+    wire [3:0] stop_adv  = vs_exit ? vs_latch109 : row_height_m1;
+
+    // DLIST pair is consumed only at the frame restart (mDLIST semantics —
+    // the live PC free-runs otherwise; ACID antic_dlistwrap #1).
+    logic dlist_dirty;
+
+    // =====================================================================
+    // NMIST / NMI / WSYNC state
+    // =====================================================================
+    logic [1:0] nmist_hi;             // {DLI, VBI}
+    logic       nmi_ext;              // extend the pulse one more cycle
+    logic       nmi_arm_q;            // DLI/VBI condition met at 7 -> pulse at 9
+    logic       nmi_arm_vbi_q;        // which NMIEN bit gates this pulse
+    logic       nmi_en_early;         // NMIEN sample #1 (entering 8)
+    logic       nmi_en_late;          // enable that arrived between the samples
+    logic [1:0] nmist_hold_q;         // cycle-6 status set is DOMINANT: re-assert
+                                      // entering 7 so a same-cycle-6 NMIRES write
+                                      // cannot erase it (ACID nmist 'VBI bit was
+                                      // reset too early'); a cycle-7+ NMIRES clears.
+    logic       wsync_latch_n;
+    assign nmist = {nmist_hi, 6'h1F};
+
+    // =====================================================================
+    // Bus schedule for the CURRENT cycle (combinational)
+    // =====================================================================
+    // MEMORY REFRESH: 9 cycles, nominally every 4 from 25 — but a refresh
+    // blocked by playfield DMA SLIPS to the next free cycle, it is not
+    // dropped.  Decoded straight out of antic_dmapattern's own expected
+    // masks: mode2b (a non-first row: char data every 2 from 29) shows
+    // blocked 29,30,31 / free 32 / blocked 33,34,35 / free 36 ... which is
+    // data-every-2 UNION refresh slipping to 30,34,38.  mode2a (a first
+    // row, playfield saturating 28..91) then shows a solid run to 99 —
+    // the eight deferred refreshes queueing up immediately after the
+    // playfield releases the bus.
+    wire refresh_due_tick = (hcount >= 7'd25) && (hcount <= 7'd57)
+                            && (((hcount - 7'd25) % 7'd4) == 7'd0);
+    // Altirra's algorithm verbatim (antic.cpp ATAnticSetRefreshCycles):
+    //     int r = 24;
+    //     for (int x = 25; x < 61; x += 4) {
+    //         if (r >= x) continue;              // LATE REFRESHES ARE DROPPED
+    //         r = x;
+    //         while (r < 107) if (cycle r free) { place at r; break; } else r++;
+    //     }
+    // The drop rule matters: refreshes do NOT queue up.  A refresh still
+    // seeking when the next nominal slot arrives simply consumes it.
+    logic       rfsh_seek;             // a refresh is looking for a free cycle
+    logic [6:0] rfsh_r;                // cycle where the last refresh landed
+    wire        rfsh_blocked;          // a higher-priority DMA owns this cycle
+    // The arm is COMBINATIONAL so a refresh can land on its own nominal
+    // cycle (registering it put every refresh one cycle late).
+    wire rfsh_arm     = refresh_due_tick && (rfsh_r < hcount);
+    wire refresh_slot = (rfsh_seek || rfsh_arm) && !rfsh_blocked
+                        && (hcount < 7'd107);
+    wire dl_inst_slot = (hcount == 7'd1) && dl_dma_on && dl_active && need_inst;
+    wire dl_lo_slot   = (hcount == 7'd6) && dl_dma_on && dl_active && need_addr;
+    wire dl_hi_slot   = (hcount == 7'd7) && dl_dma_on && dl_active && need_addr;
+    // P/M DMA runs only in the DISPLAY REGION — Altirra gates both on
+    // (mY - 8) < 240, i.e. lines 8..247.  Without the gate the machine
+    // stole 5 cycles per line right through the vertical blank, which
+    // shifts every CPU-timed measurement that spans the VBI.
+    wire pm_region    = (line >= 9'd8) && (line < 9'd248);
+    // Missile DMA is forced by the PLAYER enable too (Altirra: "player DMA
+    // also forces missile DMA — Run For the Money requires this").
+    wire pm_missile   = (hcount == 7'd0) && (dmactl_q[3:2] != 2'b00) && pm_region;
+    wire pm_player    = (hcount >= 7'd2) && (hcount <= 7'd5) && dmactl_q[3] && pm_region;
+
+    // ---- Playfield DMA windows (phase 2d; Altirra UpdateDMAPattern) ------
+    // Character name clock: every 2 (modes 2-5) / 4 (6-7) from S =
+    // {wide 10, normal 18, narrow 26}; char DATA = the same clock +3;
+    // bitmap data (8-F) = +2 with step 8 (8-9), 4 (A-C), 2 (D-F).  HSCROL
+    // (when the line enables HS) bumps the fetch width one step wider and
+    // delays the whole grid by one clock per 2 of HSCROL.  Cycles 105-113
+    // are VIRTUAL: the clock runs, the bus is NOT stolen.  Fetch counts by
+    // width: step2 = 48/40/32, step4 = 24/20/16, step8 = 12/10/8.
+    wire       pf_line     = dl_active && (mode >= 4'h2);   // a mode line
+    wire       hs_en       = pf_line && dl_ctl[4];
+    wire [1:0] w_raw       = dmactl_q[1:0];
+    wire [1:0] pf_w        = (hs_en && (w_raw == 2'd1 || w_raw == 2'd2))
+                             ? w_raw + 2'd1 : w_raw;        // HS widens 1 step
+    wire       pf_on       = pf_line && (pf_w != 2'd0);
+    wire [6:0] hs_delay    = {4'd0, hscrol_q[3:1]};
+    // Altirra: mPFDMAStart = mode < 8 ? {26,18,10} : {28,20,12} — BITMAP
+    // modes start two cycles later than character modes at every width.
+    wire [6:0] pf_base     = (pf_w == 2'd3) ? ((mode < 4'h8) ? 7'd10 : 7'd12)
+                           : (pf_w == 2'd2) ? ((mode < 4'h8) ? 7'd18 : 7'd20)
+                                            : ((mode < 4'h8) ? 7'd26 : 7'd28);
+    wire [6:0] name_start  = pf_base + hs_delay;
+    wire       is_char     = (mode >= 4'h2) && (mode <= 4'h7);
+    wire       step4       = (mode == 4'h6) || (mode == 4'h7) ||
+                             (mode >= 4'hA && mode <= 4'hC);
+    wire       step8       = (mode == 4'h8) || (mode == 4'h9);
+    // data clock start: names+3 for char modes, names+2 for bitmap
+    wire [6:0] data_start  = name_start + (is_char ? 7'd3 : 7'd2);
+    // The playfield spans the SAME number of cycles in every mode — only the
+    // fetch density differs (48 every 2 == 24 every 4 == 12 every 8 == 96
+    // cycles at wide).  So the extent is a width lookup, not a multiply:
+    // this removes two combinational multipliers from the steal cone.
+    wire [3:0] stepv       = step8 ? 4'd8 : step4 ? 4'd4 : 4'd2;
+    wire [6:0] pf_span     = (pf_w == 2'd3) ? 7'd96 : (pf_w == 2'd2) ? 7'd80 : 7'd64;
+    wire [8:0] name_end    = {2'd0, name_start} + {2'd0, pf_span};
+    wire [8:0] data_end    = {2'd0, data_start} + {2'd0, pf_span};
+    // grid hits (virtual >= 105: no steal)
+    wire [6:0] name_rel    = hcount - name_start;
+    wire [6:0] data_rel    = hcount - data_start;
+    wire name_hit = pf_on && is_char && (row_ctr == 4'd0)          // names: first row line
+                    && (hcount >= name_start) && ({2'd0, hcount} < name_end)
+                    && ((name_rel & (stepv[3:0] - 4'd1)) == 7'd0)
+                    && (hcount < 7'd105);
+    wire data_hit = pf_on
+                    && (hcount >= data_start) && ({2'd0, hcount} < data_end)
+                    && ((data_rel & (stepv[3:0] - 4'd1)) == 7'd0)
+                    && (hcount < 7'd105);
+    wire pf_steal = name_hit || data_hit;
+
+    // Delayed copies: the fetch is ISSUED in the slot cycle, its data lands on
+    // the following tick, so the capture below keys on these.
+    logic name_hit_d, data_hit_d, is_char_d;
+    logic [6:0] hcount_d;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            name_hit_d <= 1'b0; data_hit_d <= 1'b0;
+            is_char_d  <= 1'b0; hcount_d   <= 7'd0;
+        end else if (phi2_tick) begin
+            name_hit_d <= name_hit; data_hit_d <= data_hit;
+            is_char_d  <= is_char;  hcount_d   <= hcount;
+        end
+    end
+
+    logic [2:0] cycle_type_c;
+    always_comb begin
+        if (dl_inst_slot || dl_lo_slot || dl_hi_slot) cycle_type_c = CT_DL;
+        else if (pm_missile || pm_player)             cycle_type_c = CT_PM;
+        else if (pf_steal)                            cycle_type_c = CT_PF;
+        else if (refresh_slot)                        cycle_type_c = CT_REFRESH;
+        else                                          cycle_type_c = CT_CPU;
+    end
+    // NOT registered: dumped against antic_dmapattern's own expected masks,
+    // the COMBINATIONAL signal matches Avery's cycle numbering exactly while
+    // a registered copy shifted the whole pattern +1.  The WSYNC path's
+    // register is already absorbed into RELEASE_CYCLE, so the two paths need
+    // to agree with the RASTER, not with each other's depth.
+    assign cycle_type = cycle_type_c;
+    // A one-machine-cycle-delayed copy.  Which of the two the CPU should see
+    // is a DELIVERY question the schedule dump cannot answer (both are
+    // correct views of the same schedule, one cycle apart), so fpga_xt_top
+    // selects at runtime via sallyrst[3] and the board decides.
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)            cycle_type_q <= CT_CPU;
+        else if (phi2_tick) cycle_type_q <= cycle_type_c;
+    end
+
+    // Refresh queue: each nominal tick adds one owed refresh; an owed
+    // refresh is retired on any cycle where no higher-priority DMA (DL,
+    // P/M, playfield) claims the bus.
+    assign rfsh_blocked = dl_inst_slot || dl_lo_slot || dl_hi_slot
+                          || pm_missile || pm_player || pf_steal;
+    // owed += arrived; owed -= placed.  The due tick and the placement happen
+    // on the SAME cycle in the common unblocked case — counting them
+    // separately produced a spurious extra refresh right after each due tick.
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin rfsh_seek <= 1'b0; rfsh_r <= 7'd24; end
+        else if (phi2_tick) begin
+            if (hc_next == 7'd0) begin                      // fresh line
+                rfsh_seek <= 1'b0; rfsh_r <= 7'd24;
+            end else begin
+                // a nominal slot arms a new seek unless the previous refresh
+                // already landed at/after it (then it is dropped)
+                if (refresh_slot) begin
+                    rfsh_seek <= 1'b0;
+                    rfsh_r    <= hcount;      // landed here
+                end else if (rfsh_arm) begin
+                    rfsh_seek <= 1'b1;        // blocked: keep looking
+                end
+            end
+        end
+    end
+
+    always_comb begin
+        // DL slots (cycles 1/6/7) and playfield slots never collide, so one
+        // request port serves both.
+        mem_req  = dl_inst_slot || dl_lo_slot || dl_hi_slot || name_hit || data_hit;
+        if (dl_inst_slot || dl_lo_slot || dl_hi_slot)
+            mem_addr = dl_pc;
+        else if (name_hit)
+            mem_addr = scan_addr;                       // character name
+        else if (data_hit && is_char)
+            // glyph: CHBASE[7:2] : code[6:0] : row.  Modes 2/3 are 8-line;
+            // 4/5 are 8-line too, 6/7 are 16-line and use one fewer code bit.
+            mem_addr = {chbase_q[7:2], name_q[6:0], row_ctr[2:0]};
+        else
+            mem_addr = scan_addr;                       // bitmap graphics byte
+    end
+
+    // Instruction byte as seen by the cycle-2 decode.  The decode tick IS
+    // the tick that ends the fetch cycle: cap_inst (registered) is not set
+    // yet, but the byte is already on mem_rdata — bypass on the slot itself.
+    wire [7:0] inst_now = dl_inst_slot ? mem_rdata : inst_q;
+
+    // =====================================================================
+    // The machine
+    // =====================================================================
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            dmactl_q <= 8'h00; nmien_q <= 8'h00; vscrol_q <= 8'h00; hscrol_q <= 8'h00;
+            dlistl_q <= 8'h00; dlisth_q <= 8'h00;
+            wsync_armed <= 1'b0; dlist_dirty <= 1'b1;
+            hcount <= 7'd0; line <= 9'd0;
+            dl_ctl <= 8'h00; dl_ctl_prev <= 8'h00; dl_pc <= 16'h0000;
+            row_ctr <= 4'd0; row_height_m1 <= 4'd0;
+            dl_active <= 1'b0; need_inst <= 1'b0; need_addr <= 1'b0; is_jvb <= 1'b0;
+            chbase_q <= 8'h00; chactl_q <= 8'h00;
+            scan_addr <= 16'h0000; pf_valid <= 1'b0; pf_byte <= 8'h00;
+            pf_code <= 8'h00; pf_hpos <= 7'd0; pf_is_char <= 1'b0;
+            name_q <= 8'h00; name_pend <= 1'b0;
+            vs_prev <= 1'b0; vs_latch6 <= 4'd0; vs_latch109 <= 4'd0;
+            inst_q <= 8'h00; addr_lo_q <= 8'h00;
+            nmist_hi <= 2'b00; nmi_ext <= 1'b0; nmi_n <= 1'b1; nmi_arm_q <= 1'b0; nmi_arm_vbi_q <= 1'b0; nmi_en_early <= 1'b0; nmi_en_late <= 1'b0; nmist_hold_q <= 2'b00;
+            wsync_latch_n <= 1'b1; rdy_n_q <= 1'b1;
+        end else begin
+            // ---------- register snoop (every clk, zero latency) ----------
+            // SALLYRST cold-boot.  This MUST clear the whole display-list
+            // machine and the interrupt/WSYNC state, not just DMACTL/NMIEN.
+            // Clearing only those two left a cold-booted program inheriting the
+            // PREVIOUS program's DL machine — mid-list dl_pc, a part-way
+            // row_ctr, possibly parked in JVB, sometimes with wsync_armed set or
+            // an NMI still armed.  That is a real cross-test state leak and the
+            // mechanism behind the run-order-dependent ACID800 results
+            // (antic_vscroldli / antic_dlistwrap measured 1 pass in 7 on ONE
+            // bitstream; see docs/a800/HANDOFF.md 1m).
+            // hcount/line deliberately KEEP RUNNING: a cold reset does not stop
+            // the beam on real hardware, and xexload relies on that.
+            if (cold) begin
+                // ONLY the registers that actually carry cross-test state.
+                // An earlier version cleared ~30 registers here; each one costs
+                // a mux on its D input, and antic_timing is on clk_sally, which
+                // build 87 missed by 0.034ns.  Everything the OS or the test
+                // rewrites on boot (DLISTL/H, HSCROL/VSCROL, CHBASE/CHACTL and
+                // the VSCROL latches) does NOT need clearing — leaving them
+                // costs nothing observable and buys the slack back.
+                dmactl_q  <= 8'h00;
+                nmien_q   <= 8'h00;
+                dlist_dirty <= 1'b0;
+                dl_pc     <= 16'h0000;
+                dl_ctl    <= 8'h00;
+                dl_ctl_prev <= 8'h00;
+                row_ctr   <= 4'd0;
+                dl_active <= 1'b0;
+                need_inst <= 1'b0;
+                need_addr <= 1'b0;
+                is_jvb    <= 1'b0;
+                wsync_armed   <= 1'b0;
+                wsync_latch_n <= 1'b1;
+                rdy_n_q       <= 1'b1;
+                nmist_hi      <= 2'b00;
+                nmi_arm_q     <= 1'b0;
+                nmi_arm_vbi_q <= 1'b0;
+                nmi_n         <= 1'b1;
+                nmi_ext       <= 1'b0;
+            end
+            if (reg_we) begin
+                case (reg_addr)
+                    4'h0: dmactl_q <= reg_wdata;
+                    4'h2: begin dlistl_q <= reg_wdata; dlist_dirty <= 1'b1; end
+                    4'h3: begin dlisth_q <= reg_wdata; dlist_dirty <= 1'b1; end
+                    4'h1: chactl_q <= reg_wdata;
+                    4'h4: hscrol_q <= reg_wdata;
+                    4'h9: chbase_q <= reg_wdata;
+                    4'h5: begin
+                        vscrol_q <= reg_wdata;
+                        if (hcount < 7'd109) vs_latch109 <= reg_wdata[3:0];
+                    end
+                    4'hA: wsync_armed <= 1'b1;
+                    4'hE: nmien_q <= reg_wdata;
+                    4'hF: nmist_hi <= 2'b00;               // NMIRES
+                    default: ;
+                endcase
+            end
+
+            if (phi2_tick) begin
+                // ---- DL fetch data: capture AT the launch tick ----------
+                // mem_rdata (the shadow's port-A register) refreshes every
+                // non-write clk of the slot cycle and holds mem[dl_pc] at
+                // this tick; dl_pc increments on the SAME tick, so a delayed
+                // capture would read the NEXT byte (measured: the JVB read
+                // its own operand and never parked).
+                if (dl_inst_slot) begin
+                    inst_q <= mem_rdata;
+                    dl_pc  <= {dl_pc[15:10], dl_pc[9:0] + 10'd1};
+                end
+                if (dl_lo_slot) begin
+                    addr_lo_q <= mem_rdata;
+                    dl_pc     <= {dl_pc[15:10], dl_pc[9:0] + 10'd1};
+                end
+                if (dl_hi_slot) begin
+                    need_addr <= 1'b0;
+                    if (is_jvb) begin
+                        dl_pc <= {mem_rdata, addr_lo_q};
+                        if (inst_q[6]) dl_active <= 1'b0;    // JVB parks
+                        is_jvb <= 1'b0;
+                    end else begin
+                        dl_pc <= {dl_pc[15:10], dl_pc[9:0] + 10'd1};
+                    end
+                    // LMS operand IS the playfield scan pointer.  Previously
+                    // discarded ("renderer's concern"), which is exactly why
+                    // the burst compositor had to re-derive it from the meta
+                    // table; the streaming path needs it live here.
+                    if (!is_jvb) scan_addr <= {mem_rdata, addr_lo_q};
+                end
+
+                // ---- playfield fetch: capture bytes, step the scan ------
+                // mem_rdata is valid on the tick ENDING the requested cycle, so
+                // a slot asserted at hcount N is consumed here at N+1.
+                pf_valid <= 1'b0;
+                if (name_hit_d) begin
+                    // character name: hold it for the glyph fetch 3 cycles on,
+                    // and step the scan (4K wrap — antic_addresswrap).
+                    name_q    <= mem_rdata;
+                    name_pend <= 1'b1;
+                    scan_addr <= {scan_addr[15:12], scan_addr[11:0] + 12'd1};
+                end
+                if (data_hit_d) begin
+                    pf_valid   <= 1'b1;
+                    pf_byte    <= mem_rdata;
+                    pf_code    <= is_char_d ? name_q : 8'h00;
+                    pf_hpos    <= hcount_d;
+                    pf_is_char <= is_char_d;
+                    if (!is_char_d)
+                        scan_addr <= {scan_addr[15:12], scan_addr[11:0] + 12'd1};
+                    name_pend <= 1'b0;
+                end
+
+                // ---- entering cycle 2: decode a just-fetched instruction -
+                if (hc_next == 7'd2 && need_inst && dl_active && dl_dma_on) begin
+                    need_inst     <= 1'b0;
+                    dl_ctl        <= inst_now;
+                    row_height_m1 <= ctl_height_m1(inst_now);
+                    // block entry: DCTR loads the LIVE VSCROL (Altirra
+                    // mRowCounter = mVSCROL), else 0
+                    row_ctr <= ((inst_now[3:0] >= 4'h2) && inst_now[5] && !vs_cur)
+                               ? vscrol_q[3:0] : 4'd0;
+                    if (inst_now[3:0] == 4'h1) begin
+                        need_addr <= 1'b1; is_jvb <= 1'b1;
+                    end else if (inst_now[6] && inst_now[3:0] != 4'h0) begin
+                        need_addr <= 1'b1;                   // LMS operand
+                    end
+                end
+
+                // ---- entering cycle 6: VSCROL DLI-compare sample --------
+                if (hc_next == 7'd6) vs_latch6 <= vscrol_q[3:0];
+
+                // ---- /NMI pulse shaping ---------------------------------
+                // (trigger below overrides — trigger wins on the same tick)
+                if (nmi_ext) begin nmi_ext <= 1'b0; nmi_n <= 1'b0; end
+                else               nmi_n   <= 1'b1;
+
+                // ---- entering cycle 7: NMIST changes --------------------
+                // Visible to a CPU read whose data cycle is 6 and not one
+                // earlier: on the release-104 grid the fid's data sample
+                // sits one window ahead of its commit, so 'entering 7' is
+                // what the CPU sees as cycle 6 (measured: entering 6 gave
+                // ACID nmist 'set too early (<cycle 6)', entering 7 on the
+                // OLD release-102 grid gave 'too late').  The DLI compare
+                // uses the cycle-6 VSCROL sample — Altirra mLatchedVScroll2,
+                // sampled at 6 and used at 7.
+                if (hc_next == 7'd7) begin
+                    if (line == VBI_LINE) begin
+                        nmist_hi  <= 2'b01;
+                        nmist_hold_q <= 2'b01;
+                        nmi_arm_q <= 1'b1;          // condition only — NMIEN gates at pulse time
+                        nmi_arm_vbi_q <= 1'b1;
+                        dl_ctl_prev <= dl_ctl;               // save across the VBI
+                        dl_ctl      <= dl_ctl & 8'h20;       // VS survives
+                        // DL DMA STOPS for the vertical blank (Altirra
+                        // mbDLActive = false at line 248, true again at the
+                        // first display line).  Without this the list keeps
+                        // being fetched through lines 248..261..7 and the
+                        // next line's DLI fires in the blanking region —
+                        // ACID antic_vscroll #5, whose 5th DLI must land on
+                        // line 15 of the frame AFTER the straddle (vcount
+                        // 7+8=15); we measured 1, i.e. around line 1.
+                        dl_active   <= 1'b0;
+                    end else if (dl_ctl[7] && (row_ctr == stop_dli)) begin
+                        // DLI: mode lines, blank+DLI lines, and the parked
+                        // JVB wait region alike (Race In Space).
+                        nmist_hi  <= 2'b10;
+                        nmist_hold_q <= 2'b10;
+                        nmi_arm_q <= 1'b1;          // condition only — NMIEN gates at pulse time
+                        nmi_arm_vbi_q <= 1'b0;
+                    end else begin
+                        nmi_arm_q <= 1'b0;
+                    end
+                end
+                // entering 8: the cycle-7 set survives a same-cycle NMIRES
+                // (ACID nmist 'VBI bit was reset too early')
+                if (hc_next == 7'd8 && nmist_hold_q != 2'b00) begin
+                    nmist_hi     <= nmist_hold_q;
+                    nmist_hold_q <= 2'b00;
+                end
+                // ---- entering cycle 9: /NMI pulse (cycles 9-10) ---------
+                // Two cycles after the status set, mirroring the real chip's
+                // 7-8 pulse relative to its cycle-6 status change plus the
+                // NMOS core's internal /NMI synchronizer stage (which the
+                // fid's per-clk edge latch skips).  HW-verified: blockednmi
+                // passes under authority on this grid.
+                // ---- NMIEN: TWO samples, asymmetric combine -------------
+                // Altirra takes mEarlyNMIEN at mX==7 and mEarlyNMIEN2 at
+                // mX==8, then:
+                //     cumulative     = pending & early          -> fire now
+                //     cumulativeLate = pending & early2 & ~early -> fire +1
+                // so an enable present at the FIRST sample fires promptly,
+                // an enable arriving BETWEEN the samples still fires (one
+                // cycle late), and a disable arriving after the first
+                // sample cannot cancel an already-committed interrupt.
+                // That asymmetry is precisely what ACID antic_nmist's
+                // NMIEN sub-tests demand — a single sample point cannot
+                // satisfy 'enable on cycle 6 activates' and 'disable on
+                // cycle 6 does NOT deactivate' simultaneously (measured
+                // from both directions on builds 52d/53/54b).
+                // SAMPLE POINTS, pinned by four ACID asserts.  In this
+                // machine's own frame a CPU write with Avery data-cycle N
+                // becomes visible in nmien_q entering N+2 (consistent across
+                // every probe taken on builds 52d/53/54b/55).  Therefore:
+                //   disable@5 must deactivate      -> deciding sample >= 7
+                //   disable@6 must NOT deactivate  -> deciding sample <= 7
+                //   enable@6  must activate        -> a sample at 8
+                //   enable@7  must NOT activate    -> no sample after 8
+                // => early sample entering 7 (the decision tick), late
+                //    sample entering 8.  Early fires at 8, late at 9.
+                // (select the bit from the LIVE line compare — nmi_arm_vbi_q
+                //  is written on this same tick and would read stale here)
+                if (hc_next == 7'd7)
+                    nmi_en_early <= (line == VBI_LINE) ? nmien_q[6] : nmien_q[7];
+                if (hc_next == 7'd8) begin
+                    nmi_en_late <= ((line == VBI_LINE) ? nmien_q[6] : nmien_q[7])
+                                   & ~nmi_en_early;
+                    if (nmi_arm_q && nmi_en_early) begin
+                        nmi_n <= 1'b0; nmi_ext <= 1'b1; nmi_arm_q <= 1'b0;
+                    end
+                end
+                // late enable (arrived between the samples): pulse slips one
+                if (hc_next == 7'd9 && nmi_arm_q && nmi_en_late) begin
+                    nmi_n <= 1'b0; nmi_ext <= 1'b1; nmi_arm_q <= 1'b0;
+                end
+                if (hc_next == 7'd10) begin
+                    nmi_arm_q <= 1'b0; nmi_en_late <= 1'b0;
+                end
+
+                // ---- WSYNC latch + /RDY (clear beats set) ---------------
+                if (hc_next == RELEASE_CYCLE) wsync_latch_n <= 1'b1;
+                else if (wsync_armed)         wsync_latch_n <= 1'b0;
+                wsync_armed <= 1'b0;
+                rdy_n_q     <= wsync_latch_n;
+
+                // ---- entering cycle 111: line advance (VCOUNT) ----------
+                // The last line does NOT wrap here: ANTIC increments into
+                // 262 so VCOUNT reads 131 for exactly ONE cycle before
+                // resetting (ACID antic_vcount 'rollover #1 (NTSC) wrong' —
+                // Avery's "nasty one: single cycle rollover", expects 131).
+                if (hc_next == 7'd111) line <= line + 9'd1;
+                // ---- entering cycle 112: the rollover completes ---------
+                if (hc_next == 7'd112 && line == 9'd262) line <= 9'd0;
+
+                // ---- entering cycle 112: row-advance decision -----------
+                if (hc_next == 7'd112) begin
+                    if (dl_active && !need_inst) begin
+                        if (row_ctr == stop_adv) begin
+                            row_ctr     <= 4'd0;
+                            need_inst   <= 1'b1;
+                            vs_prev     <= vs_cur;
+                            vs_latch109 <= vscrol_q[3:0];    // re-sample after use
+                        end else begin
+                            row_ctr <= row_ctr + 4'd1;       // 4-bit wrap = over-scroll
+                        end
+                    end else if (dl_active && need_inst && !dl_dma_on) begin
+                        // DL DMA off mid-frame: the fetch never happened —
+                        // the STUCK control byte keeps cycling its rows and
+                        // firing its DLI (live-DMACTL semantics).
+                        row_ctr <= row_ctr + 4'd1;
+                    end
+                end
+
+                // ---- end of line 7: (re)start the DL for line 8 ---------
+                // NOT gated on dl_dma_on: ANTIC always begins the display
+                // region.  What DL DMA gates is FETCHING (dl_inst_slot etc).
+                // With DMA off the control byte is STUCK at its last value
+                // and its rows keep cycling — so its DLI keeps firing every
+                // row-end, which is exactly what ACID antic_dlistwrap #2
+                // measures ("DLI was not carried over around VBLANK": the
+                // test kills DMACTL mid-frame and still expects DLIs).
+                // Clearing dl_active here stopped the display dead instead.
+                if (line_wraps && line == RESTART_LINE) begin
+                    dl_active <= 1'b1;
+                    need_inst <= 1'b1;
+                    dl_pc     <= (dlist_dirty && dl_dma_on) ? {dlisth_q, dlistl_q}
+                                                            : dl_pc;
+                    dlist_dirty <= 1'b0;
+                    dl_ctl    <= dl_ctl_prev;                // Altirra restart
+                    row_height_m1 <= ctl_height_m1(dl_ctl_prev);
+                    row_ctr   <= 4'd0;
+                    // The straddling line's VS state must survive the VBI:
+                    // Altirra restores mDLControl = mDLControlPrev, so the
+                    // "previous line" the next VS-exit compares against is
+                    // the one that ran into the vertical blank.  Resetting
+                    // this to 0 loses a VS->non-VS transition across the
+                    // frame boundary (ACID antic_vscroll #5: a 29x blank-8
+                    // list whose VS mode line straddles the VBI).
+                    vs_prev   <= (dl_ctl_prev[3:0] >= 4'h2) && dl_ctl_prev[5];
+                end
+
+                // ---- counters -------------------------------------------
+                hcount <= hc_next;
+            end
+        end
+    end
+
+endmodule
+
+`default_nettype wire

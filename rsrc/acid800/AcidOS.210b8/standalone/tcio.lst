@@ -1,0 +1,2472 @@
+mads 2.1.0 build 8 (23 Dec 19)
+Source: tcio.s
+     1 						icl		'library.s'
+Source: library.s
+     1 				; Altirra AcidOS test suite
+     2 				; Copyright (C) 2013 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				;==========================================================================
+    23 				; MEMORY MAP
+    24 				;
+    25 				; 0480-04FF		Line buffer
+    26 				; 0500-21FF		Reserved for DOS
+    27 				; 2200-25FF		Test display
+    28 				; 2600-2BFF		Library code
+    29 				;
+    30 				;==========================================================================
+    31
+    32 						icl		'hardware.inc'
+Source: hardware.inc
+     1 				; Altirra AcidOS test suite
+     2 				; Copyright (C) 2013 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				.ifndef f_HARDWARE_INC
+    23 				.def f_HARDWARE_INC
+    24
+    25 				;==========================================================================
+    26 				; GTIA
+    27 				;
+    28 				hposp0	equ	$d000
+    29 				hposp1	equ	$d001
+    30 				hposp2	equ	$d002
+    31 				hposp3	equ	$d003
+    32 				hposm0	equ	$d004
+    33 				hposm1	equ	$d005
+    34 				hposm2	equ	$d006
+    35 				hposm3	equ	$d007
+    36 				sizep0	equ	$d008
+    37 				sizep1	equ	$d009
+    38 				sizep2	equ	$d00a
+    39 				sizep3	equ	$d00b
+    40 				sizem	equ	$d00c
+    41 				trig0	equ	$d010
+    42 				trig1	equ	$d011
+    43 				trig2	equ	$d012
+    44 				colpm0	equ	$d012
+    45 				trig3	equ	$d013
+    46 				colpm1	equ	$d013
+    47 				pal		equ	$d014
+    48 				colpm2	equ	$d014
+    49 				colpm3	equ	$d015
+    50 				colpf0	equ	$d016
+    51 				colpf1	equ	$d017
+    52 				colpf2	equ	$d018
+    53 				colpf3	equ	$d019
+    54 				colbk	equ	$d01a
+    55 				prior	equ	$d01b
+    56 				gractl	equ	$d01d
+    57 				consol	equ	$d01f
+    58
+    59 				;==========================================================================
+    60 				; POKEY
+    61 				;
+    62 				pot0	equ	$d200
+    63 				audf1	equ	$d200
+    64 				pot1	equ	$d201
+    65 				audc1	equ	$d201
+    66 				pot2	equ	$d202
+    67 				audf2	equ	$d202
+    68 				pot3	equ	$d203
+    69 				audc2	equ	$d203
+    70 				pot4	equ	$d204
+    71 				audf3	equ	$d204
+    72 				pot5	equ	$d205
+    73 				audc3	equ	$d205
+    74 				pot6	equ	$d206
+    75 				audf4	equ	$d206
+    76 				pot7	equ	$d207
+    77 				audc4	equ	$d207
+    78 				audctl	equ	$d208
+    79 				kbcode	equ	$d209
+    80 				stimer	equ	$d209
+    81 				skres	equ	$d20a
+    82 				potgo	equ	$d20b
+    83 				serin	equ	$d20d
+    84 				serout	equ	$d20d
+    85 				irqen	equ	$d20e
+    86 				irqst	equ	$d20e
+    87 				skctl	equ	$d20f
+    88 				skstat	equ	$d20f
+    89
+    90 				;==========================================================================
+    91 				; PIA
+    92 				;
+    93 				porta	equ	$d300
+    94 				portb	equ	$d301
+    95 				pactl	equ	$d302
+    96 				pbctl	equ	$d303
+    97
+    98 				;==========================================================================
+    99 				; ANTIC
+   100 				;
+   101 				dmactl	equ	$d400
+   102 				chactl	equ	$d401
+   103 				dlistl	equ	$d402
+   104 				dlisth	equ	$d403
+   105 				hscrol	equ	$d404
+   106 				vscrol	equ	$d405
+   107 				pmbase	equ	$d407
+   108 				chbase	equ	$d409
+   109 				wsync	equ	$d40a
+   110 				vcount	equ	$d40b
+   111 				penh	equ	$d40c
+   112 				penv	equ	$d40d
+   113 				nmien	equ	$d40e
+   114 				nmist	equ	$d40f
+   115 				nmires	equ	$d40f
+   116
+   117 				;==========================================================================
+   118 				; 6502
+   119 				;
+   120 				nmivec	equ	$fffa
+   121 				resvec	equ	$fffc
+   122 				irqvec	equ	$fffe
+   123
+   124 				.endif
+    33 						icl		'kerneldb.inc'
+Source: kerneldb.inc
+     1 				; Altirra AcidOS test suite
+     2 				; Copyright (C) 2013 Avery Lee, All Rights Reserved.
+     3 				;
+     4 				; Permission is hereby granted, free of charge, to any person obtaining a copy
+     5 				; of this software and associated documentation files (the "Software"), to deal
+     6 				; in the Software without restriction, including without limitation the rights
+     7 				; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     8 				; copies of the Software, and to permit persons to whom the Software is
+     9 				; furnished to do so, subject to the following conditions:
+    10 				;
+    11 				; The above copyright notice and this permission notice shall be included in
+    12 				; all copies or substantial portions of the Software.
+    13 				;
+    14 				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    15 				; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    16 				; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    17 				; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    18 				; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    19 				; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    20 				; SOFTWARE. 
+    21
+    22 				.ifndef f_KERNELDB_INC
+    23 				.def f_KERNELDB_INC
+    24
+    25 				casini	= $0002			;cassette initialization vector
+    26 				ramlo	= $0004			;
+    27 				tramsz	= $0006			;temporary ram size / cart A flag
+    28 				tstdat	= $0007			;RAM test data register / cart B flag
+    29 				warmst	= $0008			;warmstart flag
+    30 				boot?	= $0009			;boot flag; 0 if none, 1 for disk, 2 for cassette
+    31 				dosvec	= $000a
+    32 				dosini	= $000c
+    33 				appmhi	= $000e
+    34 				pokmsk	= $0010
+    35 				brkkey	= $0011			;set on [BREAK]
+    36 				rtclok	= $0012
+    37 				bufadr	= $0015			;indirect buffer address pointer (temp for disk buffer)
+    38 						; $0016
+    39 				iccomt	= $0017			;CIO: command byte
+    40 				ziocb	= $0020			;zero-page IOCB
+    41 				ichidz	= $0020			;Zero page IOCB: device index ($FF = not open)
+    42 				icdnoz	= $0021			;Zero page IOCB: device number
+    43 				iccomz	= $0022			;Zero page IOCB: command byte
+    44 				icstaz	= $0023			;Zero page IOCB: status byte
+    45 				icbalz	= $0024			;Zero page IOCB: address of device/filename spec lo
+    46 				icbahz	= $0025			;Zero page IOCB: address of device/filename spec hi
+    47 				icptlz	= $0026			;Zero page IOCB: put byte address lo (-1)
+    48 				icpthz	= $0027			;Zero page IOCB: put byte address hi (-1)
+    49 				icbllz	= $0028			;Zero page IOCB: buffer length/byte count lo (-1)
+    50 				icblhz	= $0029			;Zero page IOCB: buffer length/byte count hi (-1)
+    51 				icax1z	= $002a			;Zero page IOCB: device-specific information 1
+    52 				icax2z	= $002b			;Zero page IOCB: device-specific information 2
+    53 				icax3z	= $002c			;Zero page IOCB: device-specific information 3
+    54 				icax4z	= $002d			;Zero page IOCB: device-specific information 4
+    55 				icax5z	= $002e			;Zero page IOCB: device-specific information 5
+    56 				icidno	= $002e			;CIO: call X register save/restore
+    57 				icax6z	= $002f			;Zero page IOCB: device-specific information 6
+    58 				ciochr	= $002f			;CIO: call A register save/restore
+    59 				status  = $0030			;SIO: temporay status byte
+    60 				chksum	= $0031			;SIO: temporary checksum byte (used by IRQ routines)
+    61 				bufrlo	= $0032			;SIO: buffer pointer lo (incremented by IRQ routines)
+    62 				bufrhi	= $0033			;SIO: buffer pointer hi (incremented by IRQ routines)
+    63 				bfenlo	= $0034			;SIO: buffer end lo
+    64 				bfenhi	= $0035			;SIO: buffer end hi
+    65 				ltemp	= $0036			;Relocating loader: loader temp address (XL/XE)
+    66 						; $0037
+    67 				bufrfl	= $0038			;SIO: buffer full flag
+    68 				recvdn	= $0039			;SIO: receive completed flag
+    69 				xmtdon	= $003a			;SIO: transmit completed flag
+    70 				chksnt	= $003b			;SIO: checksum sent flag
+    71 				nocksm	= $003c			;SIO: no-checksum flag
+    72 				bptr	= $003d			;Cassette: Buffer pointer
+    73 				ftype	= $003e			;Cassette: Interrecord gap (IRG) type; bit7=1 means continuous mode
+    74 				feof	= $003f			;Cassette: EOF flag
+    75 				soundr	= $0041			;SIO: noisy audio flag
+    76 				critic	= $0042			;critical flag for vbi
+    77 				zchain	= $004a			;Peripheral Handler: zero-page chain address
+    78 						; $004b
+    79 				atract	= $004d			;screen attract counter
+    80 				drkmsk	= $004e			;screen attract mask
+    81 				colrsh	= $004f			;screen attract color shift
+    82 				tmpchr	= $0050			;Screen Editor
+    83 				hold1	= $0051			;Display/Editor: temporary storage
+    84 				lmargn	= $0052			;left margin column
+    85 				rmargn	= $0053			;right margin column
+    86 				rowcrs	= $0054			;cursor row
+    87 				colcrs	= $0055			;cursor column
+    88 						; $0056
+    89 				dindex	= $0057			;display mode index
+    90 				savmsc	= $0058			;lowest address of screen region
+    91 				oldrow	= $005a			;
+    92 				oldcol	= $005b			;
+    93 				oldchr	= $005d			;cursor character save/restore
+    94 				oldadr	= $005e			;cursor memory address
+    95 						; $005f
+    96 				palnts	= $0062			;PAL/NTSC flag
+    97 				logcol	= $0063			;Display/Editor: Logical column (0-119)
+    98 				adress	= $0064			;temporary storage (display code)
+    99 						; $0065
+   100 				toadr	= $0066			;temporary storage (display code)
+   101 						; $0067
+   102 				frmadr	= $0068			;temporary storage (display code)
+   103 						; $0069
+   104 				ramtop	= $006a			;ram size
+   105 				bufcnt	= $006b
+   106 				bufstr	= $006c			;row/column of start of logical line
+   107 				bitmsk	= $006e			;Screen Editor
+   108 				shfamt	= $006f			;Screen Editor
+   109 				rowac	= $0070			;Screen Editor: line drawing
+   110 						; $0071			;
+   111 				colac	= $0072			;Screen Editor: line drawing
+   112 						; $0073			;
+   113 				endpt	= $0074			;Screen Editor: line drawing
+   114 						; $0075			;
+   115 				deltar	= $0076			;Screen Editor: delta row (line drawing)
+   116 				deltac	= $0077			;Screen Editor: delta column (line drawing)
+   117 						; $0078			;
+   118 				keydef	= $0079			;XL/XE: Keyboard definition table
+   119 						; $007a
+   120 				swpflg	= $007b			;current display var state ($00 = main, $FF = split screen)
+   121 				holdch	= $007c			;temporary key hold area prior to shift/control lock logic
+   122 				countr	= $007e			;Screen Editor: line length
+   123 						; $007f
+   124 				fr0		= $00d4			;FP: Accumulator 0
+   125 				_fr3	= $00da			;FP: Accumulator 4
+   126 				fr1		= $00e0			;FP: Accumulator 1
+   127 				_fr2	= $00e6			;FP: Accumulator 2
+   128 				_fpres2	= $00ef			;BASIC: Used in sqr() routine -- must not be touched by FP code
+   129 				_fpres	= $00f0			;BASIC: Used in sin() routine -- must not be touched by FP code
+   130 				cix		= $00f2			;FP: Character index
+   131 				inbuff	= $00f3			;FP: ASCII conversion buffer
+   132 						; $00f4
+   133 				_fpcount= $00f5
+   134 				_fptemp0= $00f6
+   135 				_fptemp1= $00f7
+   136 				flptr	= $00fc			;FP: pointer for floating-point loads and stores
+   137 				_flptr2	= $00fe
+   138
+   139 				vdslst	= $0200			;display list interrupt vector
+   140 				vprced	= $0202			;serial bus proceed interrupt vector
+   141 				vinter	= $0204			;serial bus interrupt vector
+   142 				vbreak	= $0206			;BRK instruction vector
+   143 				vkeybd	= $0208			;keyboard interrupt vector
+   144 				vserin	= $020a			;serial input ready interrupt vector
+   145 				vseror	= $020c			;serial output ready interrupt vector
+   146 				vseroc	= $020e			;serial output completed interrupt vector
+   147 				vtimr1	= $0210			;pokey timer 1 interrupt vector
+   148 				vtimr2	= $0212			;pokey timer 2 interrupt vector
+   149 				vtimr4	= $0214			;pokey timer 4 interrupt vector
+   150 				vimirq	= $0216			;immediate IRQ vector
+   151 				cdtmv1	= $0218			;countdown timer 1
+   152 				cdtmv2	= $021a			;countdown timer 2
+   153 				cdtmv3	= $021c			;countdown timer 3
+   154 				cdtmv4	= $021e			;countdown timer 4
+   155 				cdtmv5	= $0220			;countdown timer 5
+   156 				vvblki	= $0222			;vertical blank immediate vector
+   157 				vvblkd	= $0224			;vertical blank deferred vector
+   158 				cdtma1	= $0226			;timer 1 vector
+   159 				cdtma2	= $0228			;timer 2 vector
+   160 				cdtmf3	= $022a			;timer 3 flag
+   161 				srtimr	= $022b			;autorepeat timer
+   162 				cdtmf4	= $022c			;timer 4 flag
+   163 				intemp	= $022d			;temp value used by SETVBV
+   164 				cdtmf5	= $022e			;timer 5 flag
+   165 				sdmctl	= $022f			;shadow for DMACTL ($D400)
+   166 				sdlstl	= $0230			;shadow for DLISTL ($D402)
+   167 				sdlsth	= $0231			;shadow for DLISTH ($D403)
+   168 				sskctl	= $0232			;shadow for SKCTL ($D20F)
+   169 				lcount	= $0233			;Relocating loader: (XL/XE)
+   170 				lpenh	= $0234			;light pen horizontal pos
+   171 				lpenv	= $0235			;light pen vertical pos
+   172 				brkky	= $0236			;break key interrupt vector (OS B+ only)
+   173 				reladr	= $0238			;Relocating loader: temp address (XL/XE)
+   174 						; $0239
+   175 				cdevic	= $023a			;SIO: command frame device ID
+   176 				ccomnd	= $023b			;SIO: command frame command ID
+   177 				caux1	= $023c			;SIO: command aux byte 1
+   178 				caux2	= $023d			;SIO: command aux byte 2
+   179 				temp	= $023e			;SIO: temp space
+   180 				errflg	= $023f			;SIO: error flag
+   181 				dflags	= $0240			;disk boot flags
+   182 				dbsect	= $0241			;disk boot sector count
+   183 				bootad	= $0242			;disk boot address
+   184 				coldst	= $0244			;cold start flag
+   185 				reclen	= $0245			;Relocating loader: record length (XL/XE)
+   186 				dsktim	= $0246			;Disk Handler: Disk operation timeout
+   187 				pdvmsk	= $0247			;PBI device mask (XL/XE)
+   188 				shpdvs	= $0248			;PBI device selection register shadow ($D1FF) (XL/XE)
+   189 				fine	= $026e			;fine scrolling flag (XL/XE)
+   190 				gprior	= $026f			;shadow for PRIOR ($D01B)
+   191 				paddl0	= $0270			;shadow for POT0 ($D200)
+   192 				paddl1	= $0271			;shadow for POT1 ($D201)
+   193 				paddl2	= $0272			;shadow for POT2 ($D202)
+   194 				paddl3	= $0273			;shadow for POT3 ($D203)
+   195 				paddl4	= $0274			;shadow for POT4 ($D204)
+   196 				paddl5	= $0275			;shadow for POT5 ($D205)
+   197 				paddl6	= $0276			;shadow for POT6 ($D206)
+   198 				paddl7	= $0277			;shadow for POT7 ($D207)
+   199 				stick0	= $0278			;shadow for PORTA lo ($D300)
+   200 				stick1	= $0279			;shadow for PORTA hi ($D300)
+   201 				stick2	= $027A			;shadow for PORTB lo ($D302)
+   202 				stick3	= $027B			;shadow for PORTB hih ($D302)
+   203 				ptrig0	= $027c			;paddle trigger 0
+   204 				ptrig1	= $027d			;paddle trigger 1
+   205 				ptrig2	= $027e			;paddle trigger 2
+   206 				ptrig3	= $027f			;paddle trigger 3
+   207 				ptrig4	= $0280			;paddle trigger 4
+   208 				ptrig5	= $0281			;paddle trigger 5
+   209 				ptrig6	= $0282			;paddle trigger 6
+   210 				ptrig7	= $0283			;paddle trigger 7
+   211 				strig0	= $0284			;shadow for TRIG0 ($D001)
+   212 				strig1	= $0285			;shadow for TRIG1 ($D002)
+   213 				strig2	= $0286			;shadow for TRIG2 ($D003)
+   214 				strig3	= $0287			;shadow for TRIG3 ($D004)
+   215 				hibyte	= $0288			;Relocating loader (XL/XE)
+   216 				wmode	= $0289			;Cassette: Write mode (00 = read, 80 = write)
+   217 				blim	= $028a			;Cassette: Buffer limit
+   218 				jveck	= $028c			;XL/XE: IRQ jump vector
+   219 				newadr	= $028e			;Relocating loader (XL/XE)
+   220 				txtrow	= $0290
+   221 				txtcol	= $0291
+   222 						; $0292
+   223 				tindex	= $0293			;text mode index
+   224 				txtmsc	= $0294			;text window pointer
+   225 						; $0295
+   226 				cretry	= $029c			;SIO: command retries (XL/XE)
+   227 				hold3	= $029d			;Screen Editor
+   228 				hold2	= $029f			;Screen Editor
+   229 				dmask	= $02a0			;Display/Editor: Graphics merge mask
+   230 				tmplbt	= $02a1			
+   231 				escflg	= $02a2			;Display/Editor: Escape next character
+   232 				tabmap	= $02a3			;Display/Editor: Bitfield indicating tabs (note reversed bit positions)
+   233 				logmap	= $02b2			;Display/Editor: Logical line start map (4 bytes)
+   234 				tmprow	= $02b8			;Screen Editor
+   235 				tmpcol	= $02b9			;Screen Editor
+   236 						; $02ba
+   237 				scrflg	= $02bb			;Display/Editor: Scroll counter
+   238 				hold4	= $02bc			;Screen Editor
+   239 				dretry	= $02bd			;SIO: device retries (XL/XE)
+   240 				shflok	= $02be			;shift/control lock flags
+   241 				botscr	= $02bf			;number of text rows in text window
+   242 				pcolr0	= $02c0			;shadow for COLPM0 ($D012)
+   243 				pcolr1	= $02c1			;shadow for COLPM1 ($D013)
+   244 				pcolr2	= $02c2			;shadow for COLPM2 ($D014)
+   245 				pcolr3	= $02c3			;shadow for COLPM3 ($D015)
+   246 				color0	= $02c4			;shadow for COLPF0 ($D016)
+   247 				color1	= $02c5			;shadow for COLPF1 ($D017)
+   248 				color2	= $02c6			;shadow for COLPF2 ($D018)
+   249 				color3	= $02c7			;shadow for COLPF3 ($D019)
+   250 				color4	= $02c8			;shadow for COLBK ($D01A)
+   251 				runadr	= $02c9			;Relocating loader: run address (XL/XE)
+   252 						; $02ca
+   253 				hiused	= $02cb			;Relocating loader: Next available memory location (out) (XL/XE)
+   254 						; $02cc
+   255 				zhiuse	= $02cd			;Relocating loader: Next available zero-page address (out) (XL/XE)
+   256 						; $02ce
+   257 				gbytea	= $02cf			;Relocating loader: GET BYTE address (XL/XE)
+   258 						; $02d0
+   259 				loadad	= $02d1			;Relocating loader: Load address (XL/XE)
+   260 						; $02d2
+   261 				zloada	= $02d3			;Relocating loader: Zero-page load address (XL/XE)
+   262 						; $02d4
+   263 				dsctln	= $02d5			;Disk sector size (XL/XE)
+   264 				pbpnt	= $02de			;Printer: Buffer index (XL/XE location)
+   265 				pbufsz	= $02df			;Printer: Record size (XL/XE location)
+   266 				runad	= $02e0
+   267 				initad	= $02e2
+   268 				ramsiz	= $02e4			;ram size in pages
+   269 				memtop	= $02e5			;highest location for programs and data
+   270 				memlo	= $02e7			;base of application memory
+   271 				hndlod	= $02e9			;CIO: Handler load flag (XL/XE)
+   272 				dvstat	= $02ea			;DISK: Status request buffer area (4 bytes)
+   273 						; $02eb
+   274 						; $02ec
+   275 						; $02ed
+   276 				crsinh	= $02f0			;Display/Editor: cursor inhibit flag
+   277 				keydel	= $02f1			;keyboard debounce delay (set to 3 vblanks per key)
+   278 				ch1		= $02f2			;last keyboard code read
+   279 				chact	= $02f3			;shadow for CHACTL ($D401)
+   280 				chbas	= $02f4			;shadow for CHBASE ($D409)
+   281 				rowinc	= $02f8			;Screen Editor: row direction (XL/XE location)
+   282 				colinc	= $02f9			;Screen Editor: col direction (XL/XE location)
+   283 				atachr	= $02fb			;Screen Editor
+   284 				ch		= $02fc			;keyboard FIFO byte
+   285 				fildat	= $02fd			;Screen Editor: fill color
+   286 				dspflg	= $02fe			;enable/disable of control codes by screen editor (E:)
+   287 				ssflag	= $02ff			;display/screen editor suspend flag
+   288 				ddevic	= $0300			;serial bus ID
+   289 				dunit	= $0301			;device number
+   290 				dcomnd	= $0302			;command byte
+   291 				dstats	= $0303			;status byte
+   292 				dbuflo	= $0304			;buffer address lo
+   293 				dbufhi	= $0305			;buffer address hi
+   294 				dtimlo	= $0306			;disk timeout value
+   295 				dbytlo	= $0308			;byte count lo
+   296 				dbythi	= $0309			;byte count hi
+   297 				daux1	= $030a			;sector number lo
+   298 				daux2	= $030b			;sector number hi
+   299 				timer1	= $030c			;SIO: baud rate determination - first timer value
+   300 				addcor	= $030e			;SIO: baud rate determination - correction value
+   301 				casflg	= $030f			;SIO: cassette I/O flag (0=normal, nonzero=cassette)
+   302 				timer2	= $0310			;SIO: baud rate determination - second timer value
+   303 				temp1	= $0312			;SIO: baud rate determination - temp
+   304 						; $0313
+   305 				ptimot	= $0314			;Printer: Timeout (XL/XE location)
+   306 				temp3	= $0315			;SIO: baud rate determination - temp
+   307 				timflg	= $0317			;SIO: operation timeout flag (set by countdown timer 1 IRQ)
+   308 				stackp	= $0318			;SIO: stack pointer save
+   309 				hatabs	= $031a			;handler table
+   310 				pupbt1	= $033d			;(XL/XE) Power-up boot flag #1 - $5C
+   311 				pupbt2	= $033e			;(XL/XE) Power-up boot flag #2 - $93
+   312 				pupbt3	= $033f			;(XL/XE) Power-up boot flag #3 - $25
+   313 				ichid	= $0340			;IOCB #0 handler ID
+   314 				icdno	= $0341			;IOCB #0 device number
+   315 				iccmd	= $0342			;IOCB #0 command byte
+   316 				icsta	= $0343			;IOCB #0 status
+   317 				icbal	= $0344			;IOCB #0 buffer address lo
+   318 				icbah	= $0345			;IOCB #0 buffer address hi
+   319 				icptl	= $0346			;IOCB #0 PUT address lo
+   320 				icpth	= $0347			;IOCB #0 PUT address hi
+   321 				icbll	= $0348			;IOCB #0 buffer length/byte count lo
+   322 				icblh	= $0349			;IOCB #0 buffer length/byte count hi
+   323 				icax1	= $034a			;IOCB #0 auxiliary information lo
+   324 				icax2	= $034b			;IOCB #0 auxiliary information hi
+   325 				icax3	= $034c			;
+   326 				icax4	= $034d			;
+   327 				icax5	= $034e			;
+   328 				icax6	= $034f			;
+   329 				prnbuf	= $03c0			;printer buffer
+   330 				ckey	= $03e9			;cassette boot key
+   331 				basicf	= $03f8			;XL/XE: ROM BASIC flag. 0 = enabled
+   332 				gintlk	= $03fa			;XL/XE: Cartridge interlock (clone of TRIG3). 
+   333 				chlink	= $03fb			;XL/XE: Relocated loader chain
+   334 				casbuf	= $03fd			;Cassette buffer (03FD-047F)
+   335 				lbuff	= $0580			;
+   336 				plyarg	= $05e0			;FP: Polynomial evaluation temp register
+   337
+   338 				afp		equ		$d800
+   339 				fasc	equ		$d8e6
+   340 				ipf		equ		$d9aa
+   341 				fpi		equ		$d9d2
+   342 				zfr0	equ		$da44
+   343 				zf1		equ		$da46
+   344 				fsub	equ		$da60
+   345 				fadd	equ		$da66
+   346 				fmul	equ		$dadb
+   347 				fdiv	equ		$db28
+   348 				plyevl	equ		$dd40
+   349 				fld0r	equ		$dd89
+   350 				fld0p	equ		$dd8d
+   351 				fld1r	equ		$dd98
+   352 				fld1p	equ		$dd9c
+   353 				fst0r	equ		$dda7
+   354 				fst0p	equ		$ddab
+   355 				fmove	equ		$ddb6
+   356 				exp		equ		$ddc0
+   357 				exp10	equ		$ddcc
+   358 				log		equ		$decd
+   359 				log10	equ		$ded1
+   360
+   361 				dskinv	= $e453
+   362 				ciov	= $e456
+   363 				setvbv	= $e45c
+   364 				sysvbv	= $e45f
+   365 				xitvbv	= $e462
+   366
+   367 				.endif
+    34
+    35 						opt		o-
+    36
+    37 						org		$b0
+    38 				d0		dta		0
+    39 				d1		dta		0
+    40 				d2		dta		0
+    41 				d3		dta		0
+    42 				d4		dta		0
+    43 				d5		dta		0
+    44 				d6		dta		0
+    45 				d7		dta		0
+    46 				a0		dta		a(0)
+    47 				a1		dta		a(0)
+    48 				a2		dta		a(0)
+    49 				a3		dta		a(0)
+    50
+    51 						org		$c0
+    52 						
+    53 				_log_curx	dta		0
+    54 				_log_curln	dta		a(0)
+    55 				_log_srcptr	dta		a(0)
+    56 				_log_lncnt	dta		0
+    57
+    58 = 0080			LOGF_PAGING = $80
+    59 				_log_flags	dta		0
+    60
+    61 				_test_sp		dta		0
+    62 				_test_exit		dta		0
+    63
+    64 						.if *>$d4
+    65 						.error	'Library zero-page intrudes upon FP region: ',*
+    66 						.endif
+    67
+    68 				;=======================================================================
+    69
+    70 				.macro _TEST_ENTRY
+    71 				.ifdef STANDALONE
+    72 						icl		'init.s'
+    73 						run		__init
+    74 				.else
+    75 						run		main
+    76 				.endif		
+    77 				.endm
+    78
+    79 				;=======================================================================
+    80
+    81 						org		$2200
+    82 						
+    83 				.ifdef GENLIBRARY
+    84 						opt		o+
+    85 				.else
+    86 						opt		o-
+    87 				.endif
+    88 						
+    89 				_log_dlist:
+    90 FFFF> 2200-2220> 70 70 + 		:3 dta	$70
+    91 2203 42 40 22				dta		$42,a(_log_display_start)
+    92 2206 00					dta		$00
+    93 2207 02 02 02 02 02 02 + 		:23 dta	$02
+    94 221E 41 00 22				dta		$41,a(_log_dlist)
+    95 						
+    96 2221					org		$2240
+    97 2240			_log_display_start:
+    98 2240-2267> 80 80 A1 E3 + 		dta		"  AcidOS output - Ctrl+A to toggle      "*
+    99 2268			_log_display:
+   100 						;$2258-25FF
+   101 = 2600			_log_displayend equ $2600
+   102
+   103 2268					org		$2600
+   104
+   105 				;=======================================================================
+   106 2600-2A8E> 00		_cpu_mode		dta		0
+   107 2601 00			_opt_wait		dta		0
+   108 2602 00			_opt_waitfail	dta		0
+   109 2603 00 00		_test_exitfn	dta		a(0)
+   110 2605 00			_test_passed	dta		0
+   111 2606 00			_test_failed	dta		0
+   112 2607 00			_test_skipped	dta		0
+   113 2608 00			_test_testidx	dta		0
+   114 2609 00			_menu_2ndtime	dta		0
+   115 260A FF			_log_visible	dta		$ff
+   116 260B 00 00		_log_dlsave		dta		a(0)
+   117
+   118 				;=======================================================================
+   119 260D 30 31 32 33 34 35 + _hexdig	dta		'0123456789ABCDEF'
+   120
+   121 				;=======================================================================
+   122 261D			.nowarn .proc _log_keyboardirq
+   123 261D A9 26				lda		#>next
+   124 261F 48					pha
+   125 2620 A9 28				lda		#<next
+   126 2622 48					pha
+   127 2623 08					php
+   128 2624 48					pha
+   129 2625 4C FF FF				jmp		$ffff
+   130 = 2626			chainaddr = *-2
+   131
+   132 2628			next:
+   133 2628 AD FC 02				lda		ch
+   134 262B C9 BF				cmp		#$bf		;CTRL+A
+   135 262D D0 19				bne		not_ctrla
+   136 						
+   137 						;eat the key
+   138 262F A9 FF				lda		#$ff
+   139 2631 8D FC 02				sta		ch
+   140 						
+   141 						;toggle display flag
+   142 2634 4D 0A 26				eor		_log_visible
+   143 2637 8D 0A 26				sta		_log_visible
+   144 263A 30 0C				bmi		is_visible
+   145 263C AD 0B 26 8D 30 02 + 		mwa		_log_dlsave sdlstl
+   146 2648			is_visible:
+   147 2648			not_ctrla:
+   148 2648 68					pla
+   149 2649 40					rti
+   150 				.endp
+   151
+   152 				;=======================================================================
+   153 264A			.nowarn .proc _log_deferred_vbi
+   154 264A 2C 0A 26				bit		_log_visible
+   155 264D 10 21				bpl		dl_ok
+   156 						
+   157 264F AD 30 02				lda		sdlstl
+   158 2652 AE 31 02				ldx		sdlsth
+   159 2655 C9 00				cmp		#<_log_dlist
+   160 2657 D0 04				bne		dl_replaced
+   161 2659 E0 22				cpx		#>_log_dlist
+   162 265B F0 13				beq		dl_ok
+   163 265D			dl_replaced:
+   164 265D 8D 0B 26				sta		_log_dlsave
+   165 2660 8E 0C 26				stx		_log_dlsave+1
+   166 2663 08					php
+   167 2664 78					sei
+   168 2665 A9 00				lda		#<_log_dlist
+   169 2667 8D 30 02				sta		sdlstl
+   170 266A A9 22				lda		#>_log_dlist
+   171 266C 8D 31 02				sta		sdlsth
+   172 266F 28					plp
+   173 2670			dl_ok:
+   174 2670 4C 62 E4				jmp		xitvbv
+   175 				.endp
+   176
+   177 				;=======================================================================
+   178 				;	A = column
+   179 				;	X = row
+   180 2673			.nowarn .proc _log_gotoxy
+   181 						;save new X
+   182 2673 48					pha
+   183 						
+   184 						;erase existing cursor
+   185 2674 A4 C0				ldy		_log_curx
+   186 2676 B1 C1				lda		(_log_curln),y
+   187 2678 49 80				eor		#$80
+   188 267A 91 C1				sta		(_log_curln),y
+   189 						
+   190 						;recompute line addr
+   191 267C A9 11 85 C2				mva		#>[_log_display/2] _log_curln+1
+   192 2680 BD 96 26				lda		pos_table,x
+   193 2683 0A					asl
+   194 2684 26 C2				rol		_log_curln+1
+   195 2686 0A					asl
+   196 2687 26 C2				rol		_log_curln+1
+   197 2689 85 C1				sta		_log_curln
+   198 						
+   199 						;update X and redraw cursor
+   200 268B 68					pla
+   201 268C A8					tay
+   202 268D 84 C0				sty		_log_curx
+   203 268F B1 C1				lda		(_log_curln),y
+   204 2691 49 80				eor		#$80
+   205 2693 91 C1				sta		(_log_curln),y
+   206 2695 60					rts
+   207 						
+   208 2696			pos_table:
+   209 2696 1A 24 2E 38 42 4C + 		:22 dta [#*40+(<_log_display)]/4
+   210 				.endp
+   211
+   212 				;=======================================================================
+   213 26AC			.nowarn .proc _log_cls
+   214 26AC A0 00				ldy		#0
+   215 26AE 84 C5				sty		_log_lncnt
+   216 26B0 98					tya
+   217 26B1			clearloop:
+   218 26B1 99 68 22				sta		_log_display,y
+   219 26B4 99 00 23				sta		_log_displayend-$300,y
+   220 26B7 99 00 24				sta		_log_displayend-$200,y
+   221 26BA 99 00 25				sta		_log_displayend-$100,y
+   222 26BD C8					iny
+   223 26BE D0 F1				bne		clearloop
+   224 26C0 A9 68 85 C1 A9 22 + 		mwa		#_log_display _log_curln
+   225 26C8 D0 09				bne		_log_clearline.xit
+   226 				.endp
+   227
+   228 				;=======================================================================
+   229 26CA			.nowarn .proc _log_clearline
+   230 26CA A0 27				ldy		#39
+   231 26CC A9 00				lda		#0
+   232 26CE 91 C1 88 10 FB			sta:rpl	(_log_curln),y-
+   233 26D3			xit:
+   234 26D3 A0 02				ldy		#2
+   235 26D5 84 C0				sty		_log_curx
+   236 26D7 A9 80				lda		#$80
+   237 26D9 91 C1				sta		(_log_curln),y
+   238 26DB 60					rts
+   239 				.endp
+   240
+   241 				;=======================================================================
+   242 				; Modified:
+   243 				;	A, Y
+   244 				;
+   245 				; Preserved:
+   246 				;	X
+   247 				;
+   248 				; Control codes handled:
+   249 				;	$7D		clear
+   250 				;	$9B		end of line
+   251 				;	$9C		clear line
+   252 				;
+   253 26DC			.nowarn .proc _log_putchar
+   254 						;check for EOL
+   255 26DC C9 9B				cmp		#$9b
+   256 26DE D0 08				bne		not_eol
+   257 26E0 A4 C0				ldy		_log_curx
+   258 26E2 A9 00				lda		#0
+   259 26E4 91 C1				sta		(_log_curln),y
+   260 26E6 F0 24				beq		wrap
+   261 26E8			not_eol:
+   262 						;check for clear
+   263 26E8 C9 7D				cmp		#$7d
+   264 26EA F0 C0				beq		_log_cls
+   265 						
+   266 						;check for clear line
+   267 26EC C9 9C				cmp		#$9c
+   268 26EE F0 DA				beq		_log_clearline
+   269 						
+   270 						;convert ATASCII to INTERNAL
+   271 26F0 48					pha
+   272 26F1 2A					rol
+   273 26F2 2A					rol
+   274 26F3 2A					rol
+   275 26F4 2A					rol
+   276 26F5 29 03				and		#$03
+   277 26F7 A8					tay
+   278 26F8 68					pla
+   279 26F9 59 7C 27				eor		conv_tab,y
+   280
+   281 26FC A4 C0				ldy		_log_curx
+   282 26FE 91 C1				sta		(_log_curln),y
+   283 2700 C8					iny
+   284 2701 C0 28				cpy		#40
+   285 2703 B0 07				bcs		wrap
+   286 2705 84 C0				sty		_log_curx
+   287 2707			done:
+   288 2707 A9 80				lda		#$80
+   289 2709 91 C1				sta		(_log_curln),y
+   290 270B 60					rts
+   291 270C			wrap:
+   292 270C A0 02				ldy		#2
+   293 270E 84 C0				sty		_log_curx
+   294 2710 A5 C1				lda		_log_curln
+   295 2712 69 27				adc		#39
+   296 2714 85 C1				sta		_log_curln
+   297 2716 90 02 E6 C2				scc:inc	_log_curln+1
+   298 						
+   299 271A A5 C2				lda		_log_curln+1
+   300 271C C9 26				cmp		#>_log_displayend
+   301 271E D0 2F				bne		no_scroll
+   302 2720			scroll:
+   303 2720 A0 90				ldy		#<(_log_display+40)
+   304 2722 B9 00 22 99 D8 21 + 		mva:rne	_log_display&$ff00,y +(_log_display&$ff00)-40,y+
+   305 272B B9 00 23 99 D8 22 + 		mva:rne	$100+(_log_display&$ff00),y $100+(_log_display&$ff00)-40,y+
+   306 2734 B9 00 24 99 D8 23 + 		mva:rne	$200+(_log_display&$ff00),y $200+(_log_display&$ff00)-40,y+
+   307 273D B9 00 25 99 D8 24 + 		mva:rne	$300+(_log_display&$ff00),y $300+(_log_display&$ff00)-40,y+
+   308
+   309 2746 A9 D8 85 C1				mva		#$d8 _log_curln
+   310 274A C6 C2				dec		_log_curln+1
+   311
+   312 274C 20 CA 26				jsr		_log_clearline
+   313 274F			no_scroll:
+   314 						;check if paging is enabled
+   315 274F 24 C6				bit		_log_flags
+   316 2751 10 B4				bpl		done
+   317 						
+   318 						;check if we've done a page
+   319 2753 E6 C5				inc		_log_lncnt
+   320 2755 A5 C5				lda		_log_lncnt
+   321 2757 C9 15				cmp		#21
+   322 2759 90 AC				bcc		done
+   323 275B A9 00 85 C5				mva		#0 _log_lncnt
+   324 						
+   325 275F A0 09				ldy		#9
+   326 2761			more_loop:
+   327 2761 B9 72 27				lda		more_msg-2,y
+   328 2764 91 C1				sta		(_log_curln),y
+   329 2766 88					dey
+   330 2767 C0 01				cpy		#1
+   331 2769 D0 F6				bne		more_loop
+   332 						
+   333 276B 20 20 29				jsr		_waitKey
+   334 276E 20 CA 26				jsr		_log_clearline
+   335 2771 4C 07 27				jmp		done
+   336 						
+   337 2774			more_msg:
+   338 2774 0D 0D 2D 6F 72 65 + 		dta		"--More--"
+   339
+   340 277C			conv_tab:
+   341 277C 40					dta		$40
+   342 277D 20					dta		$20
+   343 277E 60					dta		$60
+   344 277F 00					dta		$00
+   345 				.endp
+   346
+   347 				;=======================================================================
+   348 2780			.nowarn .proc _log_imprint
+   349 2780 68					pla
+   350 2781 85 C3				sta		_log_srcptr
+   351 2783 68					pla
+   352 2784 85 C4				sta		_log_srcptr+1
+   353 2786			print_entry:
+   354 2786 20 90 27				jsr		_log_printm1
+   355 2789 A5 C4				lda		_log_srcptr+1
+   356 278B 48					pha
+   357 278C A5 C3				lda		_log_srcptr
+   358 278E 48					pha
+   359 278F 60					rts
+   360 				.endp
+   361
+   362 				;=======================================================================
+   363 = 27A2			_log_print = _log_printm1.alt_entry
+   364
+   365 2790			.nowarn .proc _log_printm1
+   366 2790 A2 00				ldx		#0
+   367 2792			prloop:
+   368 2792 E6 C3 D0 02 E6 C4			inw		_log_srcptr
+   369 2798			prloop1:
+   370 2798 A1 C3				lda		(_log_srcptr,x)
+   371 279A F0 0A				beq		done
+   372 279C 20 DC 26				jsr		_log_putchar
+   373 279F 4C 92 27				jmp		prloop
+   374 27A2			alt_entry:
+   375 27A2 A2 00				ldx		#0
+   376 27A4 F0 F2				beq		prloop1
+   377 27A6			done:
+   378 27A6 60					rts
+   379 				.endp
+   380
+   381 				;=======================================================================
+   382 27A7			.nowarn .proc _log_imprintf
+   383 27A7 68					pla
+   384 27A8 AA					tax
+   385 27A9 68					pla
+   386 27AA A8					tay
+   387 27AB E8					inx
+   388 27AC D0 01 C8				sne:iny
+   389 27AF 8A					txa
+   390 27B0 20 BA 27				jsr		_log_printf
+   391 27B3 A5 B9				lda		a0+1
+   392 27B5 48					pha
+   393 27B6 A5 B8				lda		a0
+   394 27B8 48					pha
+   395 27B9 60					rts	
+   396 				.endp
+   397
+   398 				;=======================================================================
+   399 27BA			.nowarn .proc _log_printf
+   400 27BA 85 B8				sta		a0
+   401 27BC 84 B9				sty		a0+1
+   402 27BE A0 00				ldy		#0
+   403 27C0 84 B0				sty		d0
+   404 						
+   405 27C2			charloop:
+   406 27C2 B1 B8				lda		(a0),y
+   407 27C4 F0 11				beq		done
+   408 27C6 E6 B8 D0 02 E6 B9			inw		a0
+   409 27CC C9 25				cmp		#'%'
+   410 27CE F0 08				beq		special
+   411 27D0			escaped:
+   412 27D0 20 DC 26				jsr		_log_putchar
+   413 27D3			nextchar:
+   414 27D3 A0 00				ldy		#0
+   415 27D5 F0 EB				beq		charloop
+   416
+   417 27D7			done:
+   418 27D7 60					rts
+   419
+   420 27D8			special:
+   421 27D8 E6 B0				inc		d0
+   422 27DA A6 B0				ldx		d0
+   423 27DC B1 B8				lda		(a0),y
+   424 27DE E6 B8 D0 02 E6 B9			inw		a0
+   425 27E4 C9 64				cmp		 #'d'
+   426 27E6 D0 41				bne		notdec
+   427 27E8 98					tya
+   428 27E9 84 BA				sty		a1
+   429 27EB A0 06				ldy		#6
+   430 27ED 78					sei
+   431 27EE F8					sed
+   432 27EF			decloop1:
+   433 27EF 36 B0				rol		d0,x
+   434 27F1 65 BA				adc		a1
+   435 27F3 85 BA				sta		a1
+   436 27F5 88					dey
+   437 27F6 D0 F7				bne		decloop1
+   438 27F8 84 BB				sty		a1+1
+   439 27FA A0 02				ldy		#2
+   440 27FC			decloop2:
+   441 27FC 36 B0				rol		d0,x
+   442 27FE 65 BA				adc		a1
+   443 2800 85 BA				sta		a1
+   444 2802 26 BB				rol		a1+1
+   445 2804 88					dey
+   446 2805 D0 F5				bne		decloop2
+   447 2807 D8					cld
+   448 2808 58					cli
+   449 2809 A5 BB				lda		a1+1
+   450 280B F0 0C				beq		decdigit2
+   451 280D AA					tax
+   452 280E BD 0D 26				lda		_hexdig,x
+   453 2811 20 1A 29				jsr		putbyte
+   454 2814 A5 BA				lda		a1
+   455 2816 4C 99 28				jmp		puthex_nextchar
+   456 						
+   457 2819			decdigit2:
+   458 2819 A5 BA				lda		a1
+   459 281B C9 10				cmp		#$10
+   460 281D 90 03				bcc		decdigit1
+   461 281F 4C 99 28				jmp		puthex_nextchar
+   462 						
+   463 2822			decdigit1:
+   464 2822 AA					tax
+   465 2823 BD 0D 26				lda		_hexdig,x
+   466 2826 4C D0 27				jmp		escaped
+   467
+   468 2829			notdec:
+   469 2829 C9 78				cmp		#'x'
+   470 282B D0 05				bne		nothex
+   471 282D B5 B0				lda		d0,x
+   472 282F 4C 99 28				jmp		puthex_nextchar
+   473
+   474 2832			nothex:
+   475 2832 C9 58				cmp		#'X'
+   476 2834 D0 0E				bne		nothexword
+   477 2836 E6 B0				inc		d0
+   478 2838 B5 B1				lda		d1,x
+   479 283A 20 07 29				jsr		puthex
+   480 283D A6 B0				ldx		d0
+   481 283F B5 AF				lda		d0-1,x
+   482 2841 4C 99 28				jmp		puthex_nextchar
+   483
+   484 2844			nothexword:
+   485 2844 C9 44				cmp		 #'D'
+   486 2846 D0 5F				bne		notdecword
+   487
+   488 2848 A0 08				ldy		#8
+   489 284A A9 00				lda		#0
+   490 284C 85 BA				sta		a1
+   491 284E 85 BB				sta		a1+1
+   492 2850 85 BC				sta		a2
+   493 2852 78					sei
+   494 2853 F8					sed
+   495 2854			decword1:
+   496 2854 36 B1				rol		d1,x
+   497 2856 A5 BA				lda		a1
+   498 2858 65 BA				adc		a1
+   499 285A 85 BA				sta		a1
+   500 285C A5 BB				lda		a1+1
+   501 285E 65 BB				adc		a1+1
+   502 2860 85 BB				sta		a1+1
+   503 2862 88					dey
+   504 2863 D0 EF				bne		decword1
+   505 					
+   506 2865 A0 08				ldy		#8
+   507 2867			decword2:
+   508 2867 36 B0				rol		d0,x
+   509 2869 A5 BA				lda		a1
+   510 286B 65 BA				adc		a1
+   511 286D 85 BA				sta		a1
+   512 286F A5 BB				lda		a1+1
+   513 2871 65 BB				adc		a1+1
+   514 2873 85 BB				sta		a1+1
+   515 2875 A5 BC				lda		a2
+   516 2877 65 BC				adc		a2
+   517 2879 85 BC				sta		a2
+   518 287B 88					dey
+   519 287C D0 E9				bne		decword2
+   520 287E D8					cld
+   521 287F 58					cli
+   522 					
+   523 2880 AA					tax
+   524 2881 F0 0D				beq		decword3
+   525 2883 20 FC 28				jsr		puthexcond
+   526 						
+   527 2886 A5 BB				lda		a1+1
+   528 2888 20 07 29				jsr		puthex
+   529 288B A5 BA				lda		a1
+   530 288D 4C 99 28				jmp		puthex_nextchar
+   531
+   532 2890			decword3:
+   533 2890 A5 BB				lda		a1+1
+   534 2892 F0 0B				beq		decword4
+   535 2894 20 FC 28				jsr		puthexcond
+   536 2897 A5 BA				lda		a1
+   537 2899			puthex_nextchar:
+   538 2899 20 07 29				jsr		puthex
+   539 289C 4C D3 27				jmp		nextchar
+   540 					
+   541 289F			decword4:
+   542 289F A5 BA				lda		a1
+   543 28A1 20 FC 28				jsr		puthexcond
+   544 28A4 4C D3 27				jmp		nextchar
+   545
+   546 28A7			notdecword:
+   547 28A7 C9 63				cmp		 #'c'
+   548 28A9 D0 08				bne		notchar
+   549 28AB B5 B0				lda		d0,x
+   550 28AD 20 1A 29				jsr		putbyte
+   551 28B0			strdone:
+   552 28B0 4C D3 27				jmp		nextchar
+   553 					
+   554 28B3			notchar:
+   555 28B3 C9 73				cmp		 #'s'
+   556 28B5 D0 1C				bne		notstr
+   557 					
+   558 28B7 E6 B0				inc		d0
+   559 28B9 B5 B0				lda		d0,x
+   560 28BB 85 BA				sta		a1
+   561 28BD B5 B1				lda		d0+1,x
+   562 28BF 85 BB				sta		a1+1
+   563
+   564 28C1			strloop:
+   565 28C1 A0 00				ldy		#0
+   566 28C3 B1 BA				lda		(a1),y
+   567 28C5 F0 E9				beq		strdone
+   568 28C7 20 DC 26				jsr		_log_putchar
+   569 28CA E6 BA D0 02 E6 BB			inw		a1
+   570 28D0 4C C1 28				jmp		strloop
+   571 					
+   572 28D3			notstr:
+   573 28D3 C9 66				cmp		#'f'
+   574 28D5 D0 20				bne		notfloat
+   575
+   576 28D7 E6 B0				inc		d0
+   577 28D9 B5 B1				lda		d0+1,x
+   578 28DB A8					tay
+   579 28DC B5 B0				lda		d0,x
+   580 28DE AA					tax
+   581 28DF 20 89 DD				jsr		fld0r
+   582 28E2 20 E6 D8				jsr		fasc
+   583 28E5 A6 F3				ldx		inbuff
+   584 28E7			nextfloatchar:
+   585 28E7 BD 00 05				lda		+(lbuff&$ff00),x
+   586 28EA E8					inx
+   587 28EB 48					pha
+   588 28EC 29 7F				and		#$7f
+   589 28EE 20 DC 26				jsr		_log_putchar
+   590 28F1 68					pla
+   591 28F2 10 F3				bpl		nextfloatchar
+   592 28F4 4C D3 27				jmp		nextchar
+   593
+   594 28F7			notfloat:
+   595 28F7 C6 B0				dec		d0
+   596 28F9 4C D0 27				jmp		escaped
+   597 					
+   598 28FC			puthexcond:
+   599 28FC C9 10				cmp		#$10
+   600 28FE B0 07				bcs		puthex
+   601 2900 AA					tax
+   602 2901 BD 0D 26				lda		_hexdig,x
+   603 2904 4C 1A 29				jmp		putbyte
+   604
+   605 2907			puthex:	
+   606 2907 48					pha
+   607 2908 4A					lsr
+   608 2909 4A					lsr
+   609 290A 4A					lsr
+   610 290B 4A					lsr
+   611 290C AA					tax
+   612 290D BD 0D 26				lda		_hexdig,x
+   613 2910 20 1A 29				jsr		putbyte
+   614 2913 68					pla
+   615 2914 29 0F				and		#$0f
+   616 2916 AA					tax
+   617 2917 BD 0D 26				lda		_hexdig,x
+   618 291A			putbyte:
+   619 291A AA					tax
+   620 291B 20 DC 26				jsr		_log_putchar
+   621 291E 8A					txa
+   622 291F 60					rts
+   623 				.endp
+   624
+   625 				;==========================================================================
+   626 2920			.nowarn .proc _waitKey
+   627 2920 A9 FF				lda		#$ff
+   628 2922 8D FC 02				sta		ch
+   629 2925 8D F2 02				sta		ch1
+   630 2928 CD FC 02 F0 FB			cmp:req	ch
+   631 292D 60					rts
+   632 				.endp
+   633
+   634 				;==========================================================================
+   635 292E			.nowarn .proc _waitKeyPrompt
+   636 292E 20 80 27				jsr		_log_imprint
+   637 2931 50 72 65 73 73 20 + 		dta		c"Press a key...",0
+   638 2940 20 20 29				jsr		_waitKey
+   639 2943 20 80 27				jsr		_log_imprint
+   640 2946 9C 00				dta		$9c,0
+   641 2948 60					rts
+   642 				.endp
+   643
+   644 				;==========================================================================
+   645 				; _load_seg
+   646 				;
+   647 				; Module loader.
+   648 				;
+   649 				;	X:A = address of filename to load
+   650 				;
+   651 2949			.nowarn .proc	_load_seg
+   652 						;open IOCB #1
+   653 2949 8D 54 03				sta		icbal+$10
+   654 294C 8E 55 03				stx		icbah+$10
+   655 294F A9 04				lda		#$04
+   656 2951 8D 5A 03				sta		icax1+$10
+   657 2954 A9 03				lda		#CIOCmdOpen
+   658 2956 20 DD 29				jsr		do_io
+   659 2959 30 6C				bmi		other_fail
+   660
+   661 						;begin relocation
+   662 295B A9 E8 8D E0 02 A9 + 		mwa		#definit runad
+   663
+   664 2965			relocloop:
+   665 						;load starting address
+   666 2965 A9 B8 8D 54 03 A9 + 		mwa		#a0 icbal+$10
+   667 296F 20 D1 29				jsr		load_two
+   668 2972 30 4D				bmi		startaddr_fail
+   669 						
+   670 						;check for $FFFF signature
+   671 2974 A5 B8				lda		a0
+   672 2976 25 B9				and		a0+1
+   673 2978 C9 FF				cmp		#$ff
+   674 297A F0 E9				beq		relocloop
+   675 						
+   676 						;load ending address
+   677 297C A9 BA 8D 54 03 A9 + 		mwa		#a1 icbal+$10
+   678 2986 20 D1 29				jsr		load_two
+   679 2989 30 3C				bmi		other_fail
+   680 						
+   681 						;compute length and load
+   682 298B 38 A5 BA E5 B8 8D + 		sbw		a1 a0 icbll+$10
+   683 299A EE 58 03 D0 03 EE + 		inw		icbll+$10
+   684 29A2 A5 B8 8D 54 03 A5 + 		mwa		a0 icbal+$10
+   685 29AC 20 DB 29				jsr		load_bytes
+   686 29AF 30 16				bmi		other_fail
+   687 						
+   688 						;init a segment
+   689 29B1 A9 E8 8D E2 02 A9 + 		mwa		#definit initad
+   690 29BB 20 E5 29				jsr		doinit
+   691 29BE 4C 65 29				jmp		relocloop
+   692
+   693 29C1			startaddr_fail:
+   694 29C1 C0 88				cpy		#CIOStatEndOfFile
+   695 29C3 D0 02				bne		other_fail
+   696 29C5 A0 01				ldy		#1
+   697 29C7			other_fail:
+   698 						;save status
+   699 29C7 84 B8				sty		a0
+   700 						
+   701 						;close IOCB #1
+   702 29C9 A9 0C				lda		#CIOCmdClose
+   703 29CB 20 DD 29				jsr		do_io
+   704 						
+   705 						;restore status and exit
+   706 29CE A4 B8				ldy		a0
+   707 29D0 60					rts
+   708 						
+   709 29D1			load_two:
+   710 29D1 A9 02 8D 58 03 A9 + 		mwa		#2 icbll+$10
+   711 29DB			load_bytes:
+   712 29DB A9 07				lda		#CIOCmdGetChars
+   713 29DD			do_io:
+   714 29DD 8D 52 03				sta		iccmd+$10
+   715 29E0 A2 10				ldx		#$10
+   716 29E2 4C 56 E4				jmp		ciov
+   717
+   718 29E5			doinit:
+   719 29E5 6C E2 02				jmp		(initad)
+   720 					
+   721 29E8			definit:
+   722 29E8 60					rts
+   723
+   724 				.endp
+   725
+   726 				;==========================================================================
+   727 				; _run_seg
+   728 				;
+   729 				; Module relocator and executor.
+   730 				;
+   731 				; The last segment loaded by _load_seg is relocated and executed.
+   732 				;
+   733 29E9			.nowarn .proc _run_seg
+   734 29E9 6C E0 02				jmp		(runad)
+   735 				.endp
+   736
+   737 				;=======================================================================
+   738 29EC			.nowarn .proc _Exec
+   739 29EC 20 49 29				jsr		_load_seg
+   740 29EF 4C E9 29				jmp		_run_seg
+   741 				.endp
+   742
+   743 				;=======================================================================
+   744 29F2			.nowarn .proc _ExecMenu
+   745 29F2 A2 29				ldx		#>menu_exe
+   746 29F4 A9 F9				lda		#<menu_exe
+   747 29F6 4C EC 29				jmp		_Exec
+   748
+   749 29F9			menu_exe:
+   750 29F9 44 3A 4D 45 4E 55 + 		dta		'D:MENU.EXE',$9B		
+   751 				.endp
+   752
+   753 				;=======================================================================
+   754 2A04			.nowarn .proc _RunTests
+   755 2A04			test_loop:
+   756 						;read next test line
+   757 2A04 A9 80 8D 68 03			mva		#$80 icbll+$20
+   758 2A09 A9 00 8D 69 03			mva		#$00 icblh+$20
+   759 2A0E A2 20				ldx		#$20
+   760 2A10 20 56 E4				jsr		ciov
+   761 2A13 10 03				bpl		testOK
+   762 2A15 4C F2 29				jmp		_ExecMenu
+   763 2A18			testOK:
+   764 						;replace EOL with 0
+   765 2A18 A2 FF				ldx		#$ff
+   766 2A1A A9 9B				lda		#$9b
+   767 2A1C			eol_loop:
+   768 2A1C E8					inx
+   769 2A1D DD 80 04				cmp		$0480,x
+   770 2A20 D0 FA				bne		eol_loop
+   771 2A22 A9 00				lda		#0
+   772 2A24 9D 80 04				sta		$0480,x
+   773
+   774 2A27 A9 82 85 B1 A9 04 + 		mwa		#$0482 d1
+   775 2A2F 20 A7 27				jsr		_log_imprintf
+   776 2A32 2D 2D 2D 20 54 65 + 		dta		'--- Test %s ---',$9B,'Loading...',0
+   777 								
+   778 						;store return stack ptr
+   779 2A4D BA					tsx
+   780 2A4E E8					inx
+   781 2A4F E8					inx
+   782 2A50 85 C7				sta		_test_sp
+   783 						
+   784 						;load segment
+   785 2A52 A9 44 8D 80 04			mva		#'D' $0480
+   786 2A57 A9 3A 8D 81 04			mva		#':' $0481
+   787 2A5C A2 04				ldx		#$04
+   788 2A5E A9 80				lda		#$80
+   789 2A60 20 49 29				jsr		_load_seg
+   790 2A63 30 0B				bmi		fail
+   791 						
+   792 						;clear loading message
+   793 2A65 20 80 27				jsr		_log_imprint
+   794 2A68 9C 00				dta		$9c,0
+   795 						
+   796 						;run segment
+   797 2A6A 20 E9 29				jsr		_run_seg
+   798 2A6D 4C 04 2A				jmp		test_loop
+   799 						
+   800 2A70			fail:
+   801 2A70 84 B1				sty		d1
+   802 2A72 20 A7 27				jsr		_log_imprintf
+   803 2A75 46 41 49 4C 45 44 + 		dta		'FAILED to load: %x',$9b,0
+   804 2A89 20 2E 29				jsr		_waitKeyPrompt
+   805 2A8C 4C 04 2A				jmp		test_loop
+   806 				.endp
+   807
+   808 				;=======================================================================
+   809 						.if *>$2c00
+   810 						.error	'Library too long: ',*,' > $2C00'
+   811 						.endif
+   812
+   813 						opt		o+
+     2 2A8F					icl		'cio.inc'
+Source: cio.inc
+     1 				;	Altirra - Atari 800/800XL/5200 emulator
+     2 				;	Modular Kernel ROM - Character Input/Output Definitions
+     3 				;	Copyright (C) 2008-2012 Avery Lee
+     4 				;
+     5 				;	This program is free software; you can redistribute it and/or modify
+     6 				;	it under the terms of the GNU General Public License as published by
+     7 				;	the Free Software Foundation; either version 2 of the License, or
+     8 				;	(at your option) any later version.
+     9 				;
+    10 				;	This program is distributed in the hope that it will be useful,
+    11 				;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+    12 				;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    13 				;	GNU General Public License for more details.
+    14 				;
+    15 				;	You should have received a copy of the GNU General Public License
+    16 				;	along with this program; if not, write to the Free Software
+    17 				;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+    18
+    19 				.ifndef f_CIO_INC
+    20 				.def f_CIO_INC
+    21
+    22 				CIOStatBreak		= $80	;break key abort
+    23 				CIOStatIOCBInUse	= $81	;IOCB in use
+    24 				CIOStatUnkDevice	= $82	;unknown device
+    25 				CIOStatWriteOnly	= $83	;opened for write only
+    26 				CIOStatInvalidCmd	= $84	;invalid command
+    27 				CIOStatNotOpen		= $85	;device or file not open
+    28 				CIOStatInvalidIOCB	= $86	;invalid IOCB number
+    29 				CIOStatReadOnly		= $87	;opened for read only
+    30 				CIOStatEndOfFile	= $88	;end of file reached
+    31 				CIOStatTruncRecord	= $89	;record truncated
+    32 				CIOStatTimeout		= $8A	;device timeout
+    33 				CIOStatNAK			= $8B	;device NAK
+    34 				CIOStatSerFrameErr	= $8C	;serial bus framing error
+    35 				CIOStatCursorRange	= $8D	;cursor out of range
+    36 				CIOStatSerOverrun	= $8E	;serial frame overrun error
+    37 				CIOStatSerChecksum	= $8F	;serial checksum error
+    38 				CIOStatDeviceDone	= $90	;device done error
+    39 				CIOStatBadScrnMode	= $91	;bad screen mode
+    40 				CIOStatNotSupported	= $92	;function not supported by handler
+    41 				CIOStatOutOfMemory	= $93	;not enough memory
+    42 				CIOStatDriveNumErr	= $A0	;disk drive # error
+    43 				CIOStatTooManyFiles	= $A1	;too many open disk files
+    44 				CIOStatDiskFull		= $A2	;disk full
+    45 				CIOStatFatalDiskIO	= $A3	;fatal disk I/O error
+    46 				CIOStatFileNumDiff	= $A4	;internal file # mismatch
+    47 				CIOStatFileNameErr	= $A5	;filename error
+    48 				CIOStatPointDLen	= $A6	;point data length error
+    49 				CIOStatFileLocked	= $A7	;file locked
+    50 				CIOStatInvDiskCmd	= $A8	;invalid command for disk
+    51 				CIOStatDirFull		= $A9	;directory full (64 files)
+    52 				CIOStatFileNotFound	= $AA	;file not found
+    53 				CIOStatInvPoint		= $AB	;invalid point
+    54
+    55 				CIOCmdOpen			= $03
+    56 				CIOCmdGetRecord		= $05
+    57 				CIOCmdGetChars		= $07
+    58 				CIOCmdPutRecord		= $09
+    59 									; $0A	;PUT CHARS alias (required by K-Razy Shoot Out)
+    60 				CIOCmdPutChars		= $0B
+    61 				CIOCmdClose			= $0C
+    62 				CIOCmdGetStatus		= $0D
+    63 				CIOCmdSpecial		= $0E	;$0E and up is escape
+    64
+    65 				.endif
+     3 						
+     4 				.macro _ASSERT_YP
+     5 						php
+     6 						cpy		#0
+     7 						bpl		ok
+     8 						sty		d1
+     9 						jsr		_log_imprintf
+    10 						dta		:1,$9B,0
+    11 				ok:
+    12 						plp
+    13 				.endm
+    14
+    15 				.macro _ASSERT_Y
+    16 						php
+    17 						cpy		:1
+    18 						beq		ok
+    19 						sty		d1
+    20 						pha
+    21 						txa
+    22 						pha
+    23 						jsr		_log_imprintf
+    24 						dta		:2,$9B,0
+    25 						pla
+    26 						tax
+    27 						pla
+    28 				ok:
+    29 						plp
+    30 				.endm
+    31
+    32 				.macro _ASSERT_A
+    33 						php
+    34 						cmp		:1
+    35 						beq		ok
+    36 						sta		d1
+    37 						pha
+    38 						txa
+    39 						pha
+    40 						jsr		_log_imprintf
+    41 						dta		:2,$9B,0
+    42 						pla
+    43 						tax
+    44 						pla
+    45 				ok:
+    46 						plp
+    47 				.endm
+    48
+    49 				.macro _ASSERT_YA16
+    50 						php
+    51 						cpy		#>:1
+    52 						bne		fail
+    53 						cmp		#<:1
+    54 						beq		ok
+    55 				fail:
+    56 						sty		d1
+    57 						sta		d2
+    58 						txa
+    59 						pha
+    60 						jsr		_log_imprintf
+    61 						dta		:2,$9B,0
+    62 						pla
+    63 						tax
+    64 				ok:
+    65 						plp
+    66 				.endm
+    67
+    68 				.macro _ASSERT_P
+    69 						bpl		ok
+    70 						sty		d1
+    71 						jsr		_log_imprintf
+    72 						dta		:1,$9B,0
+    73 				ok:
+    74 				.endm
+    75
+    76 				.macro _ASSERT_N
+    77 						bmi		ok
+    78 						sty		d1
+    79 						jsr		_log_imprintf
+    80 						dta		:1,$9B,0
+    81 				ok:
+    82 				.endm
+    83
+    84 2A8F					_TEST_ENTRY
+Macro: _TEST_ENTRY [Source: library.s]
+Source: cio.inc
+    24 2A8F					org		$8000
+    28 8000-80FC> A9 FF 85 0E + 		mwa		#$7fff appmhi
+    30 8008 A9 68 85 C1 A9 22 + 		mwa		#_log_display _log_curln
+    31 8010 A9 00 85 C0				mva		#0 _log_curx
+    34 8014 A9 00				lda		#0
+    35 8016 8D 0E D4				sta		nmien
+    36 8019 8D 00 D4				sta		dmactl
+    39 801C A9 80 85 C6				mva		#LOGF_PAGING _log_flags
+    42 8020 A9 7D				lda		#$7d
+    43 8022 20 DC 26				jsr		_log_putchar
+    46 8025 78					sei
+    47 8026 AD 08 02 8D 26 26 + 		mwa		vkeybd _log_keyboardirq.chainaddr
+    48 8032 A9 1D 8D 08 02 A9 + 		mwa		#_log_keyboardirq vkeybd
+    49 803C 58					cli
+    51 803D AD 30 02 8D 0B 26 + 		mwa		sdlstl _log_dlsave
+    54 8049 A9 07				lda		#7
+    55 804B A0 4A				ldy		#<_log_deferred_vbi
+    56 804D A2 26				ldx		#>_log_deferred_vbi
+    57 804F 20 5C E4				jsr		setvbv
+    60 8052 A9 00 8D 30 02 A9 + 		mwa		#_log_dlist sdlstl
+    61 805C A9 40 8D 0E D4			mva		#$40 nmien
+    64 8061 A2 40				ldx		#$40
+    65 8063 A9 0C 9D 42 03			mva		#CIOCmdClose iccmd,x
+    66 8068 20 56 E4				jsr		ciov
+    67 806B A9 03 9D 42 03			mva		#CIOCmdOpen iccmd,x
+    68 8070 A9 FA 9D 44 03 A9 + 		mwa		#kbdname icbal,x
+    69 807A A9 0C 9D 4A 03			mva		#$0c icax1,x
+    70 807F A9 00 9D 4B 03			mva		#0 icax2,x
+    71 8084 20 56 E4				jsr		ciov
+    74 8087 A2 00				ldx		#0
+    75 8089 A9 0C 9D 42 03			mva		#CIOCmdClose iccmd,x
+    76 808E 20 56 E4				jsr		ciov
+    77 8091 A9 03 9D 42 03			mva		#CIOCmdOpen iccmd,x
+    78 8096 A9 F7 9D 44 03 A9 + 		mwa		#dispname icbal,x
+    79 80A0 A9 04 9D 4A 03			mva		#$04 icax1,x
+    80 80A5 20 56 E4				jsr		ciov
+    83 80A8 A5 14				lda		rtclok+2
+    84 80AA C5 14 F0 FC				cmp:req	rtclok+2
+    88 80AE 20 13 2C				jsr		main
+    90 80B1 20 80 27				jsr		_log_imprint
+    91 80B4 54 65 73 74 20 63 + 		dta		'Test completed.',$9b,0
+    94 80C5 20 20 29				jsr		_waitKey
+    97 80C8 78					sei
+    98 80C9 AD 26 26 8D 08 02 + 		mwa		_log_keyboardirq.chainaddr vkeybd
+    99 80D5 58					cli
+   102 80D6 A9 07				lda		#7
+   103 80D8 A0 62				ldy		#<xitvbv
+   104 80DA A2 E4				ldx		#>xitvbv
+   105 80DC 20 5C E4				jsr		setvbv
+   108 80DF 78					sei
+   109 80E0 AD 0C 26				lda		_log_dlsave+1
+   110 80E3 AD 0B 26 8D 02 D4 + 		mwa		_log_dlsave dlistl
+   111 80EF 58					cli
+   113 80F0 A5 14				lda		rtclok+2
+   114 80F2 C5 14 D0 FC				cmp:rne	rtclok+2
+   116 80F6 60					rts
+   121 80F7			dispname:
+   122 80F7 45 3A 9B				dta		'E:',$9B
+   124 80FA			kbdname:
+   125 80FA 4B 3A 9B				dta		'K:',$9B
+     3 02E0-02E1> 00 80				run		__init
+Source: tcio.s
+    85 						
+    86 80FD					org		$80
+    87 						opt		o-
+    88 						
+    89 0080					org		$2c00
+    90 2C00			fnbuf:
+    91
+    92 2C00					org		$2c10
+    93 2C10			devid	dta		0
+    94 2C11			tstatus	dta		0
+    95 2C12			ioindex	dta		0
+    96
+    97 						opt		o+
+    98 						
+    99 = 0030			IOCB_OFFSET = $30
+   100
+   101 				;==========================================================================
+   102 2C13			.proc main
+   103 						;close IOCB #3, to reset to standard state
+   104 2C13-3535> A2 30				ldx		#IOCB_OFFSET
+   105 2C15 A9 0C 9D 42 03			mva		#CIOCmdClose iccmd,x
+   106 2C1A 20 56 E4				jsr		ciov
+   107 						
+   108 						;close an already closed IOCB
+   109 2C1D A2 30				ldx		#IOCB_OFFSET
+   110 2C1F A9 0C 9D 42 03			mva		#CIOCmdClose iccmd,x
+   111 2C24 20 56 E4				jsr		ciov
+   112 						
+   113 2C27					_ASSERT_YP 'Reclose status bad: Y=$%x'
+Macro: _ASSERT_YP [Source: tcio.s]
+     1 2C27 08					php
+     2 2C28 C0 00				cpy		#0
+     3 2C2A 10 20				bpl		ok
+     4 2C2C 84 B1				sty		d1
+     5 2C2E 20 A7 27				jsr		_log_imprintf
+     6 2C31 52 65 63 6C 6F 73 + 		dta		'Reclose status bad: Y=$%x',$9B,0
+     7 2C4C			ok:
+     8 2C4C 28					plp
+Source: tcio.s
+   114 2C4D					_ASSERT_P 'Reclose failed: N=1'
+Macro: _ASSERT_P [Source: tcio.s]
+     1 2C4D 10 1A				bpl		ok
+     2 2C4F 84 B1				sty		d1
+     3 2C51 20 A7 27				jsr		_log_imprintf
+     4 2C54 52 65 63 6C 6F 73 + 		dta		'Reclose failed: N=1',$9B,0
+     5 2C69			ok:
+Source: tcio.s
+   115
+   116 						;try to find a nonexistent device
+   117 						;there are only 12 slots, so we are guaranteed that a letter will
+   118 						;be free
+   119 2C69 A0 41				ldy		#'A'
+   120 2C6B			search_loop:
+   121 2C6B 98					tya
+   122 2C6C 20 FE 34				jsr		FindDevice
+   123 2C6F D0 03				bne		unused_found
+   124 2C71 C8					iny
+   125 2C72 D0 F7				bne		search_loop
+   126 2C74			unused_found:
+   127
+   128 						;set up filename
+   129 2C74 8C 00 2C				sty		fnbuf
+   130 2C77 A2 0F				ldx		#$0f
+   131 2C79 A9 9B				lda		#$9B
+   132 2C7B 9D 00 2C CA D0 FA			sta:rne	fnbuf,x-
+   133 						
+   134 						;try to open a nonexistent device
+   135 2C81 A9 04				lda		#4
+   136 2C83 8D 7A 03				sta		icax1+IOCB_OFFSET
+   137 2C86 A9 00				lda		#0
+   138 2C88 8D 7B 03				sta		icax2+IOCB_OFFSET
+   139 2C8B 20 D9 34				jsr		OpenIO
+   140 						
+   141 2C8E					_ASSERT_Y #CIOStatUnkDevice, 'Bogus open didn''''t fail: Y=$%x'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 2C8E 08					php
+     2 2C8F C0 82				cpy		#CIOStatUnkDevice
+     3 2C91 F0 2A				beq		ok
+     4 2C93 84 B1				sty		d1
+     5 2C95 48					pha
+     6 2C96 8A					txa
+     7 2C97 48					pha
+     8 2C98 20 A7 27				jsr		_log_imprintf
+     9 2C9B 42 6F 67 75 73 20 + 		dta		'Bogus open didn''t fail: Y=$%x',$9B,0
+    10 2CBA 68					pla
+    11 2CBB AA					tax
+    12 2CBC 68					pla
+    13 2CBD			ok:
+    14 2CBD 28					plp
+Source: tcio.s
+   142 2CBE					_ASSERT_N 'Bogus open didn''''t fail: N=0'
+Macro: _ASSERT_N [Source: tcio.s]
+     1 2CBE 30 22				bmi		ok
+     2 2CC0 84 B1				sty		d1
+     3 2CC2 20 A7 27				jsr		_log_imprintf
+     4 2CC5 42 6F 67 75 73 20 + 		dta		'Bogus open didn''t fail: N=0',$9B,0
+     5 2CE2			ok:
+Source: tcio.s
+   143 						
+   144 						;register device
+   145 2CE2 A9 00				lda		#0
+   146 2CE4 20 FE 34				jsr		FindDevice
+   147 2CE7 F0 2A				beq		found_space
+   148 2CE9 20 80 27				jsr		_log_imprint
+   149 2CEC 48 41 54 41 42 53 + 		dta		'HATABS full - skipping device tests.',$9B,0
+   150 2D12 60					rts		
+   151 2D13			found_space:
+   152 2D13 8E 10 2C				stx		devid
+   153 2D16 AD 00 2C				lda		fnbuf
+   154 2D19 9D 1A 03				sta		hatabs,x
+   155 2D1C A9 0B 9D 1B 03 A9 + 		mwa		#TestDevHandlerTable hatabs+1,x
+   156 						
+   157 						;try to open the device again
+   158 2D26 A9 01 8D 11 2C			mva		#1 tstatus
+   159 2D2B 20 D9 34				jsr		OpenIO
+   160 						
+   161 2D2E					_ASSERT_YP 'Test device open failed: Y=$%x'
+Macro: _ASSERT_YP [Source: tcio.s]
+     1 2D2E 08					php
+     2 2D2F C0 00				cpy		#0
+     3 2D31 10 25				bpl		ok
+     4 2D33 84 B1				sty		d1
+     5 2D35 20 A7 27				jsr		_log_imprintf
+     6 2D38 54 65 73 74 20 64 + 		dta		'Test device open failed: Y=$%x',$9B,0
+     7 2D58			ok:
+     8 2D58 28					plp
+Source: tcio.s
+   162 2D59					_ASSERT_P 'Test device open failed: N=1'
+Macro: _ASSERT_P [Source: tcio.s]
+     1 2D59 10 23				bpl		ok
+     2 2D5B 84 B1				sty		d1
+     3 2D5D 20 A7 27				jsr		_log_imprintf
+     4 2D60 54 65 73 74 20 64 + 		dta		'Test device open failed: N=1',$9B,0
+     5 2D7E			ok:
+Source: tcio.s
+   163 						
+   164 						;check that device ID is correct
+   165 2D7E AC 10 2C				ldy		devid
+   166 2D81 84 B2				sty		d2
+   167 2D83					_ASSERT_Y ichid+$30, 'IOCB id didn''''t match: $%x!=$%x'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 2D83 08					php
+     2 2D84 CC 70 03				cpy		ichid+$30
+     3 2D87 F0 2B				beq		ok
+     4 2D89 84 B1				sty		d1
+     5 2D8B 48					pha
+     6 2D8C 8A					txa
+     7 2D8D 48					pha
+     8 2D8E 20 A7 27				jsr		_log_imprintf
+     9 2D91 49 4F 43 42 20 69 + 		dta		'IOCB id didn''t match: $%x!=$%x',$9B,0
+    10 2DB1 68					pla
+    11 2DB2 AA					tax
+    12 2DB3 68					pla
+    13 2DB4			ok:
+    14 2DB4 28					plp
+Source: tcio.s
+   168 						
+   169 						;check that unit #1 was chosen
+   170 2DB5 AC 71 03				ldy		icdno+$30
+   171 2DB8					_ASSERT_Y #1, 'IOCB device no not 1 for implied: %x'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 2DB8 08					php
+     2 2DB9 C0 01				cpy		#1
+     3 2DBB F0 31				beq		ok
+     4 2DBD 84 B1				sty		d1
+     5 2DBF 48					pha
+     6 2DC0 8A					txa
+     7 2DC1 48					pha
+     8 2DC2 20 A7 27				jsr		_log_imprintf
+     9 2DC5 49 4F 43 42 20 64 + 		dta		'IOCB device no not 1 for implied: %x',$9B,0
+    10 2DEB 68					pla
+    11 2DEC AA					tax
+    12 2DED 68					pla
+    13 2DEE			ok:
+    14 2DEE 28					plp
+Source: tcio.s
+   172 						
+   173 						;try to open again, and verify that we get an IOCB in use error
+   174 2DEF 20 D9 34				jsr		OpenIO
+   175 						
+   176 2DF2					_ASSERT_Y #CIOStatIOCBInUse, 'Open reuse didn''''t fail: Y=%x'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 2DF2 08					php
+     2 2DF3 C0 81				cpy		#CIOStatIOCBInUse
+     3 2DF5 F0 29				beq		ok
+     4 2DF7 84 B1				sty		d1
+     5 2DF9 48					pha
+     6 2DFA 8A					txa
+     7 2DFB 48					pha
+     8 2DFC 20 A7 27				jsr		_log_imprintf
+     9 2DFF 4F 70 65 6E 20 72 + 		dta		'Open reuse didn''t fail: Y=%x',$9B,0
+    10 2E1D 68					pla
+    11 2E1E AA					tax
+    12 2E1F 68					pla
+    13 2E20			ok:
+    14 2E20 28					plp
+Source: tcio.s
+   177 2E21					_ASSERT_N 'Open reuse didn''''t fail: N=0'
+Macro: _ASSERT_N [Source: tcio.s]
+     1 2E21 30 22				bmi		ok
+     2 2E23 84 B1				sty		d1
+     3 2E25 20 A7 27				jsr		_log_imprintf
+     4 2E28 4F 70 65 6E 20 72 + 		dta		'Open reuse didn''t fail: N=0',$9B,0
+     5 2E45			ok:
+Source: tcio.s
+   178
+   179 						;close the IOCB
+   180 2E45 20 D4 34				jsr		CloseIO
+   181 						
+   182 						;check that the handler ID is now $FF
+   183 2E48 AC 70 03				ldy		ichid+$30
+   184 2E4B					_ASSERT_Y #$ff, 'IOCB handler was not $FF after close: %x'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 2E4B 08					php
+     2 2E4C C0 FF				cpy		#$ff
+     3 2E4E F0 35				beq		ok
+     4 2E50 84 B1				sty		d1
+     5 2E52 48					pha
+     6 2E53 8A					txa
+     7 2E54 48					pha
+     8 2E55 20 A7 27				jsr		_log_imprintf
+     9 2E58 49 4F 43 42 20 68 + 		dta		'IOCB handler was not $FF after close: %x',$9B,0
+    10 2E82 68					pla
+    11 2E83 AA					tax
+    12 2E84 68					pla
+    13 2E85			ok:
+    14 2E85 28					plp
+Source: tcio.s
+   185 						
+   186 						;open x2: and check that unit is #2
+   187 2E86 A9 32				lda		#'2'
+   188 2E88 8D 01 2C				sta		fnbuf+1
+   189 2E8B 20 D9 34				jsr		OpenIO
+   190 						
+   191 2E8E					_ASSERT_YP 'T2: open failed: Y=%x'
+Macro: _ASSERT_YP [Source: tcio.s]
+     1 2E8E 08					php
+     2 2E8F C0 00				cpy		#0
+     3 2E91 10 1C				bpl		ok
+     4 2E93 84 B1				sty		d1
+     5 2E95 20 A7 27				jsr		_log_imprintf
+     6 2E98 54 32 3A 20 6F 70 + 		dta		'T2: open failed: Y=%x',$9B,0
+     7 2EAF			ok:
+     8 2EAF 28					plp
+Source: tcio.s
+   192 2EB0 AC 71 03				ldy		icdno+$30
+   193 2EB3					_ASSERT_Y #2, 'x2: open produced wrong unit: %x'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 2EB3 08					php
+     2 2EB4 C0 02				cpy		#2
+     3 2EB6 F0 2D				beq		ok
+     4 2EB8 84 B1				sty		d1
+     5 2EBA 48					pha
+     6 2EBB 8A					txa
+     7 2EBC 48					pha
+     8 2EBD 20 A7 27				jsr		_log_imprintf
+     9 2EC0 78 32 3A 20 6F 70 + 		dta		'x2: open produced wrong unit: %x',$9B,0
+    10 2EE2 68					pla
+    11 2EE3 AA					tax
+    12 2EE4 68					pla
+    13 2EE5			ok:
+    14 2EE5 28					plp
+Source: tcio.s
+   194 						
+   195 2EE6 20 D4 34				jsr		CloseIO
+   196 						
+   197 						;check that x0: is not valid
+   198 						;
+   199 						;Note that we don't test x9:, because while it's invalid according
+   200 						;to the OS manual, the standard OS allows it.
+   201 						;
+   202 2EE9 A9 30				lda		#'0'
+   203 2EEB 8D 01 2C				sta		fnbuf+1
+   204 2EEE 20 D9 34				jsr		OpenIO
+   205 2EF1					_ASSERT_YP 'x0: open failed: Y=%x'
+Macro: _ASSERT_YP [Source: tcio.s]
+     1 2EF1 08					php
+     2 2EF2 C0 00				cpy		#0
+     3 2EF4 10 1C				bpl		ok
+     4 2EF6 84 B1				sty		d1
+     5 2EF8 20 A7 27				jsr		_log_imprintf
+     6 2EFB 78 30 3A 20 6F 70 + 		dta		'x0: open failed: Y=%x',$9B,0
+     7 2F12			ok:
+     8 2F12 28					plp
+Source: tcio.s
+   206 2F13 AC 71 03				ldy		icdno+$30
+   207 2F16					_ASSERT_Y #1, 'x0: open produced wrong unit: %x'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 2F16 08					php
+     2 2F17 C0 01				cpy		#1
+     3 2F19 F0 2D				beq		ok
+     4 2F1B 84 B1				sty		d1
+     5 2F1D 48					pha
+     6 2F1E 8A					txa
+     7 2F1F 48					pha
+     8 2F20 20 A7 27				jsr		_log_imprintf
+     9 2F23 78 30 3A 20 6F 70 + 		dta		'x0: open produced wrong unit: %x',$9B,0
+    10 2F45 68					pla
+    11 2F46 AA					tax
+    12 2F47 68					pla
+    13 2F48			ok:
+    14 2F48 28					plp
+Source: tcio.s
+   208 2F49 20 D4 34				jsr		CloseIO
+   209
+   210 						;check that x20: opens x2:
+   211 2F4C A9 32				lda		#'2'
+   212 2F4E 8D 01 2C				sta		fnbuf+1
+   213 2F51 A9 30				lda		#'0'
+   214 2F53 8D 02 2C				sta		fnbuf+2
+   215 2F56 20 D9 34				jsr		OpenIO
+   216 2F59					_ASSERT_YP 'x20: open failed: Y=%x'
+Macro: _ASSERT_YP [Source: tcio.s]
+     1 2F59 08					php
+     2 2F5A C0 00				cpy		#0
+     3 2F5C 10 1D				bpl		ok
+     4 2F5E 84 B1				sty		d1
+     5 2F60 20 A7 27				jsr		_log_imprintf
+     6 2F63 78 32 30 3A 20 6F + 		dta		'x20: open failed: Y=%x',$9B,0
+     7 2F7B			ok:
+     8 2F7B 28					plp
+Source: tcio.s
+   217 2F7C AC 71 03				ldy		icdno+$30
+   218 2F7F					_ASSERT_Y #2, 'x20: open produced wrong unit: %x'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 2F7F 08					php
+     2 2F80 C0 02				cpy		#2
+     3 2F82 F0 2E				beq		ok
+     4 2F84 84 B1				sty		d1
+     5 2F86 48					pha
+     6 2F87 8A					txa
+     7 2F88 48					pha
+     8 2F89 20 A7 27				jsr		_log_imprintf
+     9 2F8C 78 32 30 3A 20 6F + 		dta		'x20: open produced wrong unit: %x',$9B,0
+    10 2FAF 68					pla
+    11 2FB0 AA					tax
+    12 2FB1 68					pla
+    13 2FB2			ok:
+    14 2FB2 28					plp
+Source: tcio.s
+   219 2FB3 20 D4 34				jsr		CloseIO
+   220 						
+   221 						;--------------------------------
+   222 						;permissions tests
+   223 						;--------------------------------
+   224 						
+   225 						;open x1: again with permission 0 - should succeed
+   226 2FB6 A9 31 8D 01 2C			mva		#'1' fnbuf+1
+   227 2FBB A9 00 8D 7A 03			mva		#0 icax1+IOCB_OFFSET
+   228 2FC0 20 D9 34				jsr		OpenIO
+   229 2FC3					_ASSERT_YP 'x1: reopen failed'
+Macro: _ASSERT_YP [Source: tcio.s]
+     1 2FC3 08					php
+     2 2FC4 C0 00				cpy		#0
+     3 2FC6 10 18				bpl		ok
+     4 2FC8 84 B1				sty		d1
+     5 2FCA 20 A7 27				jsr		_log_imprintf
+     6 2FCD 78 31 3A 20 72 65 + 		dta		'x1: reopen failed',$9B,0
+     7 2FE0			ok:
+     8 2FE0 28					plp
+Source: tcio.s
+   230 						
+   231 						;attempt a GET CHAR -- this should fail with write-only
+   232 2FE1 A9 00				lda		#0
+   233 2FE3 A8					tay
+   234 2FE4 20 F0 34				jsr		SetIOLength
+   235 2FE7 A9 07				lda		#CIOCmdGetChars
+   236 2FE9 20 E8 34				jsr		DoIO
+   237 2FEC					_ASSERT_Y	#CIOStatWriteOnly, 'Get from perm 0 test failed: Y=%x'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 2FEC 08					php
+     2 2FED C0 83				cpy		#CIOStatWriteOnly
+     3 2FEF F0 2E				beq		ok
+     4 2FF1 84 B1				sty		d1
+     5 2FF3 48					pha
+     6 2FF4 8A					txa
+     7 2FF5 48					pha
+     8 2FF6 20 A7 27				jsr		_log_imprintf
+     9 2FF9 47 65 74 20 66 72 + 		dta		'Get from perm 0 test failed: Y=%x',$9B,0
+    10 301C 68					pla
+    11 301D AA					tax
+    12 301E 68					pla
+    13 301F			ok:
+    14 301F 28					plp
+Source: tcio.s
+   238 						
+   239 						;attempt a PUT CHAR -- this should fail with read-only
+   240 3020 A9 00				lda		#0
+   241 3022 A8					tay
+   242 3023 20 F0 34				jsr		SetIOLength
+   243 3026 A9 0B				lda		#CIOCmdPutChars
+   244 3028 20 E8 34				jsr		DoIO
+   245 302B					_ASSERT_Y	#CIOStatReadOnly, 'Put to perm 0 test failed: Y=%x'		
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 302B 08					php
+     2 302C C0 87				cpy		#CIOStatReadOnly
+     3 302E F0 2C				beq		ok
+     4 3030 84 B1				sty		d1
+     5 3032 48					pha
+     6 3033 8A					txa
+     7 3034 48					pha
+     8 3035 20 A7 27				jsr		_log_imprintf
+     9 3038 50 75 74 20 74 6F + 		dta		'Put to perm 0 test failed: Y=%x',$9B,0
+    10 3059 68					pla
+    11 305A AA					tax
+    12 305B 68					pla
+    13 305C			ok:
+    14 305C 28					plp
+Source: tcio.s
+   246 						
+   247 						;--------------------------------
+   248 						;get byte tests
+   249 						;--------------------------------
+   250
+   251 						;close IOCB #3
+   252 305D 20 D4 34				jsr		CloseIO
+   253 						
+   254 						;reopen as read/write
+   255 3060 A9 0C 8D 7A 03			mva		#$0c icax1+IOCB_OFFSET
+   256 3065 20 D9 34				jsr		OpenIO
+   257 3068					_ASSERT_YP 'x1: reopen#2 failed'
+Macro: _ASSERT_YP [Source: tcio.s]
+     1 3068 08					php
+     2 3069 C0 00				cpy		#0
+     3 306B 10 1A				bpl		ok
+     4 306D 84 B1				sty		d1
+     5 306F 20 A7 27				jsr		_log_imprintf
+     6 3072 78 31 3A 20 72 65 + 		dta		'x1: reopen#2 failed',$9B,0
+     7 3087			ok:
+     8 3087 28					plp
+Source: tcio.s
+   258 						
+   259 						;init get buffer
+   260 3088 A2 00				ldx		#0
+   261 308A			fill_loop:
+   262 308A 8A					txa
+   263 308B 9D 00 38				sta		iobuffer1,x
+   264 308E E8					inx
+   265 308F D0 F9				bne		fill_loop
+   266 						
+   267 						;start mid-way in the buffer
+   268 3091 A9 5A				lda		#$5a
+   269 3093 8D 12 2C				sta		ioindex
+   270 						
+   271 						;do a one-byte fetch
+   272 3096 A9 33				lda		#$33
+   273 3098 8D 00 3A				sta		iobuffer2
+   274 309B A9 00				lda		#0
+   275 309D A8					tay
+   276 309E 20 F0 34				jsr		SetIOLength
+   277 30A1 A0 3A				ldy		#>iobuffer2
+   278 30A3 A9 00				lda		#<iobuffer2
+   279 30A5 20 F7 34				jsr		SetIOAddress
+   280 30A8 A9 07				lda		#CIOCmdGetChars
+   281 30AA 20 E8 34				jsr		DoIO
+   282 30AD					_ASSERT_Y	#$03, 'Single-byte get failed: Y=%x != $03'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 30AD 08					php
+     2 30AE C0 03				cpy		#$03
+     3 30B0 F0 30				beq		ok
+     4 30B2 84 B1				sty		d1
+     5 30B4 48					pha
+     6 30B5 8A					txa
+     7 30B6 48					pha
+     8 30B7 20 A7 27				jsr		_log_imprintf
+     9 30BA 53 69 6E 67 6C 65 + 		dta		'Single-byte get failed: Y=%x != $03',$9B,0
+    10 30DF 68					pla
+    11 30E0 AA					tax
+    12 30E1 68					pla
+    13 30E2			ok:
+    14 30E2 28					plp
+Source: tcio.s
+   283 30E3					_ASSERT_A	#$5a, 'Single-byte get failed: A=%x != $5A'
+Macro: _ASSERT_A [Source: tcio.s]
+     1 30E3 08					php
+     2 30E4 C9 5A				cmp		#$5a
+     3 30E6 F0 30				beq		ok
+     4 30E8 85 B1				sta		d1
+     5 30EA 48					pha
+     6 30EB 8A					txa
+     7 30EC 48					pha
+     8 30ED 20 A7 27				jsr		_log_imprintf
+     9 30F0 53 69 6E 67 6C 65 + 		dta		'Single-byte get failed: A=%x != $5A',$9B,0
+    10 3115 68					pla
+    11 3116 AA					tax
+    12 3117 68					pla
+    13 3118			ok:
+    14 3118 28					plp
+Source: tcio.s
+   284 						
+   285 3119 AD 12 2C				lda		ioindex
+   286 311C					_ASSERT_A	#$5b, 'Single-byte get failed: bad call counter (%x)'
+Macro: _ASSERT_A [Source: tcio.s]
+     1 311C 08					php
+     2 311D C9 5B				cmp		#$5b
+     3 311F F0 3A				beq		ok
+     4 3121 85 B1				sta		d1
+     5 3123 48					pha
+     6 3124 8A					txa
+     7 3125 48					pha
+     8 3126 20 A7 27				jsr		_log_imprintf
+     9 3129 53 69 6E 67 6C 65 + 		dta		'Single-byte get failed: bad call counter (%x)',$9B,0
+    10 3158 68					pla
+    11 3159 AA					tax
+    12 315A 68					pla
+    13 315B			ok:
+    14 315B 28					plp
+Source: tcio.s
+   287 						
+   288 315C AD 00 3A				lda		iobuffer2
+   289 315F					_ASSERT_A	#$33, 'Single-byte get failed: corrupted buffer (%x)'
+Macro: _ASSERT_A [Source: tcio.s]
+     1 315F 08					php
+     2 3160 C9 33				cmp		#$33
+     3 3162 F0 3A				beq		ok
+     4 3164 85 B1				sta		d1
+     5 3166 48					pha
+     6 3167 8A					txa
+     7 3168 48					pha
+     8 3169 20 A7 27				jsr		_log_imprintf
+     9 316C 53 69 6E 67 6C 65 + 		dta		'Single-byte get failed: corrupted buffer (%x)',$9B,0
+    10 319B 68					pla
+    11 319C AA					tax
+    12 319D 68					pla
+    13 319E			ok:
+    14 319E 28					plp
+Source: tcio.s
+   290 						
+   291 						;do a multi-byte, multi-page fetch
+   292 319F A9 40				lda		#<$140
+   293 31A1 A0 01				ldy		#>$140
+   294 31A3 20 F0 34				jsr		SetIOLength
+   295 31A6 A0 7A				ldy		#>iobuffer2+$40
+   296 31A8 A9 40				lda		#<iobuffer2+$40
+   297 31AA 20 F7 34				jsr		SetIOAddress
+   298 31AD A9 07				lda		#CIOCmdGetChars
+   299 31AF 20 E8 34				jsr		DoIO
+   300 31B2					_ASSERT_Y	#$03, 'Multi-byte get failed: Y=%x != $03'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 31B2 08					php
+     2 31B3 C0 03				cpy		#$03
+     3 31B5 F0 2F				beq		ok
+     4 31B7 84 B1				sty		d1
+     5 31B9 48					pha
+     6 31BA 8A					txa
+     7 31BB 48					pha
+     8 31BC 20 A7 27				jsr		_log_imprintf
+     9 31BF 4D 75 6C 74 69 2D + 		dta		'Multi-byte get failed: Y=%x != $03',$9B,0
+    10 31E3 68					pla
+    11 31E4 AA					tax
+    12 31E5 68					pla
+    13 31E6			ok:
+    14 31E6 28					plp
+Source: tcio.s
+   301 31E7 AD 12 2C				lda		ioindex
+   302 31EA					_ASSERT_A	#$9b, 'Multi-byte get failed: bad call counter (%x)'
+Macro: _ASSERT_A [Source: tcio.s]
+     1 31EA 08					php
+     2 31EB C9 9B				cmp		#$9b
+     3 31ED F0 39				beq		ok
+     4 31EF 85 B1				sta		d1
+     5 31F1 48					pha
+     6 31F2 8A					txa
+     7 31F3 48					pha
+     8 31F4 20 A7 27				jsr		_log_imprintf
+     9 31F7 4D 75 6C 74 69 2D + 		dta		'Multi-byte get failed: bad call counter (%x)',$9B,0
+    10 3225 68					pla
+    11 3226 AA					tax
+    12 3227 68					pla
+    13 3228			ok:
+    14 3228 28					plp
+Source: tcio.s
+   303 3229 AD 78 03				lda		icbll+IOCB_OFFSET
+   304 322C AC 79 03				ldy		icblh+IOCB_OFFSET
+   305 322F C9 40				cmp		#<$140
+   306 3231 D0 04				bne		len_bad
+   307 3233 C0 01				cpy		#>$140
+   308 3235 F0 38				beq		len_ok
+   309 3237			len_bad:
+   310 3237 85 B2				sta		d2
+   311 3239 84 B1				sty		d1
+   312 323B 20 A7 27				jsr		_log_imprintf
+   313 323E 4D 75 6C 74 69 2D + 		dta		'Multi-byte get failed: bad result length (%x%x)',$9B,0
+   314 326F			len_ok:
+   315
+   316 						;--------------------------------
+   317 						;get record tests
+   318 						;--------------------------------
+   319
+   320 						;copy string to src buffer
+   321 326F A2 05				ldx		#5
+   322 3271 BD CE 34 9D 00 38 + 		mva:rpl	message_1,x iobuffer1,x-
+   323 327A A9 00				lda		#0
+   324 327C 8D 12 2C				sta		ioindex
+   325 						
+   326 327F A9 AA				lda		#$aa
+   327 3281 A2 07				ldx		#7
+   328 3283 9D 00 3A CA 10 FA			sta:rpl	iobuffer2,x-
+   329 						
+   330 						;issue a get record with plenty of buffer and check that it stops
+   331 						;at EOL
+   332 3289 A0 3A				ldy		#>iobuffer2
+   333 328B A9 00				lda		#<iobuffer2
+   334 328D 20 F7 34				jsr		SetIOAddress
+   335 3290 A0 00				ldy		#$00
+   336 3292 A9 10				lda		#$10
+   337 3294 20 F0 34				jsr		SetIOLength
+   338 3297 A9 05				lda		#CIOCmdGetRecord
+   339 3299 20 E8 34				jsr		DoIO
+   340 329C					_ASSERT_Y	#$03, 'Get record #1 failed: Y=%x != $03'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 329C 08					php
+     2 329D C0 03				cpy		#$03
+     3 329F F0 2E				beq		ok
+     4 32A1 84 B1				sty		d1
+     5 32A3 48					pha
+     6 32A4 8A					txa
+     7 32A5 48					pha
+     8 32A6 20 A7 27				jsr		_log_imprintf
+     9 32A9 47 65 74 20 72 65 + 		dta		'Get record #1 failed: Y=%x != $03',$9B,0
+    10 32CC 68					pla
+    11 32CD AA					tax
+    12 32CE 68					pla
+    13 32CF			ok:
+    14 32CF 28					plp
+Source: tcio.s
+   341
+   342 32D0 AC 79 03				ldy		icblh+IOCB_OFFSET
+   343 32D3 AD 78 03				lda		icbll+IOCB_OFFSET
+   344 32D6					_ASSERT_YA16	$0005, 'Get record #1 len failed: %x%x'
+Macro: _ASSERT_YA16 [Source: tcio.s]
+     1 32D6 08					php
+     2 32D7 C0 00				cpy		#>$0005
+     3 32D9 D0 04				bne		fail
+     4 32DB C9 05				cmp		#<$0005
+     5 32DD F0 2B				beq		ok
+     6 32DF			fail:
+     7 32DF 84 B1				sty		d1
+     8 32E1 85 B2				sta		d2
+     9 32E3 8A					txa
+    10 32E4 48					pha
+    11 32E5 20 A7 27				jsr		_log_imprintf
+    12 32E8 47 65 74 20 72 65 + 		dta		'Get record #1 len failed: %x%x',$9B,0
+    13 3308 68					pla
+    14 3309 AA					tax
+    15 330A			ok:
+    16 330A 28					plp
+Source: tcio.s
+   345
+   346 330B A9 AA				lda		#$aa
+   347 330D A2 07				ldx		#7
+   348 330F 9D 00 3A CA 10 FA			sta:rpl	iobuffer2,x-
+   349 						
+   350 						;issue a get record with short buffer and check that it stops early
+   351 3315 A9 00				lda		#0
+   352 3317 8D 12 2C				sta		ioindex
+   353 331A A0 3A				ldy		#>iobuffer2
+   354 331C A9 00				lda		#<iobuffer2
+   355 331E 20 F7 34				jsr		SetIOAddress
+   356 3321 A0 00				ldy		#$00
+   357 3323 A9 03				lda		#$03
+   358 3325 20 F0 34				jsr		SetIOLength
+   359 3328 A9 05				lda		#CIOCmdGetRecord
+   360 332A 20 E8 34				jsr		DoIO
+   361 332D					_ASSERT_Y	#CIOStatTruncRecord, 'Get record #2 failed: Y=%x != $89'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 332D 08					php
+     2 332E C0 89				cpy		#CIOStatTruncRecord
+     3 3330 F0 2E				beq		ok
+     4 3332 84 B1				sty		d1
+     5 3334 48					pha
+     6 3335 8A					txa
+     7 3336 48					pha
+     8 3337 20 A7 27				jsr		_log_imprintf
+     9 333A 47 65 74 20 72 65 + 		dta		'Get record #2 failed: Y=%x != $89',$9B,0
+    10 335D 68					pla
+    11 335E AA					tax
+    12 335F 68					pla
+    13 3360			ok:
+    14 3360 28					plp
+Source: tcio.s
+   362
+   363 3361 AC 79 03				ldy		icblh+IOCB_OFFSET
+   364 3364 AD 78 03				lda		icbll+IOCB_OFFSET
+   365 3367					_ASSERT_YA16	$0003, 'Get record #2 len failed: %x%x'		
+Macro: _ASSERT_YA16 [Source: tcio.s]
+     1 3367 08					php
+     2 3368 C0 00				cpy		#>$0003
+     3 336A D0 04				bne		fail
+     4 336C C9 03				cmp		#<$0003
+     5 336E F0 2B				beq		ok
+     6 3370			fail:
+     7 3370 84 B1				sty		d1
+     8 3372 85 B2				sta		d2
+     9 3374 8A					txa
+    10 3375 48					pha
+    11 3376 20 A7 27				jsr		_log_imprintf
+    12 3379 47 65 74 20 72 65 + 		dta		'Get record #2 len failed: %x%x',$9B,0
+    13 3399 68					pla
+    14 339A AA					tax
+    15 339B			ok:
+    16 339B 28					plp
+Source: tcio.s
+   366
+   367 						;check that only three bytes went into the buffer
+   368 339C AD 03 3A				lda		iobuffer2+3
+   369 339F					_ASSERT_A	#$aa, 'Get record #2 overrun: %x'
+Macro: _ASSERT_A [Source: tcio.s]
+     1 339F 08					php
+     2 33A0 C9 AA				cmp		#$aa
+     3 33A2 F0 26				beq		ok
+     4 33A4 85 B1				sta		d1
+     5 33A6 48					pha
+     6 33A7 8A					txa
+     7 33A8 48					pha
+     8 33A9 20 A7 27				jsr		_log_imprintf
+     9 33AC 47 65 74 20 72 65 + 		dta		'Get record #2 overrun: %x',$9B,0
+    10 33C7 68					pla
+    11 33C8 AA					tax
+    12 33C9 68					pla
+    13 33CA			ok:
+    14 33CA 28					plp
+Source: tcio.s
+   370
+   371 						;issue a get record with exactly enough buffer for without EOL
+   372 33CB A9 00				lda		#0
+   373 33CD 8D 12 2C				sta		ioindex
+   374 33D0 A0 3A				ldy		#>iobuffer2
+   375 33D2 A9 00				lda		#<iobuffer2
+   376 33D4 20 F7 34				jsr		SetIOAddress
+   377 33D7 A0 00				ldy		#$00
+   378 33D9 A9 04				lda		#$04
+   379 33DB 20 F0 34				jsr		SetIOLength
+   380 33DE A9 05				lda		#CIOCmdGetRecord
+   381 33E0 20 E8 34				jsr		DoIO
+   382 33E3					_ASSERT_Y	#CIOStatTruncRecord, 'Get record #3 failed: Y=%x != $89'
+Macro: _ASSERT_Y [Source: tcio.s]
+     1 33E3 08					php
+     2 33E4 C0 89				cpy		#CIOStatTruncRecord
+     3 33E6 F0 2E				beq		ok
+     4 33E8 84 B1				sty		d1
+     5 33EA 48					pha
+     6 33EB 8A					txa
+     7 33EC 48					pha
+     8 33ED 20 A7 27				jsr		_log_imprintf
+     9 33F0 47 65 74 20 72 65 + 		dta		'Get record #3 failed: Y=%x != $89',$9B,0
+    10 3413 68					pla
+    11 3414 AA					tax
+    12 3415 68					pla
+    13 3416			ok:
+    14 3416 28					plp
+Source: tcio.s
+   383
+   384 3417 AC 79 03				ldy		icblh+IOCB_OFFSET
+   385 341A AD 78 03				lda		icbll+IOCB_OFFSET
+   386 341D					_ASSERT_YA16	$0004, 'Get record #3 len failed: %x%x'		
+Macro: _ASSERT_YA16 [Source: tcio.s]
+     1 341D 08					php
+     2 341E C0 00				cpy		#>$0004
+     3 3420 D0 04				bne		fail
+     4 3422 C9 04				cmp		#<$0004
+     5 3424 F0 2B				beq		ok
+     6 3426			fail:
+     7 3426 84 B1				sty		d1
+     8 3428 85 B2				sta		d2
+     9 342A 8A					txa
+    10 342B 48					pha
+    11 342C 20 A7 27				jsr		_log_imprintf
+    12 342F 47 65 74 20 72 65 + 		dta		'Get record #3 len failed: %x%x',$9B,0
+    13 344F 68					pla
+    14 3450 AA					tax
+    15 3451			ok:
+    16 3451 28					plp
+Source: tcio.s
+   387
+   388 						;check that only four bytes went into the buffer
+   389 3452 AD 04 3A				lda		iobuffer2+4
+   390 3455					_ASSERT_A	#$aa, 'Get record #3 overrun: %x'
+Macro: _ASSERT_A [Source: tcio.s]
+     1 3455 08					php
+     2 3456 C9 AA				cmp		#$aa
+     3 3458 F0 26				beq		ok
+     4 345A 85 B1				sta		d1
+     5 345C 48					pha
+     6 345D 8A					txa
+     7 345E 48					pha
+     8 345F 20 A7 27				jsr		_log_imprintf
+     9 3462 47 65 74 20 72 65 + 		dta		'Get record #3 overrun: %x',$9B,0
+    10 347D 68					pla
+    11 347E AA					tax
+    12 347F 68					pla
+    13 3480			ok:
+    14 3480 28					plp
+Source: tcio.s
+   391 						
+   392 						;check that five bytes were read
+   393 3481 AD 12 2C				lda		ioindex
+   394 3484					_ASSERT_A	#$05, 'Get record #3 bad call count: %x'
+Macro: _ASSERT_A [Source: tcio.s]
+     1 3484 08					php
+     2 3485 C9 05				cmp		#$05
+     3 3487 F0 2D				beq		ok
+     4 3489 85 B1				sta		d1
+     5 348B 48					pha
+     6 348C 8A					txa
+     7 348D 48					pha
+     8 348E 20 A7 27				jsr		_log_imprintf
+     9 3491 47 65 74 20 72 65 + 		dta		'Get record #3 bad call count: %x',$9B,0
+    10 34B3 68					pla
+    11 34B4 AA					tax
+    12 34B5 68					pla
+    13 34B6			ok:
+    14 34B6 28					plp
+Source: tcio.s
+   395
+   396 						;--------------------------------
+   397 						;all done
+   398 						;--------------------------------
+   399 						
+   400 						;close IOCB #3
+   401 34B7 20 D4 34				jsr		CloseIO
+   402
+   403 						;unregister the device
+   404 34BA AD 00 2C				lda		fnbuf
+   405 34BD 20 FE 34				jsr		FindDevice
+   406 34C0 D0 0B				bne		not_registered
+   407 34C2 A9 00				lda		#0
+   408 34C4 9D 1A 03				sta		hatabs,x
+   409 34C7 9D 1B 03				sta		hatabs+1,x
+   410 34CA 9D 1C 03				sta		hatabs+2,x
+   411 34CD			not_registered:
+   412 34CD 60					rts
+   413 						
+   414 34CE			message_1:
+   415 34CE 54 45 53 54 9B 58			dta		'TEST',$9B,'X'
+   416 				.endp
+   417
+   418 				;==========================================================================
+   419 34D4			.proc	CloseIO
+   420 34D4 A9 0C				lda		#CIOCmdClose
+   421 34D6 4C E8 34				jmp		DoIO
+   422 				.endp
+   423
+   424 				;==========================================================================
+   425 34D9			.proc	OpenIO
+   426 34D9 A9 00 8D 74 03 A9 + 		mwa		#fnbuf icbal+IOCB_OFFSET
+   427 34E3 A9 03				lda		#CIOCmdOpen
+   428 34E5 4C E8 34				jmp		DoIO
+   429 				.endp
+   430
+   431 				;==========================================================================
+   432 				; Inputs:
+   433 				;	A = CIO command
+   434 				;
+   435 34E8			.proc	DoIO
+   436 34E8 A2 30				ldx		#IOCB_OFFSET
+   437 34EA 9D 42 03				sta		iccmd,x
+   438 34ED 4C 56 E4				jmp		ciov
+   439 				.endp
+   440
+   441 				;==========================================================================
+   442 				; Inputs:
+   443 				;	Y:A = length
+   444 				;
+   445 34F0			.proc SetIOLength
+   446 34F0 8D 78 03				sta		icbll+IOCB_OFFSET
+   447 34F3 8C 79 03				sty		icblh+IOCB_OFFSET
+   448 34F6 60					rts
+   449 				.endp
+   450
+   451 				;==========================================================================
+   452 				; Inputs:
+   453 				;	Y:A = address
+   454 				;
+   455 34F7			.proc SetIOAddress
+   456 34F7 8D 74 03				sta		icbal+IOCB_OFFSET
+   457 34FA 8C 75 03				sty		icbah+IOCB_OFFSET
+   458 34FD 60					rts
+   459 				.endp
+   460
+   461 				;==========================================================================
+   462 34FE			.proc FindDevice
+   463 34FE A2 21				ldx		#11*3
+   464 3500			loop:
+   465 3500 DD 1A 03				cmp		hatabs,x
+   466 3503 F0 05				beq		found
+   467 3505 CA					dex
+   468 3506 CA					dex
+   469 3507 CA					dex
+   470 3508 10 F6				bpl		loop
+   471 350A			found:
+   472 350A 60					rts
+   473 				.endp
+   474
+   475 				;==========================================================================
+   476 350B			.proc TestDevHandlerTable
+   477 350B 16 35				dta		a(TestDevOpen-1)
+   478 350D 1A 35				dta		a(TestDevClose-1)
+   479 350F 1B 35				dta		a(TestDevGetByte-1)
+   480 3511 27 35				dta		a(TestDevPutByte-1)
+   481 3513 33 35				dta		a(TestDevGetStatus-1)
+   482 3515 34 35				dta		a(TestDevSpecial-1)
+   483 				.endp
+   484
+   485 				;==========================================================================
+   486 3517			.proc TestDevOpen
+   487 3517 AC 11 2C				ldy		tstatus
+   488 351A 60					rts
+   489 				.endp
+   490
+   491 				;==========================================================================
+   492 351B			.proc TestDevClose
+   493 351B 60					rts
+   494 				.endp
+   495
+   496 				;==========================================================================
+   497 351C			.proc TestDevGetByte
+   498 351C AE 12 2C				ldx		ioindex
+   499 351F EE 12 2C				inc		ioindex
+   500 3522 BD 00 38				lda		iobuffer1,x
+   501 3525 A0 03				ldy		#3
+   502 3527 60					rts
+   503 				.endp
+   504
+   505 				;==========================================================================
+   506 3528			.proc TestDevPutByte
+   507 3528 AE 12 2C				ldx		ioindex
+   508 352B EE 12 2C				inc		ioindex
+   509 352E 9D 00 3A				sta		iobuffer2,x
+   510 3531 A0 01				ldy		#1
+   511 3533 60					rts
+   512 				.endp
+   513
+   514 				;==========================================================================
+   515 3534			.proc TestDevGetStatus
+   516 3534 60					rts
+   517 				.endp
+   518
+   519 				;==========================================================================
+   520 3535			.proc TestDevSpecial
+   521 3535 60					rts
+   522 				.endp
+   523
+   524 				;==========================================================================
+   525 						.if *>$3800
+   526 						.error	'Buffer overrun'
+   527 						.endif
+   528 = 3800			iobuffer1	equ		$3800
+   529 = 3A00			iobuffer2	equ		$3a00

@@ -80,7 +80,46 @@ module antic_raster #(
     wire in_active = (scanline >= 9'(DISPLAY_TOP))
                   && (scanline <  9'(DISPLAY_TOP + ACTIVE_LINES));
     assign atari_row = in_active ? 8'(scanline - 9'(DISPLAY_TOP)) : 8'hFF;
-    assign vcount    = scanline[8:1];
+
+    // VCOUNT LEADS the physical scanline: on real ANTIC the vertical counter
+    // ($D40B = scanline>>1) advances to the NEXT value at machine cycle
+    // VCOUNT_INC_CYC, a few cycles before the scanline itself advances at
+    // line_tick (cycle 113).  A CPU read of $D40B late in the line therefore
+    // sees the next value (ACID800 antic_vcount).  Only correct once the CPU is
+    // phi2-locked to ANTIC (single-phi2) — the read has to land on ANTIC's grid.
+    //
+    // The lead must NOT wrap on the final scanline.  On the last line the leading
+    // counter reaches LINES_PER_FRAME>>1 — NTSC (262): 131, PAL (312): 156 — and
+    // only drops to 0 when the frame itself wraps at line_tick.  ACID800
+    // antic_vcount asserts exactly those two values ("VCOUNT rollover #1"), so
+    // special-casing the last line to 0 here made the test spin forever waiting
+    // for a 131 that never arrived.  scanline+1 is 262/312 max, which still fits
+    // the 9-bit width, so the plain increment is safe.
+    //
+    // Pinned EMPIRICALLY, and uniquely determined — do not "correct" this against
+    // the Altirra manual's absolute cycle numbers.  Our phi2_in_line origin is
+    // offset from ANTIC's documented cycle numbering, so matching 109-110 by name
+    // is wrong; what matters is where OUR reads land.  Measured on HW with the
+    // DBG_TB read probe (mode 2, $D40B) during ACID800 antic_vcount, whose four
+    // reads expect $01,$02,$03,$03:
+    //   read #1  scanline 3 @ phi2 111  expects $01 = OLD  ->  INC_CYC >  111
+    //   read #3  scanline 5 @ phi2 112  expects $03 = NEW  ->  INC_CYC <= 112
+    // (#2 and #4 land on scanlines where old and new agree, so they add nothing.)
+    // The two bounds intersect at exactly one value.
+    localparam int unsigned VCOUNT_INC_CYC = 112;
+    // Frame wrap is ONE CYCLE WIDE, at the very last cycle of the last line.
+    // Measured (DBG_TB mode 2, antic_vcount rollover): on scanline 261 the
+    // leading counter reads 131 at phi2 112 (rollover #1 expects 131) and must
+    // read 0 at phi2 113 (rollover #2 expects 0).  So the lead runs normally at
+    // 112 even on the final line, and only the last cycle wraps.  Wrapping the
+    // whole lead window (or never wrapping) each satisfies one assertion and
+    // breaks the other.
+    wire last_line = (scanline == 9'(LINES_PER_FRAME - 1));
+    wire [8:0] vcount_scan =
+          (last_line && (phi2_in_line >= 8'(CYC_PER_LINE - 1))) ? 9'd0
+        : (phi2_in_line >= 8'(VCOUNT_INC_CYC))                  ? (scanline + 9'd1)
+        :                                                         scanline;
+    assign vcount    = vcount_scan[8:1];
 
 endmodule
 

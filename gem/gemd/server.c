@@ -24,6 +24,10 @@
  *     the desktop side by side, and an app is launched from a shell. EOF fires for everyone.
  */
 #include <stdio.h>
+#ifdef GEM_HOST
+#include "xtos_host.h"   /* hostgem: the framebuffer lock, see gemd_present */
+#include <sys/time.h>      /* hostgem: POSIX clock, see gemd_us */
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
@@ -73,9 +77,17 @@ static int         g_blitfd = -1;    /* /dev/blitter: the present is the ENGINE'
 /* µs clock — NOT profiler-only: the §9 liveness clock (last_recv) runs on it. */
 static long long gemd_us(void)
 {
+#ifdef GEM_HOST
+    /* hostgem: the shim answers this trap by calling macOS gettimeofday, whose struct timeval is
+     * 16 bytes — four more than the XTOS layout below.  Ask POSIX directly rather than hand a
+     * 12-byte buffer to a 16-byte writer. */
+    struct timeval htv; gettimeofday(&htv, 0);
+    return (long long)htv.tv_sec * 1000000ll + htv.tv_usec;
+#else
     unsigned tv[3];
     __syscall(SYS_gettimeofday, (long)tv, 0, 0);
     return (long long)tv[0] * 1000000ll + tv[2];
+#endif
 }
 #ifdef INSTRUMENTATION
 /* Drag-lag profiler: where does a resize-drag millisecond actually go? Accumulates
@@ -199,6 +211,9 @@ static void gemd_present(int x, int y, int w, int h)
     }
 
     long long tc = PROF_NOW();
+#ifdef GEM_HOST
+    xtos_host_fb_lock();        /* the SDL thread uploads this buffer; a half-copied rect tears */
+#endif
     const uint32_t *src = g_plane.px + (size_t)y * g_plane.stride + x;
     uint32_t *dst = (uint32_t *)g_scan.addr + (size_t)y * g_scan.stride + x;
     for (int yy = 0; yy < h; yy++) {
@@ -206,6 +221,9 @@ static void gemd_present(int x, int y, int w, int h)
         src += g_plane.stride; dst += g_scan.stride;
     }
     sys_fb_present();                            /* dsb: the compositor scans DDR */
+#ifdef GEM_HOST
+    xtos_host_fb_unlock();
+#endif
     PROF_ADD(cpu, PROF_NOW() - tc); PROF_INC(presents);
 }
 static gsurface    g_surf[GEMD_MAXW];   /* the backing store per WINDOW HANDLE. gemd keeps its own
@@ -459,6 +477,15 @@ int gemd_resize_surface(int hd)
     if (ww <= 0 || wh <= 0) return -1;
 
     gsurface *s = &g_surf[hd];
+    /* NEVER conjure a surface for a window that has not opened.  Both open
+     * handshakes (do_wind_open here, wind_open client-side) test "has a
+     * surface" to mean "already open" — a surface created by a pre-open
+     * geometry change (e.g. WF_CONTENTSIZE from a listing tall enough to
+     * reserve the scrollbar) makes them silently skip the real open, and the
+     * window exists invisible, forever.  Pre-open the chrome/scroll model
+     * still updates; do_wind_open sizes the FIRST surface from the resulting
+     * work area, so nothing is lost by declining here. */
+    if (s->id < 0) return 0;
     /* THE DRAG CAPACITY POLICY. A grow drag crosses a §12 capacity quantum every ~64px, and a
      * realloc per crossing means a FRESH surface (pixels gone -> forced full repaint) a dozen
      * times per drag — the mid-drag redraw artifacts, board-observed. While the sizer drag is

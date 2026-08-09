@@ -1,0 +1,232 @@
+{
+ "date": "2026-07-25",
+ "seq": 3,
+ "core": "fid",
+ "bitstream": "DL-fetch steal gated on entry-backed rows + NMIST status tick at cycle 6 (3cfb686, build 41c, AltSpreadLogic_high)",
+ "note": "29/57 held through the DMA-steal recalibration: the walker now publishes meta_dl_active and the steal model performs NO DL fetches on post-list blank-fill rows (HW-measured: the nmist cycle-critical read moved from raster cycle 8 to 7; Avery counts 5). All cycle-sensitive anchors re-verified green (wsync, vcount, irqtiming, clisei, collision, vscroll, pia_irq, timerirq). dlitiming back to delayed-odd-only ($0E). nmist remains \"too early\" with a fully-characterized residual: the pha:pla line-crossing chain lands +2 late while the vcount chain is exact at the (confirmed) release=104 \u2014 chain-dependent; release-offset matrix run via the runtime cfg knobs flips it to \"too late\" at -2. Full dossier + MiSTer timing findings in HANDOFF 0e. Next tool: cycle-exact co-sim of the exact chain.",
+ "results": {
+  "cpu_insn": {
+   "s": "pass"
+  },
+  "cpu_decimal": {
+   "s": "pass"
+  },
+  "cpu_flags": {
+   "s": "pass"
+  },
+  "cpu_bugs": {
+   "s": "pass"
+  },
+  "cpu_clisei": {
+   "s": "pass"
+  },
+  "cpu_timing": {
+   "s": "pass"
+  },
+  "cpu_illtiming": {
+   "s": "pass"
+  },
+  "cpu_illegal": {
+   "s": "pass"
+  },
+  "cpu_65c816": {
+   "s": "na",
+   "d": "correctly skipped - no 65C816"
+  },
+  "antic_default": {
+   "s": "pass"
+  },
+  "antic_vcount": {
+   "s": "pass"
+  },
+  "antic_wsync": {
+   "s": "pass"
+  },
+  "antic_nmist": {
+   "s": "fail",
+   "d": "DLI bit set too early (<cycle 6) \u2014 walker regression, status-tick alignment"
+  },
+  "antic_dlitiming": {
+   "s": "fail",
+   "d": "Delayed odd count $0E != $0F (even/odd/phases pass)"
+  },
+  "antic_blockednmi": {
+   "s": "fail",
+   "d": "VBI handler should not have executed (6502 NMI/BRK hijack window too wide)"
+  },
+  "antic_vscroldli": {
+   "s": "fail",
+   "d": "VSCROL took effect too early"
+  },
+  "antic_dmapattern": {
+   "s": "fail",
+   "d": "Incorrect timing for mode 02-a \u2014 RANDOM gate CLEARED, now measuring real DMA-pattern timing (was 'cannot decode random pair')"
+  },
+  "antic_virtdma": {
+   "s": "fail",
+   "d": "Pattern #2 was not correct: 00 != $05"
+  },
+  "antic_pmdma": {
+   "s": "fail",
+   "d": "P/M DMA fetch - memory-path coherency for $3300-$37FF"
+  },
+  "antic_linebuffering": {
+   "s": "fail",
+   "d": "Readout incorrect for initial mode E: 00000000"
+  },
+  "antic_pfstarttiming": {
+   "s": "fail",
+   "d": "DLIs fire now; Character mode DMACTL early test: stride=20 (mid-scanline DMACTL feature)"
+  },
+  "antic_pfstoptiming": {
+   "s": "fail",
+   "d": "DLIs fire; Character mode DMACTL early test: stride=22 (mid-scanline DMACTL feature)"
+  },
+  "antic_hscrolbug": {
+   "s": "fail",
+   "d": "Unstopped PF DMA test failed: c1=00 (HSCROL DMA window shift not modelled)"
+  },
+  "antic_hiresbug": {
+   "s": "fail",
+   "d": "per-color-clock P/M evaluation required"
+  },
+  "antic_charcontrol": {
+   "s": "fail",
+   "d": "Failed chactl=$00 on mode 2 at row 0: expected $10, got $00"
+  },
+  "antic_vscroll": {
+   "s": "pass"
+  },
+  "antic_dlistwrap": {
+   "s": "fail",
+   "d": "DLI was not carried over around VBLANK (extend act_carry to DLI)"
+  },
+  "antic_addresswrap": {
+   "s": "pass"
+  },
+  "antic_addrmirror": {
+   "s": "pass"
+  },
+  "gtia_default": {
+   "s": "pass"
+  },
+  "gtia_consol": {
+   "s": "pass"
+  },
+  "gtia_collision": {
+   "s": "pass"
+  },
+  "gtia_collision2": {
+   "s": "fail",
+   "d": "Gr.8 %00 collision incorrect: $04"
+  },
+  "gtia_pmoverlap": {
+   "s": "fail",
+   "d": "Pass 0.0: Pos=64, Expected F0, Got 00 (mid-scanline GRAFP write)"
+  },
+  "gtia_pmresize": {
+   "s": "fail",
+   "d": "4x-to-1x failed at index 0: expected $80, got $00 (mid-scanline SIZEP change)"
+  },
+  "gtia_pmretrigger": {
+   "s": "fail",
+   "d": "per-color-clock P/M evaluation required"
+  },
+  "gtia_vdelay": {
+   "s": "fail",
+   "d": "No delay 1/4 failed: 00 != $01 (mid-scanline GRAFP write)"
+  },
+  "gtia_phantomdma": {
+   "s": "fail",
+   "d": "phantom DMA"
+  },
+  "gtia_psuedomodee": {
+   "s": "fail",
+   "d": "Cycle 14 test failed: 00 (per-color-clock GTIA mode switch)"
+  },
+  "gtia_addrmirror": {
+   "s": "pass"
+  },
+  "pokey_default": {
+   "s": "pass"
+  },
+  "pokey_timerirq": {
+   "s": "pass"
+  },
+  "pokey_timertiming": {
+   "s": "fail",
+   "d": "timer timing"
+  },
+  "pokey_timergranularity": {
+   "s": "pass"
+  },
+  "pokey_irqtiming": {
+   "s": "pass"
+  },
+  "pokey_inittiming": {
+   "s": "fail",
+   "d": "Incorrect 15KHz cycle count (odd): $1E \u2014 even sled fixed, odd 1 cycle early"
+  },
+  "pokey_noise": {
+   "s": "pass"
+  },
+  "pokey_twotone": {
+   "s": "fail",
+   "d": "two-tone serial mode"
+  },
+  "pokey_skstat": {
+   "s": "fail",
+   "d": "Framing error occurred"
+  },
+  "pokey_serclock": {
+   "s": "fail",
+   "d": "serial clock"
+  },
+  "pokey_sertiming": {
+   "s": "fail",
+   "d": "serial timing"
+  },
+  "pokey_serdirect": {
+   "s": "fail",
+   "d": "never reaches _testEnd (hangs) - not 'na'"
+  },
+  "pokey_seroc": {
+   "s": "pass"
+  },
+  "pokey_asyncrecv": {
+   "s": "pass"
+  },
+  "pokey_addrmirror": {
+   "s": "pass"
+  },
+  "pia_basic": {
+   "s": "pass"
+  },
+  "pia_irq": {
+   "s": "pass"
+  },
+  "mmu_xlbanking": {
+   "s": "pass"
+  },
+  "mod_dispmin": {
+   "s": "na",
+   "d": "display-only module"
+  },
+  "mod_disp80": {
+   "s": "na",
+   "d": "display-only module"
+  },
+  "mod_scroll40": {
+   "s": "na",
+   "d": "display-only module"
+  },
+  "mod_options": {
+   "s": "na",
+   "d": "display-only module"
+  },
+  "mod_vbxe80": {
+   "s": "na",
+   "d": "display-only module"
+  }
+ }
+}

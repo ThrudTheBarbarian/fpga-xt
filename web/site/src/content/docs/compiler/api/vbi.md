@@ -6,14 +6,14 @@ description: Install and remove Vertical-Blank-Interrupt handlers via the OS-saf
 `Vbi` installs and removes Vertical-Blank-Interrupt handlers. Atari 8-bit machines fire a VBI roughly 50 times per second on PAL or 60 on NTSC, and the OS dispatches first to an **immediate** vector for time-critical work, then to a **deferred** vector after its own housekeeping.
 
 ```c
-#import <Vbi.xt>
+#import <Vbi.xc>
 ```
 
 All methods are `static`. Install / remove always go through `SETVBV` (`$E45C`) so the OS performs the SEI-safe atomic write to the vector pair — without that, the VBI could fire between the lo and hi byte writes and call into the wrong half of the new pointer.
 
 ## The two vectors
 
-The Atari OS holds two vectors and walks them in order during every vertical blank:
+This class is **xt6502-only** — it programs the Atari vertical-blank vectors, which no other target has. The Atari OS holds two vectors and walks them in order during every vertical blank:
 
 | Vector | Address | Default | Use for |
 |--------|---------|---------|---------|
@@ -43,11 +43,11 @@ Your handler **must** be declared with the `:vbi` function annotation. That tell
 A plain function would corrupt registers across the interrupted code and either lock the machine up or skip the rest of the OS chain.
 
 ```c
-volatile u8@ COLBK = @$D01A;        // background colour register
+volatile u8* COLBK = (u8*)$D01A;    // background colour register
 
 void rainbow(void) :vbi
 {
-    @COLBK = @COLBK + 1;             // change border colour every frame
+    *COLBK = *COLBK + (u8)1;         // change border colour every frame
 }
 
 void main(void)

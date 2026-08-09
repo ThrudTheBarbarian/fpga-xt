@@ -32,7 +32,19 @@ void vClearTickInterrupt(void);
 #define configTASK_RETURN_ADDRESS       NULL
 #define configUSE_IDLE_HOOK             0
 #define configUSE_TICK_HOOK             0
-#define configCPU_CLOCK_HZ             666666666UL   /* periph timer = /2 */
+/* 666.67 MHz = ARM_PLL FDIV 40 / 2, as ps7_init.tcl programs it. The part is an
+ * XC7Z020-2 rated to 766.67 MHz (FDIV 46) and that bump was TRIED and backed out
+ * -- see below. This constant MUST track ps7_init: gtimer_timeofday() divides
+ * the global-timer count by configCPU_CLOCK_HZ/2 and vConfigureTickInterrupt()
+ * derives the tick reload from it, so a mismatch silently mis-scales every
+ * measured duration AND the scheduler tick. clk_report() prints both at boot so
+ * a divergence is visible rather than inferred.
+ *
+ * The 766 MHz attempt did not boot, but that is NOT yet evidence the part cannot
+ * do it: reverting to 666 did not restore boot either, so something else broke in
+ * the same window and the clock was never cleanly tested. Re-test from a known
+ * good board before concluding anything about the speed grade. */
+#define configCPU_CLOCK_HZ             766666666UL   /* periph timer = /2 */
 #define configTICK_RATE_HZ            ((TickType_t)1000)
 #define configMAX_PRIORITIES           8
 #define configMINIMAL_STACK_SIZE      ((unsigned short)512)

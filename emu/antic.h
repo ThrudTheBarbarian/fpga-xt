@@ -1,0 +1,278 @@
+/*
+ * antic.h — the ANTIC timing core.
+ *
+ * ANTIC owns the bus and hands the CPU its cycles.  The system's read/write
+ * callbacks call antic_tick() until it yields, so a halted CPU is simply a
+ * callback that takes longer to return.  There is no CDC, no second raster with
+ * its own phase, and no /RDY sampling window — see emu/antic-design.md.
+ *
+ * Every timing landmark below is a measured ACID800 result, with the test that
+ * establishes it named.  None of them are guesses.
+ */
+#ifndef ANTIC_H
+#define ANTIC_H
+
+#include <stdint.h>
+#include "antic_dma.h"
+
+/* Scanline cycle landmarks (docs/Acid800/). */
+/* How far ahead of its window the playfield fetch COMMITS its start, in machine
+ * cycles.  Swept 0..6 against antic_pfstarttiming and antic_pfstoptiming: only 3
+ * lets either test reach its HSCROL section, and it is the same 3 as the
+ * character prefetch's own lead, which is why it holds for bitmap rows too. */
+#ifndef PF_COMMIT_LEAD
+#define PF_COMMIT_LEAD 3
+#endif
+#define ANTIC_CYC_NMIST   7     /* NMIST bits set; NMIEN sampled  (antic_nmist) */
+#define ANTIC_CYC_NMI     8     /* /NMI asserted, ONE cycle after the status */
+#define ANTIC_CYC_NMIRES  8     /* NMIRES takes effect from here  (antic_nmist) */
+#define ANTIC_CYC_WSYNC 104     /* first cycle the CPU gets BACK  (see below) */
+/* Where this boundary sits cannot be read off antic_wsync — its probes are
+ * anchored to the release, so moving it moves them too and the reading cancels.
+ * antic_vcount pins it on its own, from an INEQUALITY on both sides.  Its four
+ * part-1 measurements all read VCOUNT after a WSYNC and differ only in how many
+ * cycles they burn first, and `lda abs` reads on its fourth cycle:
+ *
+ *   d0,d1  bit $00   (3) then lda vcount -> the read lands on WSYNC+6
+ *   d2,d3  bit $0100 (4) then lda vcount -> the read lands on WSYNC+7
+ *
+ * d0/d1 must see the OLD value and d2/d3 the NEW one, so WSYNC+6 < 111 <=
+ * WSYNC+7 — which admits exactly one release cycle, 104.  Every other landmark
+ * here was calibrated by reading it THROUGH the CPU, so all of them move with
+ * it: NMIST/NMIRES to 7/8 (antic_nmist) and the VSCROL sample to 5
+ * (antic_vscroldli).  VCOUNT is unmoved because 111 is what the inequality
+ * above solves for.  The suite's own inline cycle annotations are not a usable
+ * cross-check: antic_nmist's "pha:pla ;*, 104..109" reads as a release at 103
+ * while antic_vcount's "bit $0100 ;*, 105, 106, 107" reads as 104, and they
+ * cannot both be right.  Trust the assertions, not the comments. */
+#define ANTIC_CYC_VCOUNT 111    /* VCOUNT advances                (antic_vcount) */
+
+#define ANTIC_LINES_NTSC 262
+#define ANTIC_LINES_PAL  312
+
+/* NMIST/NMIEN bits */
+#define ANTIC_NMI_DLI 0x80
+#define ANTIC_NMI_VBI 0x40
+
+typedef uint8_t (*antic_fetch_fn)(void *ctx, uint16_t addr);
+
+/* Scanlines per row, by ANTIC mode.  Modes 0 (blank) and 1 (jump) are not
+ * display modes and are handled separately. */
+#define ANTIC_CYC_ROWEND 5   /* VSCROL is sampled for the row-end compare here */
+extern const uint8_t antic_row_height[16];
+extern int antic_glyph_probe;   /* debug: trace glyph-row selection */
+
+/* ---- the two address counters ---------------------------------------------
+ * Both are narrower than 16 bits and BOTH wrap mid-instruction, which is what
+ * antic_addresswrap checks by putting the 1 KB break in the middle of an LMS
+ * operand.  Written as plain 16-bit adders they pass casual testing and fail
+ * that test immediately. */
+
+/* The display-list counter is 10 bits within its 1 KB page. */
+static inline uint16_t antic_dl_next(uint16_t a)
+{
+    return (uint16_t)((a & 0xFC00u) | ((a + 1u) & 0x03FFu));
+}
+
+/* The playfield/LMS counter wraps at 4 KB. */
+static inline uint16_t antic_pf_next(uint16_t a)
+{
+    return (uint16_t)((a & 0xF000u) | ((a + 1u) & 0x0FFFu));
+}
+
+typedef struct {
+    /* registers */
+    uint8_t  dmactl, chactl, hscrol, vscrol, pmbase, chbase;
+    uint8_t  hscrol_line;  /* the HSCROL in force for the REST of this line.  A
+                            * mid-line write cannot claim scroll the beam has
+                            * already gone past, and it is limited a unit at a
+                            * time — see antic_write's HSCROL case. */
+    uint8_t  nmien, nmist;
+
+    /* timing */
+    int cycle;        /* 0..113 within the scanline */
+    int scanline;     /* 0..lines-1 */
+    int lines;        /* ANTIC_LINES_NTSC or _PAL */
+    int vcount;       /* the register's own counter — see antic_vcount.md */
+
+    /* WSYNC: the CPU is held until cycle ANTIC_CYC_WSYNC.  Arms on the FIRST
+     * $D40A write of a read-modify-write, which writes it twice. */
+    int wsync_halt;
+
+    int nmi;          /* NMI line to the CPU */
+
+    antic_fetch_fn fetch;
+    void          *ctx;
+
+    /* ---- display-list execution ---------------------------------------- */
+    uint16_t dl_addr;     /* display-list program counter */
+    uint16_t pf_addr;     /* playfield memory scan address (LMS target) */
+    uint8_t  dl_insn;
+    uint8_t  vscrol_prev;  /* did the PREVIOUS instruction have the VSCROL bit? */
+    int8_t   pf_at[ANTIC_LINE_CYCLES]; /* which line-buffer byte each cycle
+                                        * fetches from the scan address, -1 for
+                                        * none — see antic_dma_line_map */
+    uint8_t  pf_next;      /* how many playfield bytes this line has fetched */
+    /* A playfield stream whose STOP was never matched runs on past the end of
+     * the scanline; this is the cycle on the NEXT line at which its next fetch
+     * falls, or -1 when the line starts idle.  antic_hscrolbug is built on it. */
+    int      pf_carry;
+    /* The DMA clock carried between scanlines, and its value at the top of THIS
+     * one so a mid-line rebuild starts from the same place.  Non-zero only
+     * under abnormal DMA -- see antic_dma.h. */
+    uint8_t  pf_clock;
+    uint8_t  pf_clock_in;
+    /* Window edges FROZEN because the line has already gone past them, -1 for
+     * an edge still live, and the cycle the last such check was made at.  See
+     * antic.c's latch_edges. */
+    int      pf_lat_start;
+    int      pf_lat_vend;
+    int      pf_last_check;
+    /* The line buffer's READ ORIGIN: how many bytes were fetched BEFORE the
+     * display window opened.  ANTIC's buffer has a write pointer that advances
+     * per FETCH and a read pointer that advances per DISPLAYED byte, so a line
+     * whose stream ran on from the previous one starts with its write pointer
+     * ahead and the display must skip those bytes.  Zero on a normal line. */
+    uint8_t  lb_origin;
+    uint8_t  glyph_row;    /* the row within the glyph for THIS scanline */
+    uint8_t  row_first;    /* this scanline is the row's FIRST, which is NOT the
+                            * same as row_line == 0: a row ENTERING a vertically
+                            * scrolled region starts its counter at VSCROL, and
+                            * gating the fetch on the counter meant such a row
+                            * never fetched at all and never advanced the
+                            * playfield scan address (antic_pfstarttiming). */
+    uint8_t  bus_byte;     /* what was last on the DATA BUS, whoever drove it.
+                            * system.c keeps it fresh; the VIRTUAL playfield
+                            * slot latches it instead of fetching. */
+    int      virt_cyc;     /* the line's VIRTUAL playfield slot, -1 for none */
+    uint8_t  virt_idx;     /* which line-buffer entry that slot feeds */
+    uint8_t  nmi_arm;      /* the status set at cycle 7 raises /NMI at 8 */
+    unsigned long ticks;   /* free-running machine cycles since reset */
+    /* Counts CPU BUS ACCESSES, not cycles.  An RMW's two writes are consecutive
+     * ACCESSES whatever DMA does in between -- /RDY cannot stop a write cycle --
+     * so adjacency has to be judged in this frame and not in `ticks`. */
+    unsigned long cpu_acc;
+    /* Where the LAST WSYNC write landed, in ANTIC's own frame.  An RMW writes
+     * twice, and whether the second re-arms the halt turns on whether it
+     * follows the first IMMEDIATELY -- a stolen cycle in between and it does
+     * not.  See antic_write's $D40A case. */
+    int wsync_wr_cyc, wsync_wr_sl;
+    /* cpu_acc at the moment the last WSYNC halt was released.  How far an RMW
+     * sits from that release is the one thing that separates the three tests
+     * bracketing the re-arm -- see antic_write's $D40A case. */
+    unsigned long wsync_rel_acc;
+    unsigned long wsync_wr_at; /* `ticks` of the last WSYNC write.  An RMW's two
+                            * writes are only ADJACENT when no DMA falls between
+                            * them, and the pair can straddle a line boundary —
+                            * pokey_noise writes at 113 and 0 — so this cannot
+                            * be a scanline cycle. */
+    uint8_t  wsync_extra;  /* a WSYNC write arriving while the halt is ALREADY
+                            * armed pushes the release out by one cycle — an
+                            * RMW writes twice (antic_wsync's INC cases) */
+    uint8_t  cpu_writing;  /* the CPU's pending access is a WRITE.  /RDY — which
+                            * is what WSYNC pulls — does not stop a write cycle;
+                            * ANTIC's /HALT for DMA does.  Modelling both the
+                            * same way makes an INC WSYNC re-arm on its second
+                            * write and cost a whole extra scanline. */
+    uint8_t  nmist_set_now;/* NMIST was set THIS cycle — a NMIRES landing in the
+                            * same cycle must not undo it (antic_nmist) */
+    uint8_t  dli_fired;    /* this instruction's DLI has already been raised */
+    uint8_t  row_ends;     /* latched at ANTIC_CYC_ROWEND: does the row finish
+                            * with THIS scanline?  Sampling VSCROL here rather
+                            * than at line_start is what separates a write on
+                            * cycle 3 from one on cycle 4 (antic_vscroldli). */
+    int      row_end;      /* row ends when row_line passes this.  -1 means "use
+                            * VSCROL, compared LIVE" — the row after a scrolled
+                            * region ends when the row counter reaches VSCROL, so
+                            * a write lands or misses to the cycle
+                            * (antic_vscroldli). */
+
+    /* ---- player/missile DMA -------------------------------------------------
+     * ANTIC FETCHES this data; whether GTIA latches it is GRACTL's business, and
+     * GRACTL lives in GTIA — so the bytes are exposed here and system.c applies
+     * the gate.  antic_pmdma checks the two are separate. */
+    uint8_t  pm_p[4], pm_m;
+    uint8_t  pm_fetched;     /* the instruction driving the current row */
+    int      row_line;    /* scanline within the current row */
+    int      row_height;  /* DYNAMIC — VSCROL can extend it mid-row, so the
+                           * next row's DLI moves with it and DLI scanlines
+                           * must never be precomputed (antic_vscroldli) */
+    int      dl_done;     /* JVB seen: wait for vertical blank */
+    int      dli_line;    /* this scanline is the row's LAST and the row's
+                           * instruction has bit 7 — so a DLI is due at cycle 6.
+                           * Recomputed per line, never precomputed for the
+                           * frame (antic_vscroldli). */
+
+    /* ---- the line buffer -------------------------------------------------
+     * ANTIC fetches into this and displays FROM it, so fetch time and display
+     * time are different instants.  antic_linebuffering proves the separation:
+     * change DMACTL between the two and the buffer still holds what was fetched
+     * under the OLD width; interrupt playfield DMA mid-line and the rest of the
+     * line is NOT blanked, because the buffer still holds it; and the contents
+     * can be displayed again.
+     *
+     * So it is deliberately NOT cleared per line — persistence is the observable
+     * behaviour, not an accident. */
+    uint8_t linebuf[64];   /* wide playfield is 48 bytes; 64 is room to spare */
+    uint8_t glyphbuf[64];  /* character modes fetch a GLYPH per name byte — two
+                            * fetches per character, so the decode has both */
+    int     lb_len;        /* bytes fetched on the last line that fetched any */
+
+    /* the DMA schedule for the scanline in progress */
+    uint8_t blocked[ANTIC_LINE_CYCLES];
+    /* Which of those blocked cycles are memory REFRESH.  Refresh is the
+     * slippable, lowest-priority DMA, and the only kind that can yield to a CPU
+     * write -- see DMA_SPARES_WRITE in antic.c. */
+    uint8_t refresh_at[ANTIC_LINE_CYCLES];
+    uint8_t refresh_known;
+} antic;
+
+void    antic_init(antic *a, antic_fetch_fn fetch, void *ctx, int lines);
+void    antic_reset(antic *a);
+
+/* Advance one machine cycle.  Returns 1 if ANTIC (or a WSYNC halt) took the
+ * bus, meaning the CPU did NOT get this cycle. */
+int     antic_tick(antic *a);
+
+/* Execute one display-list instruction: fetch it, apply its option bits, set
+ * up the row.  Called when the previous row completes. */
+void    antic_dl_exec(antic *a);
+
+/* Visible display region.  ANTIC starts the display list at scanline 8 and the
+ * VBI arrives at 248. */
+#define ANTIC_DISPLAY_TOP     8
+#define ANTIC_DISPLAY_BOTTOM 248
+
+/* Bytes across the playfield at a given DMACTL width. */
+int     antic_pf_bytes(uint8_t dmactl, uint8_t mode);
+
+/* Read the line buffer as the DISPLAY side sees it now.  Deliberately separate
+ * from the fetch: the width used here is the CURRENT one, which is what makes
+ * a mid-line DMACTL change alias. */
+uint8_t antic_display_byte(const antic *a, int i);
+
+/* The playfield colour class at colour clock `cc` (0..227): -1 for background,
+ * else 0..3 for PF0..PF3.  Computed LIVE rather than tabulated per line —
+ * antic_pfstarttiming and antic_pfstoptiming write DMACTL and HSCROL
+ * mid-scanline and expect the edges to move, which a per-line table cannot
+ * express.  `hires_lit` reports whether either half-clock pixel is set, which
+ * is all GTIA is shown of a hi-res mode. */
+int antic_pf_at(const antic *a, int cc, int *hires_lit);
+
+/* The raw 4-bit playfield value at colour clock `cc`, or -1 outside the window.
+ * The GTIA modes reinterpret ANTIC mode F's 320 hi-res bits as 80 nibbles of two
+ * colour clocks each, so they need the DATA, not a colour class. */
+int antic_pf_nibble(const antic *a, int cc, int shift);
+
+/* The raw two-bit pixel pair at colour clock `cc` in mode F — what pseudo mode
+ * E decodes as a playfield index. */
+int antic_pf_pair(const antic *a, int cc);
+
+/* Latch the data bus into the line's VIRTUAL playfield slot, if this cycle is
+ * it.  Called from the bus path so it sees its own cycle's byte. */
+void antic_virt_latch(antic *a, int cyc, uint8_t v);
+
+uint8_t antic_read(antic *a, uint16_t addr);
+void    antic_write(antic *a, uint16_t addr, uint8_t val);
+
+#endif /* ANTIC_H */

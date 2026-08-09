@@ -19,6 +19,7 @@
  * "PL-visible => wired/uncached" invariant.
  */
 #include <stdint.h>
+#include "pl310.h"
 #include "frtos_os.h"
 
 static volatile uint32_t l1[4096] __attribute__((aligned(16384)));
@@ -93,6 +94,15 @@ void mmu_sync_caches(void *addr, unsigned long len, void *user)
     for (uint32_t p = a; p < end; p += 0x20u)
         __asm__ volatile("mcr p15,0,%0,c7,c11,1" :: "r"(p));   /* DCCMVAU: clean D to PoU */
     __asm__ volatile("dsb");
+    /* ...and OUT THROUGH THE OUTER CACHE. pl310.h originally asserted the I-side
+     * needed nothing because instruction fetch reads through L2, so a clean to
+     * PoU was enough. That was ASSUMED, not measured, and the evidence says
+     * otherwise: with the L2 on, sshd-session took an UNDEF on an address whose
+     * on-disk instruction is a perfectly valid `add r1, sp, #4` — i.e. the core
+     * fetched something other than the bytes the loader had just written. The
+     * CP15 op above only reaches the inner cache, so make the freshly written
+     * TEXT visible at the point of coherency before invalidating the I-cache. */
+    pl310_clean(a, end - a);
     for (uint32_t p = a; p < end; p += 0x20u)
         __asm__ volatile("mcr p15,0,%0,c7,c5,1" :: "r"(p));    /* ICIMVAU: invalidate I */
     __asm__ volatile("mcr p15,0,%0,c7,c5,6" :: "r"(0u));       /* BPIALL */
@@ -102,6 +112,41 @@ void mmu_sync_caches(void *addr, unsigned long len, void *user)
 /* the master (kernel) translation table — per-process spaces (vm.c) start as
  * copies of this so the kernel + wired regions are mapped in every space. */
 uint32_t *mmu_master_table(void) { return (uint32_t *)l1; }
+
+/* ---- write physical address 0 (CPU1's reset vector) ------------------------
+ * Section 0 is the NULL trap (l1[0] = 0), so the kernel cannot write address 0
+ * — which is exactly where CPU1 restarts after an SLCR reset, and therefore
+ * where its secondary-boot trampoline has to live (cpu1.c).  Open a window over
+ * section 0 just long enough to copy the words in, then close it: leaving the
+ * NULL trap disarmed would turn every null-pointer store in the kernel into a
+ * silent success.  IRQs are held off across the window so nothing else runs
+ * while the trap is down.
+ *
+ * The lines are cleaned to the point of COHERENCY, not just unification: CPU1
+ * fetches them with its MMU and caches OFF, so anything still sitting in CPU0's
+ * D-cache is invisible to it. */
+void mmu_poke_phys0(const uint32_t *w, int n)
+{
+    unsigned f = xt_irq_save();
+    uint32_t saved = l1[0];
+    l1[0] = 0x00000000u | SEC_KDATA;              /* PA 0, PL1 RW, XN */
+    asm volatile("dsb; isb");
+    asm volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* invalidate TLB */
+    asm volatile("dsb; isb");
+
+    volatile uint32_t *p = (volatile uint32_t *)0;
+    for (int i = 0; i < n; i++) p[i] = w[i];
+    asm volatile("dsb");
+    for (int i = 0; i < n; i++)
+        asm volatile("mcr p15,0,%0,c7,c10,1" :: "r"((uint32_t)(uintptr_t)&p[i]));  /* DCCMVAC */
+    asm volatile("dsb");
+
+    l1[0] = saved;                                 /* re-arm the NULL trap */
+    asm volatile("dsb; isb");
+    asm volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));
+    asm volatile("dsb; isb");
+    xt_irq_restore(f);
+}
 
 void mmu_init(void)
 {
@@ -155,6 +200,14 @@ void mmu_init(void)
     sctlr |=  (1u << 11);                                       /* Z = 1: branch prediction on */
     asm volatile("mcr p15,0,%0,c1,c0,0" :: "r"(sctlr));
     asm volatile("dsb; isb");
+
+    /* ...and the OUTER cache behind them.  Measured: without it a working set
+     * costs 32 ns/iter up to the 32 KB L1 and then 242 ns at 64 KB with no
+     * plateau at all (progs/wsweep.c) -- DRAM, because there was nothing behind
+     * L1.  It is a UNIFIED cache on the AXI path, so this one call serves CPU1
+     * too; CPU1 must not repeat it.  After the MMU and L1, so the memory types
+     * the page tables declare are already in force. */
+    pl310_init();
 }
 
 /* ---- W^X: per-page protection of loaded images (tier-2, T2-c) ----------

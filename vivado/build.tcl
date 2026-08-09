@@ -85,8 +85,12 @@ foreach f [glob -nocomplain [file join $hdl_dir *.sv]] {
     if {[string match "*_mock.sv" $name]} { continue }
     lappend sv_files $f
 }
-# The xt6502 core (the only CPU) lives in hdl/xt6502/.
+# The turbo xt6502 core lives in hdl/xt6502/.
 foreach f [glob -nocomplain [file join $hdl_dir xt6502 *.sv]] {
+    lappend sv_files $f
+}
+# The resident fidelity core (+ its debug + hand-off FSM) lives in hdl/xt6502f/.
+foreach f [glob -nocomplain [file join $hdl_dir xt6502f *.sv]] {
     lappend sv_files $f
 }
 

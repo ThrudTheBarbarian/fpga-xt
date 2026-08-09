@@ -126,7 +126,14 @@ int evnt_multi(int flags, int bclk, int bmask, int bstate,
         if (t == AES_KEY && (flags & MU_KEYBD)) {
             if (okey) *okey = ev.key; return MU_KEYBD;
         }
-        if (t == AES_BTN_DOWN && (menu_handle_click(ev.mx, ev.my) ||
+        // menu_handle_click tests `my < BARH` to decide "this is a bar click".  That test is only
+        // meaningful for a SCREEN coordinate: under gemd a click inside a window arrives localised to
+        // that window, so anything in the top BARH pixels of a client's CONTENT (a popup button, a
+        // toolbar, a label) read as a menu-bar hit and opened a pull-down instead — after which
+        // moving the mouse tracked the bar.  gemd tags each input event with its window, so only an
+        // untagged one (the desktop / the reserved bar strip) is in screen space and may reach the bar.
+        int on_screen_coords = (aes_mode() != AES_CLIENT) || aes_event_win() == 0;
+        if (t == AES_BTN_DOWN && ((on_screen_coords && menu_handle_click(ev.mx, ev.my)) ||
                                   wind_handle_click(ev.mx, ev.my))) {
             if ((flags & MU_MESAG) && mep && appl_read(0, 16, mep)) return MU_MESAG;
             continue;                                   // menu / window frame consumed the click

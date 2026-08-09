@@ -15,7 +15,7 @@
   "notes": [
     "The slave claims 0x000..0xFFF (addr[15:12]==0); sally_rom_loader OR-muxes at 0x1000+.",
     "Every register is 32-bit word-aligned (Xil_In32/Out32, no byte-lane tricks); reads never alias writes.",
-    "Runs on clk_sys (same domain as the blitter) — no CDC on the register bus."
+    "Runs on clk_sys (same domain as the blitter) \u2014 no CDC on the register bus."
   ],
   "blocks": [
     {
@@ -26,16 +26,40 @@
       "sv_sel": "BLK_BLITTER",
       "desc": "blit regs (offset = bl_addr) + STATUS/SEQ reads; dual-access 6502 $D4Bx/$D4Cx/$D4Ex under UNLK_BLIT",
       "ranges": [
-        { "lo": "0x00", "hi": "0x18", "access": "W", "sv_lo": "BLT_REG_LO",  "sv_hi": "BLT_REG_HI",
-          "desc": "blitter registers DST/PAT/CMD/SRC/FLAGS (bl_addr = offset); see blitter.h XT_BL_*" },
-        { "lo": "0x30", "hi": "0x3B", "access": "W", "sv_lo": "BLT_DESC_LO", "sv_hi": "BLT_DESC_HI",
-          "desc": "SRC/DST DDR-surface descriptors / ROW0 bases (bl_addr = offset)" }
+        {
+          "lo": "0x00",
+          "hi": "0x18",
+          "access": "W",
+          "sv_lo": "BLT_REG_LO",
+          "sv_hi": "BLT_REG_HI",
+          "desc": "blitter registers DST/PAT/CMD/SRC/FLAGS (bl_addr = offset); see blitter.h XT_BL_*"
+        },
+        {
+          "lo": "0x30",
+          "hi": "0x3B",
+          "access": "W",
+          "sv_lo": "BLT_DESC_LO",
+          "sv_hi": "BLT_DESC_HI",
+          "desc": "SRC/DST DDR-surface descriptors / ROW0 bases (bl_addr = offset)"
+        }
       ],
       "regs": [
-        { "off": "0x40", "access": "R", "width": 3,  "c": "XT_BLT_STATUS", "sv": "BLT_STATUS",
-          "desc": "{pat_blocked[2], queue_full[1], busy[0]}" },
-        { "off": "0x44", "access": "R", "width": 16, "c": "XT_BLT_SEQ",    "sv": "BLT_SEQ",
-          "desc": "seq_counter[15:0]" }
+        {
+          "off": "0x40",
+          "access": "R",
+          "width": 3,
+          "c": "XT_BLT_STATUS",
+          "sv": "BLT_STATUS",
+          "desc": "{pat_blocked[2], queue_full[1], busy[0]}"
+        },
+        {
+          "off": "0x44",
+          "access": "R",
+          "width": 16,
+          "c": "XT_BLT_SEQ",
+          "sv": "BLT_SEQ",
+          "desc": "seq_counter[15:0]"
+        }
       ]
     },
     {
@@ -46,12 +70,30 @@
       "sv_sel": "BLK_SPRITE",
       "desc": "sprite-engine reg index/data port; dual-access 6502 $D4Ax/$D4Dx under UNLK_SPRITE",
       "regs": [
-        { "off": "0x00", "access": "W", "width": 8, "c": "XT_SPR_IDX",  "sv": "SPR_IDX",
-          "desc": "latch sprite reg index" },
-        { "off": "0x04", "access": "W", "width": 8, "c": "XT_SPR_DATA", "sv": "SPR_DATA",
-          "desc": "sprite reg data + strobe (writes idx/data to engine)" },
-        { "off": "0x08", "access": "R", "width": 16, "c": "XT_SPR_COLL", "sv": "SPR_COLL",
-          "desc": "collision[col_sel] (set col_sel first via $D4D9); [15:0] = sprites this one hit" }
+        {
+          "off": "0x00",
+          "access": "W",
+          "width": 8,
+          "c": "XT_SPR_IDX",
+          "sv": "SPR_IDX",
+          "desc": "latch sprite reg index"
+        },
+        {
+          "off": "0x04",
+          "access": "W",
+          "width": 8,
+          "c": "XT_SPR_DATA",
+          "sv": "SPR_DATA",
+          "desc": "sprite reg data + strobe (writes idx/data to engine)"
+        },
+        {
+          "off": "0x08",
+          "access": "R",
+          "width": 16,
+          "c": "XT_SPR_COLL",
+          "sv": "SPR_COLL",
+          "desc": "collision[col_sel] (set col_sel first via $D4D9); [15:0] = sprites this one hit"
+        }
       ]
     },
     {
@@ -62,18 +104,54 @@
       "sv_sel": "BLK_COMP",
       "desc": "drag-overlay config (A9-only, whole 32-bit words)",
       "regs": [
-        { "off": "0x00", "access": "W", "width": 1,  "c": "XT_OVL_EN",   "sv": "OVL_EN",
-          "desc": "[0]=enable; also toggles the commit flag" },
-        { "off": "0x04", "access": "W", "width": 32, "c": "XT_OVL_BASE", "sv": "OVL_BASE",
-          "desc": "DDR byte address (32-bit)" },
-        { "off": "0x08", "access": "W", "width": 12, "c": "XT_OVL_X",    "sv": "OVL_X",
-          "desc": "on-screen X (12-bit)" },
-        { "off": "0x0C", "access": "W", "width": 12, "c": "XT_OVL_Y",    "sv": "OVL_Y",
-          "desc": "on-screen Y (12-bit)" },
-        { "off": "0x10", "access": "W", "width": 12, "c": "XT_OVL_W",    "sv": "OVL_W",
-          "desc": "width px (12-bit; stride = w<<2)" },
-        { "off": "0x14", "access": "W", "width": 12, "c": "XT_OVL_H",    "sv": "OVL_H",
-          "desc": "height px (12-bit)" }
+        {
+          "off": "0x00",
+          "access": "W",
+          "width": 1,
+          "c": "XT_OVL_EN",
+          "sv": "OVL_EN",
+          "desc": "[0]=enable; also toggles the commit flag"
+        },
+        {
+          "off": "0x04",
+          "access": "W",
+          "width": 32,
+          "c": "XT_OVL_BASE",
+          "sv": "OVL_BASE",
+          "desc": "DDR byte address (32-bit)"
+        },
+        {
+          "off": "0x08",
+          "access": "W",
+          "width": 12,
+          "c": "XT_OVL_X",
+          "sv": "OVL_X",
+          "desc": "on-screen X (12-bit)"
+        },
+        {
+          "off": "0x0C",
+          "access": "W",
+          "width": 12,
+          "c": "XT_OVL_Y",
+          "sv": "OVL_Y",
+          "desc": "on-screen Y (12-bit)"
+        },
+        {
+          "off": "0x10",
+          "access": "W",
+          "width": 12,
+          "c": "XT_OVL_W",
+          "sv": "OVL_W",
+          "desc": "width px (12-bit; stride = w<<2)"
+        },
+        {
+          "off": "0x14",
+          "access": "W",
+          "width": 12,
+          "c": "XT_OVL_H",
+          "sv": "OVL_H",
+          "desc": "height px (12-bit)"
+        }
       ]
     },
     {
@@ -84,22 +162,94 @@
       "sv_sel": "BLK_CTRL",
       "desc": "control plane (gp0_ctrl, SALLY speed, XT unlock, keyboard inject)",
       "regs": [
-        { "off": "0x00", "access": "RW", "width": 8, "c": "XT_CTRL_GP0",         "sv": "CTRL_GP0",
-          "desc": "[0]=bars, [3:1]=XL scale, [4]=DMACTL-blank, [5]=video-sleep (gate clk_pix off) (A9-only); read = effective" },
-        { "off": "0x04", "access": "RW", "width": 8, "c": "XT_CTRL_SPEED",       "sv": "CTRL_SPEED",
-          "desc": "SALLY clock_mult (dual: 6502 $D4CA); read = effective. W -> bl_addr $D4CA" },
-        { "off": "0x08", "access": "RW", "width": 8, "c": "XT_CTRL_UNLOCK",      "sv": "CTRL_UNLOCK",
-          "desc": "XT register-unlock (dual: 6502 $D1DF); read = effective" },
-        { "off": "0x0C", "access": "W",  "width": 8, "c": "XT_CTRL_KBD_INJECT",  "sv": "CTRL_KBD_INJECT",
-          "desc": "KBCODE + POKEY IRQ (A9-only; emits $D4CF)" },
-        { "off": "0x10", "access": "W",  "width": 8, "c": "XT_CTRL_KBD_RELEASE", "sv": "CTRL_KBD_RELEASE",
-          "desc": "all-keys-up (A9-only; emits $D4CD)" },
-        { "off": "0x14", "access": "W",  "width": 8, "c": "XT_CTRL_KBD_BREAK",   "sv": "CTRL_KBD_BREAK",
-          "desc": "Atari BREAK (A9-only; emits $D4CB)" },
-        { "off": "0x18", "access": "RW", "width": 32, "c": "XT_CTRL_CMPCFG",     "sv": "CTRL_CMPCFG",
-          "desc": "compositor plane arrangement (A9-only; reset 0x210 = current). depth: [3:0]=desktop, [7:4]=overlay, [11:8]=XL. alpha_en: [16]=desktop, [17]=overlay, [18]=XL. Route-A flip = desktop on top with alpha (0x00010132)" },
-        { "off": "0x1C", "access": "RW", "width": 8, "c": "XT_CTRL_SALLYRST",   "sv": "CTRL_SALLYRST",
-          "desc": "[0]=1 HOLD the SALLY realm in reset (A9-only; reset 0 = running). Cold-boot-per-launch: hold, rewrite the OS/RAM through the ROM-loader window (0x1000+), release = fresh coldstart. Resets the 6502 core AND the XT state a stock guest cannot know about (bank selects $D5C0/$D5C1, screen banking $D5C3-5); the video pipeline keeps scanning" }
+        {
+          "off": "0x00",
+          "access": "RW",
+          "width": 8,
+          "c": "XT_CTRL_GP0",
+          "sv": "CTRL_GP0",
+          "desc": "[0]=bars, [3:1]=XL scale, [4]=DMACTL-blank, [5]=video-sleep (gate clk_pix off) (A9-only); read = effective"
+        },
+        {
+          "off": "0x04",
+          "access": "RW",
+          "width": 8,
+          "c": "XT_CTRL_SPEED",
+          "sv": "CTRL_SPEED",
+          "desc": "SALLY clock_mult (dual: 6502 $D4CA); read = effective. W -> bl_addr $D4CA"
+        },
+        {
+          "off": "0x08",
+          "access": "RW",
+          "width": 8,
+          "c": "XT_CTRL_UNLOCK",
+          "sv": "CTRL_UNLOCK",
+          "desc": "XT register-unlock (dual: 6502 $D1DF); read = effective"
+        },
+        {
+          "off": "0x0C",
+          "access": "W",
+          "width": 8,
+          "c": "XT_CTRL_KBD_INJECT",
+          "sv": "CTRL_KBD_INJECT",
+          "desc": "KBCODE + POKEY IRQ (A9-only; emits $D4CF)"
+        },
+        {
+          "off": "0x10",
+          "access": "W",
+          "width": 8,
+          "c": "XT_CTRL_KBD_RELEASE",
+          "sv": "CTRL_KBD_RELEASE",
+          "desc": "all-keys-up (A9-only; emits $D4CD)"
+        },
+        {
+          "off": "0x14",
+          "access": "W",
+          "width": 8,
+          "c": "XT_CTRL_KBD_BREAK",
+          "sv": "CTRL_KBD_BREAK",
+          "desc": "Atari BREAK (A9-only; emits $D4CB)"
+        },
+        {
+          "off": "0x18",
+          "access": "RW",
+          "width": 32,
+          "c": "XT_CTRL_CMPCFG",
+          "sv": "CTRL_CMPCFG",
+          "desc": "compositor plane arrangement (A9-only; reset 0x210 = current). depth: [3:0]=desktop, [7:4]=overlay, [11:8]=XL. alpha_en: [16]=desktop, [17]=overlay, [18]=XL. Route-A flip = desktop on top with alpha (0x00010132)"
+        },
+        {
+          "off": "0x1C",
+          "access": "RW",
+          "width": 8,
+          "c": "XT_CTRL_SALLYRST",
+          "sv": "CTRL_SALLYRST",
+          "desc": "[0]=1 HOLD the SALLY realm in reset (A9-only; reset 0 = running). Cold-boot-per-launch: hold, rewrite the OS/RAM through the ROM-loader window (0x1000+), release = fresh coldstart. Resets the 6502 core AND the XT state a stock guest cannot know about (bank selects $D5C0/$D5C1, screen banking $D5C3-5); the video pipeline keeps scanning"
+        },
+        {
+          "off": "0x20",
+          "access": "W",
+          "width": 32,
+          "c": "XT_CTRL_JOY_OVR",
+          "sv": "CTRL_JOY_OVR",
+          "desc": "keypad->joystick override (A9-only; forces STICK0/1 PORTA pins + TRIG0 when the physical PCAL9722 joystick is absent). [31]=override enable (0 = joy_bridge/PCAL9722 drives as normal). [7:0]=PORTA pin value, ACTIVE-LOW (STICK0 bits[3:0]: bit0=up bit1=down bit2=left bit3=right; STICK1 bits[7:4]; 1=released 0=pressed; 0xFF=neutral). [8]=TRIG0/fire value, ACTIVE-LOW (0=fire pressed). Muxed into pia_regs PORTA + GTIA TRIG0 in antic_top; the joy_bridge write-through path is untouched"
+        },
+        {
+          "off": "0x24",
+          "access": "W",
+          "width": 8,
+          "c": "XT_CTRL_CONSOL",
+          "sv": "CTRL_CONSOL",
+          "desc": "console-keys value the 6502 reads as CONSOL ($D01F). ACTIVE-LOW: bit0=START bit1=SELECT bit2=OPTION (0=pressed). Reset $07 (none). The kernel holds OPTION ($03) across a game coldstart so the XL OS leaves BASIC DISABLED ($A000-$BFFF stays RAM) \u2014 no game boots with BASIC mapped, and BASIC shadowing RAM was crashing games; releases to $07 for boot-to-BASIC (READY). Replaces the hardwired 8'h07 in antic_top"
+        },
+        {
+          "off": "0x28",
+          "access": "W",
+          "width": 16,
+          "c": "XT_CTRL_RWTUNE",
+          "sv": "CTRL_RWTUNE",
+          "desc": "ANTIC-rewrite timing tune (A9-only; reset 0 = the RTL defaults). Four SIGNED nibble offsets on the cycle numbers ACID bisects, so a cycle question costs a register write instead of a 25-minute bitstream: [3:0] NMIST status cycle (default 7), [7:4] /NMI cycle (8), [11:8] WSYNC /RDY release (104), [15:12] VCOUNT advance (111). The legacy timing machine has the same facility for its WSYNC release and that is how its constants were found. Only meaningful under rewrite timing authority (sallyrst[3])"
+        }
       ]
     },
     {
@@ -110,24 +260,78 @@
       "sv_sel": "BLK_DIAG",
       "desc": "PL diagnostic words (A9-only, read-only, word-aligned)",
       "regs": [
-        { "off": "0x00", "access": "R", "width": 32, "c": "XT_DIAG0", "sv": "DIAG0",
-          "desc": "MMCM locks / clk_pix-alive / frame count" },
-        { "off": "0x04", "access": "R", "width": 32, "c": "XT_DIAG2", "sv": "DIAG2",
-          "desc": "production-chain counters" },
-        { "off": "0x08", "access": "R", "width": 32, "c": "XT_DIAG3", "sv": "DIAG3",
-          "desc": "read-path activity" },
-        { "off": "0x0C", "access": "R", "width": 32, "c": "XT_DIAG4", "sv": "DIAG4",
-          "desc": "HP3 (XL) first-AR address" },
-        { "off": "0x10", "access": "R", "width": 32, "c": "XT_DIAG5", "sv": "DIAG5",
-          "desc": "HP0 (desktop) first-AR address" },
-        { "off": "0x14", "access": "R", "width": 32, "c": "XT_DIAG6", "sv": "DIAG6",
-          "desc": "HP2 read-probe status" },
-        { "off": "0x18", "access": "R", "width": 32, "c": "XT_DIAG7", "sv": "DIAG7",
-          "desc": "HP2 read-probe last rdata" },
-        { "off": "0x1C", "access": "R", "width": 32, "c": "XT_DIAG8", "sv": "DIAG8",
-          "desc": "TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem" },
-        { "off": "0x20", "access": "R", "width": 32, "c": "XT_DIAG9", "sv": "DIAG9",
-          "desc": "TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data" }
+        {
+          "off": "0x00",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DIAG0",
+          "sv": "DIAG0",
+          "desc": "MMCM locks / clk_pix-alive / frame count"
+        },
+        {
+          "off": "0x04",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DIAG2",
+          "sv": "DIAG2",
+          "desc": "production-chain counters"
+        },
+        {
+          "off": "0x08",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DIAG3",
+          "sv": "DIAG3",
+          "desc": "read-path activity"
+        },
+        {
+          "off": "0x0C",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DIAG4",
+          "sv": "DIAG4",
+          "desc": "HP3 (XL) first-AR address"
+        },
+        {
+          "off": "0x10",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DIAG5",
+          "sv": "DIAG5",
+          "desc": "HP0 (desktop) first-AR address"
+        },
+        {
+          "off": "0x14",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DIAG6",
+          "sv": "DIAG6",
+          "desc": "HP2 read-probe status"
+        },
+        {
+          "off": "0x18",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DIAG7",
+          "sv": "DIAG7",
+          "desc": "HP2 read-probe last rdata"
+        },
+        {
+          "off": "0x1C",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DIAG8",
+          "sv": "DIAG8",
+          "desc": "TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem"
+        },
+        {
+          "off": "0x20",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DIAG9",
+          "sv": "DIAG9",
+          "desc": "TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data"
+        }
       ]
     },
     {
@@ -138,18 +342,54 @@
       "sv_sel": "BLK_XLCTL",
       "desc": "XL compositor-plane window placement (A9-positioned emulation window)",
       "regs": [
-        { "off": "0x00", "access": "W", "width": 12, "c": "XT_XL_WIN_X",     "sv": "XL_WIN_X",
-          "desc": "plane origin X on screen (12-bit)" },
-        { "off": "0x04", "access": "W", "width": 12, "c": "XT_XL_WIN_Y",     "sv": "XL_WIN_Y",
-          "desc": "plane origin Y on screen (12-bit)" },
-        { "off": "0x08", "access": "W", "width": 12, "c": "XT_XL_WIN_W",     "sv": "XL_WIN_W",
-          "desc": "clip width  (12-bit; clip_x1 = X + W)" },
-        { "off": "0x0C", "access": "W", "width": 12, "c": "XT_XL_WIN_H",     "sv": "XL_WIN_H",
-          "desc": "clip height (12-bit; clip_y1 = Y + H)" },
-        { "off": "0x10", "access": "W", "width": 3,  "c": "XT_XL_WIN_SCALE", "sv": "XL_WIN_SCALE",
-          "desc": "integer scale 1..5" },
-        { "off": "0x14", "access": "W", "width": 1,  "c": "XT_XL_WIN_EN",    "sv": "XL_WIN_EN",
-          "desc": "[0]=1: use these regs (A9-positioned); 0: legacy gp0_ctrl-scale centred" }
+        {
+          "off": "0x00",
+          "access": "W",
+          "width": 12,
+          "c": "XT_XL_WIN_X",
+          "sv": "XL_WIN_X",
+          "desc": "plane origin X on screen (12-bit)"
+        },
+        {
+          "off": "0x04",
+          "access": "W",
+          "width": 12,
+          "c": "XT_XL_WIN_Y",
+          "sv": "XL_WIN_Y",
+          "desc": "plane origin Y on screen (12-bit)"
+        },
+        {
+          "off": "0x08",
+          "access": "W",
+          "width": 12,
+          "c": "XT_XL_WIN_W",
+          "sv": "XL_WIN_W",
+          "desc": "clip width  (12-bit; clip_x1 = X + W)"
+        },
+        {
+          "off": "0x0C",
+          "access": "W",
+          "width": 12,
+          "c": "XT_XL_WIN_H",
+          "sv": "XL_WIN_H",
+          "desc": "clip height (12-bit; clip_y1 = Y + H)"
+        },
+        {
+          "off": "0x10",
+          "access": "W",
+          "width": 3,
+          "c": "XT_XL_WIN_SCALE",
+          "sv": "XL_WIN_SCALE",
+          "desc": "integer scale 1..5"
+        },
+        {
+          "off": "0x14",
+          "access": "W",
+          "width": 1,
+          "c": "XT_XL_WIN_EN",
+          "sv": "XL_WIN_EN",
+          "desc": "[0]=1: use these regs (A9-positioned); 0: legacy gp0_ctrl-scale centred"
+        }
       ]
     },
     {
@@ -160,12 +400,30 @@
       "sv_sel": "BLK_MATH",
       "desc": "math-coprocessor mailbox (A9-only); 6502 side = $D5C6-$D5C8 + the $4000-$5FFF math page",
       "regs": [
-        { "off": "0x00", "access": "R", "width": 9,  "c": "XT_MATH_EVT",  "sv": "MATH_EVT",
-          "desc": "doorbell event pop: [8]=valid, [7:0]=chunk index; a read consumes one event; IRQ_F2P[1] level = FIFO non-empty" },
-        { "off": "0x04", "access": "W", "width": 24, "c": "XT_MATH_DONE", "sv": "MATH_DONE",
-          "desc": "completion: [7:0]=chunk, [15:8]=result-span first line (64 B lines), [23:16]=line count; reloads the span into the math page if that chunk is resident, then raises $D5C7 done" },
-        { "off": "0x08", "access": "R", "width": 32, "c": "XT_MATH_STAT", "sv": "MATH_STAT",
-          "desc": "[0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill" }
+        {
+          "off": "0x00",
+          "access": "R",
+          "width": 9,
+          "c": "XT_MATH_EVT",
+          "sv": "MATH_EVT",
+          "desc": "doorbell event pop: [8]=valid, [7:0]=chunk index; a read consumes one event; IRQ_F2P[1] level = FIFO non-empty"
+        },
+        {
+          "off": "0x04",
+          "access": "W",
+          "width": 24,
+          "c": "XT_MATH_DONE",
+          "sv": "MATH_DONE",
+          "desc": "completion: [7:0]=chunk, [15:8]=result-span first line (64 B lines), [23:16]=line count; reloads the span into the math page if that chunk is resident, then raises $D5C7 done"
+        },
+        {
+          "off": "0x08",
+          "access": "R",
+          "width": 32,
+          "c": "XT_MATH_STAT",
+          "sv": "MATH_STAT",
+          "desc": "[0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill"
+        }
       ]
     },
     {
@@ -176,8 +434,338 @@
       "sv_sel": "BLK_TRNG",
       "desc": "hardware entropy (ring-oscillator TRNG in the PL; A9-only, read-only)",
       "regs": [
-        { "off": "0x00", "access": "R", "width": 32, "c": "XT_TRNG_RND", "sv": "TRNG_RND",
-          "desc": "whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output" }
+        {
+          "off": "0x00",
+          "access": "R",
+          "width": 32,
+          "c": "XT_TRNG_RND",
+          "sv": "TRNG_RND",
+          "desc": "whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output"
+        },
+        {
+          "off": "0x04",
+          "access": "R",
+          "width": 32,
+          "c": "XT_TRNG_STAT",
+          "sv": "TRNG_STAT",
+          "desc": "R [5:0]=debiased entropy bits accumulated since the last TRNG_RND read (saturates at 32), [8]=fresh (>=32 bits, i.e. a FULLY re-seeded word). Reading TRNG_RND CONSUMES and clears the counter. Poll bit 8 before taking key material: the pool refills ~32 bits per microsecond, far slower than back-to-back AXI reads, so un-gated reads return an LFSR-stretched pool rather than fresh entropy"
+        }
+      ]
+    },
+    {
+      "name": "DEBUG",
+      "sel": "0x8",
+      "base": "0x800",
+      "base_macro": "XT_BLK_DEBUG",
+      "sv_sel": "BLK_DEBUG",
+      "desc": "in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, driving /bin/6502. Halt is a non-destructive rdy-gate (state preserved); all actions align to the ST_FETCH instruction boundary. Status is coherent when halted (a halted core is static). Sel 0x9 is RESERVED for the future ANTIC debugger. See docs/OS/6502-debug.md",
+      "regs": [
+        {
+          "off": "0x00",
+          "access": "W",
+          "width": 1,
+          "c": "XT_DBG_HALT",
+          "sv": "DBG_HALT",
+          "desc": "write (any) -> run to the next instruction boundary, then freeze (state preserved). Also arms halt-at-reset when combined with a SALLYRST pulse"
+        },
+        {
+          "off": "0x04",
+          "access": "W",
+          "width": 1,
+          "c": "XT_DBG_GO",
+          "sv": "DBG_GO",
+          "desc": "write (any) -> release the core, run at the configured speed"
+        },
+        {
+          "off": "0x08",
+          "access": "W",
+          "width": 16,
+          "c": "XT_DBG_STEP",
+          "sv": "DBG_STEP",
+          "desc": "write N -> execute exactly N instructions (min 1) then freeze"
+        },
+        {
+          "off": "0x0C",
+          "access": "RW",
+          "width": 2,
+          "c": "XT_DBG_CFG",
+          "sv": "DBG_CFG",
+          "desc": "[0]=bkpt_en (arm the PC breakpoint), [1]=halt_at_reset (freeze at the reset-vector fetch after the next SALLYRST release)"
+        },
+        {
+          "off": "0x10",
+          "access": "RW",
+          "width": 16,
+          "c": "XT_DBG_BKPT",
+          "sv": "DBG_BKPT",
+          "desc": "[15:0]=breakpoint PC; when bkpt_en, the core freezes at the ST_FETCH of this address (before executing it)"
+        },
+        {
+          "off": "0x14",
+          "access": "W",
+          "width": 1,
+          "c": "XT_DBG_COMMIT",
+          "sv": "DBG_COMMIT",
+          "desc": "write (any) -> inject DBG_WPC/WAXYS/WPSH into the core's PC/regs and re-anchor at ST_FETCH (only meaningful while halted)"
+        },
+        {
+          "off": "0x18",
+          "access": "RW",
+          "width": 16,
+          "c": "XT_DBG_WPC",
+          "sv": "DBG_WPC",
+          "desc": "[15:0]=PC to inject on DBG_COMMIT"
+        },
+        {
+          "off": "0x1C",
+          "access": "RW",
+          "width": 32,
+          "c": "XT_DBG_WAXYS",
+          "sv": "DBG_WAXYS",
+          "desc": "regs to inject on DBG_COMMIT: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)"
+        },
+        {
+          "off": "0x20",
+          "access": "RW",
+          "width": 12,
+          "c": "XT_DBG_WPSH",
+          "sv": "DBG_WPSH",
+          "desc": "inject on DBG_COMMIT: [7:0]=P (NV-BDIZC) [11:8]=SP high nibble (12-bit xt stack)"
+        },
+        {
+          "off": "0x24",
+          "access": "R",
+          "width": 4,
+          "c": "XT_DBG_STAT",
+          "sv": "DBG_STAT",
+          "desc": "[0]=halted [1]=bkpt_hit [2]=stepping [3]=running"
+        },
+        {
+          "off": "0x28",
+          "access": "R",
+          "width": 16,
+          "c": "XT_DBG_PC",
+          "sv": "DBG_PC",
+          "desc": "[15:0]=PC snapshot at the last instruction boundary (coherent when halted = next instruction to execute)"
+        },
+        {
+          "off": "0x2C",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DBG_AXYS",
+          "sv": "DBG_AXYS",
+          "desc": "reg snapshot: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)"
+        },
+        {
+          "off": "0x30",
+          "access": "R",
+          "width": 12,
+          "c": "XT_DBG_PSH",
+          "sv": "DBG_PSH",
+          "desc": "snapshot: [7:0]=P [11:8]=SP high nibble"
+        },
+        {
+          "off": "0x34",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DBG_ICNT",
+          "sv": "DBG_ICNT",
+          "desc": "retired-instruction count since SALLYRST (increments on each ST_FETCH boundary)"
+        },
+        {
+          "off": "0x38",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DBG_BEAM",
+          "sv": "DBG_BEAM",
+          "desc": "R ANTIC beam position latched when the core HALTED at an instruction boundary: [15:0]=scanline (0..261), [22:16]=beam X in ANTIC machine cycles (0..113). Lets an instruction be read off against the cycle numbers ACID annotates its kernels with; the trace ring records PC but not the beam. Reflects the REWRITE's beam (antic_gtia), whichever authority is selected"
+        },
+        {
+          "off": "0x3C",
+          "access": "RW",
+          "width": 2,
+          "c": "XT_DBG_TRC_CTRL",
+          "sv": "DBG_TRC_CTRL",
+          "desc": "instruction-trace ring: [0]=enable (capture {PC,A,X,Y,SP,P} every ST_DECODE boundary), [1]=break_on_full (halt the core when the ring wraps). Ring is 4096 deep; readable only when halted (static)."
+        },
+        {
+          "off": "0x40",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DBG_TRC_WPTR",
+          "sv": "DBG_TRC_WPTR",
+          "desc": "trace write pointer: [11:0]=next write slot (newest = WPTR-1), [16]=wrapped (ring has been full at least once), [17]=broke_on_full"
+        },
+        {
+          "off": "0x44",
+          "access": "W",
+          "width": 12,
+          "c": "XT_DBG_TRC_IDX",
+          "sv": "DBG_TRC_IDX",
+          "desc": "set the ring read index (0..4095); the entry appears in DBG_TRC_PC/AXYS/P"
+        },
+        {
+          "off": "0x48",
+          "access": "R",
+          "width": 16,
+          "c": "XT_DBG_TRC_PC",
+          "sv": "DBG_TRC_PC",
+          "desc": "[15:0]=PC of the traced instruction at DBG_TRC_IDX"
+        },
+        {
+          "off": "0x4C",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DBG_TRC_AXYS",
+          "sv": "DBG_TRC_AXYS",
+          "desc": "traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)"
+        },
+        {
+          "off": "0x50",
+          "access": "R",
+          "width": 12,
+          "c": "XT_DBG_TRC_P",
+          "sv": "DBG_TRC_P",
+          "desc": "traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble"
+        },
+        {
+          "off": "0x54",
+          "access": "RW",
+          "width": 16,
+          "c": "XT_DBG_WP",
+          "sv": "DBG_WP",
+          "desc": "[15:0]=data watchpoint address; when armed the core freezes on a bus access to it"
+        },
+        {
+          "off": "0x58",
+          "access": "RW",
+          "width": 3,
+          "c": "XT_DBG_WPCFG",
+          "sv": "DBG_WPCFG",
+          "desc": "data watchpoint arm: [0]=enable, [1]=break on WRITE to DBG_WP, [2]=break on READ of DBG_WP (set both for any access)"
+        },
+        {
+          "off": "0x5C",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DBG_DIAG",
+          "sv": "DBG_DIAG",
+          "desc": "debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT \u2014 verify it matches what was written)"
+        },
+        {
+          "off": "0x60",
+          "access": "W",
+          "width": 2,
+          "c": "XT_DBG_STRM_CTRL",
+          "sv": "DBG_STRM_CTRL",
+          "desc": "FIDELITY streaming-trace control: [0]=strm_en (capture {PC,A,X,Y,SP,P,IR} per instruction into a 4096-deep ring; the core AUTO-HALTS when the ring fills = real stop-the-world), [1]=drain_done (4-phase level handshake: after draining STRM_RD* set this to clear flush_req, reset the ring, and resume the core; then clear it). Rising edge of strm_en resets the ring."
+        },
+        {
+          "off": "0x64",
+          "access": "R",
+          "width": 1,
+          "c": "XT_DBG_STRM_STAT",
+          "sv": "DBG_STRM_STAT",
+          "desc": "[0]=flush_req: the streaming ring is FULL and the core is halted; the A9 should drain STRM_RD* (0..STRM_WPTR-1) then pulse drain_done"
+        },
+        {
+          "off": "0x68",
+          "access": "R",
+          "width": 13,
+          "c": "XT_DBG_STRM_WPTR",
+          "sv": "DBG_STRM_WPTR",
+          "desc": "[12:0]=count of valid entries in the streaming ring (4096 when full; a smaller partial count if strm_en was cleared mid-window)"
+        },
+        {
+          "off": "0x6C",
+          "access": "W",
+          "width": 12,
+          "c": "XT_DBG_STRM_RADDR",
+          "sv": "DBG_STRM_RADDR",
+          "desc": "[11:0]=streaming ring read address; the entry appears in STRM_RDLO/RDHI (coherent while flush_req \u2014 the ring is static because the core is halted)"
+        },
+        {
+          "off": "0x70",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DBG_STRM_RDLO",
+          "sv": "DBG_STRM_RDLO",
+          "desc": "streaming entry [31:0] at STRM_RADDR: [15:0]=PC [23:16]=A [31:24]=X"
+        },
+        {
+          "off": "0x74",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DBG_STRM_RDHI",
+          "sv": "DBG_STRM_RDHI",
+          "desc": "streaming entry [63:32] at STRM_RADDR: [7:0]=Y [15:8]=SP [23:16]=P [31:24]=IR"
+        },
+        {
+          "off": "0x78",
+          "access": "RW",
+          "width": 29,
+          "c": "XT_DBG_TB_CFG",
+          "sv": "DBG_TB_CFG",
+          "desc": "ANTIC timebase probe config: [2:0]=mode (0=off 1=$D4xx write@match 2=$D4xx read@match 3=DLI-line 4=VBI 5=WSYNC($D40A wr) 6=any $D4xx wr 7=every line_start), [11:4]=match_addr (low byte of $D4xx reg), [19:16]=read_idx (0..15 ring entry selected into DBG_TB_CAP), [24]=clear (write with a mode to arm+reset the ring for a fresh capture), [25]=circular (0=stop-on-full: hold the FIRST 16 triggers then freeze; 1=wrap: hold the LAST 16 triggers, DBG_TB_STAT.wr_idx = oldest entry), [28:26]=WSYNC /RDY shape mask {latch,q1,q2} (0 = default = 011 q1|q2; see wsync_gen.sv; [14]=comb fallback, [15]=disable write immunity, [23:20]=signed release-cycle offset from 103). 2-FF synced into the ANTIC clk_bus domain."
+        },
+        {
+          "off": "0x7C",
+          "access": "R",
+          "width": 26,
+          "c": "XT_DBG_TB_STAT",
+          "sv": "DBG_TB_STAT",
+          "desc": "ANTIC timebase probe status (2-FF synced from clk_bus): [15:0]=trig_count (16-bit saturating # of triggers since clear), [20:16]=wr_idx (0..16; 16=full), [24]=full (ring holds 16 entries), [25]=armed (set by a clear write)"
+        },
+        {
+          "off": "0x80",
+          "access": "R",
+          "width": 25,
+          "c": "XT_DBG_TB_CAP",
+          "sv": "DBG_TB_CAP",
+          "desc": "ANTIC timebase probe capture: ring entry selected by DBG_TB_CFG.read_idx = {[24:16]=scanline (0..261), [15:8]=phi2_in_line (machine-cycle 0..113), [7:0]=data (write byte for write modes, ANTIC read byte for read mode, 0 for event modes)}"
+        },
+        {
+          "off": "0x3C",
+          "access": "W",
+          "width": 16,
+          "c": "XT_DBG_BEAMPC",
+          "sv": "DBG_BEAMPC",
+          "desc": "W [15:0]=PC to beam-stamp. When the core reaches this instruction boundary the ANTIC beam is latched into DBG_BEAM2 WITHOUT halting, so an interval can be measured inside ONE run: set this to the first instruction, put the breakpoint on the second, and read DBG_BEAM2 and DBG_BEAM when it stops. Necessary because each xexload lands the test on a different scanline, so beam readings from separate runs cannot be subtracted"
+        },
+        {
+          "off": "0x40",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DBG_BEAM2",
+          "sv": "DBG_BEAM2",
+          "desc": "R ANTIC beam latched at the DBG_BEAMPC instruction boundary (no halt): [15:0]=scanline, [22:16]=beam X in machine cycles. Same layout as DBG_BEAM"
+        }
+      ]
+    },
+    {
+      "name": "SIO",
+      "sel": "0xA",
+      "base": "0xA00",
+      "base_macro": "XT_BLK_SIO",
+      "sv_sel": "BLK_SIO",
+      "desc": "paravirtual SIO mailbox (xt_sio_mbox): the 512 B page the XL OS boot stub shares with the A9, plus its data window. The doorbell/completion/status legs are the MATH block's ($D5C7 done, MATH_EVT, MATH_DONE, IRQ_F2P[1]) so the worker-task and IRQ wiring are unchanged; only the payload window is here. Sel 0x9 stays RESERVED for the ANTIC debugger. See hdl/xt_sio_mbox.sv",
+      "regs": [
+        {
+          "off": "0x00",
+          "access": "W",
+          "width": 9,
+          "c": "XT_SIO_PTR",
+          "sv": "SIO_PTR",
+          "desc": "byte pointer into the 512 B mailbox (word-aligned; [1:0] ignored). Writing it re-aims the window; each SIO_DAT access then auto-increments by 4, so a run of bytes is one seek plus N accesses"
+        },
+        {
+          "off": "0x04",
+          "access": "RW",
+          "width": 32,
+          "c": "XT_SIO_DAT",
+          "sv": "SIO_DAT",
+          "desc": "32-bit little-endian word at the pointer; read or write auto-increments the pointer by 4. The BRAM read register tracks the pointer continuously and consecutive AXI transactions are tens of clocks apart, so a read always returns settled data"
+        }
       ]
     }
   ]

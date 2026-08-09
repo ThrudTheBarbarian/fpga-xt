@@ -19,6 +19,7 @@
  * each process sees its own memory at that address.
  */
 #include <stdint.h>
+#include "pl310.h"
 #include <string.h>
 #include "frtos_os.h"
 #include "xtsys.h"   /* XT_SHM_* flags + XT_SHM_SUPPORTED (the frozen ABI) */
@@ -998,6 +999,14 @@ static void plv_cleaninval(uint32_t phys, uint32_t bytes)
         __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(a) : "memory");   /* DCCIMVAC */
     __asm__ volatile("dsb" ::: "memory");
 #ifdef XT_HW
+    /* The outer cache is PIPT too, so a recycled surface's stale lines can sit
+     * in L2 exactly as they can in L1 -- clean+invalidate both, inner first so
+     * the L1 writeback is included, then the inner pass again to drop anything
+     * speculation refilled from L2 in between. */
+    pl310_clean(phys & ~31u, ((phys + bytes + 31u) & ~31u) - (phys & ~31u));
+    pl310_inval(phys & ~31u, ((phys + bytes + 31u) & ~31u) - (phys & ~31u));
+    for (uint32_t a = phys & ~31u; a < phys + bytes; a += 32u)
+        __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(a) : "memory");
     *(volatile uint32_t *)0xF8F02730u = 0u;               /* PL310 CACHE_SYNC drain */
     __asm__ volatile("dsb" ::: "memory");
 #endif

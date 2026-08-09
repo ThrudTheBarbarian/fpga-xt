@@ -13,31 +13,45 @@ u8  a, b = 1, 2;            // a = 1, b = 2
 u8  bytes[32];              // array
 u8  rgb[]   = {255, 0, 0};  // size inferred from initialiser
 RGB white   = {255, 255, 255};
-RGB white   = [255, 255, 255]; // [..] is interchangeable with {..}
 ```
 
-You may also initialise the **raw bytes** of any value, regardless of its type, using the brace / bracket form. Trailing missing bytes are zero-filled.
+You may also initialise the **raw bytes** of any value, regardless of its type, using the brace form. Trailing missing bytes are zero-filled.
 
 ### Storage modifiers
 
-| Modifier | Storage | Persistence | Visibility | ZP cost |
-|----------|---------|-------------|-------------|---------|
-| *(default)* | ZP | local scope | current block | yes |
-| `register` | ZP (priority) | local scope | current block | yes (forced) |
-| `volatile` | ZP | local scope | current block | yes |
-| `static` | data section | permanent | current file or block | no |
-| `global static` | data section | permanent | every file | no |
+| Modifier | Storage | Persistence | Visibility |
+|----------|---------|-------------|-------------|
+| *(default)* | fast storage | local scope | current block |
+| `register` | fast storage (priority) | local scope | current block |
+| `volatile` | fast storage | local scope | current block |
+| `static` | data section | permanent | current file or block |
+| `global static` | data section | permanent | every file |
 
 Examples:
 
 ```c
-volatile u16@ dosvec = @10;       // both stores happen, even at -O2+
-register u16@ hot = $1234;        // priority on ZP allocation
+volatile u16* dosvec = (u16*)10;  // both stores happen, even at -O3
+register u16  hot = (u16)0;       // priority on the fast storage class
 static  u16  hits = 0;            // persists across calls; file-scoped
 global static u16 totalHits = 0;  // persists, visible everywhere
 ```
 
-`register` is a hint to the zero-page allocator: the compiler scans for these before ordinary allocation, so they get first pick of the ZP slots. `volatile` disables the optimiser's store-elimination — every read and write becomes an actual memory access.
+**What "fast storage" is depends on the target**, and that is the point of
+naming it this way rather than after one machine's hardware:
+
+| Target | Fast storage means |
+|---|---|
+| `xt6502` | **zero page** — one byte of address instead of two, and the only place indirect addressing works at all. It is scarce (a couple of hundred bytes for the whole program), so the allocator rations it. |
+| `arm64`, `x86_64`, `win64`, `arm9`, `m68k` | **machine registers**, assigned by the backend's register allocator, spilling to the stack frame when they run out. Plentiful by comparison. |
+
+`register` is a *hint*, not a guarantee: it asks the allocator to consider this
+variable before ordinary locals, so on a target where the resource is scarce it
+gets first pick. On the register machines the allocator's own analysis is
+usually better, and the hint rarely changes anything.
+
+`volatile` is target-neutral: it disables the optimiser's store-elimination, so
+every read and write becomes an actual memory access. That is what you want for
+a hardware register.
 
 `typedef <type> alias;` introduces a type alias; see [Types → Type aliases](/compiler/language/types/#type-aliases-typedef).
 
@@ -53,7 +67,7 @@ if (x > 10) {
 }
 ```
 
-The condition is in round brackets; the body is a block (`{ }` or `(( ))`). `else` is optional.
+The condition is in round brackets; the body is a block (`{ }`). `else` is optional.
 
 ## Switch
 
@@ -110,7 +124,19 @@ The collection may be either:
 - A fixed-size array (length is known at compile time), or
 - A heap-allocated pointer from `new T[N]` (length is read from the allocator's block header at loop entry, so deep recursion or re-allocation inside the body doesn't perturb the iteration count).
 
-The loop variable's type is normally given explicitly (`u8 ch in ...`); `auto` works too if you'd rather have the compiler infer it.
+The loop variable's type may be given explicitly (`u8 ch in …`) or **omitted**, in which case it is taken from the collection's element type:
+
+```c
+u16 squares[5];
+for (u16 v in squares) { … }      // explicit
+for (v in squares)     { … }      // same loop, element type inferred
+```
+
+Both spellings produce identical code. (The untyped form used to be accepted and then lowered into nothing, so the body silently never ran — compiler bug 036, fixed. If the element type genuinely cannot be inferred, it is now a diagnostic naming the cure rather than a loop that quietly does not run.)
+
+:::note[Primitive elements in a typed collection]
+`for ... in` over an `Array<i32>` works too: the element is a boxed `Number`, and binding it to a primitive loop variable unboxes it. See [Collections](/compiler/language/collections/#primitive-element-types).
+:::
 
 ## For-in (range)
 
@@ -166,9 +192,14 @@ Anything else — non-literal bound, literal beyond 255, large step — requires
 
 ### Caveat: unsigned descending and underflow
 
-Descending unsigned loops with a step that doesn't divide evenly into the start can wrap past 0 and run longer than expected. For example, `for (u8 i in 20..0 step -3)` walks 20, 17, 14, 11, 8, 5, 2 — then `2 - 3` wraps to 255 and the loop continues from there.
+Descending **unsigned** loops with a step that doesn't divide evenly into the start wrap past 0 and keep going. `for (u8 i in 20..0 step -3)` walks 20, 17, 14, 11, 8, 5, 2 — then `2 - 3` wraps to 255 and the loop continues from there.
 
-Avoid by either aligning the bounds with the step (`21..0 step -3`) or widening the loop variable to `u16` / `i16`.
+Two fixes, and only these two:
+
+- **Align the bounds with the step**, so the walk lands exactly on the end: `for (u8 i in 9..0 step -3)` gives 9, 6, 3 and stops.
+- **Make the loop variable SIGNED**: `for (i16 i in 10..0 step -3)` gives 10, 7, 4, 1 and stops, because stepping below the bound produces a negative rather than a huge positive.
+
+Widening from `u8` to `u16` does **not** help — it only moves the wrap to 65535, so the loop runs 20 000 iterations instead of 80. The problem is the unsignedness, not the width.
 
 ### Lowering
 
@@ -231,6 +262,77 @@ for (u8 i = 0; i < n; i++) {
 }
 ```
 
+## `defer`
+
+`defer { ... }` registers a block to run when the **enclosing scope** exits — by any path: fall-through, `return`, `break`, `continue`, or a propagating [`throw`](/compiler/language/errors/). It is the cleanup statement: you write the release next to the acquisition instead of at the bottom of the function, and every exit path gets it for free.
+
+```c
+void render(Scene* s) {
+    s.lock();
+    defer { s.unlock(); }             // released however we leave
+
+    if (!s.visible) return;           // …here
+    if (s.clipped)  return;           // …or here
+    s.drawEverything();               // …or by falling off the end
+}
+```
+
+The body must be a block. It runs at several exit points, so the braces keep what is deferred unambiguous.
+
+### LIFO, and per-scope
+
+Multiple defers in one scope run **last-registered-first**, and each defer belongs to the block that registered it — an inner `{ }` runs its own defers at its closing brace, not at function exit.
+
+```c
+{
+    defer { Stdio.printf("A\n"); }
+    defer { Stdio.printf("B\n"); }
+    Stdio.printf("body\n");
+}
+// body
+// B
+// A
+```
+
+Inside a loop body, the defer runs at the end of **each iteration** — including the iteration that `break`s or `continue`s out.
+
+```c
+for (u32 i = (u32)0; i < (u32)3; i = i + (u32)1) {
+    defer { Stdio.printf("d%d\n", i); }
+    if (i == (u32)1) break;
+}
+// d0
+// d1
+```
+
+### It runs before the scope's ARC releases
+
+The ordering that makes `defer` useful: a scope exits by running **its defers first**, then its [ARC teardown](/compiler/language/memory/#automatic-reference-counting-arc), then moving outward to the next scope. So the body can still use the very local it was written to clean up.
+
+```c
+{
+    Res* r = new Res((u32)7);
+    defer { Stdio.printf("defer sees id=%d\n", r.id); }
+}
+// defer sees id=7
+// dealloc 7
+```
+
+### No closures involved
+
+`defer` is a **statement, not a value**. Its body is lowered inline at each exit point of the scope that registered it — nothing is captured, nothing is allocated, there is no object to keep alive. It reads the enclosing scope's locals directly because it is emitted *in* that scope. That is how a language with no closures gets `defer` at zero cost, on every backend including the 6502.
+
+Two consequences fall out of that, and both are enforced:
+
+- **`return` inside a defer body is rejected.** The body runs at every exit of its scope, so there is no single return for it to perform.
+- **A `break` or `continue` that would *leave* the body is rejected.** A `break` inside a loop or `switch` written *within* the body is fine — it targets that construct.
+
+```c
+defer { return; }                       // error
+defer { break; }                        // error (inside a loop's scope)
+defer { for (…) { … break; } }          // fine — the break is the inner loop's
+```
+
 ## Manual unrolling: `:unroll`
 
 The auto-unroller runs at `-O2+` for counted `for` loops with a small trip count (default ≤5; tunable with `-Flu`). To force an unroll regardless of trip count or optimisation level, annotate the loop with `:unroll`:
@@ -258,3 +360,81 @@ i16 main(u8 numArgs, string args[]) {
 ```
 
 When `main` returns, the program issues an `RTS` to the caller — unless you pass `-Q loop` on the command line, in which case the runtime spins in an infinite loop instead.
+
+## Worked example
+
+Every loop form in one runnable program:
+
+```c
+// loops.xc — every loop form the language has.
+#import "Foundation.xc"
+#import "Stdio.xc"
+
+i32 main(void)
+{
+    // 1. C-style for: init; condition; step.
+    Stdio.print("for       ");
+    for (u16 i = (u16)0; i < (u16)5; i = i + (u16)1)
+        Stdio.printf("%d ", i);
+    Stdio.print("\n");
+
+    // 2. while — the test runs first, so the body may not run at all.
+    Stdio.print("while     ");
+    u16 n = (u16)5;
+    while (n > (u16)0) { Stdio.printf("%d ", n); n = n - (u16)1; }
+    Stdio.print("\n");
+
+    // 3. for ... in over an array, with and without the element type.
+    u16 squares[5];
+    for (u16 i = (u16)0; i < (u16)5; i = i + (u16)1)
+        squares[i] = i * i;
+    Stdio.print("for-in    ");
+    for (u16 v in squares)
+        Stdio.printf("%d ", v);
+    Stdio.print("\n");
+
+    Stdio.print("inferred  ");
+    for (v in squares)
+        Stdio.printf("%d ", v);
+    Stdio.print("\n");
+
+    // 4. break and continue, as in C.
+    Stdio.print("evens<=6  ");
+    for (u16 i = (u16)0; i < (u16)10; i = i + (u16)1) {
+        if ((i & (u16)1) != (u16)0) continue;
+        if (i > (u16)6) break;
+        Stdio.printf("%d ", i);
+    }
+    Stdio.print("\n");
+
+    // 5. Nested: break leaves only the INNERMOST loop.
+    Stdio.print("nested    ");
+    for (u16 r = (u16)0; r < (u16)3; r = r + (u16)1)
+        for (u16 c = (u16)0; c < (u16)3; c = c + (u16)1) {
+            if (c == (u16)2) break;
+            Stdio.printf("%d%d ", r, c);
+        }
+    Stdio.print("\n");
+
+    // 6. `: unroll` asks the optimiser to unroll a counted loop fully.
+    //    Purely a performance annotation — the result is identical.
+    Stdio.print("unrolled  ");
+    for (u16 i = (u16)0; i < (u16)4; i = i + (u16)1) : unroll
+        Stdio.printf("%d ", i);
+    Stdio.print("\n");
+    return 0;
+}
+```
+
+```
+for       0 1 2 3 4
+while     5 4 3 2 1
+for-in    0 1 4 9 16
+inferred  0 1 4 9 16
+evens<=6  0 2 4 6
+nested    00 01 10 11 20 21
+unrolled  0 1 2 3
+```
+
+There is **no** `do/while`: the loop forms are `while`, C-style `for`, and
+`for ... in` over an array, a range or a slice.

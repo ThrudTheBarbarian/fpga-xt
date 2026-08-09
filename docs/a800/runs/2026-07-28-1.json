@@ -1,0 +1,222 @@
+{
+ "date": "2026-07-28",
+ "seq": 1,
+ "core": "fid",
+ "bitstream": "build83-pipelined-emit",
+ "note": "Beam-time P/M collision engine (shift-register model) + VBLANK gate + combinational cmd_data. Full 63-test sweep with robust retry. NOTE: antic_vscroldli/antic_dlistwrap were initially read as regressions; re-measurement shows they are non-deterministic (1 pass in 7 on build 80), so this run shows no demonstrated regression and no demonstrated gain. At least three tests in the suite are flaky and recorded here as single samples \u2014 see HANDOFF 1m.",
+ "results": {
+  "cpu_insn": {
+   "s": "pass"
+  },
+  "cpu_decimal": {
+   "s": "pass"
+  },
+  "cpu_flags": {
+   "s": "pass"
+  },
+  "cpu_bugs": {
+   "s": "pass"
+  },
+  "cpu_clisei": {
+   "s": "pass"
+  },
+  "cpu_timing": {
+   "s": "pass"
+  },
+  "cpu_illtiming": {
+   "s": "pass"
+  },
+  "cpu_illegal": {
+   "s": "pass"
+  },
+  "cpu_65c816": {
+   "s": "error"
+  },
+  "antic_default": {
+   "s": "pass"
+  },
+  "antic_vcount": {
+   "s": "pass"
+  },
+  "antic_wsync": {
+   "s": "pass"
+  },
+  "antic_nmist": {
+   "s": "pass"
+  },
+  "antic_dlitiming": {
+   "s": "fail",
+   "d": "Delayed odd count $0E != $0F (even/odd/phases pass)"
+  },
+  "antic_blockednmi": {
+   "s": "pass"
+  },
+  "antic_vscroldli": {
+   "s": "fail",
+   "d": "FLAKY: 1 pass in 7 samples on build 80 too \u2014 not a regression, see HANDOFF 1m"
+  },
+  "antic_dmapattern": {
+   "s": "fail",
+   "d": "Incorrect timing for mode 02-a \u2014 RANDOM gate CLEARED, now measuring real DMA-pattern timing (was 'cannot decode random pair')"
+  },
+  "antic_virtdma": {
+   "s": "fail",
+   "d": "Pattern #2 was not correct: 00 != $05"
+  },
+  "antic_pmdma": {
+   "s": "fail",
+   "d": "P/M DMA fetch - memory-path coherency for $3300-$37FF"
+  },
+  "antic_linebuffering": {
+   "s": "fail",
+   "d": "Readout incorrect for initial mode E: 00000000"
+  },
+  "antic_pfstarttiming": {
+   "s": "fail",
+   "d": "DLIs fire now; Character mode DMACTL early test: stride=20 (mid-scanline DMACTL feature)"
+  },
+  "antic_pfstoptiming": {
+   "s": "fail",
+   "d": "DLIs fire; Character mode DMACTL early test: stride=22 (mid-scanline DMACTL feature)"
+  },
+  "antic_hscrolbug": {
+   "s": "fail",
+   "d": "Unstopped PF DMA test failed: c1=00 (HSCROL DMA window shift not modelled)"
+  },
+  "antic_hiresbug": {
+   "s": "fail",
+   "d": "per-color-clock P/M evaluation required"
+  },
+  "antic_charcontrol": {
+   "s": "fail",
+   "d": "Failed chactl=$00 on mode 2 at row 0: expected $10, got $00"
+  },
+  "antic_vscroll": {
+   "s": "pass"
+  },
+  "antic_dlistwrap": {
+   "s": "fail",
+   "d": "FLAKY: 1 pass in 7 samples on build 80 too \u2014 not a regression, see HANDOFF 1m"
+  },
+  "antic_addresswrap": {
+   "s": "pass"
+  },
+  "antic_addrmirror": {
+   "s": "pass"
+  },
+  "gtia_default": {
+   "s": "pass"
+  },
+  "gtia_consol": {
+   "s": "pass"
+  },
+  "gtia_collision": {
+   "s": "pass"
+  },
+  "gtia_collision2": {
+   "s": "fail",
+   "d": "Gr.8 %00 collision incorrect: $04"
+  },
+  "gtia_pmoverlap": {
+   "s": "fail",
+   "d": "Pass 0.0: Pos=64, Expected F0, Got 00 (mid-scanline GRAFP write)"
+  },
+  "gtia_pmresize": {
+   "s": "fail",
+   "d": "4x-to-1x failed at index 0: expected $80, got $00 (mid-scanline SIZEP change)"
+  },
+  "gtia_pmretrigger": {
+   "s": "fail",
+   "d": "per-color-clock P/M evaluation required"
+  },
+  "gtia_vdelay": {
+   "s": "fail",
+   "d": "No delay 1/4 failed: 00 != $01 (mid-scanline GRAFP write)"
+  },
+  "gtia_phantomdma": {
+   "s": "fail",
+   "d": "phantom DMA"
+  },
+  "gtia_psuedomodee": {
+   "s": "fail",
+   "d": "Cycle 14 test failed: 00 (per-color-clock GTIA mode switch)"
+  },
+  "gtia_addrmirror": {
+   "s": "pass"
+  },
+  "pokey_default": {
+   "s": "pass"
+  },
+  "pokey_timerirq": {
+   "s": "pass"
+  },
+  "pokey_timertiming": {
+   "s": "fail",
+   "d": "timer timing"
+  },
+  "pokey_timergranularity": {
+   "s": "pass"
+  },
+  "pokey_irqtiming": {
+   "s": "pass"
+  },
+  "pokey_inittiming": {
+   "s": "fail",
+   "d": "Incorrect 15KHz cycle count (odd): $1E \u2014 even sled fixed, odd 1 cycle early"
+  },
+  "pokey_noise": {
+   "s": "pass"
+  },
+  "pokey_twotone": {
+   "s": "fail",
+   "d": "two-tone serial mode"
+  },
+  "pokey_skstat": {
+   "s": "fail"
+  },
+  "pokey_serclock": {
+   "s": "fail",
+   "d": "serial clock"
+  },
+  "pokey_sertiming": {
+   "s": "fail"
+  },
+  "pokey_serdirect": {
+   "s": "fail",
+   "d": "never reaches _testEnd (hangs) - not 'na'"
+  },
+  "pokey_seroc": {
+   "s": "pass"
+  },
+  "pokey_asyncrecv": {
+   "s": "pass"
+  },
+  "pokey_addrmirror": {
+   "s": "pass"
+  },
+  "pia_basic": {
+   "s": "pass"
+  },
+  "pia_irq": {
+   "s": "pass"
+  },
+  "mmu_xlbanking": {
+   "s": "pass"
+  },
+  "mod_dispmin": {
+   "s": "na"
+  },
+  "mod_disp80": {
+   "s": "na"
+  },
+  "mod_scroll40": {
+   "s": "na"
+  },
+  "mod_options": {
+   "s": "na"
+  },
+  "mod_vbxe80": {
+   "s": "na"
+  }
+ }
+}

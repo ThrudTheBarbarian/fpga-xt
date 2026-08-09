@@ -25,11 +25,14 @@ Three radix prefixes are recognised, and `_` is silently ignored anywhere inside
 ```c
 u16 a = 1234;        // decimal
 u16 b = $1234;       // hex
-u8  c = %1010_0101;  // binary, with grouping underscore
+u16 c = 0x1234;      // hex, the C spelling — identical to the line above
+u8  d = %1010_0101;  // binary, with grouping underscore
 u32 big = 16_777_216;
+u32 mask = 0xFFFF_0000;   // underscores work in either hex spelling
 ```
 
-There is no `0x` prefix; xtc inherits `$` from 6502 assembler tradition.
+`$` comes from 6502 assembler tradition and `0x` (or `0X`) from C; they mean
+exactly the same thing and either can be used anywhere. Binary keeps `%`.
 
 ## String and character literals
 
@@ -56,31 +59,54 @@ u8 tab = '\t';
 u8 a   = 'A';
 ```
 
-String literals never split across source lines.
+A single string literal never splits across source lines — but **adjacent string
+literals concatenate**, as in C, and a newline between them makes no difference:
+
+```c
+Stdio.print("one" "two\n");                 // onetwo
+
+Stdio.print("a long message that would "
+            "otherwise be one unbreakable "
+            "source line as wide as itself\n");
+```
+
+The join happens in the parser, so the pieces are one literal by the time
+anything else sees them — there is no run-time concatenation and no cost.
 
 ## Reserved words
 
-The following identifiers are reserved and may not be used as names. They cover types, control flow, declaration modifiers, class machinery, and inline-asm syntax.
+These are the words the **lexer** turns into keyword tokens. They are never identifiers, anywhere.
 
-`asm`, `auto`, `bool`, `break`, `case`, `class`, `clobbers`, `continue`, `default`, `delete`, `dealloc`, `do`, `double`, `else`, `enum`, `false`, `float`, `for`, `global`, `i8`, `i16`, `i32`, `if`, `in`, `init`, `inline`, `naked`, `new`, `pointer`, `protocol`, `register`, `release`, `retain`, `return`, `self`, `sizeof`, `static`, `string`, `struct`, `super`, `switch`, `true`, `typedef`, `u8`, `u16`, `u32`, `va_arg`, `va_end`, `va_start`, `void`, `volatile`, `weak`, `while`.
+`asm`, `auto`, `bool`, `break`, `case`, `catch`, `class`, `continue`, `default`, `defer`, `delete`, `double`, `else`, `enum`, `extern`, `false`, `final`, `float`, `for`, `global`, `i8`, `i16`, `i32`, `if`, `in`, `inline`, `new`, `optional`, `pointer`, `protocol`, `register`, `release`, `retain`, `return`, `sizeof`, `static`, `string`, `struct`, `switch`, `throw`, `throws`, `true`, `try`, `typedef`, `u8`, `u16`, `u32`, `use`, `void`, `volatile`, `while`.
 
-The exact set is what the lexer recognises; the parser may accept more in context (e.g. function annotations like `:hwStack`, `:irq`, `:vbi`) which are documented on the [Functions](/compiler/language/functions/) page.
+Separately, the parser rejects the **C reserved words** as variable names even where xtc gives them no meaning of its own, so that C-shaped source doesn't quietly acquire a different meaning:
+
+`char`, `const`, `do`, `goto`, `int`, `long`, `restrict`, `short`, `signed`, `union`, `unsigned` — plus those above that C also reserves.
+
+### Contextual words
+
+A third group is meaningful only in a particular position, and is an ordinary identifier everywhere else: `self` and `super` inside a method body; `init` and `dealloc` as method names; `weak:`, `banked:`, `main:` and `shadow:` as declaration qualifiers; `va_start` / `va_arg` / `va_end` inside a variadic; `clobbers` after an `asm` block; and the function annotations (`:naked`, `:hwStack`, `:irq`, `:vbi`, …) documented on the [Functions](/compiler/language/functions/) page. Using one of these as a variable name is legal but a reliable way to confuse the next reader.
 
 ## Block delimiters
 
-Both `{ ... }` and `(( ... ))` introduce a block; they are interchangeable everywhere a block is accepted (function bodies, control flow, inline-asm, and so on).
+A block is `{ ... }`.
 
 ```c
 void greet(void) {
     Stdio.print("hi\n");
 }
-
-void greet(void) ((
-    Stdio.print("hi\n");
-))
 ```
 
-The `(( ))` form exists so xtc source can be typed on an **Atari 8-bit keyboard**, which has no `{` or `}` keys. The current toolchain is cross-compiled from desktop machines so the alternative form isn't load-bearing today, but it preserves the option of editing or even self-hosting xtc on-target in the future. There is no semantic difference between the two forms.
+:::note[`(( ))` has been removed]
+xtc once accepted `(( ... ))` as an alternative block delimiter, so source could
+be typed on an **Atari 8-bit keyboard** — which has no `{` or `}` keys. It is
+gone, and the compiler now rejects it.
+
+The reason is worth recording: accepting it forced the lexer to fuse adjacent
+parentheses into a single block token, which made `((T*)p).f` ambiguous with the
+start of a block. Disambiguating needed a lookahead heuristic in the lexer — a
+lot of fragility to buy a spelling nothing in the tree used.
+:::
 
 ## Statement terminator
 

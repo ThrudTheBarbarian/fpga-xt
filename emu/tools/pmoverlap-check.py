@@ -1,0 +1,595 @@
+#!/usr/bin/env python3
+"""Score a proposed P/M geometry model against ALL of gtia_pmoverlap's tables.
+
+The test is 12 passes x 2 missile positions x 28 player positions = 672 cells,
+and its expected values are compiled into the .lst.  Any model of "what a
+mid-line HPOS write does to a player that is already drawing" can be checked
+against every one of them here, in a second, without touching the emulator.
+
+That matters because a model fitted to a handful of rows will look right and be
+wrong: the "shift register is never reloaded" reading matches pass 3's first
+four rows exactly and misses 342 of the 672.
+
+Usage:  python3 tools/pmoverlap-check.py [--lst PATH] [--write-cc N] [--verbose]
+
+Geometry the test sets up, for anyone writing a new model() below:
+  GRAFP0 = $81   - only bit 7 and bit 0 lit, the player's two EDGE pixels
+  GRAFM  = $AA   - each missile 2 clocks with only the first lit
+  SIZEM  = $00
+  HPOSP0 = $60 written at colour clock $14, then Y written mid-line
+  missiles at scanpos .. scanpos+3, scanpos toggling by 4 between the two halves
+  even scanpos (bit 2 clear) -> the table byte's HIGH nibble, else the LOW
+  table index = Y xor $60, Y running $64..$7f
+"""
+import argparse, re, sys
+
+TABS  = [0x3000,0x3020,0x3040,0x3060,0x3080,0x30A0,
+         0x30C0,0x30E0,0x3100,0x3120,0x3140,0x3160]
+SIZEP = [3]*6 + [1]*4 + [0]*2
+MSTART= [0x60,0x68,0x70,0x78,0x80,0x88, 0x60,0x68,0x70,0x78, 0x60,0x68]
+WIDTH = {3: 4, 1: 2, 0: 1}
+
+
+def load(path):
+    mem = {}
+    for m in re.finditer(r'^\s*\d+\s+(3[01][0-9A-F]{2})((?:\s+[0-9A-F]{2})+)',
+                         open(path).read(), re.M):
+        base = int(m.group(1), 16)
+        for i, b in enumerate(m.group(2).split()):
+            mem.setdefault(base + i, int(b, 16))
+    return mem
+
+
+MODELS = {}
+
+
+def _reg(name):
+    def d(f):
+        MODELS[name] = f
+        return f
+    return d
+
+
+@_reg("restart")
+def m_restart(width, Y, write_cc):
+    """Every HPOS match retriggers the object from bit 0, cancelling the
+    emission in progress.  THIS IS WHAT gtia.c DOES TODAY.  624/672."""
+    lit, active, bit, ph = set(), False, 0, 0
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        if cc == hp:
+            active, bit, ph = True, 0, 0
+        elif active:
+            ph += 1
+            if ph >= width:
+                ph, bit = 0, bit + 1
+                if bit >= 8:
+                    active = False
+        if active and bit < 8 and (0x81 >> (7 - bit)) & 1:
+            lit.add(cc)
+    return lit
+
+
+@_reg("union")
+def m_union(width, Y, write_cc):
+    """A match starts a NEW emission and leaves any already running alone, so a
+    player moved mid-line can appear twice.  634/672 — the best so far, and the
+    reason to believe it: pass 10 wants BOTH the original emission's lit bit at
+    $67 AND the new one's at $64, which no single-emission model can give."""
+    lit, starts = set(), []
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        if cc == hp:
+            starts.append(cc)
+        for s in starts:
+            k = (cc - s) // width
+            if 0 <= k < 8 and (0x81 >> (7 - k)) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("freerun")
+def m_freerun(width, Y, write_cc):
+    """The size divider is GLOBAL and FREE-RUNNING, not restarted per object.
+
+    Every model above restarts a divider when an object starts, so a run's bit
+    boundaries are measured from its own start.  If instead the divider is one
+    counter running off the colour clock, boundaries fall at cc % width == 0 for
+    everything, and an object starting off-boundary gets a SHORT first pixel.
+    That produces Y-dependence with period exactly `width` without any realign
+    step -- which is what pass 3's period-four repeat in Y was evidence for."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        if cc % width == 0:
+            for e in em:
+                e[0] += 1
+        if cc == hp:
+            em.append([0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("freerun_one")
+def m_freerun_one(width, Y, write_cc):
+    """freerun, but ONE object at a time: a new start replaces the run in
+    progress rather than adding to it (GTIA has one shift register per player).
+    Distinguishes "union" from "the divider is what is shared"."""
+    em, lit = None, set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        if cc % width == 0 and em is not None:
+            em[0] += 1
+        if cc == hp:
+            em = [0]
+        if em is not None and em[0] < 8 and (0x81 >> (7 - em[0])) & 1:
+            lit.add(cc)
+    return lit
+
+
+@_reg("realign_at_match")
+def m_realign_at_match(width, Y, write_cc):
+    """union_realign, but the re-anchor happens when the BEAM REACHES the new
+    position -- not when HPOS is written.
+
+    The write-time version's residual splits by Y in a way a constant offset
+    cannot: pass 7 (width 2) sp $6c wants the REALIGNED boundary at odd Y up to
+    $6d and the UNREALIGNED one from $6f on.  The switch is exactly where the
+    new position overtakes the old emission's last pixel ($6e,$6f), which says
+    the re-anchor is the position COMPARATOR firing, not the register write.
+    A run that has already emitted past the new position never sees it.
+
+    DISPROVED AS STATED: 611/672, worse than the 660 it was meant to beat.  It
+    does predict pass 7's split correctly; what it loses is pass 3's EARLY Y,
+    and the diff says why.  union_realign's re-anchor sets the phase to
+    width - d and the NEXT increment then rolls it, so the bit counter is pushed
+    one bit FORWARD as well as re-phased.  Setting the phase to 0 at the match
+    delays the roll instead, so bit 7 lands four clocks late and the missile
+    window sees nothing (want 7 got 0 for pass 3 sp $78 Y $65).
+
+    So the re-anchor carries TWO effects -- a phase and a bit-advance -- and any
+    replacement has to reproduce both.  Rolling at the match supplies the
+    advance but then costs pass 7 Y $6f, where hardware keeps emitting bit 7
+    through the match cycle."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == hp:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = width - d
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_at_match_roll")
+def m_realign_at_match_roll(width, Y, write_cc):
+    """realign_at_match WITH the bit-advance: the match rolls the run's bit
+    counter as well as re-phasing it, which is the half realign_at_match was
+    missing.  Scored rather than argued -- see its result in the run."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == hp and cc >= write_cc:
+            for e in em:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_at_match_roll2")
+def m_realign_at_match_roll2(width, Y, write_cc):
+    """realign_at_match_roll, except the match does not roll a run that has
+    ALREADY rolled on this same clock.
+
+    realign_at_match_roll's whole residual sits on Y aligned to the width grid
+    -- $64/$68/$6c/$70/$74/$78 at width 4, the even Y at width 2, and every Y at
+    width 1 -- which is exactly where the run's own boundary already falls on the
+    match cycle.  Rolling there advances the bit counter twice for one boundary.
+    Phase 0 after the increment IS "a boundary just happened", so the test is
+    free."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == hp and cc >= write_cc:
+            for e in em:
+                if e[1] != 0:
+                    e[1], e[0] = 0, e[0] + 1
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("union_realign")
+def m_union_realign(width, Y, write_cc):
+    """union, PLUS: the HPOS write re-aligns every running emission's divider
+    phase to the new position.  660/672 — the best known, and the two effects
+    are independent: union alone is 634, realign is what takes pass 3 from 33
+    misses to 3.
+
+    The realign is what pass 3's period-FOUR repeat in Y demands.  Its wanted
+    values cycle 7,3,1,0 as Y advances, which is a bit boundary moving with
+    Y mod width — the running emission's boundaries shift to line up with the
+    newly written position while its bit counter keeps counting.
+
+    Residual 12, DECODED from the 4-bit missile patterns rather than described:
+    pass 7 (width 2) sp $6c at odd Y wants 3 = lit at $6e,$6f and we give 6 =
+    lit at $6d,$6e -- a boundary ONE COLOUR CLOCK EARLY, not one clock too many.
+    Pass 3 (width 4) sp $78 at Y $7d..$7f wants nothing lit there and we light a
+    tail, which is the OLD emission's last pixel realigned where hardware leaves
+    it alone.
+
+    NARROWED: only 2 of the 12 passes fail, and each at only ONE of its two
+    missile phases -- pass 3 at sp $78, pass 7 at sp $6c.  Every SIZEP-0 pass
+    passes, so it is a width>1 effect, and it is specific to where the emission
+    boundary falls rather than general.
+
+    DISPROVED as the cause: a global off-by-one in the realign amount.  Sweeping
+    the offset -2..+2 gives 616, 606, [660], 606, 616 -- symmetric and worse
+    either way, so the alignment is right at 0 and the error is upstream of it.
+
+    Also DISPROVED: realign_capped (a run may not outlast start + 8*width)
+    scored 660 on the IDENTICAL 12 cells, so a length cap is a no-op here and
+    the residual is not a run ending late.  Removed rather than kept."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_polarity")
+def m_realign_polarity(width, Y, write_cc):
+    """union_realign with the realigned phase set to d rather than width - d.
+
+    Distinct from the offset sweep in union_realign's docstring: that shifted
+    the alignment POINT by a constant, which is symmetric.  This flips which
+    side of the boundary the phase lands on, which is not."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = d % width
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_not_last")
+def m_realign_not_last(width, Y, write_cc):
+    """union_realign, except an emission already on its LAST bit is NOT
+    realigned.  union_realign's own docstring names this as the shape of the
+    pass 3 residual -- "the OLD emission's last pixel realigned where hardware
+    leaves it alone" -- so it is the hypothesis that text was pointing at."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                if e[0] < 7:
+                    e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("hpos_late2")
+def m_hpos_late2(width, Y, write_cc):
+    """union_realign, but the HPOS write takes effect TWO COLOUR CLOCKS LATER
+    than a size/graphics write issued on the same cycle.
+
+    Measured from Altirra (gtia.cpp ~3340-3363), not guessed: HPOSP/HPOSM are
+    scheduled at xpos + 5 while SIZEP/SIZEM/GRAFP/GRAFM go at xpos + 3, and xpos
+    is in colour clocks.  The docstring above records that sweeping the realign
+    offset globally is symmetric and worse either way -- but that sweep moved
+    the realign AND the position switch together.  This moves only the
+    position-driven half, which is what the hardware actually does."""
+    em, lit = [], set()
+    hpos_cc = write_cc + 2
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < hpos_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == hpos_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_off_m2")
+def m_realign_off_m2(width, Y, write_cc):
+    """union_realign with the realign amount shifted by -2.  The residual is a
+    boundary ONE CLOCK out (pass 7 wants $6e,$6f and we give $6d,$6e), so the
+    alignment offset is the single parameter that could produce it."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc + (-2)) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("shared_divider")
+def m_shared_divider(width, Y, write_cc):
+    """ONE size divider per player, free-running, shared by every emission.
+    A re-trigger reloads the BIT COUNTER but does not reset the divider -- the
+    same shape as ANTIC's free-running fetch clock, where a register write moves
+    the comparator and not the phase.
+
+    Motivated by the residual rather than guessed: in BOTH failing groups
+    hardware's lit pixel sits exactly where the UNREALIGNED old emission's k=7
+    falls ($6e,$6f at width 2; $7c-$7f at width 4), so hardware is not
+    re-phasing the old run.  union alone (no realign at all) scores only 634,
+    so the realign is standing in for something -- a shared divider is what
+    makes the NEW emission land on the old one's boundaries without moving
+    them."""
+    em, lit = [], set()
+    div = 0                                   # the one divider, free-running
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        div += 1
+        rolled = div >= width
+        if rolled:
+            div = 0
+        for e in em:
+            if rolled:
+                e[0] += 1
+        if cc == hp:
+            em.append([0])                    # bit counter reloads; divider does not
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_off_m1")
+def m_realign_off_m1(width, Y, write_cc):
+    """union_realign with the realign amount shifted by -1.  The residual is a
+    boundary ONE CLOCK out (pass 7 wants $6e,$6f and we give $6d,$6e), so the
+    alignment offset is the single parameter that could produce it."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc + (-1)) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_off_p1")
+def m_realign_off_p1(width, Y, write_cc):
+    """union_realign with the realign amount shifted by 1.  The residual is a
+    boundary ONE CLOCK out (pass 7 wants $6e,$6f and we give $6d,$6e), so the
+    alignment offset is the single parameter that could produce it."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc + (1)) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_off_p2")
+def m_realign_off_p2(width, Y, write_cc):
+    """union_realign with the realign amount shifted by 2.  The residual is a
+    boundary ONE CLOCK out (pass 7 wants $6e,$6f and we give $6d,$6e), so the
+    alignment offset is the single parameter that could produce it."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc + (2)) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_killold")
+def m_realign_killold(width, Y, write_cc):
+    """union_realign, but the OLD emission STOPS the moment the new one
+    triggers -- one shift register per player, so a re-trigger reloads it and
+    what stayed on screen is only what had already been emitted.  Tests the
+    "whatever is missing SUPPRESSES" reading of union_realign's residual."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em = [[0, 0]]                 # reload: the old run is gone
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_stopatwrite")
+def m_realign_stopatwrite(width, Y, write_cc):
+    """union_realign, but a running emission is cut at the HPOS WRITE rather
+    than at the new trigger -- the write itself ends the old run."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            em = []
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("noreload")
+def m_noreload(width, Y, write_cc):
+    """Repositions but never reloads the shift register.  330/672 — DISPROVED,
+    kept because it fits pass 3's first four rows exactly and is exactly the
+    kind of subset-fit that looks like an answer."""
+    lit, start = set(), 0x60
+    if Y < write_cc:
+        for k in range(8):
+            if (0x81 >> (7 - k)) & 1:
+                lit |= set(range(start + width*k, start + width*k + width))
+    else:
+        for n, k in enumerate(range((write_cc - start)//width + 1, 8)):
+            if (0x81 >> (7 - k)) & 1:
+                lit |= set(range(Y + width*n, Y + width*n + width))
+    return lit
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--lst", default="../rsrc/acid800/Acid800/standalone/gtia_pmoverlap.lst")
+    ap.add_argument("--write-cc", type=lambda s: int(s, 0), default=0x64)
+    ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--model", default=None, choices=sorted(MODELS))
+    a = ap.parse_args()
+
+    mem = load(a.lst)
+    if not mem:
+        sys.exit("no table bytes parsed — wrong --lst path?")
+
+    names = [a.model] if a.model else sorted(MODELS)
+    for name in names:
+        score(mem, MODELS[name], name, a)
+    return 0
+
+
+def score(mem, model, name, a):
+    bad = tot = 0
+    for p in range(12):
+        w = WIDTH[SIZEP[p]]
+        for sp in (MSTART[p], MSTART[p] ^ 4):
+            for Y in range(0x64, 0x80):
+                byte = mem.get(TABS[p] + (Y ^ 0x60))
+                if byte is None:
+                    continue
+                want = (byte >> 4) if (sp & 4) == 0 else (byte & 0xF)
+                lit = model(w, Y, a.write_cc)
+                got = 0
+                for b, m in enumerate((sp, sp+1, sp+2, sp+3)):
+                    if m in lit:
+                        got |= 8 >> b
+                tot += 1
+                if got != want:
+                    bad += 1
+                    if a.verbose and bad <= 60:
+                        print("    pass %2d sizep %d sp $%02X Y $%02X: want %X got %X"
+                              % (p, SIZEP[p], sp, Y, want, got))
+    print("  %-9s %3d/%d cells" % (name, tot - bad, tot))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

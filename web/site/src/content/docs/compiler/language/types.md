@@ -1,6 +1,6 @@
 ---
 title: Types
-description: Primitives, struct, enum, pointers, arrays, type inference, casting.
+description: The fixed-width scalars, structs, enums, pointers, arrays, type inference and casting.
 ---
 
 ## Primitive types
@@ -10,23 +10,66 @@ description: Primitives, struct, enum, pointers, arrays, type inference, casting
 | `u8`, `i8` | 1 byte | 8-bit unsigned / signed integer |
 | `u16`, `i16` | 2 bytes | 16-bit unsigned / signed integer |
 | `u32`, `i32` | 4 bytes | 32-bit unsigned / signed integer |
-| `float` | 5 bytes | binary floating-point: 1 sign byte + 1 signed binary exponent + 3-byte (24-bit) mantissa with implicit leading 1 |
-| `double` | 8 bytes | binary floating-point: same shape as `float`, with a 48-bit mantissa for ~15 digits of precision |
+| `u64`, `i64` | 8 bytes | 64-bit unsigned / signed integer |
+| `float` | 4 bytes | IEEE-754 binary32 |
+| `double` | 8 bytes | IEEE-754 binary64 |
 | `bool` | 1 byte | alias of `u8`; values are `true` and `false` |
 | `void` | — | absence of value (function returns, parameter list `(void)`) |
-| `string` | 2 bytes | alias of `u8@` (pointer to null-terminated bytes) |
-| `pointer` | varies* | arbitrary pointer-to-type |
+| `string` | pointer | alias of `u8*` (pointer to null-terminated bytes) |
+| `pointer` | target-defined | typeless pointer |
 
-*: On the Atari 8-bit range, pointers are 3-bytes: {lo, hi, bank}, but on larger machines they are the appropriate native size, arm64 uses 8-byte pointers, for example.
+Every width is the same on every target — a `u32` is four bytes on the 6502 as
+well as on arm64. Only **pointers** vary: 3 bytes on the banked xt6502 (`{lo, hi,
+bank}`), 8 bytes on the 64-bit hosts, 4 on arm9/m68k. Code that needs the number
+should use `sizeof(T*)` rather than a baked-in constant.
 
-Truncation rules are predictable:
+Floating point is **IEEE-754 on every target**, including the 6502, where the
+arithmetic is done by a software runtime or hardware on the FPGA. 
 
-- Assigning a wider integer to a narrower one **truncates**, with no sign-extension.
-- Assigning a `float` or `double` to an integer transfers the **integral part** only — truncated toward zero (`(i32)3.7` is `3`, `(i32)-3.7` is `-3`). Magnitudes that overflow the destination's i32 range saturate to `0`; `(u8)200.5` first goes to `i32`-via-`fpToI32` then narrows, so an out-of-range float silently lands as `0` instead of an undefined high byte.
+### `i64` / `u64` on every target
+
+64-bit arithmetic works on **all six targets**, not just the 64-bit hosts. The
+difference is only how: `arm64`, `x86_64` and `win64` do it in registers, while
+the narrow targets do it out of line — m68k through line-A HLE selectors, arm9
+through inline `adds`/`adc` plus libgcc, and xt6502 through hand-written
+routines in `support/xt6502/asm/{i64,u64}/`.
+
+The answers are identical everywhere, including 64-bit literals. Add, multiply,
+divide, shift, unsigned wraparound and comparison of a 2^40 value all agree
+byte-for-byte between a 6502 and an arm64.
+
+`sizeof(i64)` is 8 on every target, because width is a layout contract: a struct
+containing an `i64` lays out identically everywhere.
+
+### Conversions
+
+- Assigning a wider integer to a narrower one **truncates**, with no sign
+  extension.
+- Assigning `float`/`double` to an integer takes the **integral part**, truncated
+  toward zero: `(i32)3.7` is `3`, `(i32)-3.7` is `-3`. Magnitudes that overflow
+  the destination saturate to `0`.
+- **Same-width arithmetic stays at that width.** There is no C-style promotion to
+  `int`, so `u8 + u8` wraps at 8 bits. Only genuinely mixed-width operands widen
+  (`u8 + u16` → `u16`). To get a wider result, widen the *operands*:
+
+```c
+u8 a = (u8)200, b = (u8)100;
+u8  narrow = a + b;                  // 44  — 300 & 0xFF
+u16 wide   = a + b;                  // 44  — STILL a u8 add
+u16 real   = (u16)a + (u16)b;        // 300 — widen the OPERANDS
+```
+
+The destination cannot change how the operator computes, which is the point: an
+expression means the same thing wherever its result goes. This differs from C,
+which promotes both operands to `int` and would give 300 for the second line.
 
 ## Structs
 
-Structs gather related data into a packed value type. On the 6502 they are packed byte-aligned because the 6502 is byte-oriented, other architectures use their natural alignment. Structs have copy semantics — they are passed and returned by value.
+Structs gather related data into a value type with copy semantics — passed and
+returned by value. Field alignment is target-defined: the 6502 packs them
+byte-by-byte (padding would waste bytes on a byte-oriented CPU), while the
+register machines insert padding so each field lands on its natural boundary.
+Declaration order is preserved regardless.
 
 ```c
 typedef struct {
@@ -38,7 +81,14 @@ CursorPos topRight = {319, 0};
 CursorPos middle   = {159, 100};
 ```
 
-Initialisers may use `{ ... }` or `[ ... ]` interchangeably. Members listed in declaration order; any omitted trailing members are zero-filled. Providing more elements than the struct holds is a compile-time error.
+Initialisers use `{ … }`, as C does. Members are listed in declaration order;
+omitted trailing members are zero-filled, and supplying more elements than the
+struct holds is a compile-time error.
+
+(`[ … ]` was accepted here too, for the same reason `(( ))` was accepted as a
+block — an Atari 8-bit keyboard has no brace keys. It went when `(( ))` did, so
+there is one spelling to learn rather than two. An **enum** body still takes
+either.)
 
 A struct can be returned by value:
 
@@ -49,18 +99,18 @@ CursorPos centre(void) {
 }
 ```
 
-But you may **not** return a pointer to a stack-resident struct — the storage goes away when the scope ends:
+But you may **not** return a pointer to a stack-resident struct — the storage
+goes away when the scope ends:
 
 ```c
-CursorPos@ bad(void) {
+CursorPos* bad(void) {
     CursorPos c = {1, 2};
     return &c;        // illegal — c dies at scope exit
 }
 ```
 
-Passing a `&struct` as an argument to another function is fine because the receiver only holds the pointer for the duration of the call.
-
-`Stdio.printf` understands `%@` to recursively format a struct's members.
+Passing `&struct` as an argument is fine: the callee only holds the pointer for
+the duration of the call.
 
 ## Enumerations
 
@@ -69,77 +119,97 @@ enum suits = {hearts, clubs, diamonds, spades};
 enum directions = {N = 4, S, E, W};      // 4, 5, 6, 7
 ```
 
-Enumerations start at 0 unless an explicit value is given; subsequent entries increment by 1. The compiler picks the smallest unsigned type that holds every value.
+Enumerations start at 0 unless given an explicit value; subsequent entries
+increment by 1. The compiler picks the smallest unsigned type that holds every
+value.
 
 ## Arrays
 
 ```c
-u8 cakes[3];
-u8 spaces[]  = {' ', '\t', '\n'};        // size inferred from initialiser
+u8  cakes[3];
+u8  spaces[]  = {' ', '\t', '\n'};       // size inferred from the initialiser
 u16 scores[8] = {100, 87};               // remaining 6 slots zero-filled
 ```
 
-Array size is part of the type; if an initialiser is provided, the size in `[ ]` may be omitted.
+Array size is part of the type; with an initialiser present the size in `[ ]` may
+be omitted.
 
 ### Range initialiser
 
-Fixed-size arrays of integer-element type also accept a range expression as the initialiser:
+Fixed-size arrays with an integer element type also accept a range:
 
 ```c
-u8 buf[10] = 0..10;       // 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-u8 b2[5]   = 1...5;       // 1, 2, 3, 4, 5  (inclusive)
-u16 b3[4]  = 100..104;    // 100, 101, 102, 103  (each stored as u16)
-i8  b4[3]  = -2..1;       // -2, -1, 0
+u8  buf[10] = 0..10;      // 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+u8  b2[5]   = 1...5;      // 1, 2, 3, 4, 5   (inclusive)
+u16 b3[4]   = 100..104;   // 100, 101, 102, 103
+i8  b4[3]   = -2..1;      // -2, -1, 0
 ```
 
-Both bounds must constant-fold and the produced count must match the declared `elementCount`; size mismatches and non-literal bounds are rejected at compile time. The element type must be an integer scalar — float / struct / class arrays still need the `{ ... }` form.
-
-The codegen unrolls the initialiser into one `LDA #$.. / STA $..` pair per element-byte (so a `u16 buf[4]` produces 8 stores). For globals the bytes are baked into the data section instead.
+Both bounds must constant-fold, and the resulting count must match the declared
+element count; mismatches and non-literal bounds are rejected at compile time.
+Float, struct and class arrays still need the `{ … }` form.
 
 ### `.length`
 
-Both fixed-size arrays and heap-allocated pointers expose a `.length` pseudo-property of type `u16`:
+Fixed-size arrays and heap-allocated pointers both expose a `.length`
+pseudo-property:
 
 ```c
 u16 local[8];
 u16 n1 = local.length;        // compile-time constant: 8
 
-u16@ heap = new u16[64];
-u16 n2 = heap.length;         // runtime: read from heap header → 64
+u16* heap = new u16[64];
+u16 n2 = heap.length;         // 64
 ```
 
-`.length` on a non-heap pointer (a `T@` that didn't come from `new T[N]`) is undefined — the codegen reads whatever bytes happen to live before the pointer. Bump-allocator targets store no header, so `.length` is meaningful only under `-falloc=heap` (the default on the 6502 `xt` layouts and on every native backend).
+:::caution[The count must be statically known]
+`.length` is resolved at **compile time**, from the literal in the `new T[N]`
+that produced the pointer — it is not a read of the allocation header. So it
+works for `new u16[64]` and fails to compile for `new u16[n]` where `n` is a
+runtime value. Keep your own count when the size is computed. Compiler bug 045
+tracks making it a real header read; until then the diagnostic at least names
+the restriction.
+:::
+
+`.length` on a pointer the compiler did **not** record a count for — one that
+crossed a function boundary, or came from anywhere but `new T[N]` — is a compile
+error, not a wrong number: there is no map entry to answer from.
 
 ## Pointers
 
-Pointer syntax uses `@` instead of C's `*`. The variable is 'at' a place in memory. Whitespace around `@` is irrelevant — these all declare the same pointer-to-`u8`:
+Pointer syntax uses `*`, as C does. `&` takes an address, and `*` dereferences:
 
 ```c
-u8@ p;
-u8 @p;
-u8 @ p;
+u16  value = (u16)1234;
+u16* p = &value;
+u16  v = *p;                  // load
+*p = (u16)4321;               // store
 ```
 
-`&` takes the address of a value, just like C:
+:::caution[The sigil binds to the TYPE]
+Unlike C, `*` is part of the type rather than the declarator, so this declares
+**two pointers**:
 
 ```c
-u8  myVal = 42;
-u8@ myPtr = &myVal;
+u16* x, y;                    // BOTH are u16*
 ```
 
-Pointer-literals and dereferencing both use `@` as a prefix:
+In C the same line gives you a pointer and an integer. This is deliberate, and it
+is the single most likely thing to surprise a C programmer reading xtc.
+:::
+
+`->` is sugar for "dereference and reach a member": `p->x` is `(*p).x`. Unlike C,
+**`.` on a pointer-to-struct or pointer-to-class also works** — the compiler
+auto-dereferences. Class receivers conventionally use `.`, because a class
+instance is nearly always reached through a pointer, and `sprite.draw()` reads
+better than `sprite->draw()`.
+
+A hardware register is a pointer to a fixed address, reached by casting:
 
 ```c
-u8@ x = $400;        // x points at address $400
-@x  = 4;             // store 4 at $400
-u8  v = @x;          // load from $400
-
-volatile u16@ dosvec = @10;     // 16-bit pointer-literal at address 10
-@dosvec = $1234;
-@dosvec = $4567;     // both stores happen even at -O2+ (volatile)
+volatile u8* COLBK = (u8*)$D01A;
+*COLBK = *COLBK + (u8)1;      // both accesses happen even at -O3 (volatile)
 ```
-
-The `->` operator is sugar for "dereference and reach a member": `p->x` is `(@p).x`. Unlike C, **`.` on a pointer-to-struct or pointer-to-class also works** — the compiler auto-dereferences. Class-typed receivers conventionally use `.` because a class instance is almost always reached through a pointer (`sprite.draw()` reads more naturally than `sprite->draw()`).
 
 ## Casting
 
@@ -151,14 +221,16 @@ u16 n = (u16)x;
 
 Two extensions handle class-pointer traffic:
 
-- `(Dog@) animal` — runtime-checked downcast. On mismatch the program traps (`BRK`).
-- `(Dog@ ?) animal` — failable downcast. On mismatch yields `(Dog@)0`; on success yields the retyped pointer. Pair with an `if (d != 0)` guard.
+- `(Dog*) animal` — runtime-checked downcast. On a mismatch the program traps.
+- `(Dog* ?) animal` — **failable** downcast. On a mismatch it yields `(Dog*)0`;
+  on success, the retyped pointer. Pair it with an `if (d != 0)` guard.
 
-Upcasts, same-class casts, and non-class-pointer casts are unaffected. The full story is on the [Inheritance & protocols](/compiler/language/inheritance/) page.
+Upcasts, same-class casts and non-class-pointer casts are unaffected. The full
+story is on [Inheritance & protocols](/compiler/language/inheritance/).
 
 ## Type inference: `auto`
 
-The `auto` keyword infers a variable's type from its initialiser.
+`auto` infers a variable's type from its initialiser:
 
 ```c
 auto x = 3;          // u8
@@ -168,13 +240,15 @@ auto x = -259;       // i16
 auto x = 65589;      // u32
 auto x = -555_555;   // i32
 auto x = 4.5;        // float
-auto x = "hi";       // string (u8@)
+auto x = "hi";       // string (u8*)
 auto x = true;       // bool
 ```
 
-Integer literals pick the smallest type that holds them; positive values become unsigned, negative values become signed.
+Integer literals pick the smallest type that holds them; positive values become
+unsigned, negative values signed.
 
-Inference also follows expressions and function returns. The result type widens where necessary:
+Inference follows expressions and function returns too, widening where a
+genuinely mixed-width expression requires it:
 
 ```c
 u8 a = 4, b = 5;
@@ -183,24 +257,97 @@ auto c = a + b;       // c is u8
 u8 a = 4; u16 d = 500;
 auto e = a + d;       // e is u16  (widened)
 
-// given:  u8 fn(void) { ... }
+// given:  u8 fn(void) { … }
 auto v = fn();        // v is u8
 ```
 
-Explicit types are still preferred — `auto` is for cases where the expression makes the type obvious and a redundant restatement would be noise.
+Explicit types are still preferred — `auto` is for cases where the expression
+makes the type obvious and restating it would be noise.
 
 ## Type aliases: `typedef`
 
-Any type can be aliased to a shorter or more meaningful name:
+Any type can be aliased:
 
 ```c
 typedef u16   Tick;
-typedef u8@   bytes;
+typedef u8*   bytes;
 typedef RGB[] palette;
 ```
 
-Aliases are transparent — `Tick` and `u16` are interchangeable in every context.
+Aliases are transparent: `Tick` and `u16` are interchangeable everywhere.
+
+A typedef of a **function** signature is also how a bound-method type is spelled —
+`typedef void Handler(i32 v);` gives you `Handler^`. See
+[Bound methods & callbacks](/compiler/language/bound-methods/).
 
 ## Protocols
 
-A `protocol` is a named interface — a list of method signatures with no bodies. Protocols and class conformance are covered on [Inheritance & protocols](/compiler/language/inheritance/); the type-system view is simply that a protocol name used in a type position (typically as a pointer, e.g. `Drawable@`) accepts any conforming class instance.
+A `protocol` is a named interface — method signatures with no bodies. The
+type-system view is simply that a protocol name in a type position (usually as a
+pointer, e.g. `Drawable*`) accepts any conforming class instance. Conformance and
+optional methods are covered on
+[Inheritance & protocols](/compiler/language/inheritance/).
+
+## Worked example
+
+```c
+// types.xc — the scalar types, integer width rules, and pointers.
+#import "Foundation.xc"
+#import "Stdio.xc"
+
+i32 main(void)
+{
+    u8  small = (u8)200;
+    u16 mid   = (u16)60000;
+    i32 wide  = (i32)-100000;
+    u64 huge  = (u64)1 << (u64)40;
+
+    // printf's width contract: %d is 16-BIT and %ld is 32-bit, and both are
+    // signed — which is why 60000 in a u16 prints as -5536.
+    Stdio.printf("u8=%d u16=%d (as i32 %ld) i32=%ld\n", small, mid, (i32)mid, wide);
+    Stdio.printf("2^40 = %ld:%ld (hi:lo)\n", (u32)(huge >> (u64)32), (u32)huge);
+
+    // Same-width arithmetic stays at that width.
+    u8 a = (u8)200, b = (u8)100;
+    u8  wrapped = a + b;                 // 300 & 0xFF = 44
+    // Widening the DESTINATION does not help — `u16 w = a + b;` is still a u8
+    // add, and still 44. To get the true sum, widen the OPERANDS.
+    u16 widened = (u16)a + (u16)b;       // 300
+    Stdio.printf("u8 200+100 -> %d   widened -> %d\n", (u16)wrapped, widened);
+
+    // Literal prefixes: $ hex, % binary, _ ignored anywhere in a literal.
+    u16 hex = $BEEF;
+    u8  bin = %1010_0101;
+    u32 big = 1_000_000;
+    Stdio.printf("hex=%ld bin=%d big=%ld\n", (i32)hex, (u16)bin, big);
+
+    // Pointers use *, & takes an address.
+    u16 value = (u16)1234;
+    u16* p = &value;
+    Stdio.printf("*p = %d\n", *p);
+    *p = (u16)4321;
+    Stdio.printf("value now %d\n", value);
+
+    // The sigil binds to the TYPE, so this declares TWO pointers.
+    u16* x, y;
+    x = &value; y = &value;
+    Stdio.printf("both pointers: %d %d\n", *x, *y);
+
+    bool ok = true;
+    float f = 1.5;
+    double d = 3.1d;
+    Stdio.printf("bool=%d float=%f double=%lf\n", ok ? (u16)1 : (u16)0, f, d);
+    return 0;
+}
+```
+
+```
+u8=200 u16=-5536 (as i32 60000) i32=-100000
+2^40 = 256:0 (hi:lo)
+u8 200+100 -> 44   widened -> 300
+hex=48879 bin=165 big=1000000
+*p = 1234
+value now 4321
+both pointers: 4321 4321
+bool=1 float=1.500000 double=3.1000000000
+```

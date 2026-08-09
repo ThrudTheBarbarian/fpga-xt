@@ -1,8 +1,162 @@
 # Next Steps / Open Work — consolidated
 
+## OPEN: XL capture DUPLICATES the OS GR.0 frame (two READYs + band)
+CONFIRMED IN DDR CONTENT (2026-08-08 overnight, paired graboverlay + uncached
+`mem` probes of the displayed slot — the two now agree, post cache-fix): after
+a `6502 basic` READY boot the displayed slot holds the frame top TWICE — READY
+at slot row 0 AND again at row ~103, black band rows ~85..100 (probe row 100 =
+$000000FF written-black, row 8 = playfield blue).  So the WRITEBACK genuinely
+writes the playfield rows at two different slot-row ranges per frame — not a
+grab artifact, not a fixed offset.  KEY DISCRIMINATOR: game display lists
+capture PERFECTLY (DR title + gameplay grabs pixel-clean, same boot) — only
+the OS's short GR.0 list (24 blank + 192 + JVB, ~46 parked lines) duplicates.
+Suspects: the JVB park/resume path (110334b0) emitting the list twice per beam
+frame for short lists, or atari_row/beam wrap interplay in the rewrite; the
+rewrite beam (u_beam) also has no `cold` input (free-runs across SALLYRST).
+This needs the vbeam-accurate full-chain tb (in flight, tb_fid_raster) — repro
+in sim with the OS list shape before touching antic_dl/antic_beam.  Sometimes
+the capture comes up ALIGNED after a reset (first `6502 basic` sweep this
+session was clean 6/6 by PC; the duplication appeared on later resets) — phase
+of DMACTL-enable vs park state at SALLYRST likely selects the mode.
+Rare sibling: one basic-from-self-test reset re-entered self-test (OPTION
+sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in a 6/6 sweep.
 
+RESOLVED en route (2026-08-08, commits d6f2c77a + 21761b4b): the DR mid-load
+IRQ storm (IRQST=$F7 SEROC) and the random lost-doorbell SIO stalls were the
+fid stalled-cycle write-strobe replay — fixed by exactly-once strobes; DR now
+loads to gameplay (START via the new CONSOL keypad path).
 
 # Immediate targets
+
+## >>> THE SOFTWARE 6502/ANTIC INVESTIGATION IS ANSWERED — pick the next target <<<
+
+**Verdict: feasible, and the baseline is beaten outright.**  The software Atari
+800 in `emu/` scores **57 pass / 0 fail of 63 ACID800** — every in-scope test.
+The six that remain were out of scope from the start and are not emulator bugs:
+the five `mod_*` display modules need a boot-loader/OS in the `$0A00` resident
+page the harness does not provide, and `cpu_65c816` skips itself without a
+65C816 core.  Brief: `docs/Design/software-emulation-investigation.md`.
+Fabric baseline it replaced: 32/63 at sallyrst `$06`, ceiling 57.
+
+The fabric path is untouched, as instructed — it is still the fallback.
+
+**What is open is which direction to take next.  Candidates, unranked:**
+
+* **An OS / boot-loader stub for the `mod_*` modules.**  A real feature with its
+  own scope, exactly as the SIO drive was: ship it inert until it answers
+  honestly.  Turns 5 more tests green.
+* **A 65C816 core** for `cpu_65c816`.  Large, and only that one test wants it.
+* **Port the validated ANTIC/GTIA semantics back into the RTL.**  This was the
+  original point of the investigation — the software model is now a cycle-level
+  oracle the fabric can be diffed against, which is what the fabric never had.
+* **Performance on the A9.**  `make bench` projects what a frame costs; CPU1 is
+  at parity with CPU0 (9.00 ns/iter with MMU + caches), so ~35x realtime holds
+  on the second core.
+
+**Stage 1 (dedicated second A9 core) is DONE.**  `cat /OS/proc/cpu1` on the
+board: `mpidr 0x80000001`, a live ping CPU0 never computed, heartbeat, benchmark.
+Code: `loader/test/freertos/cpu1.{h,c}`, `cpu1_core.c`, `cpu1_boot.S`,
+`mmu_poke_phys0()`.  Two things worth keeping:
+  - **The documented release (`0xFFFFFFF0` + SEV) does not work on this board.**
+    What works is Linux's method: a trampoline at physical 0 plus an SLCR reset
+    pulse (an SLCR core reset does not re-enter the BootROM, so CPU1 restarts at
+    address 0).
+  - Kernel pages are not marked Shareable, so CPU1 must touch only the uncached
+    AMP region at `0x2100_0000` plus read-only kernel text — never CPU0's mutable
+    cached data.  That is why CPU1's code lives in its own file.
+
+Licensing, unchanged: atari800/Altirra are GPL and this repo is permissive-only.
+Everything in `emu/` was written fresh; libatari800 and AltirraSDL are used as
+measurement and oracle only, never vendored.  `emu/tools/altirra-wsync.py` drives
+the AltirraSDL bridge for cycle-accurate ground truth and earned its keep.
+
+
+- **tb_hscrol_e2e AND tb_antic_display are STALE (fail at HEAD, pre-existing).** Both
+  predate the dl_parser walker rework: they tie `frame_start`/`line_start`/`prep_tick`
+  low, so the walker never steps and `meta_*` (now the walker's current-row registers)
+  serve stale/zero rows — "row0 not mode 4", wrong row-0 pixel pairs.  Not regressions;
+  they broke when the walker interface landed.  Fix = port them to the tb_dl_parse
+  `step_row()` harness pattern.  Until then they are NOT part of the sim gate
+  (gate = dl_parse, nmi, antic_dli, antic_dli_cdc, antic_modes, antic_dma_steal,
+  wsync, pokey, boot).
+
+
+## Fidelity 6502 ("single-speed Sally") — time-native cycle-exact core
+Design: **docs/Design/fidelity-6502.md** (a FRESH core built around ~56 clk_sally per
+machine cycle; debug first-class in the micro-schedule; resident alongside turbo xt6502
+per docs/Design/dual-cpu-resident-mux.md). Refs: MOS datasheet
+(refs/mos_6501-6505_mpu_preliminary_aug_1975.pdf) governs the core cycle; the XL PBI gif
+(refs/XL-bus-timing.gif, ~worst-case) governs the expansion boundary.
+- **Phases 1–3 DONE**: `hdl/xt6502f/xt6502f.sv` — cycle engine + `sub`-slotting + RDY halt,
+  and the **entire ISA cycle-exact: all 256 opcodes pass Tom Harte** (documented + every
+  illegal incl. NMOS decimal ADC/SBC, JMP($xxFF) wrap, SLO/RLA/SRE/RRA/DCP/ISC, ANC/ALR/
+  ARR/XAA/LXA/SBX, KIL/JAM lock-up, unstable SHA/SHX/SHY/TAS/LAS). Harness: `sim/tb_xt6502f
+  _harte.sv` + `sim/harte/{fetch,convert,run}.sh`; `sim/harte/run.sh` → "256 pass, 0 fail".
+- **Phase 3 interrupts DONE** — IRQ (level, I-gated), NMI (edge-latched, one-shot), 7-cycle
+  push+vector, B-clear pushed status, NMI hijack of BRK/IRQ, RTI. Directed bench
+  `sim/tb_xt6502f_irq.sv` (all pass); Harte ties the lines inactive so the ISA is unaffected.
+  Refinements left: exact Φ2 sample slot (CLI/SEI/PLP one-instruction delay) + RESET-as-
+  interrupt sequencing.
+- **Phase 4 debug slots DONE** (RTL + sim) — `hdl/xt6502f/xt6502f_debug.sv`: two coherent
+  sample windows (early cycle-entry / late settled), break-before-execute PC bkpt + data wp
+  (halt drives cpu_halt -> rdy-gate), single-instruction step, per-cycle trace ring.
+  Bench `sim/tb_xt6502f_dbg.sv` (all pass). Left for Phase 5: wire cpu_halt/bkpt/wp/trace to
+  the GP0 DEBUG block + `/bin/6502` cycle-level additions once the core is in the SoC.
+- **Phase 5 SoC integration BUILT + TIMING-CLOSED** — the fidelity `xt6502f` is resident in
+  `fpga_xt_top` alongside turbo `xt6502`: `cpu_*` is the muxed active-core bus, `cpu_sel`
+  (=`sallyrst[1]`, 2-FF synced) picks the owner, default 0 = turbo (shipping system
+  bit-identical). Free-running phi2 window (N=56) + busy-aware `mem_ok` gate (SUB_DATA=49) +
+  /HALT. **Bitstream closes: clk_sally WNS = 0.000 ns** (the binding-path 2:1 mux — mux doc
+  §5 — closes, but at ZERO margin). `vivado/build/fpga_xt_top.bit` built (Explore).
+  - Handoff FSM `cpu_handoff.sv` (sim-proven) is NOT yet wired in — this build just proves
+    residency + mux timing, and lets the OS boot on either core (set `sallyrst[1]` before
+    releasing SALLYRST).
+  - **HW VALIDATED 2026-07-18:** turbo unchanged (desktop boots); `6502 core fid` boots the
+    real Atari OS to READY on the cycle-exact core at 1x. Needed one fix: sally_mem.rdy must
+    follow the ACTIVE core (its read-latch + writes + bank/peripheral strobes are rdy-gated) —
+    fid drives a single early-window pulse. `/bin/6502 core [turbo|fid]` switches live.
+  - **Follow-ups:** clk_sally has zero slack — if HW is marginal, retime the mux into the
+    shared MAR D-input (mux doc §5.1) to reclaim margin. Then wire cpu_handoff (live switch;
+    turbo snapshot via cdbg_* raw taps, inject via idbg_* muxed with xt6502_debug) + the
+    fidelity debug to a GP0 block. Turbo specialization (§0a) deferred per the user.
+- **Phase 6** — HW bring-up: cold-load, run the OS/games on the fidelity core, chase the
+  fidelity backlog (magenta palette, garbled tiles, input) ON the right core.
+
+## In-fabric 6502 debugger (branch `debug`) + XL app-launch
+The debugger is BUILT and HW-PROVEN: `/bin/6502 status|halt|go|step N|break $A|
+break off|breakreset on|off|reset|REG=VAL...` (halt via non-destructive rdy-gate,
+single-step, PC breakpoint, register snapshot + injection), GP0 DEBUG block
+(0x8xx), `xt6502_debug.sv`. Closed timing (clk_sally WNS +0.001). `/bin/xlboot`
+launches an ATR from the CLI. Docs: `docs/OS/6502-debug.md`. Tag `pre-6502-debug`
+on `main` is the fast baseline; sel 0x9 + DBG_BEAM reserved for the future ANTIC
+debugger. **Next tools (user's roadmap):** ANTIC recorder + waterfall diff; 6502
+AND ANTIC breakpoints; step DLIs with beam position (wire DBG_BEAM).
+
+**XL app-launch — WORKING END-TO-END 2026-07-18.** `xlboot DespatchRider.atr` boots:
+HW dmesg shows SIO STATUS ($53) + READ ($52) of boot sectors 1..$27 into $0400 via
+the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game code
+(351 distinct PCs). Two real blockers, both found with the new debug tools:
+1. **Bulk ROM-window upload dropped the OS patch.** `sally_rom_loader` does NOT
+   back-pressure; a tight 49 KB `romwin_write` store loop outran its depth-4 CDC
+   drain and dropped all but the tail ($FFFC-$FFFF), so the reset stub never landed →
+   reset fetched $00=BRK → derail. FIX (kernel): pace `romwin_write` (dsb + spin per
+   byte). *(RTL follow-up: give the loader real WREADY back-pressure.)*
+2. **OS ROM self-checksum** rejected the patched image → self-test. Coldstart $FF73
+   sums $C002-$CFFF+$5000-$57FF+$D800-$DFFF vs $C000/1, $FF92 sums $E000-$FFF7+
+   $FFFA-$FFFF vs $FFF8/9; mismatch does `LSR $01`→$01=0→`JMP $5003` self-test. Our
+   patches break both. FIX: `fix_os_checksums()` re-points $C000/1 and $FFF8/9 by the
+   patch delta. FOUND via `6502 watch $01 w`. See [[xl-app-launch]].
+- The earlier NMIEN/IRQEN/PORTB "fixes" were DERAIL AFTERMATH, not the cause — kept as
+  valid hardening. The self-test was corruption, not a coldstart decision, until (2).
+- **Debugger: breakpoint is reliable** (was never broken — earlier misses were the
+  derail aftermath + incoherent run-state PC reads). Added `6502 diag` (self-observability)
+  and a **data watchpoint** `6502 watch $A r|w|rw` (DBG_WP/WPCFG). Build #7 clk_sally
+  WNS +0.154. Docs: `docs/OS/6502-debug.md`.
+- Gotcha: rom_we (ROM-window) writes commit to the CPU's mem[] fine while SALLYRST is
+  held, BUT a fast burst overflows the loader FIFO (see blocker 1); pace it.
+- Branch hygiene: debugger + all fixes live on `debug`; cherry-pick to `main`.
+- **Next tools (user roadmap):** ANTIC recorder + waterfall diff; 6502 AND ANTIC
+  breakpoints; step DLIs with beam position (wire DBG_BEAM).
 
 ## Open Issues (tracked bugs)
 - **Retire the per-switch `TLBIALL` sledgehammer (residual stale image-region TLB entry).**
@@ -324,7 +478,11 @@
       path (~0.3–0.5 ns ≈ 1 LUT level). Current operating point is **100 MHz** (`clk_sally`
       100 / `clk_sys` 133 / `clk_pix` 148; 120 no longer closes off-the-shelf), so there's
       more headroom than the old 120 target — but it still eats margin on the binding
-      family, so gate any build on `clk_sally` WNS ≥ 0.
+      family, so gate any build on `clk_sally` WNS ≥ 0. **Written up as a build in
+      docs/Design/dual-cpu-resident-mux.md** — reuses `sally_clock` as the fidelity-core
+      cycle-enable (no 1.79 MHz clock domain, no CDC) and the `xt6502_debug`
+      snapshot/inject ports as the core-to-core state handoff, so it is mostly wiring;
+      §5 there gives the mux-retime mitigations if the one LUT-level won't close.
     - **(B) Partial Reconfiguration** — CPU in a Reconfigurable Partition, swap the core
       via a small partial bitstream over PCAP from the A9 (sub-ms, invisible at launch),
       **HDMI/ANTIC/compositor/PS-links stay live**. Removes the 2:1 mux. *Catch:* the RP
@@ -343,10 +501,16 @@
       builds, no mux, no boundary), but a full reload **blanks the whole display + re-syncs
       PS↔PL** every launch (bad UX). Rejected unless the display teardown becomes
       acceptable.
-  - **Recommendation:** (B) is the architecturally correct answer for "swap the CPU while
-    the desktop/video stays alive" — *provided* the RP is floorplanned around the
-    CPU↔memory critical loop. Sequence it **after** stable illegals land, and only when
-    cycle-exact faithful mode is actually wanted.
+  - **Recommendation (updated 2026-07-18):** start with **(A)** — on the LUT-rich 7020 a
+    second resident 6502 is a rounding error in area (~1.9k LUT, **0 binding BRAM** — the
+    fidelity core is logic; the 22 BRAM live once in the shared `sally_mem`), and (A)
+    avoids the entire DFX flow + partition-pin fence. Its lone cost is one 2:1 LUT on the
+    binding path, self-gated by our WNS-≥0 build abort. **(B) PR is the fMax-purist
+    fallback** if that LUT-level won't close after the docs/Design/dual-cpu-resident-mux.md
+    §5 mitigations — it removes the mux at the price of the RP fence. Either way, sequence
+    it **after** stable illegals land, and only when cycle-exact faithful mode is actually
+    wanted. (Prior recommendation was (B); flipped because the resident-mux handoff turned
+    out to reuse existing infrastructure — `sally_clock` + the debug inject ports.)
 
 > See also the parked branch `xt-embellishment-relocate` (opcode relocation to free
 > the cc=11 undoc territory; ISA-correct but costs ~150 ps — cherry-pick after fmax
@@ -357,6 +521,27 @@
 
 
 # Future targets
+
+## JIT 6502 as a performance "core" (PARKED — gated on the fidelity core first)
+Simon, 2026-07-31: a dynamic recompiler could give a performance core alongside
+the cycle-exact one (ref: jahej.com "JIT CPU emulation: a 6502 to x86 dynamic
+recompiler"). **Explicitly gated: only once the fidelity core is up and
+running.** Notes so the option stays open rather than being designed out:
+- It maps onto the **turbo** role, not the fidelity role — the same split the
+  fabric already has (`xt6502` turbo vs `xt6502f` fidelity, cold-switched at app
+  launch, docs/Design/dual-cpu-resident-mux.md). A recompiler cannot be
+  cycle-exact per bus cycle *and* fast; that is the whole trade.
+- **The interaction to watch is with ANTIC, and it is the crux.** The software
+  design has ANTIC running INSIDE the CPU's bus-cycle callback (emu/antic-design.md).
+  A JIT's speed comes from *not* leaving a basic block per cycle — so a naive JIT
+  and a cycle-exact ANTIC are mutually exclusive. The workable shapes are: run the
+  JIT only when DMA is off/uncontended and fall back to the interpreter when ANTIC
+  is stealing; or compile per-block with a cycle budget and check the budget at
+  block boundaries. Decide this BEFORE writing a JIT, not after.
+- Other 6502-JIT hazards, cheap to note now: self-modifying code (needs page
+  invalidation of compiled blocks — Atari software does this), computed jumps
+  into mid-block addresses, and the undocumented opcodes already implemented here.
+
 ## SSH (HW-VALIDATED end-to-end; docs/OS/ssh-server.md)
 Server + client + scp all work — HW-confirmed: clean boot (Networking/SecureShell/
 Desktop all [OK]), `ssh xtos.local` login, exec, scp both ways, boot-script start,
@@ -619,15 +804,25 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
 - none
 
 ## Video / compositor / sprites / textures
-- **plane_fetch vs blitter DDR arbitration (RTL — the real fix for the overrun
+- **plane_fetch vs blitter DDR arbitration (RTL — the residual overrun
   trickle)** — the desktop fetcher (HP0) loses to blitter bursts (HP1) on their
   shared DDRC port: single-frame line-segment corruption, ZERO overruns with the
   engine off (board A/B 2026-07-17). PS QoS is a dead end (QOS pins tied 0 in
-  fabric, "inert without HPR arb config"). Fix in fabric: deeper/earlier
-  plane_fetch line FIFO, or arb priority for the fetcher. gemd-side mitigations
-  shipped (128-row banded engine blits + CPU composite during live drags) make it
-  visually clean; hdmi-mon coalesces the residual events to 1 line/5 s.
-  *(src: gemd-plan.md §M7, hdmi.c hdmi-mon)*
+  fabric, "inert without HPR arb config"). Remaining fabric options: deeper/
+  earlier plane_fetch line FIFO (needs compositor row+2 lookahead), or arb
+  priority for the fetcher. gemd-side mitigations shipped (128-row banded engine
+  blits + CPU composite during live drags) make it visually clean; hdmi-mon
+  coalesces the residual events to 1 line/5 s. **Same-row-skip attempt REVERTED
+  (89c4291 + f3d830f reverted by 0ebc6cd/f1d23fd)** — on hardware it
+  black-screened the XL window at scale 2 while the machine ran fine
+  (XEX booted, HP3 fetches active, displayed half never updated); the four
+  unit tbs (plane_fetch/vscale/compositor/cmp_fetch) all passed, so the
+  failure lives in a fabric condition they don't model — likely the real
+  vbeam's line_start/line_start_e shape vs the tb's. Before re-landing:
+  build a tb that reuses the actual u_vbeam line_start generation, and
+  reproduce the black window in sim FIRST. Simon confirms the overruns
+  cause no visible glitches (absorbed by buffering), so this is bandwidth
+  hygiene, not a fix — low priority. *(src: gemd-plan.md §M7, hdmi.c hdmi-mon)*
 - **Compositor polish (deferred)** — visible-span-only plane fetch (bandwidth);
   tear-free `front_sel` sampling at the compositor's own frame start; narrow/wide
   playfield `src_w` tracking. *(desktop-window-over-live-window occlusion is DONE —

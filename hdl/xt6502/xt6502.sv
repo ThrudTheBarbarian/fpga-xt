@@ -36,12 +36,31 @@ module xt6502 (
     output wire [7:0]  data_out,
     output wire        rw,         // 1 = read, 0 = write
     input  wire        rdy,        // 1 = run, 0 = stall/clock-enable-low
+    // (data_in == 0), computed in sally_mem next to the data rather than here.
+    // The Z-flag bit is the clk_sally limiter and the path is route-dominated,
+    // so the 8-input reduction must not sit at the far end of the crossing.
+    input  wire        di_zero_in,
 
     input  wire        irq_n,
     input  wire        nmi_n,
 
     output wire        stack_op,
-    output wire [3:0]  s_high
+    output wire [3:0]  s_high,
+
+    // ── Debug taps (pure fan-out of architectural state; read by xt6502_debug) ──
+    output wire        dbg_boundary,   // 1 = at ST_FETCH: the once-per-instruction boundary
+    output wire [15:0] dbg_pc,
+    output wire [7:0]  dbg_a,
+    output wire [7:0]  dbg_x,
+    output wire [7:0]  dbg_y,
+    output wire [7:0]  dbg_s,
+    output wire [7:0]  dbg_p,
+    output wire [3:0]  dbg_shigh,
+
+    // ── Bus-access taps (for the data watchpoint) ──
+    output wire        dbg_bus_stb,    // 1 = a bus access commits this cycle (= rdy)
+    output wire [15:0] dbg_bus_addr,   // address of that access (= the live addr bus)
+    output wire        dbg_bus_rw      // 1 = read, 0 = write
 );
 
     localparam [15:0] VEC_RESET = 16'hFFFC;
@@ -890,24 +909,24 @@ module xt6502 (
 
             if (state == ST_PULL2) begin
                 case (IR)
-                    8'h68: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // PLA
-                    8'h64: begin X <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // POP X
-                    8'h74: begin Y <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // POP Y
+                    8'h68: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // PLA
+                    8'h64: begin X <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // POP X
+                    8'h74: begin Y <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // POP Y
                     default: P <= di | 8'h20;           // PLP → P (force U=1)
                 endcase
             end
             // SP-relative scalar load writeback (di = stack value).
             if (state == ST_SP_WB) begin
                 case (IR)
-                    8'hB2: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // LDA d,SP
-                    8'h42: begin X <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // LDX d,SP
-                    8'h52: begin Y <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // LDY d,SP
+                    8'hB2: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // LDA d,SP
+                    8'h42: begin X <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // LDX d,SP
+                    8'h52: begin Y <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // LDY d,SP
                     8'h72, 8'hF2: begin                                                     // ADC/SBC d,SP
                         A <= alu_r; P[N_BIT] <= alu_n; P[Z_BIT] <= alu_z;
                         P[C_BIT] <= alu_c; P[V_BIT] <= alu_v;
                     end
                     8'hD2: begin P[N_BIT] <= alu_n; P[Z_BIT] <= alu_z; P[C_BIT] <= alu_c; end // CMP d,SP
-                    8'h23: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // LDA d,SP,X
+                    8'h23: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // LDA d,SP,X
                     default: ;
                 endcase
             end
@@ -1026,6 +1045,23 @@ module xt6502 (
     assign data_out = wr_data;
     assign stack_op = stk_cycle;
     assign s_high   = S_high;
+
+    // ── Debug taps: combinational fan-out of architectural state (no added path) ──
+    // ST_DECODE is the true once-per-instruction boundary: the core PREFETCHES the
+    // next opcode during execution, so ST_FETCH is skipped except after control
+    // flow.  At ST_DECODE the opcode has been fetched (PC already incremented past
+    // it), so the instruction's address is PC-1 — the debug block subtracts it.
+    assign dbg_boundary = (state == ST_DECODE);
+    assign dbg_pc       = PC;
+    assign dbg_bus_stb  = rdy;              // an access commits when the core is not stalled
+    assign dbg_bus_addr = addr;             // the live memory address (MAR / EA / stack)
+    assign dbg_bus_rw   = rw;
+    assign dbg_a        = A;
+    assign dbg_x        = X;
+    assign dbg_y        = Y;
+    assign dbg_s        = S;
+    assign dbg_p        = P;
+    assign dbg_shigh    = S_high;
 
 endmodule
 

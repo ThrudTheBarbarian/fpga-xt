@@ -37,6 +37,7 @@ HDL_SRCS := \
     $(HDL_DIR)/dma_arbiter.sv     \
     $(HDL_DIR)/mem_read_mux.sv    \
     $(HDL_DIR)/bram_shim.sv       \
+    $(HDL_DIR)/display_shadow.sv  \
     $(HDL_DIR)/draw_regs.sv       \
     $(HDL_DIR)/pia_regs.sv        \
     $(HDL_DIR)/peri_link.sv       \
@@ -46,8 +47,10 @@ HDL_SRCS := \
     $(HDL_DIR)/pokey_regs.sv      \
     $(HDL_DIR)/pokey_audio.sv     \
     $(HDL_DIR)/pokey_pot.sv       \
+    $(HDL_DIR)/pokey_serial.sv    \
     $(HDL_DIR)/pokey_i2s_tx.sv    \
     $(HDL_DIR)/pokey.sv           \
+    $(HDL_DIR)/pokey_serial.sv    \
     $(HDL_DIR)/sally_clock.sv     \
     $(HDL_DIR)/bank_xlat.sv       \
     $(HDL_DIR)/sally_mem.sv       \
@@ -55,11 +58,13 @@ HDL_SRCS := \
     $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_seq.sv       \
     $(HDL_DIR)/antic_top.sv       \
-    $(HDL_DIR)/antic_dma_steal.sv
+    $(HDL_DIR)/gtia_pm_collide.sv \
+    $(HDL_DIR)/antic_dma_steal.sv \
+    $(HDL_DIR)/cdc_sync_bit.sv
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal
+.PHONY: antic_timing all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes cmp_fetch hscrol hscrol_e2e antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal antic_dli antic_dli_cdc
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -70,7 +75,7 @@ BUILD_DIR := build
 # deleted too).  They drove ANTIC through the old serial-link mocks, superseded
 # by the compositor model.  Removed from the build rather than reviving
 # intentionally-deleted RTL.
-all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes xt6502 cdc_flag_data hwreg_rd_cdc
+all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat pia_regs pia_irq peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes xt6502 cdc_flag_data hwreg_rd_cdc
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -344,7 +349,7 @@ POKEY_HDL := \
     $(HDL_DIR)/pokey_audio.sv    \
     $(HDL_DIR)/pokey_pot.sv      \
     $(HDL_DIR)/pokey_i2s_tx.sv   \
-    $(HDL_DIR)/pokey.sv
+    $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv
 
 $(BUILD_DIR)/tb_pokey.vvp: $(POKEY_HDL) tb_pokey.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pokey $(POKEY_HDL) tb_pokey.sv
@@ -400,6 +405,12 @@ xt6502: $(BUILD_DIR)/tb_xt6502.vvp
 
 $(BUILD_DIR)/tb_xt6502.vvp: $(HDL_DIR)/xt6502/xt6502.sv tb_xt6502.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_xt6502 $(HDL_DIR)/xt6502/xt6502.sv tb_xt6502.sv
+
+# ---- xt6502_debug — RETIRED with the turbo-core strip (2026-07-20) ----------
+# The turbo core is now speed-only: its register-INJECT was removed, so this
+# test (which drove dbg_wr/dbg_w* inject into the core) no longer applies.
+# The in-fabric debugger lives on the fidelity core now — see the tb_xt6502f_*
+# benches + the Harte harness for debug/interrupt coverage.
 
 sally_stack: $(BUILD_DIR)/tb_sally_stack.vvp
 	@echo "=== sally_stack — stack-BRAM alias test ==="
@@ -479,6 +490,7 @@ BOOT_ANTIC_HDL := \
     $(HDL_DIR)/dma_arbiter.sv     \
     $(HDL_DIR)/mem_read_mux.sv    \
     $(HDL_DIR)/bram_shim.sv       \
+    $(HDL_DIR)/display_shadow.sv  \
     $(HDL_DIR)/draw_regs.sv       \
     $(HDL_DIR)/pia_regs.sv        \
     $(HDL_DIR)/peri_link.sv       \
@@ -490,10 +502,12 @@ BOOT_ANTIC_HDL := \
     $(HDL_DIR)/pokey_pot.sv       \
     $(HDL_DIR)/pokey_i2s_tx.sv    \
     $(HDL_DIR)/pokey.sv           \
+    $(HDL_DIR)/pokey_serial.sv    \
     $(HDL_DIR)/pcm1808_rx.sv      \
     $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_seq.sv       \
     $(HDL_DIR)/antic_top.sv       \
+    $(HDL_DIR)/gtia_pm_collide.sv \
     $(HDL_DIR)/antic_dma_steal.sv
 
 BOOT_SYS_HDL := \
@@ -544,7 +558,7 @@ $(BUILD_DIR)/tb_boot_trace.vvp: $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) ax
 	$(IVERILOG) $(SV_FLAGS) $(BOOT_DEFINES) -D COSIM_TRACE -o $@ -s tb_boot \
 	    $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) axi_slave_mem.sv peri_rp_idle.sv tb_boot.sv
 
-.PHONY: rsrc_check
+.PHONY: acid2v rsrc_check
 rsrc_check:
 	@test -f ../rsrc/sally-boot.hex || \
 	    (echo "FAIL: ../rsrc/sally-boot.hex missing (OS ROM image needed for boot sim)"; exit 1)
@@ -823,6 +837,54 @@ antic_modes: $(BUILD_DIR)/tb_antic_modes.vvp
 $(BUILD_DIR)/tb_antic_modes.vvp: $(HDL_DIR)/compositor.sv tb_antic_modes.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_modes $(HDL_DIR)/compositor.sv tb_antic_modes.sv
 
+# ---- cmp_fetch — INTEGRATION: compositor fetch through the REAL mem chain -
+# Wires compositor + mem_read_mux + bram_shim + dma_arbiter + dma_master
+# exactly as antic_top does, with a sally_mem-style registered dual-port RAM,
+# and drives the acid800 antic_pmdma / antic_addresswrap scenarios through the
+# real handshake.  Reproduces the HW $00/wrong-fetch that the mock (mem_ready=1,
+# combinational RAM) and tb_mem_read_mux (sh_ready=1, no bram_shim) cannot.
+CMP_FETCH_HDL := $(HDL_DIR)/compositor.sv $(HDL_DIR)/mem_read_mux.sv \
+                 $(HDL_DIR)/bram_shim.sv $(HDL_DIR)/dma_arbiter.sv \
+                 $(HDL_DIR)/dma_master.sv
+cmp_fetch: $(BUILD_DIR)/tb_cmp_fetch.vvp
+	@echo "=== cmp_fetch — compositor fetch through the real mem chain ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_cmp_fetch.log
+	@grep -q '\*\*\* CMP_FETCH OK \*\*\*' $(BUILD_DIR)/tb_cmp_fetch.log || \
+	    (echo "FAIL: tb_cmp_fetch missing CMP_FETCH OK"; exit 1)
+	@echo "PASS: tb_cmp_fetch"
+
+$(BUILD_DIR)/tb_cmp_fetch.vvp: $(CMP_FETCH_HDL) tb_cmp_fetch.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_cmp_fetch $(CMP_FETCH_HDL) tb_cmp_fetch.sv
+
+# ---- hscrol — HSCROL fine sub-pixel scroll (compositor, exhaustive) --------
+# Drives the compositor directly with meta_hscrol_en=1 and hscrol=0..15 for
+# modes 2 & 4 over pseudo-random content, checking every displayed atari px
+# against source[x + 2*hscrol].  Proves the fine shift is applied smoothly (2
+# atari px / hscrol step) and never byte-granular.  Not in `all`.
+hscrol: $(BUILD_DIR)/tb_hscrol.vvp
+	@echo "=== hscrol — compositor fine sub-pixel scroll ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_hscrol.log
+	@grep -q '\*\*\* HSCROL OK \*\*\*' $(BUILD_DIR)/tb_hscrol.log || \
+	    (echo "FAIL: tb_hscrol missing HSCROL OK"; exit 1)
+	@echo "PASS: tb_hscrol"
+
+$(BUILD_DIR)/tb_hscrol.vvp: $(HDL_DIR)/compositor.sv tb_hscrol.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hscrol $(HDL_DIR)/compositor.sv tb_hscrol.sv
+
+# ---- hscrol_e2e — HSCROL enable path (dl_parser -> compositor) -------------
+# Parses a real DL with a mode-4 + HSCROL line, then composes it for several
+# live hscrol values, proving DL bit-4 -> meta_hscrol_en turns on the fine
+# window and the value shifts smoothly end-to-end.  Not in `all`.
+hscrol_e2e: $(BUILD_DIR)/tb_hscrol_e2e.vvp
+	@echo "=== hscrol_e2e — dl_parser -> compositor HSCROL enable path ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_hscrol_e2e.log
+	@grep -q '\*\*\* HSCROL_E2E OK \*\*\*' $(BUILD_DIR)/tb_hscrol_e2e.log || \
+	    (echo "FAIL: tb_hscrol_e2e missing HSCROL_E2E OK"; exit 1)
+	@echo "PASS: tb_hscrol_e2e"
+
+$(BUILD_DIR)/tb_hscrol_e2e.vvp: $(HDL_DIR)/compositor.sv $(HDL_DIR)/dl_parser.sv tb_hscrol_e2e.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hscrol_e2e $(HDL_DIR)/compositor.sv $(HDL_DIR)/dl_parser.sv tb_hscrol_e2e.sv
+
 # ---- antic_display — end-to-end ANTIC display path (integration) ----------
 # Drives the real antic_top (DL + screen in a memory model on its bram port,
 # registers over the snoop bus) and checks the §5 render-tap output: frame
@@ -838,6 +900,40 @@ antic_display: $(BUILD_DIR)/tb_antic_display.vvp
 
 $(BUILD_DIR)/tb_antic_display.vvp: $(HDL_SRCS) tb_antic_display.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_display $(HDL_SRCS) tb_antic_display.sv
+
+# ---- antic_dli — DLI fires on correct PHYSICAL scanline (integrated) -----
+antic_dli: $(BUILD_DIR)/tb_antic_dli.vvp
+	@echo "=== antic_dli — physical-scanline DLI integration ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_antic_dli.log
+	@grep -q '\*\*\* ANTIC_DLI OK \*\*\*' $(BUILD_DIR)/tb_antic_dli.log || \
+	    (echo "FAIL: tb_antic_dli missing ANTIC_DLI OK"; exit 1)
+	@echo "PASS: tb_antic_dli"
+
+$(BUILD_DIR)/tb_antic_dli.vvp: $(HDL_SRCS) tb_antic_dli.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_dli $(HDL_SRCS) tb_antic_dli.sv
+
+# ---- antic_dli_cdc — DLI coincidence via the REAL clk_sally->CDC->clk_sys --
+# register-write path (reproduces / refutes the HW-proven ACID800 antic_nmist
+# DLI failure).  Drives NMIEN through cdc_fifo_1w1r + the fpga_xt_top write-
+# strobe regen pipeline instead of the snoop bus.  Passes on EITHER verdict
+# (BUG-REPRODUCED or NOT-REPRODUCED) — it's a diagnostic bench; it only fails
+# on INCONCLUSIVE (write lost) or watchdog.
+# ---- antic_timing — the cycle-serial ANTIC timing machine (directed) ------
+$(BUILD_DIR)/tb_antic_timing.vvp: ../hdl/antic_timing.sv tb_antic_timing.sv | $(BUILD_DIR)
+	iverilog -g2012 -Wall -Wno-timescale -I../hdl -o $@ -s tb_antic_timing $^
+
+antic_timing: $(BUILD_DIR)/tb_antic_timing.vvp
+	@vvp -N $< | tee /dev/stderr | grep -q "ANTIC_TIMING OK" && echo "PASS: tb_antic_timing" || (echo "FAIL: tb_antic_timing" ; exit 1)
+
+antic_dli_cdc: $(BUILD_DIR)/tb_antic_dli_cdc.vvp
+	@echo "=== antic_dli_cdc — DLI coincidence through the register-write CDC ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_antic_dli_cdc.log
+	@grep -Eq 'ANTIC_DLI_CDC: (BUG-REPRODUCED|NOT-REPRODUCED)' $(BUILD_DIR)/tb_antic_dli_cdc.log || \
+	    (echo "FAIL: tb_antic_dli_cdc inconclusive / did not finish"; exit 1)
+	@echo "PASS: tb_antic_dli_cdc (see verdict above)"
+
+$(BUILD_DIR)/tb_antic_dli_cdc.vvp: $(HDL_SRCS) $(HDL_DIR)/cdc_fifo_1w1r.sv tb_antic_dli_cdc.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_dli_cdc $(HDL_SRCS) $(HDL_DIR)/cdc_fifo_1w1r.sv tb_antic_dli_cdc.sv
 
 # ---- M25-2 — peri_link FPGA-side SPI master ------------------------------
 peri_link: $(BUILD_DIR)/tb_peri_link.vvp
@@ -907,6 +1003,19 @@ pia_regs: $(BUILD_DIR)/tb_pia_regs.vvp
 
 $(BUILD_DIR)/tb_pia_regs.vvp: $(HDL_DIR)/pia_regs.sv tb_pia_regs.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pia_regs $(HDL_DIR)/pia_regs.sv tb_pia_regs.sv
+
+# ---- ACID800 pia_irq — 6821 CA2/CB2 interrupt-flag vectors --------------
+pia_irq: $(BUILD_DIR)/tb_pia_irq.vvp
+	@echo "=== ACID800 pia_irq vectors ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_pia_irq.log
+	@grep -q '\*\*\* PIA IRQ OK \*\*\*' $(BUILD_DIR)/tb_pia_irq.log || \
+	    (echo "FAIL: tb_pia_irq missing PIA IRQ OK"; exit 1)
+	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_pia_irq.log && \
+	    (echo "FAIL: tb_pia_irq reported a trap"; exit 1) || true
+	@echo "PASS: tb_pia_irq"
+
+$(BUILD_DIR)/tb_pia_irq.vvp: $(HDL_DIR)/pia_regs.sv tb_pia_irq.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pia_irq $(HDL_DIR)/pia_regs.sv tb_pia_irq.sv
 
 # ---- M24-6 — OS ROM load path -----------------------------------------
 os_rom_load: $(BUILD_DIR)/tb_os_rom_load.vvp
@@ -1091,3 +1200,401 @@ $(BUILD_DIR):
 
 clean:
 	rm -rf $(BUILD_DIR) visual/*.ppm
+
+# ---- FID-core vs raster co-sim (WSYNC/NMIST cycle calibration) ----------
+fid_raster: $(BUILD_DIR)/tb_fid_raster.vvp
+	@echo "=== fid_raster (cycle calibration) ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_fid_raster.log
+	@grep -q 'FID_RASTER done' $(BUILD_DIR)/tb_fid_raster.log || \
+	    (echo "FAIL: tb_fid_raster did not complete"; exit 1)
+	@echo "PASS: tb_fid_raster"
+
+$(BUILD_DIR)/tb_fid_raster.vvp: $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) $(HDL_DIR)/xt6502f/xt6502f.sv $(HDL_DIR)/antic_timing.sv axi_slave_mem.sv peri_rp_idle.sv tb_fid_raster.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) $(BOOT_DEFINES) -o $@ -s tb_fid_raster \
+	    $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) $(HDL_DIR)/xt6502f/xt6502f.sv $(HDL_DIR)/antic_timing.sv axi_slave_mem.sv peri_rp_idle.sv tb_fid_raster.sv
+
+pm_collide: build/tb_pm_collide.vvp
+	@vvp -N $<
+
+build/tb_pm_collide.vvp: tb_pm_collide.sv $(HDL_DIR)/gtia_pm_collide.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pm_collide \
+	    $(HDL_DIR)/gtia_pm_collide.sv tb_pm_collide.sv
+
+pokey_serial: build/tb_pokey_serial.vvp
+	@vvp -N $<
+
+build/tb_pokey_serial.vvp: tb_pokey_serial.sv $(HDL_DIR)/pokey_serial.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pokey_serial \
+	    $(HDL_DIR)/pokey_serial.sv tb_pokey_serial.sv
+
+antic_line_buf: build/tb_antic_line_buf.vvp
+	@vvp -N $<
+
+build/tb_antic_line_buf.vvp: tb_antic_line_buf.sv $(HDL_DIR)/antic_line_buf.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_line_buf \
+	    $(HDL_DIR)/antic_line_buf.sv tb_antic_line_buf.sv
+
+antic_mode_tbl: build/tb_antic_mode_tbl.vvp
+	@vvp -N $<
+
+build/tb_antic_mode_tbl.vvp: tb_antic_mode_tbl.sv $(HDL_DIR)/antic_mode_tbl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_mode_tbl \
+	    $(HDL_DIR)/antic_mode_tbl.sv tb_antic_mode_tbl.sv
+
+antic_pixel_shift: build/tb_antic_pixel_shift.vvp
+	@vvp -N $<
+
+build/tb_antic_pixel_shift.vvp: tb_antic_pixel_shift.sv $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_mode_tbl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pixel_shift \
+	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_mode_tbl.sv tb_antic_pixel_shift.sv
+
+antic_pf_source: build/tb_antic_pf_source.vvp
+	@vvp -N $<
+
+build/tb_antic_pf_source.vvp: tb_antic_pf_source.sv $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_mode_tbl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pf_source \
+	    $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_mode_tbl.sv tb_antic_pf_source.sv
+
+antic_color_sel: build/tb_antic_color_sel.vvp
+	@vvp -N $<
+
+build/tb_antic_color_sel.vvp: tb_antic_color_sel.sv $(HDL_DIR)/antic_color_sel.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_color_sel \
+	    $(HDL_DIR)/antic_color_sel.sv tb_antic_color_sel.sv
+
+antic_line_render: build/tb_antic_line_render.vvp
+	@vvp -N $<
+
+build/tb_antic_line_render.vvp: tb_antic_line_render.sv $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_color_sel.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_line_render \
+	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_pf_fetch.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
+	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/antic_char_ctl.sv \
+	    tb_antic_line_render.sv
+
+antic_beam: build/tb_antic_beam.vvp
+	@vvp -N $<
+
+build/tb_antic_beam.vvp: tb_antic_beam.sv $(HDL_DIR)/antic_beam.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_beam \
+	    $(HDL_DIR)/antic_beam.sv tb_antic_beam.sv
+
+antic_dl: build/tb_antic_dl.vvp
+	@vvp -N $<
+
+build/tb_antic_dl.vvp: tb_antic_dl.sv $(HDL_DIR)/antic_dl.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_dl \
+	    $(HDL_DIR)/antic_dl.sv $(HDL_DIR)/antic_mode_tbl.sv tb_antic_dl.sv
+
+antic_pf_geom: build/tb_antic_pf_geom.vvp
+	@vvp -N $<
+
+build/tb_antic_pf_geom.vvp: tb_antic_pf_geom.sv $(HDL_DIR)/antic_pf_geom.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pf_geom \
+	    $(HDL_DIR)/antic_pf_geom.sv $(HDL_DIR)/antic_mode_tbl.sv tb_antic_pf_geom.sv
+
+antic_char_ctl: build/tb_antic_char_ctl.vvp
+	@vvp -N $<
+
+build/tb_antic_char_ctl.vvp: tb_antic_char_ctl.sv $(HDL_DIR)/antic_char_ctl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_char_ctl \
+	    $(HDL_DIR)/antic_char_ctl.sv tb_antic_char_ctl.sv
+
+antic_pf_fetch: build/tb_antic_pf_fetch.vvp
+	@vvp -N $<
+
+build/tb_antic_pf_fetch.vvp: tb_antic_pf_fetch.sv $(HDL_DIR)/antic_pf_fetch.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_char_ctl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pf_fetch \
+	    $(HDL_DIR)/antic_pf_fetch.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_char_ctl.sv tb_antic_pf_fetch.sv
+
+antic_scanline: build/tb_antic_scanline.vvp
+	@vvp -N $<
+
+build/tb_antic_scanline.vvp: tb_antic_scanline.sv $(HDL_DIR)/antic_scanline.sv \
+	    $(HDL_DIR)/antic_beam.sv $(HDL_DIR)/antic_dl.sv \
+	    $(HDL_DIR)/antic_pf_geom.sv $(HDL_DIR)/antic_pf_fetch.sv \
+	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_line_buf.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_pixel_shift.sv \
+	    $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_color_sel.sv \
+	    $(HDL_DIR)/antic_char_ctl.sv $(HDL_DIR)/antic_pm_fetch.sv \
+	    $(HDL_DIR)/gtia_stage.sv $(HDL_DIR)/gtia_obj_walk.sv \
+	    $(HDL_DIR)/gtia_priority.sv $(HDL_DIR)/gtia_collide.sv \
+	    $(HDL_DIR)/gtia_special.sv $(HDL_DIR)/antic_nmi.sv \
+	    $(HDL_DIR)/antic_dma_sched.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_scanline \
+	    $(HDL_DIR)/antic_scanline.sv $(HDL_DIR)/antic_beam.sv \
+	    $(HDL_DIR)/antic_dl.sv $(HDL_DIR)/antic_pf_geom.sv \
+	    $(HDL_DIR)/antic_pf_fetch.sv $(HDL_DIR)/antic_line_render.sv \
+	    $(HDL_DIR)/antic_line_buf.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
+	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/antic_char_ctl.sv \
+	    $(HDL_DIR)/antic_pm_fetch.sv $(HDL_DIR)/gtia_stage.sv \
+	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
+	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/gtia_special.sv \
+	    $(HDL_DIR)/antic_nmi.sv $(HDL_DIR)/antic_dma_sched.sv \
+	    tb_antic_scanline.sv
+
+antic_pm_fetch: build/tb_antic_pm_fetch.vvp
+	@vvp -N $<
+
+build/tb_antic_pm_fetch.vvp: tb_antic_pm_fetch.sv $(HDL_DIR)/antic_pm_fetch.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pm_fetch \
+	    $(HDL_DIR)/antic_pm_fetch.sv tb_antic_pm_fetch.sv
+
+gtia_obj_walk: build/tb_gtia_obj_walk.vvp
+	@vvp -N $<
+
+build/tb_gtia_obj_walk.vvp: tb_gtia_obj_walk.sv $(HDL_DIR)/gtia_obj_walk.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_obj_walk \
+	    $(HDL_DIR)/gtia_obj_walk.sv tb_gtia_obj_walk.sv
+
+gtia_priority: build/tb_gtia_priority.vvp
+	@vvp -N $<
+
+build/tb_gtia_priority.vvp: tb_gtia_priority.sv $(HDL_DIR)/gtia_priority.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_priority \
+	    $(HDL_DIR)/gtia_priority.sv tb_gtia_priority.sv
+
+gtia_collide: build/tb_gtia_collide.vvp
+	@vvp -N $<
+
+build/tb_gtia_collide.vvp: tb_gtia_collide.sv $(HDL_DIR)/gtia_collide.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_collide \
+	    $(HDL_DIR)/gtia_collide.sv tb_gtia_collide.sv
+
+gtia_stage: build/tb_gtia_stage.vvp
+	@vvp -N $<
+
+build/tb_gtia_stage.vvp: tb_gtia_stage.sv $(HDL_DIR)/gtia_stage.sv \
+	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
+	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/antic_color_sel.sv \
+	    $(HDL_DIR)/gtia_special.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_stage \
+	    $(HDL_DIR)/gtia_stage.sv $(HDL_DIR)/gtia_obj_walk.sv \
+	    $(HDL_DIR)/gtia_priority.sv $(HDL_DIR)/gtia_collide.sv \
+	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/gtia_special.sv \
+	    tb_gtia_stage.sv
+
+gtia_special: build/tb_gtia_special.vvp
+	@vvp -N $<
+
+build/tb_gtia_special.vvp: tb_gtia_special.sv $(HDL_DIR)/gtia_special.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_special \
+	    $(HDL_DIR)/gtia_special.sv tb_gtia_special.sv
+
+antic_nmi: build/tb_antic_nmi.vvp
+	@vvp -N $<
+
+build/tb_antic_nmi.vvp: tb_antic_nmi.sv $(HDL_DIR)/antic_nmi.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_nmi \
+	    $(HDL_DIR)/antic_nmi.sv tb_antic_nmi.sv
+
+ANTIC2_PXPOS_SRC = $(ANTIC2_SRC) $(HDL_DIR)/antic_beam.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_pf_geom.sv \
+	    $(HDL_DIR)/antic_dma_sched.sv $(HDL_DIR)/antic_line_render.sv \
+	    $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_color_sel.sv \
+	    $(HDL_DIR)/antic_char_ctl.sv $(HDL_DIR)/antic_pixel_shift.sv
+
+antic2_pxpos: build/tb_antic2_pxpos.vvp
+	@vvp -N $<
+
+build/tb_antic2_pxpos.vvp: tb_antic2_pxpos.sv $(ANTIC2_PXPOS_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic2_pxpos \
+	    $(ANTIC2_PXPOS_SRC) tb_antic2_pxpos.sv
+
+antic_emit_win: build/tb_antic_emit_win.vvp
+	@vvp -N $<
+
+build/tb_antic_emit_win.vvp: tb_antic_emit_win.sv $(HDL_DIR)/antic_emit_win.sv \
+	    $(HDL_DIR)/antic_pf_geom.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_emit_win \
+	    $(HDL_DIR)/antic_emit_win.sv $(HDL_DIR)/antic_pf_geom.sv tb_antic_emit_win.sv
+
+antic_pf_pair: build/tb_antic_pf_pair.vvp
+	@vvp -N $<
+
+build/tb_antic_pf_pair.vvp: tb_antic_pf_pair.sv $(HDL_DIR)/antic_pf_stream.sv \
+	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_char_ctl.sv $(HDL_DIR)/antic_pixel_shift.sv \
+	    $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_color_sel.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pf_pair \
+	    $(HDL_DIR)/antic_pf_stream.sv $(HDL_DIR)/antic_line_render.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_char_ctl.sv \
+	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
+	    $(HDL_DIR)/antic_color_sel.sv tb_antic_pf_pair.sv
+
+antic_pf_stream: build/tb_antic_pf_stream.vvp
+	@vvp -N $<
+
+build/tb_antic_pf_stream.vvp: tb_antic_pf_stream.sv $(HDL_DIR)/antic_pf_stream.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_char_ctl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pf_stream \
+	    $(HDL_DIR)/antic_pf_stream.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_char_ctl.sv tb_antic_pf_stream.sv
+
+antic_dma_sched: build/tb_antic_dma_sched.vvp
+	@vvp -N $<
+
+build/tb_antic_dma_sched.vvp: tb_antic_dma_sched.sv $(HDL_DIR)/antic_dma_sched.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_pf_geom.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_dma_sched \
+	    $(HDL_DIR)/antic_dma_sched.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_pf_geom.sv tb_antic_dma_sched.sv
+
+antic_reg_file: build/tb_antic_reg_file.vvp
+	@vvp -N $<
+
+build/tb_antic_reg_file.vvp: tb_antic_reg_file.sv $(HDL_DIR)/antic_reg_file.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_reg_file \
+	    $(HDL_DIR)/antic_reg_file.sv tb_antic_reg_file.sv
+
+gtia_reg_file: build/tb_gtia_reg_file.vvp
+	@vvp -N $<
+
+build/tb_gtia_reg_file.vvp: tb_gtia_reg_file.sv $(HDL_DIR)/gtia_reg_file.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_reg_file \
+	    $(HDL_DIR)/gtia_reg_file.sv tb_gtia_reg_file.sv
+
+ANTIC_GTIA_SRC = $(HDL_DIR)/antic_gtia.sv $(HDL_DIR)/antic_scanline.sv \
+	    $(HDL_DIR)/antic_beam.sv $(HDL_DIR)/antic_dl.sv \
+	    $(HDL_DIR)/antic_pf_geom.sv $(HDL_DIR)/antic_pf_fetch.sv \
+	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
+	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/antic_char_ctl.sv \
+	    $(HDL_DIR)/antic_pm_fetch.sv $(HDL_DIR)/antic_nmi.sv \
+	    $(HDL_DIR)/antic_dma_sched.sv $(HDL_DIR)/antic_reg_file.sv \
+	    $(HDL_DIR)/gtia_reg_file.sv $(HDL_DIR)/gtia_stage.sv \
+	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
+	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/gtia_special.sv
+
+antic_gtia: build/tb_antic_gtia.vvp
+	@vvp -N $<
+
+build/tb_antic_gtia.vvp: tb_antic_gtia.sv $(ANTIC_GTIA_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_gtia \
+	    $(ANTIC_GTIA_SRC) tb_antic_gtia.sv
+
+# a8_core now instantiates POKEY: the design has one, and without it the
+# suite loses the whole pokey_* family plus antic_dmapattern and
+# antic_wsync, which MEASURE through RANDOM at $$D20A.
+POKEY_SRC = $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv $(HDL_DIR)/pokey_regs.sv \
+	    $(HDL_DIR)/pokey_audio.sv $(HDL_DIR)/pokey_pot.sv
+
+ANTIC2_SRC = $(HDL_DIR)/antic2.sv $(HDL_DIR)/antic2_seq.sv \
+	    $(HDL_DIR)/antic2_regs.sv $(HDL_DIR)/antic2_line.sv \
+	    $(HDL_DIR)/antic2_dl.sv $(HDL_DIR)/antic_pf_stream.sv \
+	    $(HDL_DIR)/antic_pm_dma.sv \
+	    $(HDL_DIR)/antic_emit_win.sv $(HDL_DIR)/a2_video.sv
+
+A8_CORE_SRC = $(HDL_DIR)/a8_core.sv $(ANTIC_GTIA_SRC) $(ANTIC2_SRC) \
+	    $(POKEY_SRC) \
+	    $(HDL_DIR)/xt6502f/xt6502f.sv
+
+# The phase-1 fabric shell (docs/antic-unification-plan.md): elaboration
+# check only — antic2 + a2_video behind antic_gtia-shaped ports.  The shared
+# GTIA stage files come via ANTIC_GTIA_SRC's tail; the shell itself must
+# elaborate with no fabric context.
+ANTIC2_FABRIC_SRC = $(HDL_DIR)/antic2_fabric.sv $(ANTIC2_SRC) \
+	    $(HDL_DIR)/antic_beam.sv $(HDL_DIR)/antic_pf_geom.sv \
+	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
+	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/antic_char_ctl.sv \
+	    $(HDL_DIR)/antic_dma_sched.sv \
+	    $(HDL_DIR)/gtia_reg_file.sv $(HDL_DIR)/gtia_stage.sv \
+	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
+	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/gtia_special.sv
+
+antic2_fabric_lint: $(ANTIC2_FABRIC_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o build/antic2_fabric_lint.vvp \
+	    -s antic2_fabric $(ANTIC2_FABRIC_SRC)
+	@echo "PASS: antic2_fabric elaborates"
+
+a8_core: build/tb_a8_core.vvp
+	@vvp -N $<
+
+build/tb_a8_core.vvp: tb_a8_core.sv $(A8_CORE_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
+	    -o $@ -s tb_a8_core $(A8_CORE_SRC) tb_a8_core.sv
+
+# One ACID800 standalone test against the rewrite.  Regenerate the image first:
+#   python3 ../tools/acid2mem.py <name> && make acid TEST=<name>
+TEST ?= antic_vcount
+
+acid: build/tb_acid.vvp
+	@vvp -N $< +TEST=$(TEST)
+
+# antic2 build: a SEPARATE binary, not a -D toggle on the same one.  make does
+# not rebuild for a changed define and would silently re-run the other design.
+acid2: build/tb_acid2.vvp
+	@vvp -N $< +TEST=$(TEST)
+
+build/tb_acid2.vvp: tb_acid.sv $(A8_CORE_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
+	    -Ptb_acid.USE_ANTIC2=1 -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
+
+build/tb_acid.vvp: tb_acid.sv $(A8_CORE_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
+	    -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
+
+# THE SAME antic2 TESTBENCH, COMPILED INSTEAD OF INTERPRETED.  vvp walks a
+# decision tree per event; verilator emits C++ and lets clang optimise it.  The
+# guard counts fabric clock posedges -- 56 per machine cycle, 200M for two
+# seconds of Atari time -- so ACID is exactly the workload that difference
+# compounds over:
+#
+#     gtia_pmoverlap        vvp >105 s      verilator     5 s
+#     the full 63-test sweep vvp ~1h50      verilator  3m18s
+#
+# Verdicts are identical, not merely similar: swept side by side against the
+# same sources, every test agreed, failures included, down to the same
+# _testFailed address.  That is worth re-checking after any change that adds an
+# uninitialised register, because --x-assign/--x-initial fast make verilator
+# two-state what icarus would propagate as X, and a design that leans on X
+# would diverge here rather than in the RTL.
+#
+# -j 0 uses every core for the C++ build; the run itself is single-threaded, so
+# a sweep still wants one process per test.
+VOBJ2 = build/vobj2
+
+# THE MEMORY IMAGE IS PART OF THE TEST.  The binary $readmemh's acid.mem and
+# acid_cfg.mem from its CWD, and +TEST= only names the result line -- it does
+# NOT select the program.  Running the binary against whatever acid.mem happens
+# to be lying in sim/ silently measures a DIFFERENT test, and that cost three
+# sessions of chasing "dead" probes whose real fault was that the display list
+# under them belonged to another program.  Generate the image every time.
+acid2v: $(VOBJ2)/tb_acid2v
+	@python3 ../tools/acid2mem.py $(TEST) . > /dev/null
+	@./$< +TEST=$(TEST) $(PLUSARGS)
+
+$(VOBJ2)/tb_acid2v: tb_acid.sv $(A8_CORE_SRC) | build
+	verilator --binary --timing -j 0 -Wno-fatal \
+	    --x-assign fast --x-initial fast \
+	    -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f -GUSE_ANTIC2=1 \
+	    --top-module tb_acid --Mdir $(VOBJ2) -o tb_acid2v \
+	    $(A8_CORE_SRC) tb_acid.sv
+
+antic_wb_adapt: build/tb_antic_wb_adapt.vvp
+	@vvp -N $<
+
+build/tb_antic_wb_adapt.vvp: tb_antic_wb_adapt.sv $(HDL_DIR)/antic_wb_adapt.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_wb_adapt \
+	    $(HDL_DIR)/antic_wb_adapt.sv tb_antic_wb_adapt.sv
+
+xt_sio_mbox: build/tb_xt_sio_mbox.vvp
+	@vvp -N $<
+
+build/tb_xt_sio_mbox.vvp: tb_xt_sio_mbox.sv $(HDL_DIR)/xt_sio_mbox.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_xt_sio_mbox \
+	    $(HDL_DIR)/xt_sio_mbox.sv tb_xt_sio_mbox.sv
+
+xt_mbit_cdc: build/tb_xt_mbit_cdc.vvp
+	@vvp -N $<
+
+build/tb_xt_mbit_cdc.vvp: tb_xt_mbit_cdc.sv $(HDL_DIR)/xt_mbit_cdc.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_xt_mbit_cdc \
+	    $(HDL_DIR)/xt_mbit_cdc.sv tb_xt_mbit_cdc.sv

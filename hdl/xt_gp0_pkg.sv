@@ -16,6 +16,8 @@ package xt_gp0_pkg;
     localparam logic [3:0] BLK_XLCTL    = 4'h5;  // 0x500  XLCTL
     localparam logic [3:0] BLK_MATH     = 4'h6;  // 0x600  MATH
     localparam logic [3:0] BLK_TRNG     = 4'h7;  // 0x700  TRNG
+    localparam logic [3:0] BLK_DEBUG    = 4'h8;  // 0x800  DEBUG
+    localparam logic [3:0] BLK_SIO      = 4'hA;  // 0xA00  SIO
 
     // ---- register offsets = addr[7:0] (per block) ----
     // BLITTER
@@ -45,6 +47,9 @@ package xt_gp0_pkg;
     localparam logic [7:0] CTRL_KBD_BREAK   = 8'h14;  // W Atari BREAK (A9-only; emits $D4CB)
     localparam logic [7:0] CTRL_CMPCFG      = 8'h18;  // RW compositor plane arrangement (A9-only; reset 0x210 = current). depth: [3:0]=desktop, [7:4]=overlay, [11:8]=XL. alpha_en: [16]=desktop, [17]=overlay, [18]=XL. Route-A flip = desktop on top with alpha (0x00010132)
     localparam logic [7:0] CTRL_SALLYRST    = 8'h1C;  // RW [0]=1 HOLD the SALLY realm in reset (A9-only; reset 0 = running). Cold-boot-per-launch: hold, rewrite the OS/RAM through the ROM-loader window (0x1000+), release = fresh coldstart. Resets the 6502 core AND the XT state a stock guest cannot know about (bank selects $D5C0/$D5C1, screen banking $D5C3-5); the video pipeline keeps scanning
+    localparam logic [7:0] CTRL_JOY_OVR     = 8'h20;  // W keypad->joystick override (A9-only; forces STICK0/1 PORTA pins + TRIG0 when the physical PCAL9722 joystick is absent). [31]=override enable (0 = joy_bridge/PCAL9722 drives as normal). [7:0]=PORTA pin value, ACTIVE-LOW (STICK0 bits[3:0]: bit0=up bit1=down bit2=left bit3=right; STICK1 bits[7:4]; 1=released 0=pressed; 0xFF=neutral). [8]=TRIG0/fire value, ACTIVE-LOW (0=fire pressed). Muxed into pia_regs PORTA + GTIA TRIG0 in antic_top; the joy_bridge write-through path is untouched
+    localparam logic [7:0] CTRL_CONSOL      = 8'h24;  // W console-keys value the 6502 reads as CONSOL ($D01F). ACTIVE-LOW: bit0=START bit1=SELECT bit2=OPTION (0=pressed). Reset $07 (none). The kernel holds OPTION ($03) across a game coldstart so the XL OS leaves BASIC DISABLED ($A000-$BFFF stays RAM) — no game boots with BASIC mapped, and BASIC shadowing RAM was crashing games; releases to $07 for boot-to-BASIC (READY). Replaces the hardwired 8'h07 in antic_top
+    localparam logic [7:0] CTRL_RWTUNE      = 8'h28;  // W ANTIC-rewrite timing tune (A9-only; reset 0 = the RTL defaults). Four SIGNED nibble offsets on the cycle numbers ACID bisects, so a cycle question costs a register write instead of a 25-minute bitstream: [3:0] NMIST status cycle (default 7), [7:4] /NMI cycle (8), [11:8] WSYNC /RDY release (104), [15:12] VCOUNT advance (111). The legacy timing machine has the same facility for its WSYNC release and that is how its constants were found. Only meaningful under rewrite timing authority (sallyrst[3])
     // DIAG
     localparam logic [7:0] DIAG0            = 8'h00;  // R MMCM locks / clk_pix-alive / frame count
     localparam logic [7:0] DIAG2            = 8'h04;  // R production-chain counters
@@ -68,6 +73,46 @@ package xt_gp0_pkg;
     localparam logic [7:0] MATH_STAT        = 8'h08;  // R [0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill
     // TRNG
     localparam logic [7:0] TRNG_RND         = 8'h00;  // R whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output
+    localparam logic [7:0] TRNG_STAT        = 8'h04;  // R R [5:0]=debiased entropy bits accumulated since the last TRNG_RND read (saturates at 32), [8]=fresh (>=32 bits, i.e. a FULLY re-seeded word). Reading TRNG_RND CONSUMES and clears the counter. Poll bit 8 before taking key material: the pool refills ~32 bits per microsecond, far slower than back-to-back AXI reads, so un-gated reads return an LFSR-stretched pool rather than fresh entropy
+    // DEBUG
+    localparam logic [7:0] DBG_HALT         = 8'h00;  // W write (any) -> run to the next instruction boundary, then freeze (state preserved). Also arms halt-at-reset when combined with a SALLYRST pulse
+    localparam logic [7:0] DBG_GO           = 8'h04;  // W write (any) -> release the core, run at the configured speed
+    localparam logic [7:0] DBG_STEP         = 8'h08;  // W write N -> execute exactly N instructions (min 1) then freeze
+    localparam logic [7:0] DBG_CFG          = 8'h0C;  // RW [0]=bkpt_en (arm the PC breakpoint), [1]=halt_at_reset (freeze at the reset-vector fetch after the next SALLYRST release)
+    localparam logic [7:0] DBG_BKPT         = 8'h10;  // RW [15:0]=breakpoint PC; when bkpt_en, the core freezes at the ST_FETCH of this address (before executing it)
+    localparam logic [7:0] DBG_COMMIT       = 8'h14;  // W write (any) -> inject DBG_WPC/WAXYS/WPSH into the core's PC/regs and re-anchor at ST_FETCH (only meaningful while halted)
+    localparam logic [7:0] DBG_WPC          = 8'h18;  // RW [15:0]=PC to inject on DBG_COMMIT
+    localparam logic [7:0] DBG_WAXYS        = 8'h1C;  // RW regs to inject on DBG_COMMIT: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)
+    localparam logic [7:0] DBG_WPSH         = 8'h20;  // RW inject on DBG_COMMIT: [7:0]=P (NV-BDIZC) [11:8]=SP high nibble (12-bit xt stack)
+    localparam logic [7:0] DBG_STAT         = 8'h24;  // R [0]=halted [1]=bkpt_hit [2]=stepping [3]=running
+    localparam logic [7:0] DBG_PC           = 8'h28;  // R [15:0]=PC snapshot at the last instruction boundary (coherent when halted = next instruction to execute)
+    localparam logic [7:0] DBG_AXYS         = 8'h2C;  // R reg snapshot: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)
+    localparam logic [7:0] DBG_PSH          = 8'h30;  // R snapshot: [7:0]=P [11:8]=SP high nibble
+    localparam logic [7:0] DBG_ICNT         = 8'h34;  // R retired-instruction count since SALLYRST (increments on each ST_FETCH boundary)
+    localparam logic [7:0] DBG_BEAM         = 8'h38;  // R R ANTIC beam position latched when the core HALTED at an instruction boundary: [15:0]=scanline (0..261), [22:16]=beam X in ANTIC machine cycles (0..113). Lets an instruction be read off against the cycle numbers ACID annotates its kernels with; the trace ring records PC but not the beam. Reflects the REWRITE's beam (antic_gtia), whichever authority is selected
+    localparam logic [7:0] DBG_TRC_CTRL     = 8'h3C;  // RW instruction-trace ring: [0]=enable (capture {PC,A,X,Y,SP,P} every ST_DECODE boundary), [1]=break_on_full (halt the core when the ring wraps). Ring is 4096 deep; readable only when halted (static).
+    localparam logic [7:0] DBG_TRC_WPTR     = 8'h40;  // R trace write pointer: [11:0]=next write slot (newest = WPTR-1), [16]=wrapped (ring has been full at least once), [17]=broke_on_full
+    localparam logic [7:0] DBG_TRC_IDX      = 8'h44;  // W set the ring read index (0..4095); the entry appears in DBG_TRC_PC/AXYS/P
+    localparam logic [7:0] DBG_TRC_PC       = 8'h48;  // R [15:0]=PC of the traced instruction at DBG_TRC_IDX
+    localparam logic [7:0] DBG_TRC_AXYS     = 8'h4C;  // R traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)
+    localparam logic [7:0] DBG_TRC_P        = 8'h50;  // R traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble
+    localparam logic [7:0] DBG_WP           = 8'h54;  // RW [15:0]=data watchpoint address; when armed the core freezes on a bus access to it
+    localparam logic [7:0] DBG_WPCFG        = 8'h58;  // RW data watchpoint arm: [0]=enable, [1]=break on WRITE to DBG_WP, [2]=break on READ of DBG_WP (set both for any access)
+    localparam logic [7:0] DBG_DIAG         = 8'h5C;  // R debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT — verify it matches what was written)
+    localparam logic [7:0] DBG_STRM_CTRL    = 8'h60;  // W FIDELITY streaming-trace control: [0]=strm_en (capture {PC,A,X,Y,SP,P,IR} per instruction into a 4096-deep ring; the core AUTO-HALTS when the ring fills = real stop-the-world), [1]=drain_done (4-phase level handshake: after draining STRM_RD* set this to clear flush_req, reset the ring, and resume the core; then clear it). Rising edge of strm_en resets the ring.
+    localparam logic [7:0] DBG_STRM_STAT    = 8'h64;  // R [0]=flush_req: the streaming ring is FULL and the core is halted; the A9 should drain STRM_RD* (0..STRM_WPTR-1) then pulse drain_done
+    localparam logic [7:0] DBG_STRM_WPTR    = 8'h68;  // R [12:0]=count of valid entries in the streaming ring (4096 when full; a smaller partial count if strm_en was cleared mid-window)
+    localparam logic [7:0] DBG_STRM_RADDR   = 8'h6C;  // W [11:0]=streaming ring read address; the entry appears in STRM_RDLO/RDHI (coherent while flush_req — the ring is static because the core is halted)
+    localparam logic [7:0] DBG_STRM_RDLO    = 8'h70;  // R streaming entry [31:0] at STRM_RADDR: [15:0]=PC [23:16]=A [31:24]=X
+    localparam logic [7:0] DBG_STRM_RDHI    = 8'h74;  // R streaming entry [63:32] at STRM_RADDR: [7:0]=Y [15:8]=SP [23:16]=P [31:24]=IR
+    localparam logic [7:0] DBG_TB_CFG       = 8'h78;  // RW ANTIC timebase probe config: [2:0]=mode (0=off 1=$D4xx write@match 2=$D4xx read@match 3=DLI-line 4=VBI 5=WSYNC($D40A wr) 6=any $D4xx wr 7=every line_start), [11:4]=match_addr (low byte of $D4xx reg), [19:16]=read_idx (0..15 ring entry selected into DBG_TB_CAP), [24]=clear (write with a mode to arm+reset the ring for a fresh capture), [25]=circular (0=stop-on-full: hold the FIRST 16 triggers then freeze; 1=wrap: hold the LAST 16 triggers, DBG_TB_STAT.wr_idx = oldest entry), [28:26]=WSYNC /RDY shape mask {latch,q1,q2} (0 = default = 011 q1|q2; see wsync_gen.sv; [14]=comb fallback, [15]=disable write immunity, [23:20]=signed release-cycle offset from 103). 2-FF synced into the ANTIC clk_bus domain.
+    localparam logic [7:0] DBG_TB_STAT      = 8'h7C;  // R ANTIC timebase probe status (2-FF synced from clk_bus): [15:0]=trig_count (16-bit saturating # of triggers since clear), [20:16]=wr_idx (0..16; 16=full), [24]=full (ring holds 16 entries), [25]=armed (set by a clear write)
+    localparam logic [7:0] DBG_TB_CAP       = 8'h80;  // R ANTIC timebase probe capture: ring entry selected by DBG_TB_CFG.read_idx = {[24:16]=scanline (0..261), [15:8]=phi2_in_line (machine-cycle 0..113), [7:0]=data (write byte for write modes, ANTIC read byte for read mode, 0 for event modes)}
+    localparam logic [7:0] DBG_BEAMPC       = 8'h3C;  // W W [15:0]=PC to beam-stamp. When the core reaches this instruction boundary the ANTIC beam is latched into DBG_BEAM2 WITHOUT halting, so an interval can be measured inside ONE run: set this to the first instruction, put the breakpoint on the second, and read DBG_BEAM2 and DBG_BEAM when it stops. Necessary because each xexload lands the test on a different scanline, so beam readings from separate runs cannot be subtracted
+    localparam logic [7:0] DBG_BEAM2        = 8'h40;  // R R ANTIC beam latched at the DBG_BEAMPC instruction boundary (no halt): [15:0]=scanline, [22:16]=beam X in machine cycles. Same layout as DBG_BEAM
+    // SIO
+    localparam logic [7:0] SIO_PTR          = 8'h00;  // W byte pointer into the 512 B mailbox (word-aligned; [1:0] ignored). Writing it re-aims the window; each SIO_DAT access then auto-increments by 4, so a run of bytes is one seek plus N accesses
+    localparam logic [7:0] SIO_DAT          = 8'h04;  // RW 32-bit little-endian word at the pointer; read or write auto-increments the pointer by 4. The BRAM read register tracks the pointer continuously and consecutive AXI transactions are tens of clocks apart, so a read always returns settled data
 
 endpackage
 `endif

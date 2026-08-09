@@ -3,7 +3,7 @@ title: Classes
 description: Class declaration, instance and stack allocation, methods, init/dealloc, properties, static methods.
 ---
 
-A class is a struct with state and behaviour — instance variables (ivars), methods, optional static methods, an `init` constructor, and a `dealloc` destructor. Classes are normally declared one per file, named `<classname>.xt` so `#import "Foo.xt"` resolves them, but the compiler does **not** enforce this — multiple classes may live in a single file, and the filename need not match the class name.
+A class is a struct with state and behaviour — instance variables (ivars), methods, optional static methods, an `init` constructor, and a `dealloc` destructor. Classes are normally declared one per file, named `<classname>.xc` so `#import "Foo.xc"` resolves them, but the compiler does **not** enforce this — multiple classes may live in a single file, and the filename need not match the class name.
 
 ```c
 class Gfx {
@@ -21,7 +21,7 @@ class Gfx {
 
 Pick whichever fits the lifetime — the syntax tells the compiler everything it needs.
 
-In what follows, the **enclosing scope** of a declaration is the block — delimited by `{ }` or `(( ))` — that contains the declaration. That's usually a function body, a loop body, or a branch of an `if` or `switch`. When the closing brace executes, the variable falls out of scope: its storage stops being live, and (under default ARC) any heap reference it held is automatically released.
+In what follows, the **enclosing scope** of a declaration is the block — delimited by `{ }` — that contains the declaration. That's usually a function body, a loop body, or a branch of an `if` or `switch`. When the closing brace executes, the variable falls out of scope: its storage stops being live, and (under default ARC) any heap reference it held is automatically released.
 
 ### Stack instance
 
@@ -29,12 +29,29 @@ In what follows, the **enclosing scope** of a declaration is the block — delim
 MyClass mine;          // zero-filled, init() runs, storage reclaimed at scope exit
 ```
 
-A bare `MyClass mine;` allocates the instance directly in the enclosing scope's local storage — zero-page if the ivars fit, spilled to the data section otherwise. The storage is zero-filled on entry to the scope, the parameterless `init()` (if present) runs automatically, and the bytes are reused as soon as the scope closes. **No heap touch.** Safe to declare inside a loop body because the same storage is reused across iterations.
+A bare `MyClass mine;` allocates the instance directly in the enclosing scope's
+local storage. It is zero-filled on entry to the scope, the parameterless
+`init()` (if present) runs automatically, and the bytes are reused as soon as
+the scope closes. **No heap touch**, so it is safe to declare inside a loop
+body — the same storage serves every iteration.
+
+Where "local storage" actually is depends on the target, and only matters when
+you are counting bytes:
+
+| Target | A stack instance lives in |
+|---|---|
+| `arm64`, `x86_64`, `win64`, `arm9`, `m68k` | the function's stack frame, like any other local |
+| `xt6502` | the SP-relative frame, with small hot ivars promoted into zero page where they fit |
+
+The semantics are identical either way. The only practical difference is scale:
+on xt6502 a large stack instance competes for a scarce resource, so a class
+with many ivars is often better on the heap; on the register machines a stack
+frame is cheap and the question rarely arises.
 
 ### Heap instance
 
 ```c
-MyClass@ mine = new MyClass();
+MyClass* mine = new MyClass();
 ```
 
 Allocates on the heap and returns a pointer to a block whose **reference count is 1**. That part is invariant — true regardless of `-farc` mode. What differs is who balances the reference:
@@ -62,7 +79,7 @@ class Sprite {
 void main(void) {
     Sprite  origin;                       // stack, init()        → (0, 0, tint 0)
     Sprite  ship(160, 96);                // stack, init(160, 96) → (160, 96, tint 0)
-    Sprite@ boss = new Sprite(80, 40, 7); // heap,  init(80, 40, 7)
+    Sprite* boss = new Sprite(80, 40, 7); // heap,  init(80, 40, 7)
 }
 ```
 
@@ -114,7 +131,7 @@ There is **no operator overloading** in xtc — only method overloading.
 
 ```c
 class Buffer {
-    u8@ bytes;
+    u8* bytes;
     u16 len;
 
     void init(u16 n) {
@@ -156,8 +173,8 @@ Use static methods when the operation belongs to a class conceptually but doesn'
 `use ClassName;` is a top-level directive that promotes a class's static methods into the bare-identifier call lookup space for the rest of the file. After `use Stdio;`, the user can call `printf("hi\n")` directly instead of writing `Stdio.printf("hi\n")` — the receiver class is implied by the directive.
 
 ```c
-#import <Stdio.xt>
-#import <Math.xt>
+#import <Stdio.xc>
+#import <Math.xc>
 
 use Stdio;
 use Math;
@@ -177,7 +194,7 @@ Resolution works exactly like a normal `Klass.method(...)` call — overload sco
 **Pair with `#use` for one-line setup.** The preprocessor offers a single-token shorthand that combines the import and the promotion:
 
 ```c
-#use Stdio          // == #import "Stdio.xt" + use Stdio;
+#use Stdio          // == #import "Stdio.xc" + use Stdio;
 
 void main(void) {
     printf("hello\n");
@@ -205,7 +222,7 @@ class Box {
 }
 
 void main(void) {
-    Box@ b = new Box();
+    Box* b = new Box();
     b.w = 150;          // calls setW(150); _w becomes 100
     u8 v = b.w;         // calls w(); returns 100
 }
@@ -235,8 +252,8 @@ class Button {
     u16  fire(void) { if (action) { return action(); } return (u16)0; }
 }
 
-Controller@ c = new Controller();
-Button@ b = new Button();
+Controller* c = new Controller();
+Button* b = new Button();
 
 b.setAction(&c.save);        // a bound METHOD — the receiver rides along
 b.setAction(&freeFn);        // a plain FUNCTION — widened into the same type
@@ -266,3 +283,95 @@ A `^` compares as a pair, so two `^`s naming the same action are equal — which
 
 - [Inheritance & protocols](/compiler/language/inheritance/) — single inheritance, virtual dispatch, downcasts, protocols.
 - [Heap, ARC & weak refs](/compiler/language/memory/) — lifecycle of heap-allocated class instances.
+
+## Worked example
+
+A class, a convenience constructor, static state, `description()` and ARC-driven `dealloc`:
+
+```c
+// classes.xc — declaring a class, allocating one, and letting ARC free it.
+#import "Foundation.xc"
+#import "Stdio.xc"
+
+class Point : Object
+{
+    // Instance variables. One `static` copy per CLASS is also allowed.
+    i16 _x, _y;
+    static u16 _made;          // how many Points have ever been built
+
+    // init() runs on `new`. A subclass's init chains to its parent
+    // automatically — you do not call super.init() by hand.
+    void init(void)
+    {
+        _x = (i16)0;
+        _y = (i16)0;
+        _made = _made + (u16)1;
+    }
+
+    // A static method is called on the class, not on an instance. This is
+    // the usual way to write a convenience constructor.
+    static Point* at(i16 x, i16 y)
+    {
+        Point* p = new Point();
+        p._x = x;
+        p._y = y;
+        return p;
+    }
+
+    // Ordinary methods. `self` is implicit.
+    i16 x(void) { return _x; }
+    i16 y(void) { return _y; }
+
+    void translate(i16 dx, i16 dy) { _x = _x + dx; _y = _y + dy; }
+
+    // Overriding description() gives every printf("%@") a useful form.
+    String* description(void)
+    {
+        String* s = String.withCString("(");
+        s.append(String.withI32((i32)_x));
+        s.appendCString(", ");
+        s.append(String.withI32((i32)_y));
+        s.appendCString(")");
+        return s;
+    }
+
+    static u16 made(void) { return _made; }
+
+    // dealloc runs when the last reference goes. Like init, it chains up
+    // the hierarchy on its own.
+    void dealloc(void) { Stdio.printf("  dealloc %@\n", self); }
+}
+
+i32 main(void)
+{
+    // `new` allocates on the heap; ARC releases it when the last reference
+    // goes out of scope. There is no free() to forget.
+    Point* a = Point.at((i16)3, (i16)4);
+    Stdio.printf("a        = %@\n", a);
+
+    a.translate((i16)-1, (i16)2);
+    Stdio.printf("moved    = %@  x=%d y=%d\n", a, a.x(), a.y());
+
+    // Static state is shared by every instance.
+    Point* b = Point.at((i16)10, (i16)20);
+    Stdio.printf("b        = %@\n", b);
+    Stdio.printf("made     = %d\n", Point.made());
+
+    // Both are released here, at the end of the enclosing scope — watch the
+    // dealloc lines appear after this one.
+    Stdio.print("end of main\n");
+    return 0;
+}
+```
+
+```
+a        = (3, 4)
+moved    = (2, 6)  x=2 y=6
+b        = (10, 20)
+made     = 2
+end of main
+  dealloc (10, 20)
+  dealloc (2, 6)
+```
+
+Both objects are released at the end of `main`, which is why the two `dealloc` lines come after `end of main`. Nothing calls `free`.

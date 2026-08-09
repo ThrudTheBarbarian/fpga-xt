@@ -1,0 +1,23 @@
+mads 2.1.0 build 8 (23 Dec 19)
+Label table:
+00	02E5	memtop
+00	D400	dmactl
+00	D402	dlistl
+00	D40A	wsync
+00	D40B	vcount
+00	D40E	nmien
+00	0080	a0
+00	0082	a1
+00	0084	a2
+00	0086	a3
+00	02E0	runad
+00	02E2	initad
+00	0700	base
+00	0708	main
+00	070A	copyloop
+00	0727	relocloop
+00	0767	copyloop2
+00	0789	doinit
+00	078C	definit
+00	078D	relocdata
+00	0F80	testtable

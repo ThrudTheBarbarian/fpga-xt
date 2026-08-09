@@ -41,6 +41,14 @@ module antic_seq (
     // ---- phi2 raster pulses (from antic_raster) -------------------------
     input  wire vbi_start,      // 1-cycle pulse: start of vertical blank
     input  wire line_start,     // 1-cycle pulse: start of each scanline
+    input  wire line_end,       // 1-cycle pulse: near the END of each scanline.
+                                // cmp_start fires HERE, not at line_start, so a
+                                // mid-line register write (ACID800's P/M tests
+                                // write at cycle ~60) is visible to the row it
+                                // belongs to.  The compositor's register inputs
+                                // are snapshotted separately in antic_top, so
+                                // moving the burst does NOT move when a write
+                                // takes effect.
     input  wire active_row,     // 1 = this scanline is in the active band
     input  wire parse_done,     // 1-cycle pulse from dl_parser (parse complete)
 
@@ -71,7 +79,7 @@ module antic_seq (
             end
 
             // Per active scanline, once this frame's parse has completed.
-            if (line_start && active_row && !parse_pending)
+            if (line_end && active_row && !parse_pending)
                 cmp_start <= 1'b1;
         end
     end

@@ -1,0 +1,233 @@
+{
+ "date": "2026-07-25",
+ "seq": 1,
+ "core": "fid",
+ "bitstream": "LIVE ROW WALKER: dl_parser entry-list + per-scanline DCTR vs live VSCROL; real DLI semantics; PIA IRQ; timing re-closed via AltSpreadLogic_medium (59f6bef line, build 36g)",
+ "note": "28/57 net through the walker re-architecture. dl_parser parse-ahead row expansion REPLACED by a per-DL-line entry list + live walker: DCTR compared against the LIVE VSCROL each scanline (region boundaries move mid-frame), real ANTIC DLI semantics (mode lines fire on the flagged line's LAST scanline live; blank-line DLIs at true physical rows via a parse-computed phantom list), frame-budget DL stop (240 scanlines) with mid-list continuation + cross-frame VS carry, free-running DL PC kept. FLIPPED: antic_addresswrap (1K DL wrap + 4K LMS wrap in the entry list). PROGRESSED: antic_vscroll now passes 4/5 (all mid-frame VSCROL region resizes work; #5 frame-straddle case reads 19 vs 15 \u2014 VS-carry fix committed for the next build); antic_pfstarttiming DLIs now FIRE (fails later at the mid-scanline DMACTL feature gap: \"stride=20\"). REGRESSED (open): antic_nmist \"DLI bit set too early (<cycle 6)\" \u2014 the cycle-exact NMIST status probe; sim replicates the DL with exact firing (scanlines 39/47, cycle 8) so this is an HW-only status-tick vs WSYNC-release alignment question. antic_dlitiming even/odd/phase cases pass; delayed-odd back to the known $0E granularity puzzle (3-stage poll experiment reverted: it sent the case to $F5). Timing closure took 7 spins: the walker's LUT pressure tipped the turbo core's BRAM->flags cone; fixed via entry-list->BRAM, S_SKIP deferral of the phantom CE off raw mem_rdata, and AltSpreadLogic_medium.",
+ "results": {
+  "cpu_insn": {
+   "s": "pass"
+  },
+  "cpu_decimal": {
+   "s": "pass"
+  },
+  "cpu_flags": {
+   "s": "pass"
+  },
+  "cpu_bugs": {
+   "s": "pass"
+  },
+  "cpu_clisei": {
+   "s": "pass"
+  },
+  "cpu_timing": {
+   "s": "pass"
+  },
+  "cpu_illtiming": {
+   "s": "pass"
+  },
+  "cpu_illegal": {
+   "s": "pass"
+  },
+  "cpu_65c816": {
+   "s": "na",
+   "d": "correctly skipped - no 65C816"
+  },
+  "antic_default": {
+   "s": "pass"
+  },
+  "antic_vcount": {
+   "s": "pass"
+  },
+  "antic_wsync": {
+   "s": "pass"
+  },
+  "antic_nmist": {
+   "s": "fail",
+   "d": "DLI bit set too early (<cycle 6) \u2014 walker regression, status-tick alignment"
+  },
+  "antic_dlitiming": {
+   "s": "fail",
+   "d": "Delayed odd count $0E != $0F (even/odd/phases pass)"
+  },
+  "antic_blockednmi": {
+   "s": "fail",
+   "d": "VBI handler should not have executed (6502 NMI/BRK hijack window too wide)"
+  },
+  "antic_vscroldli": {
+   "s": "fail",
+   "d": "VSCROL took effect too early"
+  },
+  "antic_dmapattern": {
+   "s": "fail",
+   "d": "Incorrect timing for mode 02-a \u2014 RANDOM gate CLEARED, now measuring real DMA-pattern timing (was 'cannot decode random pair')"
+  },
+  "antic_virtdma": {
+   "s": "fail",
+   "d": "Pattern #2 was not correct: 00 != $05"
+  },
+  "antic_pmdma": {
+   "s": "fail",
+   "d": "P/M DMA fetch - memory-path coherency for $3300-$37FF"
+  },
+  "antic_linebuffering": {
+   "s": "fail",
+   "d": "Readout incorrect for initial mode E: 00000000"
+  },
+  "antic_pfstarttiming": {
+   "s": "fail",
+   "d": "DLIs fire now; Character mode DMACTL early test: stride=20 (mid-scanline DMACTL feature)"
+  },
+  "antic_pfstoptiming": {
+   "s": "fail",
+   "d": "DLIs did not fire - blank-line DLI never asserts /NMI"
+  },
+  "antic_hscrolbug": {
+   "s": "fail",
+   "d": "Unstopped PF DMA test failed: c1=00 (HSCROL DMA window shift not modelled)"
+  },
+  "antic_hiresbug": {
+   "s": "fail",
+   "d": "per-color-clock P/M evaluation required"
+  },
+  "antic_charcontrol": {
+   "s": "fail",
+   "d": "Failed chactl=$00 on mode 2 at row 0: expected $10, got $00"
+  },
+  "antic_vscroll": {
+   "s": "fail",
+   "d": "4/5 pass; #5 frame-straddle: 19 != 15 (VS-carry fix queued)"
+  },
+  "antic_dlistwrap": {
+   "s": "fail",
+   "d": "Display list did not wrap around (needs a DLI; blank-line DLI cluster)"
+  },
+  "antic_addresswrap": {
+   "s": "pass"
+  },
+  "antic_addrmirror": {
+   "s": "pass"
+  },
+  "gtia_default": {
+   "s": "pass"
+  },
+  "gtia_consol": {
+   "s": "pass"
+  },
+  "gtia_collision": {
+   "s": "pass"
+  },
+  "gtia_collision2": {
+   "s": "fail",
+   "d": "Gr.8 %00 collision incorrect: $04"
+  },
+  "gtia_pmoverlap": {
+   "s": "fail",
+   "d": "Pass 0.0: Pos=64, Expected F0, Got 00 (mid-scanline GRAFP write)"
+  },
+  "gtia_pmresize": {
+   "s": "fail",
+   "d": "4x-to-1x failed at index 0: expected $80, got $00 (mid-scanline SIZEP change)"
+  },
+  "gtia_pmretrigger": {
+   "s": "fail",
+   "d": "per-color-clock P/M evaluation required"
+  },
+  "gtia_vdelay": {
+   "s": "fail",
+   "d": "No delay 1/4 failed: 00 != $01 (mid-scanline GRAFP write)"
+  },
+  "gtia_phantomdma": {
+   "s": "fail",
+   "d": "phantom DMA"
+  },
+  "gtia_psuedomodee": {
+   "s": "fail",
+   "d": "Cycle 14 test failed: 00 (per-color-clock GTIA mode switch)"
+  },
+  "gtia_addrmirror": {
+   "s": "pass"
+  },
+  "pokey_default": {
+   "s": "pass"
+  },
+  "pokey_timerirq": {
+   "s": "pass"
+  },
+  "pokey_timertiming": {
+   "s": "fail",
+   "d": "timer timing"
+  },
+  "pokey_timergranularity": {
+   "s": "pass"
+  },
+  "pokey_irqtiming": {
+   "s": "pass"
+  },
+  "pokey_inittiming": {
+   "s": "fail",
+   "d": "Incorrect 15KHz cycle count (odd): $1E \u2014 even sled fixed, odd 1 cycle early"
+  },
+  "pokey_noise": {
+   "s": "pass"
+  },
+  "pokey_twotone": {
+   "s": "fail",
+   "d": "two-tone serial mode"
+  },
+  "pokey_skstat": {
+   "s": "fail",
+   "d": "Framing error occurred"
+  },
+  "pokey_serclock": {
+   "s": "fail",
+   "d": "serial clock"
+  },
+  "pokey_sertiming": {
+   "s": "fail",
+   "d": "serial timing"
+  },
+  "pokey_serdirect": {
+   "s": "fail",
+   "d": "never reaches _testEnd (hangs) - not 'na'"
+  },
+  "pokey_seroc": {
+   "s": "pass"
+  },
+  "pokey_asyncrecv": {
+   "s": "pass"
+  },
+  "pokey_addrmirror": {
+   "s": "pass"
+  },
+  "pia_basic": {
+   "s": "pass"
+  },
+  "pia_irq": {
+   "s": "pass"
+  },
+  "mmu_xlbanking": {
+   "s": "pass"
+  },
+  "mod_dispmin": {
+   "s": "na",
+   "d": "display-only module"
+  },
+  "mod_disp80": {
+   "s": "na",
+   "d": "display-only module"
+  },
+  "mod_scroll40": {
+   "s": "na",
+   "d": "display-only module"
+  },
+  "mod_options": {
+   "s": "na",
+   "d": "display-only module"
+  },
+  "mod_vbxe80": {
+   "s": "na",
+   "d": "display-only module"
+  }
+ }
+}
