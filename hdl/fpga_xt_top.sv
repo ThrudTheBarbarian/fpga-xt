@@ -916,8 +916,14 @@ module fpga_xt_top (
     wire [15:0] tm_mem_addr;
     wire [7:0]  tm_mem_rdata;                          // display_shadow port-A read
     wire [7:0]  tm_vcount, tm_nmist;
-    wire        tm_nmi_n, tm_rdy_n;
-    wire [2:0]  tm_cycle_type, tm_cycle_type_q;
+    // KEEP: multicycle anchors, same contract as rw_steal/rw_rdy_n below —
+    // the tm machine is phi2-tick-paced and its stall/rdy outputs are
+    // tick-launched levels consumed at the fid slots (earliest: slot 2).
+    // tm_nmi_n excluded for the same reason as rw_nmi_n.
+    wire        tm_nmi_n;
+    (* keep = "true" *) wire tm_rdy_n;
+    (* keep = "true" *) wire [2:0] tm_cycle_type;
+    wire [2:0]  tm_cycle_type_q;
 
     antic_timing u_antic_timing (
         .clk        (clk_sally),

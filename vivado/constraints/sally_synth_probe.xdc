@@ -112,3 +112,12 @@ set_multicycle_path -setup 2 -through [get_nets rw_steal]
 set_multicycle_path -hold  1 -through [get_nets rw_steal]
 set_multicycle_path -setup 2 -through [get_nets rw_rdy_n]
 set_multicycle_path -hold  1 -through [get_nets rw_rdy_n]
+
+# Same stall-cone contract for the legacy timing machine's branch of the
+# authority mux (iteration 2: with the rewrite cone relaxed, the next worst
+# path was dl_ctl -> tm_cycle_type -> fid_rdy -> mbox WE — the identical
+# class through the tm nets).
+set_multicycle_path -setup 2 -through [get_nets {tm_cycle_type[*]}]
+set_multicycle_path -hold  1 -through [get_nets {tm_cycle_type[*]}]
+set_multicycle_path -setup 2 -through [get_nets tm_rdy_n]
+set_multicycle_path -hold  1 -through [get_nets tm_rdy_n]
