@@ -121,3 +121,38 @@ construction.
   its board A/B are Simon's** — XL window render, ACID-in-fabric,
   textured-background fidelity.
 - Phases 3-5: not started.
+
+
+## Phase 6 — one clock domain (the Atari realm on clk_sally)
+
+Added 2026-08-10, from the antic-sally-interop campaign's conclusion and
+Simon's steer ("antic was a simple chip... why are we so close to timing?").
+
+Every seam the campaign patched — bus-arrival skew, the read/write sampling
+asymmetry, the early POKEY write lane, the per-BOOT mesochronous phase
+lottery in the marginal POKEY trio — is the tax on the CPU (clk_sally) and
+chipset (clk_sys) living in different domains and talking through
+mesochronous bridges.  The sim proves the endgame: `a8_core` is the same
+antic2 RTL in ONE domain and scores 55/58 with zero seams.  (MiSTer's A800
+takes the same shape: one clock, enable chains, no crossings — architecture
+noted as reference only; its GPL source is never copied.)
+
+Move antic2 + a2_video + both POKEYs onto clk_sally beside the fid core:
+
+- **Timing headroom**: clk_sally is 10 ns against clk_sys's 7.5 — antic2's
+  worst cones gain 2.5 ns before any constraint work.  The remaining
+  pressure is undeclared MULTICYCLE paths: tick-gated logic forced to close
+  in one clock while its data is stable for ~75.  With one domain the
+  enables become plain clock enables and MCP constraints are safe to write
+  per block (care: antic_pf_stream's fetch FSM and the mem handshake are
+  clk-rate — never blanket the whole core).
+- **The crossings that REMAIN**: the render/lb stream into the writeback
+  (clk_sally -> clk_sys at the line-buffer boundary — a data stream where
+  cycle semantics do not matter), the GP0 register file (already
+  domain-agnostic strobes), and the BRAM ports (dual-clock BRAMs).
+- **What DISSOLVES**: the hwreg write/read CDC (bus ops become native),
+  the early POKEY lane + skid, the chipset delay lines, the RANDOM
+  lookahead, the rw_* authority syncs, and the phase lottery itself.
+- **Gate**: full acid sweep (target = the sim's 55 with serdirect/skstat na
+  pending peri-RP serial), DespatchRider + OS boot, timing at WNS >= 0 on
+  all clocks without directive roulette.
