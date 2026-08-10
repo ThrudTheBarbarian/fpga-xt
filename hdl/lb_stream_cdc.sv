@@ -7,10 +7,13 @@
 // from line_start markers and in-order colour bytes, so no cycle semantics
 // cross here — only ordering, which a FIFO preserves by construction.
 //
-// Shape: a shallow dual-clock FIFO of 9-bit entries {line_start, color}.
-// lb_wr pushes a colour byte; lb_line_start pushes a marker (the two never
-// assert together — the renderer separates them by pipeline design, and an
-// assertion in sim guards it).  Depth 32 absorbs the write-side burstiness
+// Shape: a shallow dual-clock FIFO of 10-bit entries {line_start, payload}.
+// lb_wr pushes a colour byte; lb_line_start pushes a marker whose payload is
+// the 9-bit LINE NUMBER (antic_wb_adapt samples `line` only when
+// lb_line_start asserts, so the number rides the marker and no side-band
+// multi-bit crossing exists).  The two never assert together — the renderer
+// separates them by pipeline design, and an assertion in sim guards it.
+// Depth 32 absorbs the write-side burstiness
 // (four hi-res pixels per machine cycle) against the read side's free-running
 // drain; the drain is one entry per clk_sys, faster than the push rate by
 // construction (clk_sys >= clk_sally and pushes are px_tick-paced), so the
@@ -32,6 +35,7 @@ module lb_stream_cdc #(
     input  wire        lb_wr,
     input  wire [7:0]  lb_color,
     input  wire        lb_line_start,
+    input  wire [8:0]  lb_line,       // sampled with lb_line_start only
     output wire        overflow,      // sticky; a design error, not a runtime path
 
     // ---- read side (the writeback's domain) ------------------------------
@@ -39,12 +43,14 @@ module lb_stream_cdc #(
     input  wire        rrst,
     output logic       out_wr,
     output logic [7:0] out_color,
-    output logic       out_line_start
+    output logic       out_line_start,
+    output logic [8:0] out_line       // valid the cycle out_line_start asserts,
+                                      // held until the next marker
 );
 
     localparam int DEPTH = 1 << DEPTH_LOG2;
 
-    logic [8:0] mem [0:DEPTH-1];
+    logic [9:0] mem [0:DEPTH-1];
 
     // ---- write pointer (binary + gray) -----------------------------------
     logic [DEPTH_LOG2:0] wptr_bin, wptr_gray;
@@ -65,7 +71,8 @@ module lb_stream_cdc #(
             if (full) begin
                 ovf_q <= 1'b1;                      // never expected; see header
             end else begin
-                mem[wptr_bin[DEPTH_LOG2-1:0]] <= {lb_line_start, lb_color};
+                mem[wptr_bin[DEPTH_LOG2-1:0]] <=
+                    {lb_line_start, lb_line_start ? lb_line : {1'b0, lb_color}};
                 wptr_bin  <= wptr_bin_nx;
                 wptr_gray <= wptr_gray_nx;
             end
@@ -89,13 +96,18 @@ module lb_stream_cdc #(
             out_wr         <= 1'b0;
             out_color      <= 8'h00;
             out_line_start <= 1'b0;
+            out_line       <= 9'd0;
         end else begin
             {wptr_gray_r2, wptr_gray_r1} <= {wptr_gray_r1, wptr_gray};
             out_wr         <= 1'b0;
             out_line_start <= 1'b0;
             if (!empty) begin
-                {out_line_start, out_color} <= mem[rptr_bin[DEPTH_LOG2-1:0]];
-                out_wr    <= ~mem[rptr_bin[DEPTH_LOG2-1:0]][8];
+                out_line_start <= mem[rptr_bin[DEPTH_LOG2-1:0]][9];
+                out_wr         <= ~mem[rptr_bin[DEPTH_LOG2-1:0]][9];
+                if (mem[rptr_bin[DEPTH_LOG2-1:0]][9])
+                    out_line  <= mem[rptr_bin[DEPTH_LOG2-1:0]][8:0];
+                else
+                    out_color <= mem[rptr_bin[DEPTH_LOG2-1:0]][7:0];
                 rptr_bin  <= rptr_bin_nx;
                 rptr_gray <= rptr_gray_nx;
             end

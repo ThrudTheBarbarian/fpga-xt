@@ -3,14 +3,15 @@ module tb_lb_cdc;
     reg wclk=0, rclk=0, rst=1;
     always #5    wclk = ~wclk;      // 100 MHz
     always #3.75 rclk = ~rclk;      // 133 MHz
-    reg lb_wr=0, lb_ls=0; reg [7:0] lb_color=0;
-    wire ovf, o_wr, o_ls; wire [7:0] o_color;
+    reg lb_wr=0, lb_ls=0; reg [7:0] lb_color=0; reg [8:0] lb_line=0;
+    wire ovf, o_wr, o_ls; wire [7:0] o_color; wire [8:0] o_line;
     lb_stream_cdc dut (.wclk(wclk), .wrst(rst), .lb_wr(lb_wr), .lb_color(lb_color),
-                       .lb_line_start(lb_ls), .overflow(ovf),
+                       .lb_line_start(lb_ls), .lb_line(lb_line), .overflow(ovf),
                        .rclk(rclk), .rrst(rst), .out_wr(o_wr), .out_color(o_color),
-                       .out_line_start(o_ls));
+                       .out_line_start(o_ls), .out_line(o_line));
     integer sent=0, got=0, marks_sent=0, marks_got=0, errors=0;
     reg [7:0] expect_q [0:4095];
+    reg [8:0] expect_ln [0:63];
     always @(posedge rclk) begin
         if (o_wr) begin
             if (o_color !== expect_q[got]) begin
@@ -19,16 +20,24 @@ module tb_lb_cdc;
             end
             got = got + 1;
         end
-        if (o_ls) marks_got = marks_got + 1;
+        if (o_ls) begin
+            if (o_line !== expect_ln[marks_got]) begin
+                errors = errors + 1;
+                $display("LINE ERROR at mark %0d: got %0d want %0d", marks_got, o_line, expect_ln[marks_got]);
+            end
+            marks_got = marks_got + 1;
+        end
     end
     integer i, j;
     initial begin
         repeat (10) @(posedge wclk); rst = 0;
         repeat (5) @(posedge wclk);
-        // 8 "lines" of 16 bytes each, bursty like px_tick pacing
+        // 8 "lines" of 16 bytes each, bursty like px_tick pacing; line numbers
+        // ride the markers (31, 33, 35 ... exercising bit patterns incl. bit 8)
         for (i = 0; i < 8; i = i + 1) begin
-            @(posedge wclk); lb_ls <= 1; @(posedge wclk); lb_ls <= 0;
-            marks_sent = marks_sent + 1;
+            @(posedge wclk); lb_ls <= 1; lb_line <= 9'd300 + i*2;
+            expect_ln[marks_sent] = 9'd300 + i*2; marks_sent = marks_sent + 1;
+            @(posedge wclk); lb_ls <= 0;
             for (j = 0; j < 16; j = j + 1) begin
                 @(posedge wclk);
                 lb_wr <= 1; lb_color <= (i*16+j) & 8'hFF;
