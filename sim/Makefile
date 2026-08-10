@@ -1510,6 +1510,13 @@ ANTIC2_FABRIC_SRC = $(HDL_DIR)/antic2_fabric.sv $(ANTIC2_SRC) \
 	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
 	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/gtia_special.sv
 
+lb_cdc: tb_lb_cdc.sv $(HDL_DIR)/lb_stream_cdc.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -o build/tb_lb_cdc.vvp -s tb_lb_cdc \
+	    tb_lb_cdc.sv $(HDL_DIR)/lb_stream_cdc.sv
+	@vvp build/tb_lb_cdc.vvp | tee build/tb_lb_cdc.log
+	@grep -q 'LB_CDC OK' build/tb_lb_cdc.log || (echo "FAIL: tb_lb_cdc"; exit 1)
+	@echo "PASS: tb_lb_cdc"
+
 antic2_fabric_lint: $(ANTIC2_FABRIC_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o build/antic2_fabric_lint.vvp \
 	    -s antic2_fabric $(ANTIC2_FABRIC_SRC)
