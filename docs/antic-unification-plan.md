@@ -156,3 +156,35 @@ Move antic2 + a2_video + both POKEYs onto clk_sally beside the fid core:
 - **Gate**: full acid sweep (target = the sim's 55 with serdirect/skstat na
   pending peri-RP serial), DespatchRider + OS boot, timing at WNS >= 0 on
   all clocks without directive roulette.
+
+
+### Phase 6 worklist (scoped 2026-08-10)
+
+1. **Clocking**: `u_antic2_fab` moves to clk_sally/rst_sally in fpga_xt_top;
+   both POKEYs likewise (they live in antic_top, which is otherwise clk_sys —
+   pull the POKEY pair + their phi2 divider up into a clk_sally subtree, or
+   re-clock antic_top's POKEY slice; the audio ch outputs cross to
+   pokey_i2s_tx as slow-changing sample values — a 2-FF sync per 4-bit
+   channel is sufficient, samples change at audio rates).
+2. **CPU bus, native**: the fid core's addr/data/rw/strobes drive
+   antic2_fabric and POKEY directly on clk_sally.  DELETE: the hwreg write
+   toggle crossing (for $D0/$D2/$D4 pages), hwreg_rd_cdc for those pages,
+   the early POKEY lane + skid, the RANDOM lookahead, both chipset delay
+   lines, the antic2 bus snoop crossing (the last-bus latch reads the native
+   bus).  KEEP hwreg paths for the pages that stay clk_sys (blitter regs are
+   already local; audit $D5xx/$D1xx consumers).
+3. **Video stream**: lb_wr/lb_color/lb_line_start (clk_sally) into
+   antic_wb_adapt (clk_sys): a shallow async FIFO (or dual-clock BRAM line
+   buffer) at exactly this boundary — data stream, no cycle semantics.
+   The compositor/writeback stay clk_sys.
+4. **NMI/RDY/steal to the fid core**: become same-domain wires — the
+   rwnmi/rwrdy/rwsteal syncs and the recognition-window sensitivity go away.
+5. **VCOUNT/NMIST reads**: native (the hwreg_rd_cdc round-trip dies).
+6. **BRAMs**: display shadow / charset ports serving antic2 move to
+   clk_sally ports (dual-clock BRAM primitives where both domains touch).
+7. **Constraints**: clk_sally gains the antic2 block — 10 ns budget; add
+   scoped MCP for tick-gated groups where analysis allows (NOT
+   antic_pf_stream's fetch FSM / mem handshake — clk-rate).  Retire the
+   directive-roulette notes if WNS stabilizes.
+8. **Gate**: acid sweep >= the sim's 55-with-2-na, DespatchRider + OS boot
+   + `make boot`, READY/reset geometry grabs, timing WNS >= 0 first try.
