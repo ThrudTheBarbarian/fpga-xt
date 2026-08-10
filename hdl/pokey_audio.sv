@@ -93,7 +93,6 @@ module pokey_audio #(
     // RANDOM register source — high byte of the 17-bit LFSR (bits 16..9).
     // Read at $D20A by pokey_regs.
     output wire  [7:0] random_byte,
-    output wire  [7:0] random_byte_next,   // post-this-cycle's-step value (fabric read path)
 
     // Audio-timing reference tick (selected by AUDCTL[0]). Used by
     // the audio channel counters; not for POT scan.
@@ -297,15 +296,6 @@ module pokey_audio #(
     // hot-stop assertions measure.
     assign random_byte = audctl[7] ? lfsr9_q[8:1]
                                    : lfsr17_q[16:9];
-    // One-step LOOKAHEAD readout for the fabric's CPU read path: a read in
-    // machine cycle N must return the value AFTER cycle N's step, but the
-    // read CDC samples BEFORE the (delayed) chipset tick fires.  The state
-    // is stable between ticks, so the next value is combinational.  The sim
-    // path (a8_core) samples in-domain post-tick and keeps random_byte.
-    wire [8:0]  lfsr9_nx  = {lfsr9_q[0] ^ lfsr9_q[5],   lfsr9_q[8:1]};
-    wire [16:0] lfsr17_nx = {lfsr17_q[0] ^ lfsr17_q[5], lfsr17_q[16:1]};
-    assign random_byte_next = audctl[7] ? lfsr9_nx[8:1]
-                                        : lfsr17_nx[16:9];
 
     // ---- Per-channel tick sources (M23-3) ----
     // ch1/ch3 high-freq mode (AUDCTL[6]/[5]): count on every clk

@@ -846,7 +846,7 @@ module fpga_xt_top (
         .data_out (turbo_dout),
         .rw       (turbo_rw),
         .rdy      (sally_rdy & dbg_core_run & ~cpu_sel), // owns the bus only when cpu_sel=0
-        .irq_n    (irq_n_sync),      // from ANTIC via CDC
+        .irq_n    (irq_n_sync & pk_irq_n),  // PIA/PBI via CDC + native POKEY
         .nmi_n    (nmi_n_sync),      // from ANTIC via CDC
         .stack_op (turbo_stackop),   // 12-bit stack push/pull cycle
         .s_high   (turbo_shigh),     // high 4 bits of SP
@@ -1092,7 +1092,9 @@ module fpga_xt_top (
     // set, so the CPU took its NMI from the rewrite but read NMIST from the
     // timing machine -- two rasters disagreeing about whether an interrupt had
     // happened, which is why $0E scored worse than $06.
-    wire [7:0] fid_din_mux = (fid_rw && fid_native_rd)
+    wire [7:0] fid_din_mux = (fid_rw && fid_d2)
+                                 ? (fid_addr[4] ? pkr_rdata : pkl_rdata)
+                           : (fid_rw && fid_native_rd)
                                  ? rw_rdata
                            : (fid_rw && fid_d4 && fid_addr[3:0] == 4'hB)
                                  ? (tm_auth ? tm_vcount : cpu_din)
@@ -1109,7 +1111,8 @@ module fpga_xt_top (
         .data_out  (fid_dout),
         .rw        (fid_rw),
         .rdy       (fid_rdy),
-        .irq_n     (irq_n_sync),
+        .irq_n     (irq_n_sync & pk_irq_n),   // clk_sys sources (PIA/PBI)
+                                               // synced + native POKEY /IRQ
         .nmi_n     (rw_auth ? rw_nmi_n :
                     tm_auth ? tm_nmi_n    : nmi_n_sync),
         .sync      (fid_sync),
@@ -1142,35 +1145,172 @@ module fpga_xt_top (
         end
     end
 
-    // ---- early POKEY write lane (clk_sally -> clk_sys) --------------------
-    // POKEY effects are tick-gated (LFSR stepping, timer reloads, init
-    // release).  The commit-slot hwreg strobe lands ~71 clk into the cycle --
-    // AFTER the chipset tick -- so tick-gated writes took effect one machine
-    // cycle late: the 9-bit RANDOM family read exactly one LFSR step behind
-    // ($2B != $95, invariant under every time-base delay), timers started a
-    // cycle late.  This lane strobes $D2xx writes at slot 2 of the FIRST
-    // presentation (replay-suppressed -- same exactly-once guarantee, earlier
-    // instant); the commit-slot lane excludes $D2xx so nothing double-applies.
-    logic       fidw_replay_q;
-    always_ff @(posedge clk_sally or posedge rst_sally) begin
-        if (rst_sally)              fidw_replay_q <= 1'b0;
-        else if (fid_sub == 8'd53)  fidw_replay_q <= ~fid_rdy;
+    // ================================================================
+    // POKEY pair — NATIVE clk_sally (unification phase 6, chunk 2)
+    // ================================================================
+    // The pair lives in the CPU's domain, paced by the same phi2_tick_fid as
+    // the core and the fabric: writes strobe at the commit slot and are
+    // visible to the next tick, reads sample post-tick state at SUB_DATA —
+    // the tb_acid/a8_core arrangement.  The early write lane, the write
+    // skid, the chipset delay pairing and the RANDOM read lookahead all
+    // existed to compensate the crossing; they are gone with it.
+    wire fid_d2 = (fid_addr[15:8] == 8'hD2);
+    wire pk_we  = cpu_sel & ~fid_rw & fid_wr_commit & fid_d2;
+    // Read strobe (KBCODE ack, IRQST side effects): the access instant, only
+    // on the advancing presentation — same qualification as the bus snoop.
+    wire pk_re  = cpu_sel & fid_rw & fid_d2 & (fid_sub == 8'd49) & fid_rdy;
+
+    // Keyboard events: the inject decodes live on clk_sys (bl_bridge, PS
+    // writes to $D4CF/CD/CB) — toggle each 1-clk pulse across; the KBCODE
+    // payload registers with its pulse and is long stable by the time the
+    // synced edge fires.
+    logic kbd_ev_tog = 1'b0, kbd_rel_tog = 1'b0, kbd_brk_tog = 1'b0;
+    always_ff @(posedge clk_sys) begin
+        if (kbd_event_valid_q) kbd_ev_tog  <= ~kbd_ev_tog;
+        if (kbd_release_q)     kbd_rel_tog <= ~kbd_rel_tog;
+        if (break_pulse_q)     kbd_brk_tog <= ~kbd_brk_tog;
     end
-    wire        fid_wr_d2 = cpu_sel && !fid_rw && (fid_addr[15:8] == 8'hD2);
-    logic [15:0] pkw_payload_q;      // {addr[7:0], data}
-    logic        pkw_tog_q;
-    always_ff @(posedge clk_sally or posedge rst_sally) begin
-        if (rst_sally) begin
-            pkw_payload_q <= 16'h0;
-            pkw_tog_q     <= 1'b0;
-        end else if (fid_wr_d2 && (fid_sub == 8'd2) && !fidw_replay_q) begin
-            pkw_payload_q <= {fid_addr[7:0], fid_dout};
-            pkw_tog_q     <= ~pkw_tog_q;
+    (* ASYNC_REG = "TRUE" *) reg [2:0] kbd_ev_s = '0, kbd_rel_s = '0, kbd_brk_s = '0;
+    (* ASYNC_REG = "TRUE" *) reg [7:0] kbd_code_s1;
+    reg [7:0] kbd_code_s2;
+    always_ff @(posedge clk_sally) begin
+        kbd_ev_s   <= {kbd_ev_s[1:0],  kbd_ev_tog};
+        kbd_rel_s  <= {kbd_rel_s[1:0], kbd_rel_tog};
+        kbd_brk_s  <= {kbd_brk_s[1:0], kbd_brk_tog};
+        kbd_code_s1 <= kbd_event_code_q;  kbd_code_s2 <= kbd_code_s1;
+    end
+    wire pk_kbd_valid   = kbd_ev_s[2]  ^ kbd_ev_s[1];
+    wire pk_kbd_release = kbd_rel_s[2] ^ kbd_rel_s[1];
+    wire pk_kbd_break   = kbd_brk_s[2] ^ kbd_brk_s[1];
+
+    // POT shadows from the peri bridge (antic_top, clk_sys): slow scan-rate
+    // bytes, 2-FF per byte.
+    wire [7:0] pk_pot_w [0:8];      // 0-7 = POT0-7, 8 = ALLPOT
+    (* ASYNC_REG = "TRUE" *) reg [7:0] pk_pot_s1 [0:8];
+    reg [7:0] pk_pot_s2 [0:8];
+    always_ff @(posedge clk_sally)
+        for (int pi = 0; pi < 9; pi++) begin
+            pk_pot_s1[pi] <= pk_pot_w[pi];  pk_pot_s2[pi] <= pk_pot_s1[pi];
         end
+
+    // Outbound strobes to the bridge (clk_sys side syncs the toggles).
+    wire pk_potgo_pulse, pk_fast_scan, pk_serout_strobe;
+    wire [7:0] pk_serout_byte;
+    logic pk_potgo_tog = 1'b0, pk_serout_tog = 1'b0;
+    always_ff @(posedge clk_sally) begin
+        if (pk_potgo_pulse)  pk_potgo_tog  <= ~pk_potgo_tog;
+        if (pk_serout_strobe) pk_serout_tog <= ~pk_serout_tog;
     end
-    (* ASYNC_REG = "TRUE" *) reg [2:0] pkw_tog_s = 3'b000;
-    always_ff @(posedge clk_sys) pkw_tog_s <= {pkw_tog_s[1:0], pkw_tog_q};
-    wire       pkw_stb = pkw_tog_s[2] ^ pkw_tog_s[1];
+
+    wire [7:0] pkl_rdata, pkr_rdata;
+    wire [3:0] pkl_ch1, pkl_ch2, pkl_ch3, pkl_ch4;
+    wire [3:0] pkr_ch1, pkr_ch2, pkr_ch3, pkr_ch4;
+    wire       pk_irq_n;
+
+    pokey #(.CLK_BUS_HZ(100_000_000)) u_pokey_l (
+        .clk                  (clk_sally),
+        .rst                  (rst_sally_core),   // resets with the CPU hold —
+                                                  // deterministic timer/LFSR
+                                                  // phase every launch
+        .cold_boot            (sallyrst_sync[1]),
+        .phi2_tick            (phi2_tick_fid),
+        .we                   (pk_we && !fid_addr[4]),
+        .waddr                (fid_addr[7:0]),
+        .wdata                (fid_dout),
+        .re                   (pk_re && !fid_addr[4]),
+        .re_addr              (fid_addr[7:0]),
+        .raddr                (fid_addr[7:0]),
+        .rdata                (pkl_rdata),
+        .kbd_event_valid      (pk_kbd_valid),
+        .kbd_event_code       (kbd_code_s2),
+        .kbd_release          (pk_kbd_release),
+        .shadow_pot0          (pk_pot_s2[0]),
+        .shadow_pot1          (pk_pot_s2[1]),
+        .shadow_pot2          (pk_pot_s2[2]),
+        .shadow_pot3          (pk_pot_s2[3]),
+        .shadow_pot4          (pk_pot_s2[4]),
+        .shadow_pot5          (pk_pot_s2[5]),
+        .shadow_pot6          (pk_pot_s2[6]),
+        .shadow_pot7          (pk_pot_s2[7]),
+        .shadow_allpot        (pk_pot_s2[8]),
+        .bridge_potgo_pulse   (pk_potgo_pulse),
+        .bridge_fast_scan     (pk_fast_scan),
+        .ch1_out              (pkl_ch1),
+        .ch2_out              (pkl_ch2),
+        .ch3_out              (pkl_ch3),
+        .ch4_out              (pkl_ch4),
+        // The peri RP is NOT POPULATED: external serial handshake tied
+        // NEUTRAL, internal shifter in charge (same ties as before the move;
+        // see the peri-RP note in antic_top's history).
+        .ser_out_ready_pulse  (1'b0),
+        .ser_out_complete     (1'b1),
+        .ser_in_byte_pulse    (1'b0),
+        .ser_in_byte          (8'h00),
+        .break_key_pulse      (pk_kbd_break),
+        .ser_framing_err      (1'b0),
+        .ser_input_overrun    (1'b0),
+        .ser_input_busy       (1'b0),
+        .irq_n                (pk_irq_n),
+        .serout_byte          (pk_serout_byte),
+        .serout_strobe        (pk_serout_strobe),
+        .skctl_out            ()
+    );
+
+    // Right POKEY ($D21x) — audio-only stereo companion, I/O tied off.
+    wire pk_r_irq_n_unused;
+    pokey #(.CLK_BUS_HZ(100_000_000)) u_pokey_r (
+        .clk                  (clk_sally),
+        .rst                  (rst_sally_core),
+        .cold_boot            (sallyrst_sync[1]),
+        .phi2_tick            (phi2_tick_fid),
+        .we                   (pk_we && fid_addr[4]),
+        .waddr                (fid_addr[7:0]),
+        .wdata                (fid_dout),
+        .re                   (pk_re && fid_addr[4]),
+        .re_addr              (fid_addr[7:0]),
+        .raddr                (fid_addr[7:0]),
+        .rdata                (pkr_rdata),
+        .kbd_event_valid      (1'b0),
+        .kbd_event_code       (8'h00),
+        .kbd_release          (1'b0),
+        .shadow_pot0          (8'h00), .shadow_pot1 (8'h00),
+        .shadow_pot2          (8'h00), .shadow_pot3 (8'h00),
+        .shadow_pot4          (8'h00), .shadow_pot5 (8'h00),
+        .shadow_pot6          (8'h00), .shadow_pot7 (8'h00),
+        .shadow_allpot        (8'h00),
+        .bridge_potgo_pulse   (),
+        .bridge_fast_scan     (),
+        .ch1_out              (pkr_ch1),
+        .ch2_out              (pkr_ch2),
+        .ch3_out              (pkr_ch3),
+        .ch4_out              (pkr_ch4),
+        .ser_out_ready_pulse  (1'b0),
+        .ser_out_complete     (1'b1),
+        .ser_in_byte_pulse    (1'b0),
+        .ser_in_byte          (8'h00),
+        .break_key_pulse      (1'b0),
+        .ser_framing_err      (1'b0),
+        .ser_input_overrun    (1'b0),
+        .ser_input_busy       (1'b0),
+        .irq_n                (pk_r_irq_n_unused),
+        .serout_byte          (),
+        .serout_strobe        (),
+        .skctl_out            ()
+    );
+
+    // M23-stereo: dual-mono until software opts in with a $D21x write (the
+    // de-facto detection signal; see the original antic_top note, which
+    // travels with this logic).  Native now: the trigger is the pair's own
+    // write strobe.
+    logic pk_stereo_q;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally)                    pk_stereo_q <= 1'b0;
+        else if (pk_we && fid_addr[4])    pk_stereo_q <= 1'b1;
+    end
+    wire [3:0] pk_ch1_r_mux = pk_stereo_q ? pkr_ch1 : pkl_ch1;
+    wire [3:0] pk_ch2_r_mux = pk_stereo_q ? pkr_ch2 : pkl_ch2;
+    wire [3:0] pk_ch3_r_mux = pk_stereo_q ? pkr_ch3 : pkl_ch3;
+    wire [3:0] pk_ch4_r_mux = pk_stereo_q ? pkr_ch4 : pkl_ch4;
 
     // ---- the 2:1 bus mux (the one LUT on the clk_sally binding path, mux doc §5) ----------
     // Read data (cpu_din) fans out to both cores; only the owner's rdy is live.
@@ -1538,9 +1678,13 @@ module fpga_xt_top (
     // fid_din_mux — those reads must NOT arm the CDC round-trip, or the
     // handshake would stall the core against a crossing whose answer nothing
     // consumes.  rw_auth is clk_sally, same domain as this decode.
-    wire        is_native_rd   = rw_auth
+    wire        is_native_rd   = (rw_auth
                                & ((cpu_addr[15:8] == 8'hD0)
-                                | ((cpu_addr[15:8] == 8'hD4) & ~is_blitter_reg));
+                                | ((cpu_addr[15:8] == 8'hD4) & ~is_blitter_reg)))
+                               | (cpu_addr[15:8] == 8'hD2);   // POKEY is native
+                                                              // (phase 6 chunk 2);
+                                                              // antic_top no longer
+                                                              // answers $D2xx at all
     wire        hwreg_cdc_rd   = hwreg_page_rd & ~is_blitter_reg & ~is_xtc_ctl
                                & ~is_native_rd;
 
@@ -1566,8 +1710,8 @@ module fpga_xt_top (
             hwreg_wr_payload_q <= 24'h0;
             hwreg_wr_tog_q     <= 1'b0;
         end else if (hwreg_we && hwreg_addr[15:8] != 8'hD2) begin
-            // $D2xx rides the EARLY POKEY lane (pkw_* above) -- excluding it
-            // here keeps the two lanes from double-applying one store.
+            // $D2xx is native to the POKEY pair (clk_sally) -- nothing on
+            // the far side decodes it any more, so don't cross it.
             hwreg_wr_payload_q <= {hwreg_addr, hwreg_din};
             hwreg_wr_tog_q     <= ~hwreg_wr_tog_q;
         end
@@ -1784,7 +1928,9 @@ module fpga_xt_top (
     wire [24:0] antic_dbg_tb_cap;   // capture antic_top -> GP0 (2-FF synced inside GP0)
 
     antic_top #(
-        .POKEY_CLK_BUS_HZ (150_000_000)     // clk_sys nominal (150 MHz)
+        .POKEY_CLK_BUS_HZ (150_000_000)     // clk_sys nominal — the I2S/PCM
+                                            // mixer's reference (the POKEYs
+                                            // themselves are clk_sally now)
     ) u_antic_top (
         .clk_bus            (clk_sys),
         .rst_n              (rst_sys_n),
@@ -1820,10 +1966,20 @@ module fpga_xt_top (
         .dma_rw_o           (),
         .dma_oe             (),
         .diag_wsync_overdue_count(),
-        .kbd_event_valid    (kbd_event_valid_q),
-        .kbd_event_code     (kbd_event_code_q),
-        .kbd_release        (kbd_release_q),
-        .kbd_break_pulse    (break_pulse_q),
+        // POKEY subtree link (phase 6): audio in, POT shadows out.
+        .pk_ch1_l           (pkl_ch1), .pk_ch2_l (pkl_ch2),
+        .pk_ch3_l           (pkl_ch3), .pk_ch4_l (pkl_ch4),
+        .pk_ch1_r           (pk_ch1_r_mux), .pk_ch2_r (pk_ch2_r_mux),
+        .pk_ch3_r           (pk_ch3_r_mux), .pk_ch4_r (pk_ch4_r_mux),
+        .pk_potgo_tog       (pk_potgo_tog),
+        .pk_fast_scan       (pk_fast_scan),
+        .pk_serout_byte     (pk_serout_byte),
+        .pk_serout_tog      (pk_serout_tog),
+        .pk_pot0 (pk_pot_w[0]), .pk_pot1 (pk_pot_w[1]),
+        .pk_pot2 (pk_pot_w[2]), .pk_pot3 (pk_pot_w[3]),
+        .pk_pot4 (pk_pot_w[4]), .pk_pot5 (pk_pot_w[5]),
+        .pk_pot6 (pk_pot_w[6]), .pk_pot7 (pk_pot_w[7]),
+        .pk_allpot          (pk_pot_w[8]),
         .spi_clk            (),
         .spi_mosi           (),
         .spi_miso           (1'b0),
@@ -1842,9 +1998,6 @@ module fpga_xt_top (
         // PORTB state — consumed by sally_mem for ROM vs RAM control.
         .portb_q            (portb_q),
         // Early POKEY write lane (see pkw_* above).
-        .pokey_wr_we        (pkw_stb),
-        .pokey_wr_addr      (pkw_payload_q[15:8]),
-        .pokey_wr_data      (pkw_payload_q[7:0]),
         // ANTIC render tap → DDR3 writeback (HP3, see antic_writeback below).
         .wb_pix_valid       (antic_wb_pix_valid),
         .wb_pix_pair        (antic_wb_pix_pair),
@@ -1955,9 +2108,17 @@ module fpga_xt_top (
     // practice; a torn sample lasts one clk and is re-sampled correct).
     (* ASYNC_REG = "TRUE" *) reg [15:0] rw_tune_s1, rw_tune_s2;
     (* ASYNC_REG = "TRUE" *) reg [7:0]  consol_s1,  consol_s2;
+    // Fire button: joy_ovr (clk_sys GP0) bit 31 = override enable, bit 8 =
+    // TRIG0 level (active-low, 1 = released) — same decode as the legacy
+    // pia_joy_fire mux in antic_top.
+    (* ASYNC_REG = "TRUE" *) reg [1:0] joyovr_en_s, joyovr_fire_s;
+    reg trig0_fire_s2;
     always_ff @(posedge clk_sally) begin
         rw_tune_s1 <= rw_tune;      rw_tune_s2 <= rw_tune_s1;
         consol_s1  <= consol_keys;  consol_s2  <= consol_s1;
+        joyovr_en_s   <= {joyovr_en_s[0],   joy_ovr[31]};
+        joyovr_fire_s <= {joyovr_fire_s[0], joy_ovr[8]};
+        trig0_fire_s2 <= joyovr_en_s[1] ? joyovr_fire_s[1] : 1'b1;
     end
 
     // Native CPU bus: address/rw are the fid core's own nets, stable for the
@@ -1991,9 +2152,12 @@ module fpga_xt_top (
         // Full bus snoop (every fid data phase) — native registered pair.
         .bus_byte(snoop_byte_q),
         .bus_byte_stb(snoop_stb_q),
-        // TRIG0-3 released. A game's fire button would thread from the GP0
-        // keypad override here — chunk-2 work with the POKEY/input move.
-        .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
+        // TRIG0 from the GP0 keypad->joystick override (KP_0 fire), synced.
+        // TRIG1/2 released; TRIG3 MUST stay released — the XL OS reads $D013
+        // as the $A000 cartridge-present line (GINTLK interlock; a flip mid-
+        // session trips the anti-cart-swap lockup).
+        .trig0({7'h00, trig0_fire_s2}), .trig1(8'h01),
+        .trig2(8'h01), .trig3(8'h01),
         // $D014 PAL: $0F = NTSC, and this machine IS NTSC — must agree with
         // antic_top's pal_sense_in (the OS reads it to set up VBI timing).
         .pal_sense(8'h0F), .consol_keys(consol_s2),

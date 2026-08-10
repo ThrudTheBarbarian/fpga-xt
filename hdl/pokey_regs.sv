@@ -83,7 +83,6 @@ module pokey_regs (
 
     // M23-2: RANDOM source (17-bit LFSR high byte) — read at $D20A.
     input  wire  [7:0] random_byte,
-    input  wire  [7:0] random_byte_next,   // post-step lookahead (fabric read path)
 
     // M23-4: keyboard event ingest. The full Atari KBCODE byte
     // (scan code in [5:0] + shift in [6] + ctrl in [7]) arrives
@@ -447,7 +446,7 @@ module pokey_regs (
             4'h7: rdata = pot7;
             4'h8: rdata = allpot;       // ALLPOT
             4'h9: rdata = kbcode_q;     // KBCODE
-            4'hA: rdata = random_byte_next;  // RANDOM -- post-step lookahead (see pokey_audio)
+            4'hA: rdata = random_byte;   // RANDOM -- native reads sample post-tick
             4'hD: rdata = serin_q;       // SERIN
             4'hE: rdata = ~irq_pending;  // IRQST (0 = pending; bit 3 live)
             // SKSTAT layout (Atari):

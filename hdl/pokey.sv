@@ -97,7 +97,6 @@ module pokey #(
     wire [7:0] audc1, audc2, audc3, audc4;
     wire [7:0] audctl;
     wire [7:0] random_byte;        // M23-2: 17-bit LFSR high byte → RANDOM ($D20A)
-    wire [7:0] random_byte_next;   // post-step lookahead (fabric read path)
 
     // Register file ↔ POT scan glue (M23-5).
     wire        potgo_pulse;
@@ -135,7 +134,6 @@ module pokey #(
         .audc3                (audc3),  .audc4 (audc4),
         .audctl               (audctl),
         .random_byte          (random_byte),
-        .random_byte_next     (random_byte_next),
         .kbd_event_valid      (kbd_event_valid),
         .kbd_event_code       (kbd_event_code),
         .kbd_release          (kbd_release),
@@ -190,7 +188,6 @@ module pokey #(
         .ch3_out      (ch3_out),
         .ch4_out      (ch4_out),
         .random_byte  (random_byte),
-        .random_byte_next (random_byte_next),
         .ref_tick_out       (ref_tick_w),
         .ref_tick_15khz_out (ref_tick_15khz_w),
         .ser_out_bit        (ser_out_bit_w),
