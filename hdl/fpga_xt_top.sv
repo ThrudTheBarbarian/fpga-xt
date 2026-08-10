@@ -1155,7 +1155,19 @@ module fpga_xt_top (
     // skid, the chipset delay pairing and the RANDOM read lookahead all
     // existed to compensate the crossing; they are gone with it.
     wire fid_d2 = (fid_addr[15:8] == 8'hD2);
-    wire pk_we  = cpu_sel & ~fid_rw & fid_wr_commit & fid_d2;
+    // Chipset writes strobe at SUB_DATA (the sim contract: a8_core's
+    // `cpu_we = !rw && rdy && sub==SUB_DATA`), NOT the commit slot.  The
+    // commit slot sits 0-2 clk before the next tick under the fractional
+    // phi2 divider's jitter (54..57-clk cycles), and a registered strobe
+    // landing ON the tick edge races the seq's tick-branch state — measured:
+    // antic_wsync d5's release-cycle re-arm was clobbered by the same-edge
+    // armed_now clear, releasing the halt a full line early ($14 != $34).
+    // Exactly-once still holds at SUB_DATA: for chip pages every fid_rdy
+    // term is stable across the cycle (wsync/steal are levels, mem_ok never
+    // drops on a chip access), so rdy here equals rdy at the commit slot and
+    // stalled presentations never strobe.
+    wire fid_chip_we = cpu_sel & ~fid_rw & (fid_sub == 8'd49) & fid_rdy;
+    wire pk_we  = fid_chip_we & fid_d2;
     // Read strobe (KBCODE ack, IRQST side effects): the access instant, only
     // on the advancing presentation — same qualification as the bus snoop.
     wire pk_re  = cpu_sel & fid_rw & fid_d2 & (fid_sub == 8'd49) & fid_rdy;
@@ -2122,11 +2134,12 @@ module fpga_xt_top (
     end
 
     // Native CPU bus: address/rw are the fid core's own nets, stable for the
-    // whole machine cycle.  The write strobe is fid_wr_commit — the advancing
-    // presentation's commit slot, the proven exactly-once instant (stalled
-    // replays never fire it) — landing 3 slots before the next tick, so the
-    // write is visible to tick N+1: the tb_acid ordering.
-    wire a2_we_native = cpu_sel & ~fid_rw & fid_wr_commit & (fid_d0 | fid_d4);
+    // whole machine cycle.  The write strobe is fid_chip_we — SUB_DATA,
+    // rdy-gated, the tb_acid ordering with the sim's own tick margin (see
+    // the note at its declaration: the commit slot's registered strobe could
+    // land ON the next tick under phi2-divider jitter and lost the WSYNC
+    // release-cycle re-arm).
+    wire a2_we_native = fid_chip_we & (fid_d0 | fid_d4);
 
     antic2_fabric u_antic2_fab (
         // rst_sally_core (not rst_sally): the A9's SALLYRST hold resets the

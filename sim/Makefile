@@ -1545,6 +1545,15 @@ build/tb_acid2.vvp: tb_acid.sv $(A8_CORE_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
 	    -Ptb_acid.USE_ANTIC2=1 -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
 
+# antic2 with the HARDWARE's jittered tick cadence (55.866 clk/cycle) --
+# reproduces the fabric's mesochronous phi2 spacing for HW-vs-sim bisects.
+acid2j: build/tb_acid2j.vvp
+	@vvp -N $< +TEST=$(TEST)
+
+build/tb_acid2j.vvp: tb_acid.sv $(A8_CORE_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
+	    -Ptb_acid.USE_ANTIC2=1 -Ptb_acid.JITTER=1 -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
+
 build/tb_acid.vvp: tb_acid.sv $(A8_CORE_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
 	    -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
