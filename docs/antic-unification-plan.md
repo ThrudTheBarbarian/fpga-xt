@@ -158,6 +158,44 @@ Move antic2 + a2_video + both POKEYs onto clk_sally beside the fid core:
   all clocks without directive roulette.
 
 
+### Phase 6 status (2026-08-10)
+
+**LANDED — the Atari realm runs on clk_sally.**
+
+- **Chunk 1** (04ac8092): antic2_fabric native — same phi2_tick_fid as the
+  fid core, native bus (reads combinational with 49 clk settle, writes
+  strobed exactly-once), lb_stream_cdc carrying the render stream with the
+  line number riding each start marker, native rdy/nmi/steal wires, the
+  fabric resets WITH the CPU on SALLYRST (deterministic CPU-cycle-0-on-
+  line-0 every launch — the phase lottery is structurally gone).  Deleted:
+  rw_phi2_dl delay taps, split time bases, the snoop toggle crossing, the
+  VCOUNT/NMIST mbit CDC, the rdy/nmi/steal 2-FF syncs, hwreg read-CDC for
+  the native pages, the antic_gtia fallback branch.
+- **Chunk 2** (75951a58): both POKEYs native beside the CPU — write/read
+  strobes on the fid grid, native /IRQ, keyboard toggle-crossed in, POT
+  shadows/POTGO/SEROUT bridged to the peri machinery left in antic_top,
+  audio channels 2-FF'd into the I2S mixer.  Deleted: the early $D2xx
+  lane, the write skid, the RANDOM lookahead.  The fire button now threads
+  from joy_ovr to the fabric's TRIG0.  The turbo core loses POKEY by
+  design (debug core; nothing on the crossed path decodes $D2xx).
+- **Strobe instant** (ba04f4a6): chipset writes strobe at SUB_DATA, the
+  sim's own contract — the commit slot's registered strobe could land ON
+  the next tick under the fractional phi2 divider's 54..57-clk cycles and
+  lost antic_wsync's release-cycle re-arm (d5, "$14 != $34").  tb_acid
+  gained an `acid2j` target that runs the hardware's 55.866-clk jittered
+  cadence for exactly this class of HW-vs-sim question.
+- **Timing**: both builds met WNS >= 0 on ALL clocks first try, no
+  directive roulette (clk_sys shed the fabric's worst cones; the fabric
+  gained clk_sally's 10 ns).
+- **ACID**: 50 pass (chunk 1, run 2026-08-10-4) -> 54 pass (chunk 2, run
+  -5).  dlitiming/dmapattern/noise/timertiming went green with native
+  POKEY; virtdma with the native last-bus.  Open: antic_wsync (the strobe
+  fix above, in validation), serdirect/skstat (environmental — no serial
+  bus device; na candidates pending Simon's call).
+- **Still to retire**: the legacy antic_top machine (timing master +
+  peri/i2s host today), its delayed time base, and the crossed-bus
+  register lanes for the pages that remain clk_sys.
+
 ### Phase 6 worklist (scoped 2026-08-10)
 
 1. **Clocking**: `u_antic2_fab` moves to clk_sally/rst_sally in fpga_xt_top;

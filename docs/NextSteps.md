@@ -1,43 +1,32 @@
 # Next Steps / Open Work — consolidated
 
-## antic-sally-interop — one beam landed; conformance gap enumerated
-RESOLVED 2026-08-09 (branch antic-sally-interop): the pixels-vs-CPU-timing
-split brain.  USE_ANTIC2_FABRIC flipped (unification phase 2) and SALLYRST
-boots to $0A (fid + rewrite authority) — antic2 owns pixels AND VCOUNT/NMI/
-rdy, one beam.  HW: Despatch Rider renders fully correctly (status bars,
-ticker, live counters, no duplication/flicker); READY clean across resets at
-both authorities; the OS GR.0 capture duplication and the DLI band drift are
-gone with the boot default.  ACID-in-fabric: 40/58 at $0A — best fabric score
-ever (old best 32@$06 incoherent, old $0A 27) vs the sim's 55/58 ceiling 57.
+## antic-sally-interop — phase 6 (one clock domain) landed; residuals
+The Atari realm (antic2 + GTIA + both POKEYs) runs NATIVE on clk_sally
+beside the fid core — unification phase 6, chunks 1+2 + the SUB_DATA strobe
+fix (04ac8092 / 75951a58 / ba04f4a6; status in
+docs/antic-unification-plan.md).  Every CPU-bus crossing, delay tap, skid
+and lookahead is gone; the per-boot mesochronous phase lottery is
+structurally dead (the fabric resets WITH the CPU); both builds met timing
+first try, no directive roulette.  ACID: 50 (chunk 1) -> 54 (chunk 2) of
+58, runs 2026-08-10-4/-5.
 
-ACID campaign 2026-08-09/10 (branch antic-sally-interop): 32 -> 40 (one-beam)
--> 44 (TICK_DELAY: bus-arrival skew) -> 45 (full bus snoop) -> 47 (chipset
-time base 8 + gtia_pmresize back) -> 48 (POKEY-L serial ties neutral, peri RP
-absent) -> 50 BEST (split time bases: antic2@8 for NMI recognition, POKEY@12
-for the early write lane) -> 49-50 phase-dependent (apply-at-tick skid).
-
-DEFINITIVE overnight finding: the marginal POKEY trio (inittiming, sertiming,
-antic_wsync) flips PER BOOT on an identical bitstream — the clk_sally/clk_sys
-mesochronous beat phase is set at PLL lock and shifts CDC arrival instants
-per boot.  NEXT STEP (the real fix): make the chipset delay tap / skid window
-GP0-programmable and add a kernel boot-time calibration (run a RANDOM-phase
-probe, steer the tap until green) — turns the lottery into determinism.
-Landed en route: early exactly-once $D2xx write lane; RANDOM read lookahead;
-POKEY write skid (apply at tick-1); two antic2 clk_sys path registrations
-(pf_mode_q, pf_bytes_q).  clk_sys closes only by directive roulette (three
-fixes in): the floorplan/fmax pass is now the gating engineering debt.
-
-Remaining reds and dispositions:
-- pokey_noise + the trio: phase-calibration item above.
-- antic_virtdma (04 != \$05): last-bus latch one phase stale; priority
-  experiments exhausted — next: trace the virtual-slot capture instant vs the
-  snoop arrival in sim with a bus-accurate tb.
-- antic_dmapattern: unmoved by everything; RANDOM-clocked like wsync so
-  partly phase-hostage; re-test after calibration.
+Open:
+- antic_wsync (Late INC WSYNC "$14 != $34"): the commit-slot strobe raced
+  the tick under the fractional phi2 divider's jitter — SUB_DATA strobe fix
+  ba04f4a6 built; awaiting board validation + full resweep (expect 55).
 - pokey_serdirect / pokey_skstat: need real serial-bus NAK behavior the
-  paravirtual SIO does not produce (na in sim for the same reason) — propose
-  honest 'na (no serial bus)' classification pending peri-RP bring-up.
-- cpu_65c816: harness classification noise (error vs na).
+  paravirtual SIO does not produce (na in sim for the same reason) —
+  propose honest 'na (no serial bus)' classification pending peri-RP
+  bring-up.  AWAITING SIMON'S CALL.
+- Legacy retirement (phase-6 tail): antic_top's legacy machine is still
+  the phi2 timing master and hosts the peri/i2s glue; the crossed register
+  lanes remain for the clk_sys pages.  Retiring it removes the last
+  compensation-era machinery.
+- Turbo core: lost POKEY access by design (debug core; the crossed path no
+  longer decodes $D2xx).  Revisit only if turbo needs full-chip debugging.
+- Board note: mDNS dropped once after an acid xexload on the chunk-2 build
+  (2026-08-10 ~11:20); JTAG reload pending post-build — watch for
+  recurrence.
 
 Rare sibling still open: one basic-from-self-test reset re-entered self-test
 (OPTION sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in 6/6.
