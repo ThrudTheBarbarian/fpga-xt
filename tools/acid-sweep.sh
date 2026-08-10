@@ -56,6 +56,18 @@ for xex in "$ACID_DIR"/*.xex; do
     n=$((n + 1))
     printf '[%d] %-24s ' "$n" "$name" >&2
 
+    # Environment-na (Simon's call, 2026-08-10): these need a physical SIO
+    # device to NAK a command -- the paravirtual SIO cannot produce the bus
+    # behavior they assert on, and the sim skips them for the same reason.
+    # Greyed like the sim until the peri-RP serial bring-up delivers a real
+    # bus; remove from this list at that point.
+    case "$name" in
+    pokey_serdirect|pokey_skstat)
+        printf '%s\t%s\n' "$name" na >> "$OUT"
+        echo "na (no serial bus)" >&2
+        continue ;;
+    esac
+
     # Retry ONLY a failed load. xexload exits 0 on success, so a non-zero rc is
     # the known flaky-load race and is worth another go. A load that succeeded
     # but never halted is a genuine na (65C816 probe, mod display modules) and

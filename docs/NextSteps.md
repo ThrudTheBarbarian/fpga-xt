@@ -13,10 +13,11 @@ first try, no directive roulette.  ACID: 50 (chunk 1) -> 54 (chunk 2) of
 Open:
 - antic_wsync: CLOSED — SUB_DATA strobe fix ba04f4a6 validated on HW; full
   sweep 2026-08-10-6 = 55 pass, HW at sim parity.
-- pokey_serdirect / pokey_skstat: need real serial-bus NAK behavior the
-  paravirtual SIO does not produce (na in sim for the same reason) —
-  propose honest 'na (no serial bus)' classification pending peri-RP
-  bring-up.  AWAITING SIMON'S CALL.
+- pokey_serdirect / pokey_skstat: DECIDED (Simon, 2026-08-10) — na like
+  the sim (no serial bus device).  Sweep + dashboard grey them; the sweep
+  list in tools/acid-sweep.sh is where they come BACK when the peri-RP
+  board (at PCBA now, arriving soon) delivers a real serial bus.
+  **The dashboard's top run is now ZERO FAILS — HW fully at sim parity.**
 - Legacy retirement (phase-6 tail): antic_top's legacy machine is still
   the phi2 timing master and hosts the peri/i2s glue; the crossed register
   lanes remain for the clk_sys pages.  Retiring it removes the last

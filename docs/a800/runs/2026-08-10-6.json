@@ -1,200 +1,202 @@
 {
-  "date": "2026-08-10",
-  "seq": 6,
-  "core": "fid",
-  "bitstream": "ba04f4a6 phase6-subdata-strobe",
-  "note": "SUB_DATA chip strobes: antic_wsync green. HW = sim parity (55); only serdirect/skstat remain (no serial-bus device -- na candidates)",
-  "results": {
-    "cpu_insn": {
-      "s": "pass"
-    },
-    "cpu_decimal": {
-      "s": "pass"
-    },
-    "cpu_flags": {
-      "s": "pass"
-    },
-    "cpu_bugs": {
-      "s": "pass"
-    },
-    "cpu_clisei": {
-      "s": "pass"
-    },
-    "cpu_timing": {
-      "s": "pass"
-    },
-    "cpu_illtiming": {
-      "s": "pass"
-    },
-    "cpu_illegal": {
-      "s": "pass"
-    },
-    "cpu_65c816": {
-      "s": "na"
-    },
-    "antic_default": {
-      "s": "pass"
-    },
-    "antic_vcount": {
-      "s": "pass"
-    },
-    "antic_wsync": {
-      "s": "pass"
-    },
-    "antic_nmist": {
-      "s": "pass"
-    },
-    "antic_dlitiming": {
-      "s": "pass"
-    },
-    "antic_blockednmi": {
-      "s": "pass"
-    },
-    "antic_vscroldli": {
-      "s": "pass"
-    },
-    "antic_dmapattern": {
-      "s": "pass"
-    },
-    "antic_virtdma": {
-      "s": "pass"
-    },
-    "antic_pmdma": {
-      "s": "pass"
-    },
-    "antic_linebuffering": {
-      "s": "pass"
-    },
-    "antic_pfstarttiming": {
-      "s": "pass"
-    },
-    "antic_pfstoptiming": {
-      "s": "pass"
-    },
-    "antic_hscrolbug": {
-      "s": "pass"
-    },
-    "antic_hiresbug": {
-      "s": "pass"
-    },
-    "antic_charcontrol": {
-      "s": "pass"
-    },
-    "antic_vscroll": {
-      "s": "pass"
-    },
-    "antic_dlistwrap": {
-      "s": "pass"
-    },
-    "antic_addresswrap": {
-      "s": "pass"
-    },
-    "antic_addrmirror": {
-      "s": "pass"
-    },
-    "gtia_default": {
-      "s": "pass"
-    },
-    "gtia_consol": {
-      "s": "pass"
-    },
-    "gtia_collision": {
-      "s": "pass"
-    },
-    "gtia_collision2": {
-      "s": "pass"
-    },
-    "gtia_pmoverlap": {
-      "s": "pass"
-    },
-    "gtia_pmresize": {
-      "s": "pass"
-    },
-    "gtia_pmretrigger": {
-      "s": "pass"
-    },
-    "gtia_vdelay": {
-      "s": "pass"
-    },
-    "gtia_phantomdma": {
-      "s": "pass"
-    },
-    "gtia_psuedomodee": {
-      "s": "pass"
-    },
-    "gtia_addrmirror": {
-      "s": "pass"
-    },
-    "pokey_default": {
-      "s": "pass"
-    },
-    "pokey_timerirq": {
-      "s": "pass"
-    },
-    "pokey_timertiming": {
-      "s": "pass"
-    },
-    "pokey_timergranularity": {
-      "s": "pass"
-    },
-    "pokey_irqtiming": {
-      "s": "pass"
-    },
-    "pokey_inittiming": {
-      "s": "pass"
-    },
-    "pokey_noise": {
-      "s": "pass"
-    },
-    "pokey_twotone": {
-      "s": "pass"
-    },
-    "pokey_skstat": {
-      "s": "fail"
-    },
-    "pokey_serclock": {
-      "s": "pass"
-    },
-    "pokey_sertiming": {
-      "s": "pass"
-    },
-    "pokey_serdirect": {
-      "s": "fail"
-    },
-    "pokey_seroc": {
-      "s": "pass"
-    },
-    "pokey_asyncrecv": {
-      "s": "pass"
-    },
-    "pokey_addrmirror": {
-      "s": "pass"
-    },
-    "pia_basic": {
-      "s": "pass"
-    },
-    "pia_irq": {
-      "s": "pass"
-    },
-    "mmu_xlbanking": {
-      "s": "pass"
-    },
-    "mod_dispmin": {
-      "s": "na",
-      "d": "RAN: returned to the loader park $FF60"
-    },
-    "mod_disp80": {
-      "s": "na",
-      "d": "RAN: returned to the loader park $FF60"
-    },
-    "mod_scroll40": {
-      "s": "na"
-    },
-    "mod_options": {
-      "s": "na"
-    },
-    "mod_vbxe80": {
-      "s": "na"
-    }
+ "date": "2026-08-10",
+ "seq": 6,
+ "core": "fid",
+ "bitstream": "ba04f4a6 phase6-subdata-strobe",
+ "note": "SUB_DATA chip strobes: antic_wsync green. HW = sim parity (55); only serdirect/skstat remain (no serial-bus device -- na candidates)  serdirect/skstat reclassified na (Simon, 2026-08-10) -- ZERO FAILS.",
+ "results": {
+  "cpu_insn": {
+   "s": "pass"
+  },
+  "cpu_decimal": {
+   "s": "pass"
+  },
+  "cpu_flags": {
+   "s": "pass"
+  },
+  "cpu_bugs": {
+   "s": "pass"
+  },
+  "cpu_clisei": {
+   "s": "pass"
+  },
+  "cpu_timing": {
+   "s": "pass"
+  },
+  "cpu_illtiming": {
+   "s": "pass"
+  },
+  "cpu_illegal": {
+   "s": "pass"
+  },
+  "cpu_65c816": {
+   "s": "na"
+  },
+  "antic_default": {
+   "s": "pass"
+  },
+  "antic_vcount": {
+   "s": "pass"
+  },
+  "antic_wsync": {
+   "s": "pass"
+  },
+  "antic_nmist": {
+   "s": "pass"
+  },
+  "antic_dlitiming": {
+   "s": "pass"
+  },
+  "antic_blockednmi": {
+   "s": "pass"
+  },
+  "antic_vscroldli": {
+   "s": "pass"
+  },
+  "antic_dmapattern": {
+   "s": "pass"
+  },
+  "antic_virtdma": {
+   "s": "pass"
+  },
+  "antic_pmdma": {
+   "s": "pass"
+  },
+  "antic_linebuffering": {
+   "s": "pass"
+  },
+  "antic_pfstarttiming": {
+   "s": "pass"
+  },
+  "antic_pfstoptiming": {
+   "s": "pass"
+  },
+  "antic_hscrolbug": {
+   "s": "pass"
+  },
+  "antic_hiresbug": {
+   "s": "pass"
+  },
+  "antic_charcontrol": {
+   "s": "pass"
+  },
+  "antic_vscroll": {
+   "s": "pass"
+  },
+  "antic_dlistwrap": {
+   "s": "pass"
+  },
+  "antic_addresswrap": {
+   "s": "pass"
+  },
+  "antic_addrmirror": {
+   "s": "pass"
+  },
+  "gtia_default": {
+   "s": "pass"
+  },
+  "gtia_consol": {
+   "s": "pass"
+  },
+  "gtia_collision": {
+   "s": "pass"
+  },
+  "gtia_collision2": {
+   "s": "pass"
+  },
+  "gtia_pmoverlap": {
+   "s": "pass"
+  },
+  "gtia_pmresize": {
+   "s": "pass"
+  },
+  "gtia_pmretrigger": {
+   "s": "pass"
+  },
+  "gtia_vdelay": {
+   "s": "pass"
+  },
+  "gtia_phantomdma": {
+   "s": "pass"
+  },
+  "gtia_psuedomodee": {
+   "s": "pass"
+  },
+  "gtia_addrmirror": {
+   "s": "pass"
+  },
+  "pokey_default": {
+   "s": "pass"
+  },
+  "pokey_timerirq": {
+   "s": "pass"
+  },
+  "pokey_timertiming": {
+   "s": "pass"
+  },
+  "pokey_timergranularity": {
+   "s": "pass"
+  },
+  "pokey_irqtiming": {
+   "s": "pass"
+  },
+  "pokey_inittiming": {
+   "s": "pass"
+  },
+  "pokey_noise": {
+   "s": "pass"
+  },
+  "pokey_twotone": {
+   "s": "pass"
+  },
+  "pokey_skstat": {
+   "s": "na",
+   "d": "no serial bus device: needs a physical SIO peer to NAK a command; na in sim for the same reason. Revisit at peri-RP serial bring-up."
+  },
+  "pokey_serclock": {
+   "s": "pass"
+  },
+  "pokey_sertiming": {
+   "s": "pass"
+  },
+  "pokey_serdirect": {
+   "s": "na",
+   "d": "no serial bus device: needs a physical SIO peer to NAK a command; na in sim for the same reason. Revisit at peri-RP serial bring-up."
+  },
+  "pokey_seroc": {
+   "s": "pass"
+  },
+  "pokey_asyncrecv": {
+   "s": "pass"
+  },
+  "pokey_addrmirror": {
+   "s": "pass"
+  },
+  "pia_basic": {
+   "s": "pass"
+  },
+  "pia_irq": {
+   "s": "pass"
+  },
+  "mmu_xlbanking": {
+   "s": "pass"
+  },
+  "mod_dispmin": {
+   "s": "na",
+   "d": "RAN: returned to the loader park $FF60"
+  },
+  "mod_disp80": {
+   "s": "na",
+   "d": "RAN: returned to the loader park $FF60"
+  },
+  "mod_scroll40": {
+   "s": "na"
+  },
+  "mod_options": {
+   "s": "na"
+  },
+  "mod_vbxe80": {
+   "s": "na"
   }
+ }
 }
