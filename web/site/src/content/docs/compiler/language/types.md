@@ -162,15 +162,6 @@ u16* heap = new u16[64];
 u16 n2 = heap.length;         // 64
 ```
 
-:::caution[The count must be statically known]
-`.length` is resolved at **compile time**, from the literal in the `new T[N]`
-that produced the pointer — it is not a read of the allocation header. So it
-works for `new u16[64]` and fails to compile for `new u16[n]` where `n` is a
-runtime value. Keep your own count when the size is computed. Compiler bug 045
-tracks making it a real header read; until then the diagnostic at least names
-the restriction.
-:::
-
 `.length` on a pointer the compiler did **not** record a count for — one that
 crossed a function boundary, or came from anywhere but `new T[N]` — is a compile
 error, not a wrong number: there is no map entry to answer from.
@@ -195,7 +186,7 @@ u16* x, y;                    // BOTH are u16*
 ```
 
 In C the same line gives you a pointer and an integer. This is deliberate, and it
-is the single most likely thing to surprise a C programmer reading xtc.
+is the single most likely thing to surprise a C programmer reading xcc.
 :::
 
 `->` is sugar for "dereference and reach a member": `p->x` is `(*p).x`. Unlike C,
