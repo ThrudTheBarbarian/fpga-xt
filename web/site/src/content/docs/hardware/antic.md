@@ -45,7 +45,7 @@ Acid800 suite**, measured in two environments:
   release edges (including a write landing *on* the release cycle), DLI/NMI
   recognition alignment, display-list timing, P/M DMA, and the POKEY timer,
   init-mode, and serial-output timing families.
-- **antic2-hw — 54 of 58**: the same core on silicon.  The whole Atari
+- **antic2-hw — 55 of 58**: the same core on silicon, matching antic2-sim.  The whole Atari
   realm — antic2, GTIA, and both POKEYs — now runs **natively in the CPU's
   clock domain** (the unification's phase 6): one clock, one phi2 grid, no
   crossings on the CPU bus.  Register writes land in the cycle the program
@@ -54,16 +54,19 @@ Acid800 suite**, measured in two environments:
   DLI-timing, DMA-pattern, POKEY-noise and POKEY-timer families in one
   step, retired the per-boot score lottery (the chipset resets with the
   CPU, so every boot has the same cycle-zero alignment), and moved the
-  display pipeline off the tightest clock — both native builds met timing
-  on the first attempt.  The remaining gap to antic2-sim: the WSYNC
-  read-modify-write edge case (fix in validation) and two serial-bus tests
-  that need a physical SIO device neither environment has (skipped in the
-  harness for the same reason).
+  display pipeline off the tightest clock — every native build has met
+  timing on the first attempt.  The final piece was strobing register
+  writes at the core's data slot rather than its commit slot, so the
+  strobe can never race a tick under the phi2 divider's cycle-length
+  jitter (the WSYNC read-modify-write edge case that caught).  The only
+  tests not green on hardware are two serial-bus tests that need a
+  physical SIO device neither environment has (the sim skips them for the
+  same reason).
 
 :::note
 `antic2` is the fabric's pixel and timing authority, running in the CPU's
 own clock domain; the remaining unification work retires the superseded
 legacy pipeline. See `docs/antic-unification-plan.md` in the repo for the
 phase plan and status, and `docs/a800/index.html` for the per-test
-conformance dashboard (the phase-6 runs are 2026-08-10-4 and -5).
+conformance dashboard (the phase-6 runs are 2026-08-10-4 through -6).
 :::
