@@ -764,7 +764,7 @@ static int xex_run_init(cpu6502 *r, uint16_t initad)
         if (pc >= 0x1D90 && pc <= 0x1DC0) {
             klog("[xl] xex: INIT ran to the acid framework end (no return)\r\n");
             dbg_read_regs(r);
-            return 0;
+            return 1;                       /* ran to completion: skip the RUN phase */
         }
         return -1;
     }
@@ -899,10 +899,18 @@ int xex_boot(const char *path, int turbo, int hold)
         /* a segment that set INITAD ($02E2/$02E3): run INIT now */
         if (s <= 0x02E2 && e >= 0x02E3) {
             uint16_t initad = (uint16_t)(data[0x02E2 - s] | (data[0x02E3 - s] << 8));
-            if (xex_run_init(&reg, initad) != 0) {
+            int irc = xex_run_init(&reg, initad);
+            if (irc < 0) {
                 frtos_free(xex, NULL);
                 klog("[xl] xex: INIT run failed\r\n");
                 return -5;
+            }
+            if (irc == 1) {                 /* the test ran ENTIRELY inside INIT
+                                             * (cpu_65c816): nothing to RUN — the
+                                             * realm keeps its parked end state
+                                             * and the sweep reads never-halts. */
+                frtos_free(xex, NULL);
+                return 0;
             }
         }
     }
