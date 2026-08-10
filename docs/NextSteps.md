@@ -23,14 +23,13 @@ Open:
   compensation-era machinery.
 - Turbo core: lost POKEY access by design (debug core; the crossed path no
   longer decodes $D2xx).  Revisit only if turbo needs full-chip debugging.
-- Board note RESOLVED to a kernel bug: the recurring "board drops" during
-  the phase-6 campaign were mDNS-ONLY — ssh by IP (192.168.192.179) works
-  and the 6502 keeps running (verified mid-"drop": DespatchRider title
-  animating, PC live).  The kernel's mDNS responder stops re-announcing
-  after sustained net+xexload traffic; the earlier MEMP_NUM_SYS_TIMEOUT
-  24→64 fix covered a different wedge in the same family.  NOT a phase-6
-  PL regression.  Fix belongs in the kernel mDNS timer path; use the IP
-  in the meantime.
+- Board mDNS drops: FIXED (624c5bfe) — a 60 s kernel keepalive re-sends
+  IGMP membership reports and issues a gratuitous mDNS announce.  Root
+  cause: inbound MULTICAST delivery dies (snooping-switch aging suspected)
+  while the responder stays healthy — proven mid-wedge by a UNICAST
+  `dig @board -p 5353 xtos.local` answering perfectly.  Validated 22 min
+  continuous resolution with traffic (historic wedges hit at 4-18 min).
+  Keep an eye on it across longer sessions.
 
 Rare sibling still open: one basic-from-self-test reset re-entered self-test
 (OPTION sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in 6/6.
