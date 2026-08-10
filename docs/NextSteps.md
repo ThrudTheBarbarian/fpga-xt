@@ -22,6 +22,15 @@ Open:
   the phi2 timing master and hosts the peri/i2s glue; the crossed register
   lanes remain for the clk_sys pages.  Retiring it removes the last
   compensation-era machinery.
+- Timing: HEALTHY (2026-08-10 MCP campaign, 79910d25+e09561d9).  2-cycle
+  multicycle exceptions on the slot-proven stall cones took clk_sally
+  +0.001→+0.813, clk_sys +0.217, clk_pix +0.378, hold +0.045; a 4-directive
+  sweep ALL passed (spread = seed noise; ExtraTimingOpt stays default) and
+  the MCP bitstream swept ACID at 55/8/0 (run 2026-08-10-7).  Remaining
+  worst paths are genuine clock-rate (fid state→CE, blitter cx→state,
+  sprite cache→prio) — next gains need floorplan/fmax or pipeline RTL,
+  only if a need arises.  A future 120 MHz attempt must re-audit the MCPs
+  (slot spacing scales with N).
 - Turbo core: lost POKEY access by design (debug core; the crossed path no
   longer decodes $D2xx).  Revisit only if turbo needs full-chip debugging.
 - Board mDNS drops: FIXED (624c5bfe) — a 60 s kernel keepalive re-sends
