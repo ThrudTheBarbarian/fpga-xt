@@ -1926,7 +1926,15 @@ module fpga_xt_top (
     wire        rw_auth_sys = 1'b1;
     wire [15:0] rw_mem_addr;
     wire [7:0]  rw_rdata;
-    wire        rw_steal, rw_rdy_n, rw_nmi_n;
+    // KEEP: multicycle-constraint anchors (see sally_synth_probe.xdc).  The
+    // stall cone through these nets is tick-launched and slot-sampled — the
+    // tightest real window is 2 clk (tick at slot 0 -> fid_mem_step at
+    // slot 2), so STA gets a 2-cycle setup exception THROUGH these nets
+    // and needs their names to survive synthesis.  nmi_n is deliberately
+    // NOT here: the core edge-detects it every clock.
+    (* keep = "true" *) wire rw_steal;
+    (* keep = "true" *) wire rw_rdy_n;
+    wire        rw_nmi_n;
     wire        rw_lb_wr, rw_lb_line_start;
     wire [7:0]  rw_lb_color;
     wire [8:0]  rw_line;
