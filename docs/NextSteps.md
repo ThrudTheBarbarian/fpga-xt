@@ -23,13 +23,14 @@ Open:
   compensation-era machinery.
 - Turbo core: lost POKEY access by design (debug core; the crossed path no
   longer decodes $D2xx).  Revisit only if turbo needs full-chip debugging.
-- Board note: networking drops recurring on the phase-6 builds (3× on
-  2026-08-10: after a single xexload, after xlboot DespatchRider with a
-  black screen, and right after a full sweep COMPLETED — 63 xexloads ran
-  clean then the net died at idle).  dapfix+load recovers.  Pattern does
-  NOT implicate the 6502 app path (the sweep finished); suspect the
-  kernel/net side or a new PL interaction — needs klog via UART (Simon
-  has one) on the next occurrence.
+- Board note RESOLVED to a kernel bug: the recurring "board drops" during
+  the phase-6 campaign were mDNS-ONLY — ssh by IP (192.168.192.179) works
+  and the 6502 keeps running (verified mid-"drop": DespatchRider title
+  animating, PC live).  The kernel's mDNS responder stops re-announcing
+  after sustained net+xexload traffic; the earlier MEMP_NUM_SYS_TIMEOUT
+  24→64 fix covered a different wedge in the same family.  NOT a phase-6
+  PL regression.  Fix belongs in the kernel mDNS timer path; use the IP
+  in the meantime.
 
 Rare sibling still open: one basic-from-self-test reset re-entered self-test
 (OPTION sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in 6/6.
