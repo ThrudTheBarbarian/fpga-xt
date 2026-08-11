@@ -165,7 +165,9 @@ typedef struct proc_s {
     uintptr_t         entry;
     SemaphoreHandle_t done;
     int               exit_code;
-    volatile int      exited;         /* set by the exit thunk */
+    volatile int      exited;         /* set by the exit thunk — LAST, see proc_exit_self */
+    volatile int      dying;          /* teardown CLAIMED by one thread (not the same thing as
+                                       * `exited`: this one is set FIRST, `exited` last) */
     volatile int      killed;         /* SYS_kill: die at the next syscall / blocking tick */
     volatile int      stopped;        /* SIGSTOP/SIGTSTP (^Z): park at the next syscall /
                                        * blocking tick until SIGCONT clears it (stop_park) */
@@ -709,10 +711,24 @@ static void threads_halt(proc_t *p)
 static void proc_exit_self(proc_t *p, int code)
 {
     if (p) {
+        /* Claim the teardown on `dying`, NOT on `exited`.
+         *
+         * `exited` is what reap_orphans() and the waitpid path test to decide a
+         * process is collectable, and frtos_reap() then does vTaskDelete() +
+         * vm_space_destroy(). So setting it here — before the cleanup below —
+         * lets a parent reap this process WHILE it is still inside
+         * pipes_release(): the pipeline peers never get their EOF and block
+         * forever. That is a leak of processes and pipes, and it is exactly what
+         * a busy board showed (17 stuck processes, 20 pipes, ssh sessions that
+         * never exit) while qemu never did — it needs the reaper to interleave
+         * between the flag and the cleanup.
+         *
+         * So `exited` stays the LAST thing set, as it always was, and the
+         * one-thread-owns-the-teardown claim gets a flag of its own. */
         int claimed;
         taskENTER_CRITICAL();
-        claimed = !p->exited;                        /* first thread here owns the teardown */
-        if (claimed) p->exited = 1;
+        claimed = !p->dying;                         /* first thread here owns the teardown */
+        if (claimed) p->dying = 1;
         taskEXIT_CRITICAL();
         /* cur_thread(), not p->cur: this must be the flow actually executing, and
          * reading it from the TCB does not depend on the switch hook having run. */
@@ -735,6 +751,7 @@ static void proc_exit_self(proc_t *p, int code)
             if (proc_owns_task(p, c->waiter)) { c->waiter = 0; c->waited = 0; }
         }
 
+        p->exited = 1;                               /* NOW collectable: the cleanup above is done */
         sig_raise(proc_by_pid(p->ppid), XT_SIGCHLD); /* notify the parent (real async SIGCHLD) */
         if (p->waiter) xTaskNotifyGive(p->waiter);   /* wake a PL0 waitpid (task notification) */
         if (p->done)   xSemaphoreGive(p->done);      /* wake a kernel-task waitpid (shell_task) */
@@ -830,6 +847,7 @@ void xtos_task_fault_exit(void)
         taskEXIT_CRITICAL();
     }
     if (first) {
+        p->dying = 1;                               /* keep the teardown claim in step */
         threads_halt(p);                            /* siblings unwind at their next gate */
         p->exit_code = -1;
         sig_raise(proc_by_pid(p->ppid), XT_SIGCHLD);/* notify the parent (crashed child) */
@@ -4081,6 +4099,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
      * the console waited for a signal that had already been sent and thrown away. */
     if (g_claim_init) { g_claim_init = 0; g_init_pid = p->pid; }
     p->killed = 0;                       /* slot reuse must not inherit a SYS_kill */
+    p->dying  = 0;                       /* ...nor a teardown claim */
     p->stopped = 0;                      /* ...nor a SIGSTOP */
     p->sig_pending = 0; p->sig_blocked = 0; p->sig_trap = 0;   /* exec resets signal state */
     for (int si = 0; si < XT_NSIG; si++) { p->sigact[si].handler = XT_SIG_DFL; p->sigact[si].mask = 0; p->sigact[si].flags = 0; p->sigact[si].restorer = 0; p->sigact[si].trap = 0; }
