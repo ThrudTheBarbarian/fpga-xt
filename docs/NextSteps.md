@@ -64,10 +64,24 @@ a hundred concurrent threads.  The
 existing suite is unregressed (selftest, pipetest, sigtest 5/5, fstest, locktest,
 lntest, shmtest, cowtest, vmtest, demandtest, mmaptest, regtest).
 
+**HARDWARE VERIFIED 2026-08-11** (build 5017b86c, Z-Turn V2).  `threadtest` 6/6
+first load; the two opt-in fault tests both correct on metal — a faulting worker
+takes the process down and the OS keeps running, and a thread stack overflow
+lands in its GUARD PAGE (`DFAR=0x64010e68` decodes to slot 8 / thread 1 /
+offset 0xe68, inside the 4 KB guard, `L2[pg]=0` a genuine translation fault).
+That was the result most at risk from qemu's loose MMU modelling and it needed
+no changes.  Existing suite on the board: locktest, lntest, shmtest, fstest all
+pass.
+
+⚠ Run the suite from the SERIAL console, not ssh: `fstest` asserts "initial cwd
+is /", which only holds for the serial login shell, so over ssh it reports a
+spurious `fstest: FAIL` with every other assertion passing.
+
+Getting the load on took a DAP-wedge recovery (`vivado/scripts/jtag_dapfix.tcl`,
+then `load` DIRECTLY with no reset leg — the 2026-08-08 wrinkle in
+[[jtag_dap_wedge_recovery]]).
+
 Open:
-- **Not yet run on hardware.**  Everything above is qemu.  Needs a board pass
-  (`make -C loader hw` + JTAG load, then `threadtest`), and the guard-page and
-  TLB behaviour is exactly the class of thing qemu models loosely.
 - **Main-thread stacks should migrate to the new window.**  They are still in
   `stackguard.c`'s static arena, sized MAXPROC x 64 KB up front.  The thread-stack
   window is deliberately built to be the template for that move (global VA,
