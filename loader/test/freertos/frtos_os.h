@@ -16,6 +16,47 @@
  * first write). The kernel never touches it, so no global TLB shadow on HW. */
 #define XTOS_COW_VA    0x11000000u
 #define XTOS_COW_SIZE  0x00001000u
+/* THREAD-STACK window: one stack per worker thread, with an unmapped guard page
+ * below each, carved from pool pages by vm.c rather than from a static arena.
+ *
+ * ── The rule this window exists to satisfy ──────────────────────────────────
+ * A task stack must be PL1-reachable in EVERY address space, not just its owner's.
+ * FreeRTOS's SWI path runs vTaskSwitchContext — and so our TTBR0 swap — ON THE
+ * OUTGOING TASK'S OWN STACK, so a stack that is mapped only in its owner's space
+ * disappears from under the switch and the return pops garbage into PC. (It does
+ * exactly that: a jump to 0 out of vm_switch's epilogue.)
+ *
+ * So the addresses are GLOBAL — process slot S owns section TSTK_VA + S*1 MB, and
+ * no two processes share a stack VA — and it is the PERMISSIONS that are private:
+ * every space maps every thread stack PL1-RW / PL0-none, and only the owning space
+ * flips its own threads' pages to PL0-RW. A process can therefore read and write
+ * its own thread stacks and nothing else's, while the kernel can always reach the
+ * one it is standing on. That is the same contract stackguard.c gives main-thread
+ * stacks — this is that model generalised onto pool pages, which is what makes it
+ * the template main-thread stacks can migrate to.
+ *
+ * The VA sits above the shm window and outside DDR, so it costs no DDR, needs no
+ * entry in the per-process window band (XTOS_POOL_FLOOR), and cannot collide with
+ * an identity-mapped pool page. */
+#define XTOS_TSTK_VA      0x60000000u   /* just above XTOS_SHM_VA + XTOS_SHM_SIZE */
+#define XTOS_TSTK_PERPROC 0x00800000u   /* 8 MB (8 sections) of stack VA per process slot */
+#define XTOS_TSTK_SIZE    (64u * XTOS_TSTK_PERPROC)         /* MAXPROC slots = 512 MB of VA */
+#define XTOS_TSTK_STRIDE  0x00010000u   /* 64 KB per thread: guard + up to 60 KB of stack.
+                                         * A slot never straddles a 1 MB section, which is
+                                         * what lets the mapping code work one section at a
+                                         * time. */
+#define XTOS_TSTK_GUARD   0x00001000u   /* the unmapped page a stack overflow lands in */
+#define XTOS_TSTK_DEFAULT 0x0000C000u   /* 48 KB default (the main thread's is 64 KB) */
+#define XTOS_TSTK_SLOTS   (XTOS_TSTK_PERPROC / XTOS_TSTK_STRIDE)   /* stack slots per process */
+#define XTOS_TSTK_SECS    (XTOS_TSTK_PERPROC >> 20)                /* 1 MB sections per process */
+#define XTOS_TSTK_MAX     (XTOS_TSTK_STRIDE - XTOS_TSTK_GUARD)
+/* the low (first usable) address of process `slot`'s thread `tid` stack. tid 0 is
+ * the main thread, which still lives in the stackguard arena — its slot here is
+ * simply unused, which keeps the indexing arithmetic trivial. */
+#define XTOS_TSTK_BASE(slot, tid) \
+    (XTOS_TSTK_VA + (uint32_t)(slot) * XTOS_TSTK_PERPROC \
+                  + (uint32_t)(tid)  * XTOS_TSTK_STRIDE + XTOS_TSTK_GUARD)
+
 /* per-process mmap window: files (romfs, page-aligned) mapped READ-ONLY + shared,
  * demand-paged on first touch. One section; bump-allocated per process. */
 #define XTOS_MMAP_VA   0x12000000u
@@ -48,9 +89,11 @@
  *
  *     HEAP  0x1000_0000 + 8 MB   -> 0x1080_0000
  *     COW   0x1100_0000 + 4 KB
+ *     TSTK  0x1180_0000 + 8 MB   -> 0x1200_0000   (thread stacks)
  *     MMAP  0x1200_0000 + 1 MB   -> 0x1210_0000   <- the top
  *
- * (The stack arena is static kernel BSS, identity-mapped, so it is not a window. The shm
+ * (The MAIN-thread stack arena is static kernel BSS, identity-mapped, so it is not a
+ * window — only the per-thread stacks above are. The shm
  * window USED to be the top of this band, at 0x1300_0000–0x1400_0000; it has moved out to
  * unused VA above DDR, which is why the floor drops.)
  *
@@ -85,6 +128,13 @@ int  vm_cow_map(int idx, uint32_t va);
 int  vm_cow_read_fault(int idx, uint32_t va);   /* READ permission fault in a COW range: stale-TLB / unseeded page */
 int  vm_exec_fault(int idx, uint32_t va);       /* PREFETCH permission fault: stale-section-shadow -> TLBIALL + re-run */
 int  vm_demand_map(int idx, uint32_t va);
+/* thread stacks, carved from the process's own address space (XTOS_TSTK_* above).
+ * map returns the LOW address of the usable stack (the guard page sits below it) or
+ * 0; release frees its pages back to the pool and re-arms the VA for the next thread
+ * to take the slot. Both run in the OWNING space, in task context. */
+uint32_t vm_stack_map(int idx, int tid, uint32_t bytes);
+void     vm_stack_release(int idx, int tid, uint32_t bytes);
+int      vm_stack_is_guard(uint32_t va);   /* did an overflow land in a thread guard page? */
 uint32_t vm_mmap(int idx, uint32_t src, uint32_t size);   /* map a romfs file RO+shared -> VA */
 uint32_t vm_mmap_install(int idx, void **pages, uint32_t npg, int writable, uint32_t fd, uint32_t foff);
 int      vm_mmap_write_fault(int idx, uint32_t va);   /* RW mmap write-fault: flip RW + mark dirty */

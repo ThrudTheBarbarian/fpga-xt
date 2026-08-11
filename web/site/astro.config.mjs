@@ -140,6 +140,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', slug: 'os' },
 						{ label: 'Runtime: loading & memory protection', slug: 'os/runtime' },
+						{ label: 'Threads', slug: 'os/threads' },
 						{
 							label: 'Multitasking',
 							items: [

@@ -272,8 +272,14 @@ void fault_report(unsigned code, unsigned addr, unsigned caller)
       fault_symbolize(addr, fr_hex); fr_puts("]");
       fault_symbolize(caller, fr_hex); fr_puts("]"); }
     fr_hex("  DFAR=", dfar); fr_hex("  DFSR=", dfsr); fr_hex("  IFSR=", ifsr);
+    /* two guard flavours: the main thread's, in the static stackguard arena, and a
+     * worker's, in the thread-stack window (vm.c). Both mean the same thing and
+     * both should say so — a thread overflow that reported only "DATA-ABORT" would
+     * send the reader hunting for a wild pointer. */
     { extern int stackguard_is_guard(unsigned);
-      if (code == 4 && stackguard_is_guard(dfar)) fr_puts("\n*** STACK OVERFLOW (hit guard page)"); }
+      extern int vm_stack_is_guard(unsigned);
+      if (code == 4 && (stackguard_is_guard(dfar) || vm_stack_is_guard(dfar)))
+          fr_puts("\n*** STACK OVERFLOW (hit guard page)"); }
     /* DIAG: walk the LIVE tables (current TTBR0) for the faulting address — shows
      * whether the MMU sees the section as split (coarse L2) or a plain SEC_KDATA
      * section, and the page's permission bits. */

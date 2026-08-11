@@ -101,6 +101,22 @@ enter_user_and_run:
     svc   #1
 2:  b     2b
 
+/* enter_user_thread(entry, arg): the same drop to PL0 for a WORKER thread's body.
+ * Two differences from enter_user_and_run, both deliberate: the body takes one
+ * argument rather than (argc, argv) — xtc hands a thread its receiver, and a C
+ * thread its void* — and it exits through SYS_thread_exit, so a body that returns
+ * ends ONE flow instead of the whole process, carrying its return value out in r0. */
+    .global enter_user_thread
+enter_user_thread:
+    mov   r3, r0             /* entry */
+    mov   r0, r1             /* arg -> r0 */
+    cps   #0x10              /* -> User mode (User/System share SP+LR) */
+    isb
+    blx   r3                 /* entry(arg) at PL0 */
+    movw  r7, #0x10f         /* SYS_thread_exit; r0 = the body's return value */
+    svc   #1
+3:  b     3b
+
     .extern fault_report
     .extern xtos_task_fault_exit
 xt_undef: mov r0, #1

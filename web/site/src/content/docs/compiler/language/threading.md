@@ -224,9 +224,22 @@ The balance is deterministic only because `deposit` takes the lock: two threads,
 
 ## Runtime
 
-pthreads on macOS, and raw `clone` + futex (Linux) or kernel32 (Windows) on the
-freestanding targets. The macOS runtime source is shared by both macOS runtimes
-so they cannot drift.
+pthreads on macOS, raw `clone` + futex (Linux) or kernel32 (Windows) on the
+freestanding targets, and XTOS threads on `arm9`. The macOS runtime source is
+shared by both macOS runtimes so they cannot drift.
+
+On `arm9` the kernel provides only thread lifecycle and a futex; `Mutex`, `Cond`
+and `Sem` are built over it in user space, so an uncontended lock is
+`ldrex`/`strex` and never enters the kernel. Two things there differ from a host,
+and both are deliberate:
+
+- **A faulting thread ends its whole process.** It was holding shared locks and
+  half-mutated shared state, so a surviving sibling would run on data nobody can
+  vouch for. See [XTOS threads](/os/threads/).
+- **`cpuCount()` answers 1**, honestly, because XTOS owns one A9 core — so a
+  bare `Pool.forRange` runs one worker. Pin the count with
+  `Pool.forRangeWithThreads` when a workload wants more (the cap is 128 threads
+  per process).
 
 **Known gap:** the static-initialiser guard (`__sinit_<Class>`) is still a
 check-then-act, so two threads racing to first-touch the same class's statics can

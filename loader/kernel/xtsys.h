@@ -56,6 +56,52 @@
                               * spawn (copied into this process's memory, NULL-terminated), or
                               * 0 if none. The libc shim seeds `environ` from it at load. */
 
+/* ---- threads: flows of control INSIDE one address space -------------------
+ * A process is an address space; a thread is a flow of control in it. spawn gives
+ * isolation, threads give shared-memory parallelism, and the two compose — this is
+ * the axis xcc's Thread/Mutex/Cond/Sem/Pool classes ride on (xtc
+ * docs/Design/threading.md §5, threading Phase 3).
+ *
+ * The kernel provides exactly two things: thread LIFECYCLE, and a FUTEX to block on.
+ * Mutex/Cond/Sem are built in USER space over an atomic word plus the futex pair, so
+ * an uncontended lock never enters the kernel at all and the kernel grows one
+ * mechanism rather than a synchronisation zoo.
+ *
+ * Every thread of a process shares its L1 table (TTBR0/ASID), its fds, its cwd, its
+ * signal dispositions and its heap. What is PER-THREAD is the stack, the TPIDRURW
+ * TLS pointer, and the saved syscall/deferral context.
+ *
+ * DEATH IS PROCESS-WIDE. A thread that faults takes the whole process down (it holds
+ * shared locks and half-mutated shared state, so surviving siblings would run on
+ * corrupt data), and SYS_exit from any thread exits every thread. SYS_thread_exit is
+ * the only way to end one thread alone. */
+#define SYS_thread_create 0x10E /* (entry, arg, stack_bytes) -> tid (>=1), or -errno.
+                                 * Starts `entry(arg)` at PL0 on a fresh stack carved from
+                                 * THIS process's address space (guard page below it), in
+                                 * THIS address space. stack_bytes 0 = the default. The new
+                                 * thread runs at the creator's priority, so a compute thread
+                                 * cannot starve its process's main thread. */
+#define SYS_thread_exit   0x10F /* (retval) -> no return: end THIS thread only. The main
+                                 * thread (tid 0) returning is process exit, as ever. */
+#define SYS_thread_join   0x110 /* (tid, int *retval) -> 0 / -errno: block until `tid` exits
+                                 * and store its retval (retval may be NULL). -ESRCH = no such
+                                 * thread, -EINVAL = detached / already joined / self. */
+#define SYS_thread_detach 0x111 /* (tid) -> 0 / -errno: nobody will join it; its slot and its
+                                 * stack are reclaimed the moment it exits. */
+#define SYS_thread_self   0x112 /* () -> this thread's tid (0 = the main thread) */
+#define SYS_thread_tls    0x113 /* (ptr) -> previous value: set this thread's TLS block
+                                 * pointer. The kernel keeps it in TPIDRURW across context
+                                 * switches, so PL0 reads its own block with one
+                                 * `mrc p15,0,rX,c13,c0,2` and no syscall. TPIDRURW is
+                                 * PL0-writable, so a runtime may also set it directly — the
+                                 * kernel saves it on switch-OUT, so either route persists. */
+#define SYS_futex_wait    0x114 /* (uaddr, val, timeout_ms) -> 0 woken / -EAGAIN (*uaddr != val,
+                                 * checked atomically against wake) / -ETIMEDOUT / -EINTR.
+                                 * timeout_ms < 0 = forever. uaddr is a word in this process's
+                                 * own memory; the wait queue is keyed on (process, uaddr), so
+                                 * two processes cannot reach each other's waiters. */
+#define SYS_futex_wake    0x115 /* (uaddr, n) -> number of threads woken. n < 0 = all. */
+
 /* ---- real signals (kernel-authoritative disposition + async delivery) ------
  * One disposition table per process in the kernel; SYS_kill marks a signal
  * pending; the kernel builds a frame on the target's user stack and vectors it

@@ -57,8 +57,19 @@ void vClearTickInterrupt(void);
 #define configUSE_COUNTING_SEMAPHORES  1
 #define configQUEUE_REGISTRY_SIZE      8
 #define configUSE_TASK_NOTIFICATIONS   1
+/* Two notification slots per task: index 0 is the long-standing waitpid/exit wake,
+ * index 1 belongs to threads (join and futex). They must not share — a task can be a
+ * waitpid waiter AND own threads, and a wake meant for one would be eaten by the
+ * other, which is a hang, not a glitch. */
+#define configTASK_NOTIFICATION_ARRAY_ENTRIES 2
 #define configSUPPORT_STATIC_ALLOCATION 1   /* spawned tasks use static stacks (stackguard.c) */
 #define configSUPPORT_DYNAMIC_ALLOCATION 1
+/* One TLS pointer per task, holding its `thread_t *` (frtos_os.c). Every syscall,
+ * every fault and every context switch has to answer "which thread is this?", and
+ * before this that answer was a linear scan of the 64-slot process table on each —
+ * including from traceTASK_SWITCHED_IN, i.e. on the scheduler's hot path. With
+ * threads the table gains a second dimension, so the scan had to go. */
+#define configNUM_THREAD_LOCAL_STORAGE_POINTERS 1
 
 /* hooks / checks */
 #define configCHECK_FOR_STACK_OVERFLOW 2
@@ -86,7 +97,12 @@ void vClearTickInterrupt(void);
 extern void vAssertCalled(const char *file, int line);
 #define configASSERT(x) if ((x) == 0) vAssertCalled(__FILE__, __LINE__)
 
-/* T2-b: swap the per-process address space (TTBR0) on every context switch */
+/* T2-b: swap the per-process address space (TTBR0) on every context switch, and
+ * with it the outgoing/incoming thread's TPIDRURW (the TLS block PL0 reads without
+ * a syscall). TPIDRURW is PL0-WRITABLE, so it must be saved on the way out — a
+ * runtime that sets its own block directly would otherwise lose it at the next
+ * switch, which is the kind of bug that only shows up under load. */
+#define traceTASK_SWITCHED_OUT() do { extern void xtos_thread_switch_out(void); xtos_thread_switch_out(); } while (0)
 #define traceTASK_SWITCHED_IN()  do { extern void xtos_vm_on_switch(void); xtos_vm_on_switch(); } while (0)
 
 #endif /* FREERTOS_CONFIG_H */

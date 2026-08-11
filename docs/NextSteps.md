@@ -44,6 +44,45 @@ Open:
 Rare sibling still open: one basic-from-self-test reset re-entered self-test
 (OPTION sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in 6/6.
 
+## XTOS threads (xtc threading Phase 3) — LANDED, open tail
+
+Threads inside one process are in: eight syscalls (`thread_create`/`exit`/`join`/
+`detach`/`self`/`tls` + a futex pair), guarded per-thread stacks carved from pool
+pages by `vm.c`, `TPIDRURW` thread-local storage, a real futex-backed
+`__malloc_lock` in libc.so (newlib's was a no-op stub, so malloc was
+single-threaded), and process-wide death when a thread faults.
+`Mutex`/`Cond`/`Sem` are user-space over the futex, so an uncontended lock never
+enters the kernel.  Docs: `docs/OS/threads.md` (+ the
+Starlight page); the compiler side is `fpga-xtc/docs/Design/threading.md` §9.9.
+
+Verified under qemu: `/bin/threadtest` (spawn/join, shared state, a contended
+mutex at exactly 8000 increments, TLS isolation, detach-and-reclaim, a futex
+rendezvous, the faulting-thread process kill, and a thread stack overflow landing
+in its guard page), plus all nine xtc threading fixtures compiled `-A arm9`
+running byte-identical to the hosts — including `threads_tls_many`, which spawns
+a hundred concurrent threads.  The
+existing suite is unregressed (selftest, pipetest, sigtest 5/5, fstest, locktest,
+lntest, shmtest, cowtest, vmtest, demandtest, mmaptest, regtest).
+
+Open:
+- **Not yet run on hardware.**  Everything above is qemu.  Needs a board pass
+  (`make -C loader hw` + JTAG load, then `threadtest`), and the guard-page and
+  TLB behaviour is exactly the class of thing qemu models loosely.
+- **Main-thread stacks should migrate to the new window.**  They are still in
+  `stackguard.c`'s static arena, sized MAXPROC x 64 KB up front.  The thread-stack
+  window is deliberately built to be the template for that move (global VA,
+  per-space PL0 permissions, pool-backed) — the arena then goes away.
+- **Limits**: 128 threads/process, 128 system-wide, 32 concurrent futex
+  waiters, 48 KB default stack.  Array bounds, not design limits.
+- **Page accounting**: the threads build sits ~2 pages (8 KB) above baseline in
+  the selftest's pool count and PLATEAUS there (139/140 vs a flat 138 over eight
+  runs), traced to the ramfs page store (`rf_write`), not to thread state — no
+  threads run in that test.  Fixed offset, not a leak.  (The selftest's "LEAK"
+  line itself is pre-existing: baseline reports it too.)
+- **The static-init guard is still racy** (`fpga-xtc` threading.md §9.5): two
+  threads first-touching one class's statics can both run its `init`.  Rule until
+  fixed: touch static classes on the main thread before spawning.
+
 # Immediate targets
 
 ## >>> THE SOFTWARE 6502/ANTIC INVESTIGATION IS ANSWERED — pick the next target <<<
