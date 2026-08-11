@@ -77,6 +77,21 @@ pass.
 is /", which only holds for the serial login shell, so over ssh it reports a
 spurious `fstest: FAIL` with every other assertion passing.
 
+**The hardware run found one real bug, which qemu could not have.**
+`proc_exit_self` set `p->exited` FIRST as the one-thread-owns-the-teardown
+claim — but `exited` is what reap_orphans/waitpid test for COLLECTABLE, and
+`frtos_reap` then does vTaskDelete + vm_space_destroy.  So a parent could reap a
+process while it was still inside `pipes_release()`, and the pipeline peers
+never got their EOF.  On a busy board that leaked to 17 live processes (hwm 19)
+and 20 pipes with nothing attached, ssh sessions that never exited, and finally
+no networking at all.  Fixed by giving the claim its own `dying` flag and
+restoring `exited` to LAST, where it was before this work touched it.
+Confirmed on hardware: idle 9 procs / 7 pipes, and STILL 9/7 (hwm unmoved) after
+selftest + both fault tests + 18 spawns over 6 ssh sessions.
+
+⚠ On this board `reset && load` now wedges the DAP every time.  What works:
+`jtag_dapfix.tcl`, then `load` DIRECTLY with no reset leg.
+
 Getting the load on took a DAP-wedge recovery (`vivado/scripts/jtag_dapfix.tcl`,
 then `load` DIRECTLY with no reset leg — the 2026-08-08 wrinkle in
 [[jtag_dap_wedge_recovery]]).
