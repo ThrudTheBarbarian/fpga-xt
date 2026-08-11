@@ -232,12 +232,21 @@ newlib-check:
 $(BUILD)/libc-dirent.o: libc-dirent.c kernel/xtsys.h test/qemu/usys.h | $(BUILD)
 	$(ARMCC) $(ARMCFLAGS) -Ilibc-compat -Itest/qemu -Ikernel -c $< -o $@
 
-$(BUILD)/libc.so: newlib-pic/libc.a libc-hide.map $(BUILD)/libc-dirent.o | $(BUILD)
+$(BUILD)/libc-threads.o: libc-threads.c kernel/xtsys.h | $(BUILD)
+	$(ARMCC) $(ARMCFLAGS) -mcpu=cortex-a9 -Ikernel -c $< -o $@
+
+# --wrap=__malloc_lock/unlock: newlib's own no-op stubs are already inside the
+# --whole-archive'd libc.a, so a second definition would be a duplicate; wrapping
+# redirects newlib's REFERENCES to the real futex-backed lock in libc-threads.c
+# without touching the validated libc.a.  Without it, two threads of one process
+# in malloc at the same time corrupt the arena.
+$(BUILD)/libc.so: newlib-pic/libc.a libc-hide.map $(BUILD)/libc-dirent.o $(BUILD)/libc-threads.o | $(BUILD)
 	$(ARMCC) -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -shared -nostdlib \
 	    -Wl,-z,max-page-size=0x100000 \
 	    -Wl,--version-script=libc-hide.map \
+	    -Wl,--wrap=__malloc_lock -Wl,--wrap=__malloc_unlock \
 	    -Wl,--whole-archive newlib-pic/libc.a -Wl,--no-whole-archive \
-	    $(BUILD)/libc-dirent.o \
+	    $(BUILD)/libc-dirent.o $(BUILD)/libc-threads.o \
 	    -Wl,-soname,libc.so -o $@
 
 # --- romfs: build the programs as .so, pack them into a blob, embed it ---
@@ -608,6 +617,10 @@ $(BUILD)/wxtest.so: test/freertos/progs/wxtest.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/wxtest.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/wxtest.o $(BUILD)/libc.so
 
+$(BUILD)/threadtest.so: test/freertos/progs/threadtest.c $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -mcpu=cortex-a9 -Inewlib-pic/include -c $< -o $(BUILD)/threadtest.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/threadtest.o $(BUILD)/libc.so
+
 $(BUILD)/cowtest.so: test/freertos/progs/cowtest.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/cowtest.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/cowtest.o $(BUILD)/libc.so
@@ -649,7 +662,7 @@ ROMFS_ASSET_ARGS := /fonts/AovelSansRounded.ttf=../gem/fonts/AovelSansRounded.tt
 # copy at /System/OS/Apps/Desktop when there is no SD (qemu / a bare card).
 DESKTOP_RSC := ../gem/resources/desktop.rsc
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/desktop.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/speed.so $(BUILD)/scale.so $(BUILD)/dbg6502.so $(BUILD)/xlboot.so $(BUILD)/xexload.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libxtos.so $(BUILD)/libc.so test/freertos/Registry.db $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES) $(BUILD)/blittest.so
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/desktop.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/threadtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/speed.so $(BUILD)/scale.so $(BUILD)/dbg6502.so $(BUILD)/xlboot.so $(BUILD)/xexload.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libxtos.so $(BUILD)/libc.so test/freertos/Registry.db $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES) $(BUILD)/blittest.so
 	$(BUILD)/mkromfs $@ \
 	    /OS/Apps/Desktop/desktop.rsc=$(DESKTOP_RSC) \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
@@ -658,6 +671,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUI
 	    /bin/stacktest=$(BUILD)/stacktest.so \
 	    /bin/wxtest=$(BUILD)/wxtest.so \
 	    /bin/cowtest=$(BUILD)/cowtest.so \
+	    /bin/threadtest=$(BUILD)/threadtest.so \
 	    /bin/sharetext=$(BUILD)/sharetext.so \
 	    /bin/shmtest=$(BUILD)/shmtest.so \
 	    /bin/blittest=$(BUILD)/blittest.so \
@@ -729,7 +743,7 @@ $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 # base libraries every spawn needs (libc/libm), init + lua (the boot runner and
 # its #!/bin/lua scripts), motd, and the tier-2 test battery. ~6 MB of RAM back
 # vs the full image. qemu keeps the full romfs (no SD there).
-$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/speed.so $(BUILD)/scale.so $(BUILD)/dbg6502.so $(BUILD)/xlboot.so $(BUILD)/xexload.so $(BUILD)/graboverlay.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libc.so $(BUILD)/blittest.so
+$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/threadtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/speed.so $(BUILD)/scale.so $(BUILD)/dbg6502.so $(BUILD)/xlboot.so $(BUILD)/xexload.so $(BUILD)/graboverlay.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libc.so $(BUILD)/blittest.so
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -737,6 +751,7 @@ $(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/svctest.so
 	    /bin/stacktest=$(BUILD)/stacktest.so \
 	    /bin/wxtest=$(BUILD)/wxtest.so \
 	    /bin/cowtest=$(BUILD)/cowtest.so \
+	    /bin/threadtest=$(BUILD)/threadtest.so \
 	    /bin/sharetext=$(BUILD)/sharetext.so \
 	    /bin/shmtest=$(BUILD)/shmtest.so \
 	    /bin/blittest=$(BUILD)/blittest.so \

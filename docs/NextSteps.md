@@ -44,6 +44,74 @@ Open:
 Rare sibling still open: one basic-from-self-test reset re-entered self-test
 (OPTION sampled held despite CONSOL=$07) — 1 in ~10, unreproduced in 6/6.
 
+## XTOS threads (xtc threading Phase 3) — LANDED, open tail
+
+Threads inside one process are in: eight syscalls (`thread_create`/`exit`/`join`/
+`detach`/`self`/`tls` + a futex pair), guarded per-thread stacks carved from pool
+pages by `vm.c`, `TPIDRURW` thread-local storage, a real futex-backed
+`__malloc_lock` in libc.so (newlib's was a no-op stub, so malloc was
+single-threaded), and process-wide death when a thread faults.
+`Mutex`/`Cond`/`Sem` are user-space over the futex, so an uncontended lock never
+enters the kernel.  Docs: `docs/OS/threads.md` (+ the
+Starlight page); the compiler side is `fpga-xtc/docs/Design/threading.md` §9.9.
+
+Verified under qemu: `/bin/threadtest` (spawn/join, shared state, a contended
+mutex at exactly 8000 increments, TLS isolation, detach-and-reclaim, a futex
+rendezvous, the faulting-thread process kill, and a thread stack overflow landing
+in its guard page), plus all nine xtc threading fixtures compiled `-A arm9`
+running byte-identical to the hosts — including `threads_tls_many`, which spawns
+a hundred concurrent threads.  The
+existing suite is unregressed (selftest, pipetest, sigtest 5/5, fstest, locktest,
+lntest, shmtest, cowtest, vmtest, demandtest, mmaptest, regtest).
+
+**HARDWARE VERIFIED 2026-08-11** (build 5017b86c, Z-Turn V2).  `threadtest` 6/6
+first load; the two opt-in fault tests both correct on metal — a faulting worker
+takes the process down and the OS keeps running, and a thread stack overflow
+lands in its GUARD PAGE (`DFAR=0x64010e68` decodes to slot 8 / thread 1 /
+offset 0xe68, inside the 4 KB guard, `L2[pg]=0` a genuine translation fault).
+That was the result most at risk from qemu's loose MMU modelling and it needed
+no changes.  Existing suite on the board: locktest, lntest, shmtest, fstest all
+pass.
+
+⚠ Run the suite from the SERIAL console, not ssh: `fstest` asserts "initial cwd
+is /", which only holds for the serial login shell, so over ssh it reports a
+spurious `fstest: FAIL` with every other assertion passing.
+
+**The hardware run found one real bug, which qemu could not have.**
+`proc_exit_self` set `p->exited` FIRST as the one-thread-owns-the-teardown
+claim — but `exited` is what reap_orphans/waitpid test for COLLECTABLE, and
+`frtos_reap` then does vTaskDelete + vm_space_destroy.  So a parent could reap a
+process while it was still inside `pipes_release()`, and the pipeline peers
+never got their EOF.  On a busy board that leaked to 17 live processes (hwm 19)
+and 20 pipes with nothing attached, ssh sessions that never exited, and finally
+no networking at all.  Fixed by giving the claim its own `dying` flag and
+restoring `exited` to LAST, where it was before this work touched it.
+Confirmed on hardware: idle 9 procs / 7 pipes, and STILL 9/7 (hwm unmoved) after
+selftest + both fault tests + 18 spawns over 6 ssh sessions.
+
+⚠ On this board `reset && load` now wedges the DAP every time.  What works:
+`jtag_dapfix.tcl`, then `load` DIRECTLY with no reset leg.
+
+Getting the load on took a DAP-wedge recovery (`vivado/scripts/jtag_dapfix.tcl`,
+then `load` DIRECTLY with no reset leg — the 2026-08-08 wrinkle in
+[[jtag_dap_wedge_recovery]]).
+
+Open:
+- **Main-thread stacks should migrate to the new window.**  They are still in
+  `stackguard.c`'s static arena, sized MAXPROC x 64 KB up front.  The thread-stack
+  window is deliberately built to be the template for that move (global VA,
+  per-space PL0 permissions, pool-backed) — the arena then goes away.
+- **Limits**: 128 threads/process, 128 system-wide, 32 concurrent futex
+  waiters, 48 KB default stack.  Array bounds, not design limits.
+- **Page accounting**: the threads build sits ~2 pages (8 KB) above baseline in
+  the selftest's pool count and PLATEAUS there (139/140 vs a flat 138 over eight
+  runs), traced to the ramfs page store (`rf_write`), not to thread state — no
+  threads run in that test.  Fixed offset, not a leak.  (The selftest's "LEAK"
+  line itself is pre-existing: baseline reports it too.)
+- **The static-init guard is still racy** (`fpga-xtc` threading.md §9.5): two
+  threads first-touching one class's statics can both run its `init`.  Rule until
+  fixed: touch static classes on the main thread before spawning.
+
 # Immediate targets
 
 ## >>> THE SOFTWARE 6502/ANTIC INVESTIGATION IS ANSWERED — pick the next target <<<

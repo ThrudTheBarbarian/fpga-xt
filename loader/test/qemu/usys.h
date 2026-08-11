@@ -58,6 +58,30 @@ static inline long sys_plane_grab(int plane, void *buf)
 static inline long sys_xtos_recv(void *msg8) { return __syscall(SYS_xtos_recv, (long)msg8, 0, 0); }
 static inline long sys_spawn(const char *path, int argc, char **argv)
 { return __syscall(SYS_spawn, (long)path, argc, (long)argv); }
+
+/* ---- threads (see xtsys.h's SYS_thread_* block) ---------------------------
+ * `entry` runs at PL0 on its own stack and is handed `arg` in r0; returning from it
+ * is SYS_thread_exit with that value. stack_bytes 0 = the default. */
+static inline long sys_thread_create(void (*entry)(void *), void *arg, unsigned stack_bytes)
+{ return __syscall(SYS_thread_create, (long)entry, (long)arg, (long)stack_bytes); }
+static inline long sys_thread_exit(int retval)
+{ return __syscall(SYS_thread_exit, retval, 0, 0); }
+static inline long sys_thread_join(int tid, int *retval)
+{ return __syscall(SYS_thread_join, tid, (long)retval, 0); }
+static inline long sys_thread_detach(int tid)
+{ return __syscall(SYS_thread_detach, tid, 0, 0); }
+static inline long sys_thread_self(void) { return __syscall(SYS_thread_self, 0, 0, 0); }
+/* set this thread's TLS block; the kernel keeps it in TPIDRURW across switches, so
+ * reads need no syscall at all — see sys_tls_get. */
+static inline long sys_thread_tls(void *p) { return __syscall(SYS_thread_tls, (long)p, 0, 0); }
+static inline void *sys_tls_get(void)
+{ void *v; __asm__ volatile("mrc p15,0,%0,c13,c0,2" : "=r"(v)); return v; }
+/* block while *uaddr == val (the compare and the enqueue are atomic against wake,
+ * so there is no lost-wakeup window). timeout_ms < 0 = forever. */
+static inline long sys_futex_wait(volatile unsigned *uaddr, unsigned val, long timeout_ms)
+{ return __syscall(SYS_futex_wait, (long)uaddr, (long)val, timeout_ms); }
+static inline long sys_futex_wake(volatile unsigned *uaddr, int n)
+{ return __syscall(SYS_futex_wake, (long)uaddr, n, 0); }
 static inline long sys_waitpid(int pid) { return __syscall(SYS_waitpid, pid, 0, 0); }
 /* poll (WNOHANG): -11 = still running, else reaps + returns the exit code */
 static inline long sys_waitpid_nb(int pid) { return __syscall(SYS_waitpid, pid, XT_WAIT_NB, 0); }

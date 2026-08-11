@@ -84,6 +84,7 @@ static uint16_t  space_l2n[NSPACE];             /* slots used this space (uint8_
  * deliberate: it keeps the allocator to a dozen lines with no partial-page bookkeeping,
  * and the ceiling is bounded by real mappings rather than by NSPACE x MAXSEC. */
 static void *dpage_raw(void);                    /* defined below (with the page pool) */
+static void  vm_stack_release_all(int idx);      /* defined below (with the thread-stack window) */
 static void *g_l2_free;                          /* free list of 1 KB L2 slots */
 
 static uint32_t *l2_alloc(void)
@@ -552,6 +553,8 @@ static void *dpage(int idx)
  * is PIPT, so the scrub via the pool's identity VA is coherent with any window VA. */
 void vm_space_destroy(int idx)
 {
+    vm_stack_release_all(idx);                 /* the global stack L2s outlive the space — clear
+                                                * them before the pages go back to the pool */
     vm_shm_drop_space(idx);                    /* release this space's shm refs (free at last mapper) */
     space_l2_release_all(idx);                 /* and its L2 tables — reclaim at DEATH, not just at
                                                 * slot reuse, or a dead space pins them until reused */
@@ -595,6 +598,138 @@ int vm_demand_map(int idx, uint32_t va)
     __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
     __asm__ volatile("dsb; isb");
     return 1;
+}
+
+/* ---- thread stacks (XTOS_TSTK_* window) -----------------------------------
+ * A thread's stack is private pages mapped PL0-RW into the OWNING space only, with
+ * the slot's first page left as a translation fault so an overflow aborts precisely
+ * instead of walking into the thread below. That is the same contract stackguard.c
+ * gives a main-thread stack — but built out of the process's own address space
+ * rather than a static kernel arena, so it costs nothing until a thread exists and
+ * does not multiply with the thread count. Main-thread stacks are meant to migrate
+ * here; this is the template, so keep it general.
+ *
+ * The pages are NOT charged to the space's reclaim list (g_space_pages), which caps
+ * at MAXPP: 128 threads of 48 KB is 1536 pages, so charging them would fill the list
+ * and then silently stop charging the HEAP and COW pages that genuinely depend on it.
+ * Stack pages are freed explicitly instead — by vm_stack_release when a thread is
+ * reclaimed, and by vm_stack_release_all as the backstop for a process that dies
+ * with threads still mapped. Both read the pages straight out of the page tables, so
+ * neither needs a side list to know what it owns.
+ */
+
+int vm_stack_is_guard(uint32_t va)
+{
+    if (va < XTOS_TSTK_VA || va >= XTOS_TSTK_VA + XTOS_TSTK_SIZE) return 0;
+    return ((va - XTOS_TSTK_VA) % XTOS_TSTK_STRIDE) < XTOS_TSTK_GUARD;
+}
+
+/* The GLOBAL (PL1-only) L2 for process slot `idx`'s stack section, created on that
+ * process's first thread and then reachable from every space — which is the whole
+ * point: the outgoing task's stack must still be addressable at PL1 after the
+ * switch has installed the incoming space (see frtos_os.h's XTOS_TSTK_* note).
+ *
+ * Installed in the MASTER table so spaces created later inherit it, and pushed into
+ * every LIVE space's L1 as well, since those were copied from the master before the
+ * section existed. */
+static uint32_t *tstk_master_l2(uint32_t sec)
+{
+    uint32_t *m = mmu_master_table();
+    if ((m[sec] & 0x3u) == 0x1u) return (uint32_t *)(m[sec] & 0xFFFFFC00u);
+    uint32_t *l2 = l2_alloc();
+    if (!l2) return 0;
+    for (uint32_t i = 0; i < 256; i++) l2[i] = 0;           /* nothing mapped until a thread asks */
+    m[sec] = L1_COARSE(l2);
+    for (int s = 0; s < NSPACE; s++)                        /* ...and into every space's copy */
+        space_l1[s][sec] = L1_COARSE(l2);                   /* (a dead space is rebuilt on reuse) */
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));    /* TLBIALL (a section appeared) */
+    __asm__ volatile("dsb; isb");
+    return l2;
+}
+
+uint32_t vm_stack_map(int idx, int tid, uint32_t bytes)
+{
+    if (idx < 0 || idx >= NSPACE) return 0;
+    if (tid < 1 || tid >= (int)XTOS_TSTK_SLOTS) return 0;
+    if (bytes == 0 || bytes > XTOS_TSTK_MAX) return 0;
+    bytes = (bytes + 0xFFFu) & ~0xFFFu;
+    uint32_t lo  = XTOS_TSTK_BASE(idx, tid);
+    /* A slot is STRIDE-aligned and STRIDE divides 1 MB, so a stack never straddles a
+     * section — one section's pair of tables covers the whole of it, guard included. */
+    uint32_t sec = lo >> 20;
+    uint32_t *gl2 = tstk_master_l2(sec);                    /* PL1-everywhere view */
+    if (!gl2) return 0;
+    /* the owner's private view of the same section, seeded from the global one, is
+     * where the PL0 permission lives */
+    uint32_t *pl2 = perproc_l2(idx, space_l1[idx], sec);
+    if (!pl2) return 0;
+    for (uint32_t va = lo; va < lo + bytes; va += 0x1000u) {
+        void *pg = dpage_raw();                             /* freed explicitly; see above */
+        if (!pg) { vm_stack_release(idx, tid, va - lo); return 0; }   /* unwind what we mapped */
+        gl2[L2_IDX(va)] = L2_KERN((uint32_t)pg);            /* PL1 RW, PL0 none — everyone else */
+        pl2[L2_IDX(va)] = L2_PAGE((uint32_t)pg);            /* PL0 RW — the owner only */
+    }
+    gl2[L2_IDX(lo - XTOS_TSTK_GUARD)] = 0;                  /* the guard stays a translation */
+    pl2[L2_IDX(lo - XTOS_TSTK_GUARD)] = 0;                  /* fault in both views */
+    __asm__ volatile("dsb");
+    for (uint32_t va = lo - XTOS_TSTK_GUARD; va < lo + bytes; va += 0x1000u)
+        __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va));          /* TLBIMVAA */
+    __asm__ volatile("dsb; isb");
+    return lo;
+}
+
+void vm_stack_release(int idx, int tid, uint32_t bytes)
+{
+    if (idx < 0 || idx >= NSPACE) return;
+    if (tid < 1 || tid >= (int)XTOS_TSTK_SLOTS || bytes == 0) return;
+    bytes = (bytes + 0xFFFu) & ~0xFFFu;
+    if (bytes > XTOS_TSTK_MAX) bytes = XTOS_TSTK_MAX;
+    uint32_t  lo  = XTOS_TSTK_BASE(idx, tid);
+    uint32_t  sec = lo >> 20;
+    uint32_t *m   = mmu_master_table();
+    if ((m[sec] & 0x3u) != 0x1u) return;                    /* no stacks ever mapped here */
+    uint32_t *gl2 = (uint32_t *)(m[sec] & 0xFFFFFC00u);
+    uint32_t  l1e = space_l1[idx][sec];
+    uint32_t *pl2 = ((l1e & 0x3u) == 0x1u) ? (uint32_t *)(l1e & 0xFFFFFC00u) : 0;
+    for (uint32_t va = lo; va < lo + bytes; va += 0x1000u) {
+        uint32_t e = gl2[L2_IDX(va)];
+        gl2[L2_IDX(va)] = 0;
+        if (pl2 && pl2 != gl2) pl2[L2_IDX(va)] = 0;
+        if (!(e & 0x3u)) continue;
+        dfree_raw((void *)(e & 0xFFFFF000u));               /* scrubs on the way out */
+    }
+    __asm__ volatile("dsb");
+    for (uint32_t va = lo; va < lo + bytes; va += 0x1000u)
+        __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va));          /* TLBIMVAA */
+    __asm__ volatile("dsb; isb");
+}
+
+/* Backstop for a process that dies with threads still mapped — normally
+ * threads_teardown has already released each one. It has to free the pages as well
+ * as clear the entries: the GLOBAL L2 outlives the space, so a stale entry would
+ * hand the next process in this slot a live mapping to a page the pool has since
+ * given away. */
+static void vm_stack_release_all(int idx)
+{
+    uint32_t sec0 = (XTOS_TSTK_VA + (uint32_t)idx * XTOS_TSTK_PERPROC) >> 20;
+    uint32_t *m   = mmu_master_table();
+    int hit = 0;
+    for (uint32_t k = 0; k < XTOS_TSTK_SECS; k++) {
+        uint32_t sec = sec0 + k;
+        if ((m[sec] & 0x3u) != 0x1u) continue;
+        uint32_t *gl2 = (uint32_t *)(m[sec] & 0xFFFFFC00u);
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t e = gl2[i];
+            gl2[i] = 0;
+            if (e & 0x3u) dfree_raw((void *)(e & 0xFFFFF000u));
+        }
+        hit = 1;
+    }
+    if (!hit) return;
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));    /* TLBIALL */
+    __asm__ volatile("dsb; isb");
 }
 
 /* copy-on-write fault: a WRITE permission-faulted at `va` in space `idx`. If `va`

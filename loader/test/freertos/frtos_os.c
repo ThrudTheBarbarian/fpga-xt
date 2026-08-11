@@ -107,16 +107,67 @@ enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL, KFS_CLOSEFD,
        KFS_STAT };
 static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **out_buf);
 
-typedef struct {
+/* ---- threads ---------------------------------------------------------------
+ * A process is an address space; a thread is a flow of control inside it. Everything
+ * a thread does NOT own — the L1 table, the fd table, the cwd, the signal
+ * dispositions, the heap — stays in proc_t below. What a thread owns is here: its
+ * FreeRTOS task, its stack, its TLS pointer, and the saved PL0 context the blocking
+ * -syscall deferral parks in (which was per-process only because a process had
+ * exactly one flow — two threads deferring at once would have overwritten each
+ * other's return frame, so this is a correctness move, not tidying).
+ *
+ * tid 0 is the main thread — the flow proc_launch created — and lives inline in
+ * proc_t. tids >= 1 come from one GLOBAL pool: threads are rare and bursty (a pool
+ * spins up N for one loop and drops them), so a per-process array would reserve
+ * MAXPROC x MAXTHREAD TCBs to serve a handful of live threads. */
+#define MAXTHREAD 128                  /* per process, INCLUDING the main thread */
+#define NTHREAD   128                  /* global pool of non-main threads (tid >= 1) */
+
+struct proc_s;
+typedef struct thread_s {
+    volatile int      used;
+    volatile int      exited;
+    volatile int      detached;       /* nobody will join: reclaim at exit */
+    volatile int      reaped;         /* teardown claimed (one reaper only) */
+    int               tid;            /* 0 = main thread; also its stack slot */
+    int               retval;
+    struct proc_s    *proc;           /* owning process (never NULL while used) */
+    TaskHandle_t      task;
+    TaskHandle_t      joiner;         /* task parked in SYS_thread_join on us */
+    uint32_t          stack_lo;       /* PL0 stack base; 0 = the stackguard arena (tid 0) */
+    uint32_t          stack_sz;
+    uint32_t          tls;            /* TPIDRURW — the TLS block PL0 reads directly */
+    uint32_t          entry, arg;     /* PL0 body + its single argument */
+    /* blocking-syscall deferral: saved PL0 exception context so the blocking part can
+     * run in task context (PL1) and then sysret to PL0. dctx = {r0..r12, lr(=user PC),
+     * sp_usr, spsr, r14_usr}; dnum/da* = the deferred syscall + args. dctx[16]=r14_usr
+     * is used only by signal delivery (to save/restore the full interrupted context). */
+    uint32_t          dctx[17];
+    uint32_t          dnum;
+    long              da0, da1, da2;
+    uint32_t          async_ctx[16];  /* r0..r15 of a PL0 task preempted with a signal pending */
+    uint32_t          async_cpsr;     /* its CPSR (captured by the tick-return hook) */
+    StaticTask_t      tcb;            /* static TCB (stack is the PL0 stack above) */
+} thread_t;
+
+typedef struct proc_s {
     int               used;
     int               pid;
     int               ppid;            /* spawner's pid (for SIGCHLD-on-exit) */
-    TaskHandle_t      task;
+    thread_t          main;            /* tid 0 — the flow spawn created */
+    thread_t         *cur;             /* the thread of THIS process running right now.
+                                        * Maintained by the context-switch hook, so the
+                                        * deferral/signal paths reach the right saved
+                                        * frame through the proc they already hold. */
+    thread_t         *thr[MAXTHREAD];  /* index = tid; thr[0] = &main */
+    int               nthread;         /* live threads (>= 1 while the process lives) */
     xtld_obj         *obj;
     uintptr_t         entry;
     SemaphoreHandle_t done;
     int               exit_code;
-    volatile int      exited;         /* set by the exit thunk */
+    volatile int      exited;         /* set by the exit thunk — LAST, see proc_exit_self */
+    volatile int      dying;          /* teardown CLAIMED by one thread (not the same thing as
+                                       * `exited`: this one is set FIRST, `exited` last) */
     volatile int      killed;         /* SYS_kill: die at the next syscall / blocking tick */
     volatile int      stopped;        /* SIGSTOP/SIGTSTP (^Z): park at the next syscall /
                                        * blocking tick until SIGCONT clears it (stop_park) */
@@ -134,14 +185,6 @@ typedef struct {
     int               transient;      /* loaded outside the cache (runhost) -> unload on reap */
     int               strace;         /* log this proc's syscalls to klog (SYS_strace / name match) */
     void             *src;            /* the host ELF buffer to free on reap (transient) */
-    StaticTask_t      tcb;            /* static TCB (stack from stackguard.c) */
-    /* blocking-syscall deferral: saved PL0 exception context so the blocking part can
-     * run in task context (PL1) and then sysret to PL0. dctx = {r0..r12, lr(=user PC),
-     * sp_usr, spsr, r14_usr}; dnum/da* = the deferred syscall + args. dctx[16]=r14_usr
-     * is used only by signal delivery (to save/restore the full interrupted context). */
-    uint32_t          dctx[17];
-    uint32_t          dnum;
-    long              da0, da1, da2;
     char              cwd[256];       /* current working dir (absolute); relative paths resolve here */
     /* real signals: one authoritative disposition table + pending/blocked bitsets.
      * SYS_kill sets a pending bit; the kernel vectors it to sigact[].handler at the
@@ -151,8 +194,6 @@ typedef struct {
     volatile uint32_t sig_pending;    /* signals raised, awaiting delivery */
     uint32_t          sig_blocked;    /* masked signals (rt_sigprocmask) */
     uint32_t          sig_trap;       /* userland __sig_trap stub (async delivery entry) */
-    uint32_t          async_ctx[16];  /* r0..r15 of a PL0 task preempted with a signal pending */
-    uint32_t          async_cpsr;     /* its CPSR (captured by the tick-return hook) */
     uint32_t          xtos_cursor;    /* next XTOS-broadcast seq this proc will receive
                                        * (see xtos_broadcast / SYS_xtos_recv); set = g_xtos_seq
                                        * at launch so a new app gets no historical events */
@@ -176,6 +217,29 @@ static inline void sig_raise(proc_t *t, int sig)
 }
 
 static proc_t g_proc[MAXPROC];
+
+/* the global pool tids >= 1 come from (see thread_t above) */
+static thread_t g_thread[NTHREAD];
+
+/* Is `h` one of this process's tasks? Used wherever a TaskHandle recorded by one
+ * flow (a waitpid waiter, the foreground-job chain) is compared back to a process:
+ * with threads, "the process's task" is no longer a single handle, and testing only
+ * the main thread would silently mis-answer for a waitpid issued off a worker. */
+static int proc_owns_task(const proc_t *p, TaskHandle_t h)
+{
+    if (!p || !h) return 0;
+    for (int i = 0; i < MAXTHREAD; i++)
+        if (p->thr[i] && p->thr[i]->used && p->thr[i]->task == h) return 1;
+    return 0;
+}
+
+/* The current thread, in O(1): every task we create stashes its thread_t in TLS
+ * pointer 0. A task that is not a process flow (fs, net, shell, idle, timers) has
+ * none, and gets NULL — which is exactly what cur_proc() wants to return for it. */
+static inline thread_t *cur_thread(void)
+{
+    return (thread_t *)pvTaskGetThreadLocalStoragePointer(NULL, 0);
+}
 
 /* live-count helpers + peak high-water marks for /OS/proc/limits. The peaks are
  * bumped at the claim sites (proc launch, pipe create) so they catch transients
@@ -248,7 +312,7 @@ static proc_t *fg_leaf(void)
         int waits_another = 0;                 /* c waits a live proc itself -> not the leaf */
         for (int j = 0; j < MAXPROC && !waits_another; j++) {
             proc_t *o = &g_proc[j];
-            if (o != c && o->used && !o->exited && o->waiter == c->task) waits_another = 1;
+            if (o != c && o->used && !o->exited && proc_owns_task(c, o->waiter)) waits_another = 1;
         }
         if (!waits_another) return c;
     }
@@ -398,22 +462,38 @@ int fb_owner_pid(void) { return g_fb_owner_pid; }
 
 static proc_t *cur_proc(void)
 {
-    TaskHandle_t t = xTaskGetCurrentTaskHandle();
-    for (int i = 0; i < MAXPROC; i++)
-        if (g_proc[i].used && g_proc[i].task == t) return &g_proc[i];
-    return NULL;
+    thread_t *t = cur_thread();
+    return t ? t->proc : NULL;
+}
+
+/* traceTASK_SWITCHED_OUT — still the OUTGOING task. TPIDRURW is PL0-writable, so
+ * whatever the departing thread last put there is its truth; save it before the
+ * incoming thread overwrites the register. */
+void xtos_thread_switch_out(void)
+{
+    thread_t *t = cur_thread();
+    if (!t) return;
+    uint32_t v; __asm__ volatile("mrc p15,0,%0,c13,c0,2" : "=r"(v));
+    t->tls = v;
 }
 
 /* T2-b: called from traceTASK_SWITCHED_IN on every context switch — point TTBR0
  * at the incoming task's address space (its process's L1 table, or the master
- * table for the kernel/shell/idle tasks). vm_switch only flushes on a change. */
+ * table for the kernel/shell/idle tasks), install its TLS pointer, and record it
+ * as its process's current flow (proc->cur, which the deferral and signal paths
+ * reach the saved PL0 frame through). vm_switch only flushes on a change. */
 void xtos_vm_on_switch(void)
 {
     extern void vm_switch(uint32_t *, uint32_t);
-    TaskHandle_t t = xTaskGetCurrentTaskHandle();
+    thread_t *t = cur_thread();
     uint32_t *table = (uint32_t *)0; uint32_t asid = 0;   /* master (kernel) space */
-    for (int i = 0; i < MAXPROC; i++)
-        if (g_proc[i].used && g_proc[i].task == t) { table = g_proc[i].l1; asid = g_proc[i].asid; break; }
+    if (t && t->proc) { table = t->proc->l1; asid = t->proc->asid; t->proc->cur = t; }
+    __asm__ volatile("mcr p15,0,%0,c13,c0,2" :: "r"(t ? t->tls : 0u));
+    /* TPIDRURO — the thread's identity, readable at PL0 and NOT writable there.
+     * libc's recursive malloc lock has to answer "is this lock already mine?" on
+     * every malloc, and a syscall for that would cost more than the lock guards.
+     * tid+1, so 0 stays available to mean "not a process thread". */
+    __asm__ volatile("mcr p15,0,%0,c13,c0,3" :: "r"(t ? (uint32_t)t->tid + 1u : 0u));
     vm_switch(table, asid);
 }
 
@@ -586,15 +666,77 @@ static long k_tty_ioctl(proc_t *p, unsigned req, void *arg)
     }
 }
 
+/* ---- thread death ---------------------------------------------------------
+ * A thread cannot free the stack it is standing on, nor delete its own TCB (see the
+ * long note at frtos_reap on why self-delete corrupts the scheduler lists). So a
+ * dying thread marks itself, hands its exit value to whoever is joining, and parks;
+ * the JOINER — or process teardown, for a detached or unjoined thread — does the
+ * vTaskDelete and the vm_stack_release from a context that is not on that stack.
+ *
+ * Task context only, and it never returns. */
+static void thread_exit_self(thread_t *t, int retval)
+{
+    if (t) {
+        t->retval = retval;
+        t->exited = 1;
+        if (t->joiner) xTaskNotifyGive(t->joiner);
+    }
+    vTaskSuspend(NULL);
+    for (;;) vTaskSuspend(NULL);                     /* never resumed */
+}
+
+/* Stop every OTHER thread of a dying process. It is deliberately COOPERATIVE: a
+ * sibling parked inside the kernel may hold the fs mutex or an fd's page, and
+ * deleting it there would leak exactly the resource nobody is left to release. So
+ * this raises the same `killed` flag SYS_kill uses, and each sibling unwinds at its
+ * next syscall boundary or blocking-loop tick (xt_block_check), which is where the
+ * kernel already knows how to die safely. frtos_reap then waits, bounded, for them.
+ *
+ * A sibling still running at PL0 when the reaper gives up is safe to delete: PL0
+ * holds no kernel state, and nothing this process owns is freed until reap. */
+static void threads_halt(proc_t *p)
+{
+    if (!p) return;
+    p->killed = 1;                                   /* siblings die at their next gate */
+    p->stopped = 0;                                  /* ...and a stopped one is not parked past it */
+}
+
 /* mark this process exited and park (task context only — the exit thunk, or
- * a deferral that must die in place, e.g. the SIGPIPE emulation) */
+ * a deferral that must die in place, e.g. the SIGPIPE emulation).
+ *
+ * With threads this is PROCESS-wide by definition: exit(2) from any thread ends the
+ * process, and the first thread here claims the teardown. A sibling that reaches a
+ * kill gate afterwards finds `exited` already set and leaves as a THREAD instead, so
+ * the pipe/tty release and the SIGCHLD happen exactly once. */
 static void proc_exit_self(proc_t *p, int code)
 {
     if (p) {
+        /* Claim the teardown on `dying`, NOT on `exited`.
+         *
+         * `exited` is what reap_orphans() and the waitpid path test to decide a
+         * process is collectable, and frtos_reap() then does vTaskDelete() +
+         * vm_space_destroy(). So setting it here — before the cleanup below —
+         * lets a parent reap this process WHILE it is still inside
+         * pipes_release(): the pipeline peers never get their EOF and block
+         * forever. That is a leak of processes and pipes, and it is exactly what
+         * a busy board showed (17 stuck processes, 20 pipes, ssh sessions that
+         * never exit) while qemu never did — it needs the reaper to interleave
+         * between the flag and the cleanup.
+         *
+         * So `exited` stays the LAST thing set, as it always was, and the
+         * one-thread-owns-the-teardown claim gets a flag of its own. */
+        int claimed;
+        taskENTER_CRITICAL();
+        claimed = !p->dying;                         /* first thread here owns the teardown */
+        if (claimed) p->dying = 1;
+        taskEXIT_CRITICAL();
+        /* cur_thread(), not p->cur: this must be the flow actually executing, and
+         * reading it from the TCB does not depend on the switch hook having run. */
+        if (!claimed) thread_exit_self(cur_thread(), 0);  /* a sibling is already tearing down */
+        threads_halt(p);
         p->exit_code = code;
         pipes_release(p);                            /* EOF to pipeline peers first */
         tty_release(p);                              /* raw-mode owner dies -> cooked */
-        p->exited = 1;
 
         /* Re-parent this process's children to init(1) BEFORE we announce our death.
          * Two things must happen, and the second is the actual bug:
@@ -606,9 +748,10 @@ static void proc_exit_self(proc_t *p, int code)
             proc_t *c = &g_proc[i];
             if (!c->used || c == p || c->ppid != p->pid) continue;
             c->ppid = g_init_pid ? g_init_pid : 0;
-            if (c->waiter == p->task) { c->waiter = 0; c->waited = 0; }
+            if (proc_owns_task(p, c->waiter)) { c->waiter = 0; c->waited = 0; }
         }
 
+        p->exited = 1;                               /* NOW collectable: the cleanup above is done */
         sig_raise(proc_by_pid(p->ppid), XT_SIGCHLD); /* notify the parent (real async SIGCHLD) */
         if (p->waiter) xTaskNotifyGive(p->waiter);   /* wake a PL0 waitpid (task notification) */
         if (p->done)   xSemaphoreGive(p->done);      /* wake a kernel-task waitpid (shell_task) */
@@ -623,6 +766,13 @@ static void task_exit_thunk(void)
     proc_exit_self(p, p ? p->exit_code : 0);
 }
 
+/* SYS_thread_exit's resume target: PL1, task context, so it may park the task. */
+static void thread_exit_thunk(void)
+{
+    thread_t *t = cur_thread();
+    thread_exit_self(t, t ? t->retval : 0);
+}
+
 /* Kernel blocking primitives OUTSIDE the pipe/pty loops (the UART ring q_read,
  * etc.) call this each poll so a kill/signal is honoured even though the task is
  * parked at PL1 (async-tick delivery can't reach a kernel-blocked task — it only
@@ -632,7 +782,10 @@ static void task_exit_thunk(void)
 int xt_block_check(void)
 {
     proc_t *p = cur_proc();
-    if (p && p->killed) proc_exit_self(p, 137);   /* SIGKILL/default-terminate: die here */
+    if (p && p->killed) proc_exit_self(p, 137);   /* SIGKILL/default-terminate: die here.
+                                                   * (If a sibling already claimed the
+                                                   * teardown this leaves as a thread —
+                                                   * proc_exit_self's first act.) */
     return sig_ready(p) ? -4 : 0;
 }
 
@@ -656,7 +809,13 @@ uint32_t xtos_emerg_sp(void)
 {
     uint32_t dfar; __asm__ volatile("mrc p15,0,%0,c6,c0,0" : "=r"(dfar));
     extern int stackguard_is_guard(unsigned);
-    if (!stackguard_is_guard(dfar)) return 0;
+    /* two guard flavours now: the main thread's, in the static arena, and a worker's,
+     * in the process's own thread-stack window (vm.c). Both mean "this task's stack is
+     * the casualty" and both need the borrowed emergency stack to die on. One emergency
+     * stack per PROCESS is enough because the kill is process-wide: the first thread
+     * here tears the process down, and a sibling that overflows in the same breath is
+     * already on its way out. */
+    if (!stackguard_is_guard(dfar) && !vm_stack_is_guard(dfar)) return 0;
     extern uint32_t stackguard_emerg_top(int);
     proc_t *p = cur_proc();
     return p ? stackguard_emerg_top((int)(p - g_proc)) : 0;
@@ -664,17 +823,32 @@ uint32_t xtos_emerg_sp(void)
 
 /* T2-a.2: the abort handler (xt_vectors.S) redirects a faulting task here — it
  * runs in the task's own (System-mode) context, so it can give the waitpid
- * semaphore (unblock the parent) and delete itself; the OS keeps running. */
+ * semaphore (unblock the parent) and delete itself; the OS keeps running.
+ *
+ * A faulting THREAD kills its whole process, deliberately (xtc threading.md §5.5): it
+ * was holding shared locks and half-mutated shared state, so a surviving sibling
+ * would run on data nobody can vouch for. There is no "one thread crashed, carry on"
+ * here — that is a promise a shared address space cannot keep. */
 void xtos_task_fault_exit(void)
 {
     proc_t *p = cur_proc();
-    if (p && !p->exited) {                          /* FIRST fault for this task */
+    int first = 0;
+    if (p) {
         /* Mark exited BEFORE the cleanup below. If the task's state is corrupt enough
          * that pipes_release/tty_release themselves fault, the abort handler redirects
          * us straight back here — and now `exited` is set, so we skip the cleanup and
          * fall through to the park instead of re-running it forever (the loop that grew
-         * the stack until the guard tripped, wedging the box). */
-        p->exited = 1;
+         * the stack until the guard tripped, wedging the box). The claim is atomic
+         * because two threads can fault into here at once, and the cleanup below must
+         * run exactly once however many flows arrive. */
+        taskENTER_CRITICAL();
+        first = !p->exited;
+        if (first) p->exited = 1;
+        taskEXIT_CRITICAL();
+    }
+    if (first) {
+        p->dying = 1;                               /* keep the teardown claim in step */
+        threads_halt(p);                            /* siblings unwind at their next gate */
         p->exit_code = -1;
         sig_raise(proc_by_pid(p->ppid), XT_SIGCHLD);/* notify the parent (crashed child) */
         pipes_release(p);                           /* EOF to pipeline peers first */
@@ -684,6 +858,257 @@ void xtos_task_fault_exit(void)
     }
     vTaskSuspend(NULL);                             /* park; the waiter reaps us (see task_exit_thunk) */
     for (;;) vTaskSuspend(NULL);
+}
+
+/* ---- thread lifecycle (SYS_thread_*) --------------------------------------
+ * All of it runs in TASK context (the deferral thunk), never in the SVC handler:
+ * creating a task takes the scheduler's lists, joining blocks, and both would be
+ * illegal from an exception handler that cannot yield.
+ */
+
+/* the PL0 body of a worker thread. Unlike app_main this does NOT run the image's
+ * .init_array — constructors belong to the PROCESS and ran once, on the main thread.
+ * enter_user_thread never returns: when the body returns it traps back through
+ * SYS_thread_exit, the same way enter_user_and_run traps through SYS_exit. */
+static void thread_main(void *arg)
+{
+    thread_t *t = (thread_t *)arg;
+    extern void enter_user_thread(uint32_t entry, uint32_t arg);
+    enter_user_thread(t->entry, t->arg);
+}
+
+/* Release a thread's resources. The CALLER must not be that thread (it would be
+ * standing on the stack this frees) and the thread must have parked in
+ * thread_exit_self — both are guaranteed by the only two callers, join and process
+ * teardown. Leaves the slot free for the next SYS_thread_create. */
+static void thread_reclaim(thread_t *t)
+{
+    if (!t || !t->used) return;
+    taskENTER_CRITICAL();
+    if (t->reaped) { taskEXIT_CRITICAL(); return; }   /* join and teardown can race for it */
+    t->reaped = 1;
+    taskEXIT_CRITICAL();
+    proc_t *p = t->proc;
+    if (t->task) { vTaskDelete(t->task); t->task = 0; }
+    if (t->stack_lo && p) vm_stack_release((int)(p - g_proc), t->tid, t->stack_sz);
+    if (p) {
+        if (t->tid >= 0 && t->tid < MAXTHREAD) p->thr[t->tid] = 0;
+        if (p->nthread > 0) p->nthread--;
+        if (p->cur == t) p->cur = &p->main;
+    }
+    t->used = 0; t->proc = 0; t->task = 0; t->joiner = 0;
+    t->exited = 0; t->detached = 0; t->reaped = 0; t->stack_lo = 0; t->stack_sz = 0;
+}
+
+/* Reclaim every DETACHED thread that has finished. Nobody will join them, and they
+ * could not free their own stack or TCB on the way out — so without a sweep a
+ * fire-and-forget worker would hold its slot and its stack for the life of the
+ * process, and a pool that detaches would run the process out of threads. Swept
+ * from the three calls that are already in the neighbourhood (create, join, detach),
+ * which is the same "reap on the next create or detach" the freestanding runtimes
+ * use, and costs nothing on a process that never detaches. */
+static void threads_sweep(proc_t *p)
+{
+    if (!p) return;
+    for (int i = 1; i < MAXTHREAD; i++) {
+        thread_t *t = p->thr[i];
+        if (t && t->used && t->exited && t->detached && !t->joiner) thread_reclaim(t);
+    }
+}
+
+static long k_thread_create(proc_t *p, uint32_t entry, uint32_t arg, uint32_t bytes)
+{
+    if (!p || !entry) return -22;                                  /* -EINVAL */
+    threads_sweep(p);                                              /* free what detach left behind */
+    if (bytes == 0) bytes = XTOS_TSTK_DEFAULT;
+    if (bytes > XTOS_TSTK_MAX) return -22;
+    bytes = (bytes + 0xFFFu) & ~0xFFFu;
+    /* Claim the tid and the pool slot TOGETHER, and publish thr[tid] as the
+     * reservation. Two threads of one process can be in here at once (this runs in
+     * the deferral, which yields), and a split claim lets both pick the same tid —
+     * whereupon the second vm_stack_map silently remaps the first one's stack out
+     * from under a running thread. */
+    int tid = 0;
+    thread_t *t = 0;
+    taskENTER_CRITICAL();
+    for (int i = 1; i < MAXTHREAD && !tid; i++)
+        if (!p->thr[i])
+            for (int j = 0; j < NTHREAD; j++)
+                if (!g_thread[j].used) {
+                    t = &g_thread[j]; t->used = 1;
+                    tid = i; p->thr[i] = t;
+                    break;
+                }
+    taskEXIT_CRITICAL();
+    if (!tid) return -11;                       /* -EAGAIN: process at MAXTHREAD, or pool dry */
+    memset((char *)t + offsetof(thread_t, exited), 0, sizeof *t - offsetof(thread_t, exited));
+    t->tid = tid; t->proc = p; t->entry = entry; t->arg = arg;
+
+    uint32_t lo = vm_stack_map((int)(p - g_proc), tid, bytes);
+    if (!lo) { p->thr[tid] = 0; t->used = 0; return -12; }          /* -ENOMEM: page pool dry */
+    t->stack_lo = lo; t->stack_sz = bytes;
+
+    /* thrNN — the name a fault report and a task listing identify it by. */
+    char nm[8]; nm[0] = 't'; nm[1] = 'h'; nm[2] = 'r';
+    int k = 3;
+    if (tid >= 100) nm[k++] = (char)('0' + tid / 100);
+    if (tid >= 10)  nm[k++] = (char)('0' + (tid / 10) % 10);
+    nm[k++] = (char)('0' + tid % 10);
+    nm[k] = 0;
+    /* Same ordering care as proc_launch: the new task is created at the creator's own
+     * priority and may run the instant the scheduler is resumed, so its TLS pointer —
+     * the ONLY way it can identify itself — must be installed before that. */
+    vTaskSuspendAll();
+    t->task = xTaskCreateStatic(thread_main, nm, bytes / sizeof(StackType_t), t,
+                                uxTaskPriorityGet(NULL), (StackType_t *)lo, &t->tcb);
+    if (t->task) {
+        vTaskSetThreadLocalStoragePointer(t->task, 0, t);
+        p->nthread++;                                              /* thr[tid] was the claim */
+    }
+    xTaskResumeAll();
+    if (!t->task) {
+        vm_stack_release((int)(p - g_proc), tid, bytes);
+        p->thr[tid] = 0; t->used = 0;
+        return -11;
+    }
+    return tid;
+}
+
+static long k_thread_join(proc_t *p, int tid, int *retp)
+{
+    if (!p || tid <= 0 || tid >= MAXTHREAD) return -22;            /* -EINVAL (incl. joining tid 0) */
+    threads_sweep(p);
+    thread_t *t = p->thr[tid];
+    if (!t || !t->used) return -3;                                 /* -ESRCH */
+    if (t == p->cur) return -22;                                   /* -EINVAL: joining yourself */
+    taskENTER_CRITICAL();
+    int busy = t->detached || (t->joiner != 0);
+    if (!busy) t->joiner = xTaskGetCurrentTaskHandle();
+    taskEXIT_CRITICAL();
+    if (busy) return -22;                                          /* -EINVAL: detached / already joined */
+    while (!t->exited) {
+        int r = xt_block_check();                                  /* kill / signal while joining */
+        if (r) { t->joiner = 0; return r; }
+        ulTaskNotifyTakeIndexed(1, pdTRUE, pdMS_TO_TICKS(50));
+    }
+    if (retp) *retp = t->retval;
+    thread_reclaim(t);
+    return 0;
+}
+
+static long k_thread_detach(proc_t *p, int tid)
+{
+    if (!p || tid <= 0 || tid >= MAXTHREAD) return -22;
+    threads_sweep(p);
+    thread_t *t = p->thr[tid];
+    if (!t || !t->used) return -3;
+    taskENTER_CRITICAL();
+    int busy = t->joiner != 0;
+    if (!busy) t->detached = 1;
+    taskEXIT_CRITICAL();
+    if (busy) return -22;                                          /* someone is already joining it */
+    if (t->exited) thread_reclaim(t);                              /* already gone: reclaim now */
+    return 0;
+}
+
+/* Process teardown: every thread but the caller. Bounded-wait first, because a
+ * sibling parked INSIDE the kernel holds resources only it can release — see
+ * threads_halt. Threads still at PL0 when the wait expires are safe to delete
+ * outright, so the bound is a real bound and not a wedge. */
+static void threads_teardown(proc_t *p, thread_t *keep)
+{
+    if (!p) return;
+    for (int spin = 0; spin < 100; spin++) {                       /* <= 500 ms */
+        int busy = 0;
+        for (int i = 0; i < MAXTHREAD; i++) {
+            thread_t *t = p->thr[i];
+            if (t && t != keep && t->used && !t->exited) busy = 1;
+        }
+        if (!busy) break;
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+    for (int i = 0; i < MAXTHREAD; i++) {
+        thread_t *t = p->thr[i];
+        if (t && t != keep && t->used) thread_reclaim(t);
+    }
+}
+
+/* ---- futex: the one blocking primitive the kernel provides -----------------
+ * Mutex, Cond and Sem are built on this in USER space (xtc threading.md §5.3), so an
+ * uncontended lock is an atomic word and no syscall at all, and the kernel grows one
+ * mechanism instead of a synchronisation zoo.
+ *
+ * The queue is keyed on (process, address): a VA means different memory in different
+ * spaces, so keying on the address alone would let two unrelated processes wake — or
+ * worse, fail to wake — each other. */
+#define NFUTEX 32
+static struct {
+    proc_t       *p;
+    uint32_t      va;
+    TaskHandle_t  task;
+    volatile int  woken;
+} g_futex[NFUTEX];
+
+static void futex_forget(proc_t *p)          /* a dying process leaves no waiters behind */
+{
+    taskENTER_CRITICAL();
+    for (int i = 0; i < NFUTEX; i++) if (g_futex[i].p == p) g_futex[i].p = 0;
+    taskEXIT_CRITICAL();
+}
+
+static long k_futex_wait(proc_t *p, uint32_t uaddr, uint32_t val, long timeout_ms)
+{
+    if (!p || !uaddr || (uaddr & 3u)) return -22;                  /* -EINVAL */
+    int slot = -1;
+    /* The compare and the enqueue must be ONE atomic step against k_futex_wake, or the
+     * classic lost wakeup gets in between: the waiter reads the old value, the waker
+     * writes and wakes an empty queue, and the waiter then sleeps forever on a
+     * condition that has already happened. */
+    taskENTER_CRITICAL();
+    if (*(volatile uint32_t *)uaddr != val) { taskEXIT_CRITICAL(); return -11; }   /* -EAGAIN */
+    for (int i = 0; i < NFUTEX; i++) if (!g_futex[i].p) { slot = i; break; }
+    if (slot >= 0) {
+        g_futex[slot].p = p; g_futex[slot].va = uaddr;
+        g_futex[slot].task = xTaskGetCurrentTaskHandle(); g_futex[slot].woken = 0;
+    }
+    taskEXIT_CRITICAL();
+    if (slot < 0) return -11;                                      /* -EAGAIN: queue full, caller spins */
+
+    long rc = -110;                                                /* -ETIMEDOUT */
+    TickType_t left = (timeout_ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS((uint32_t)timeout_ms);
+    for (;;) {
+        /* Wake up periodically even with no timeout, so a kill or a signal reaches a
+         * thread parked on a futex whose waker has died. */
+        TickType_t slice = (left > pdMS_TO_TICKS(50)) ? pdMS_TO_TICKS(50) : left;
+        ulTaskNotifyTakeIndexed(1, pdTRUE, slice);
+        if (g_futex[slot].woken) { rc = 0; break; }
+        int r = xt_block_check();
+        if (r) { rc = r; break; }                                  /* -EINTR (or never returns, on kill) */
+        if (timeout_ms >= 0) { left -= slice; if (left == 0) break; }
+    }
+    taskENTER_CRITICAL();
+    g_futex[slot].p = 0;
+    taskEXIT_CRITICAL();
+    return rc;
+}
+
+static long k_futex_wake(proc_t *p, uint32_t uaddr, int n)
+{
+    if (!p || !uaddr || (uaddr & 3u)) return -22;
+    TaskHandle_t hit[NFUTEX];
+    int nh = 0;
+    taskENTER_CRITICAL();
+    for (int i = 0; i < NFUTEX && (n < 0 || nh < n); i++)
+        if (g_futex[i].p == p && g_futex[i].va == uaddr && !g_futex[i].woken) {
+            g_futex[i].woken = 1;
+            hit[nh++] = g_futex[i].task;
+        }
+    taskEXIT_CRITICAL();
+    /* Notify OUTSIDE the critical section: waking N threads must not hold interrupts
+     * off for N scheduler operations. `woken` is already set, so a waiter that is
+     * spinning on its slice sees it even before its notification lands. */
+    for (int i = 0; i < nh; i++) xTaskNotifyGiveIndexed(hit[i], 1);
+    return nh;
 }
 
 /* ---- file syscalls (dispatch through the VFS: romfs / fatfs / ...) ------ */
@@ -772,10 +1197,10 @@ static long k_socket_call(proc_t *p)
     extern int  xt_sock_listen(int, int);
     extern int  xt_sock_accept(int, unsigned *, unsigned *, int (*)(void *), void *, int);
     extern int  xt_sock_resolve(const char *, unsigned *);
-    uint32_t fd = p->da0;
-    switch (p->dnum) {
+    uint32_t fd = p->cur->da0;
+    switch (p->cur->dnum) {
     case SYS_socket: {
-        int si = xt_sock_new((int)p->da0);
+        int si = xt_sock_new((int)p->cur->da0);
         if (si < 0) return -1;
         int nfd = sock_fd_new(p, si);
         if (nfd < 0) { xt_sock_close(si); return -1; }
@@ -784,35 +1209,35 @@ static long k_socket_call(proc_t *p)
     case SYS_connect:
     case SYS_bind:
         if (fd >= NFD || !p->fd[fd].open || !p->fd[fd].sock) return -1;
-        return (p->dnum == SYS_connect)
-             ? xt_sock_connect(p->fd[fd].sock - 1, (unsigned)p->da1, (unsigned)p->da2)
-             : xt_sock_bind(p->fd[fd].sock - 1, (unsigned)p->da1, (unsigned)p->da2);
+        return (p->cur->dnum == SYS_connect)
+             ? xt_sock_connect(p->fd[fd].sock - 1, (unsigned)p->cur->da1, (unsigned)p->cur->da2)
+             : xt_sock_bind(p->fd[fd].sock - 1, (unsigned)p->cur->da1, (unsigned)p->cur->da2);
     case SYS_listen:
         if (fd >= NFD || !p->fd[fd].open || !p->fd[fd].sock) return -1;
-        return xt_sock_listen(p->fd[fd].sock - 1, (int)p->da1);
+        return xt_sock_listen(p->fd[fd].sock - 1, (int)p->cur->da1);
     case SYS_accept: {
         if (fd >= NFD || !p->fd[fd].open || !p->fd[fd].sock) return -1;
         unsigned peer[2] = { 0, 0 };
-        int si = xt_sock_accept(p->fd[fd].sock - 1, &peer[0], &peer[1], sock_tick, p, (int)p->da2);
+        int si = xt_sock_accept(p->fd[fd].sock - 1, &peer[0], &peer[1], sock_tick, p, (int)p->cur->da2);
         if (si == -2) return -2;                   /* da2=1 nonblock, none pending (EAGAIN) */
         if (si < 0) return -1;
         int nfd = sock_fd_new(p, si);
         if (nfd < 0) { xt_sock_close(si); return -1; }
-        if (p->da1) { unsigned *out = (unsigned *)p->da1; out[0] = peer[0]; out[1] = peer[1]; }
+        if (p->cur->da1) { unsigned *out = (unsigned *)p->cur->da1; out[0] = peer[0]; out[1] = peer[1]; }
         return nfd;
     }
     case SYS_resolve: {
         /* the resolver runs in the LWIP THREAD: the name must live in kernel-
          * global memory, never client space (the kfs-path lesson) */
         static char nm[128];
-        const char *s = (const char *)p->da0;
-        if (!s || !p->da1) return -1;
+        const char *s = (const char *)p->cur->da0;
+        if (!s || !p->cur->da1) return -1;
         int i = 0;
         for (; s[i] && i < 127; i++) nm[i] = s[i];
         nm[i] = 0;
         unsigned ip = 0;
         if (xt_sock_resolve(nm, &ip) != 0) return -1;
-        *(unsigned *)p->da1 = ip;
+        *(unsigned *)p->cur->da1 = ip;
         return 0;
     }
     }
@@ -2177,13 +2602,13 @@ static long fs_call(proc_t *p)
 {
     int     slot = (int)(p - g_proc);
     fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
-    if (!g_fs_q || !c) return do_syscall(p->dnum, p->da0, p->da1, p->da2);
-    c->op = p->dnum;
-    if (p->dnum == SYS_open) {
-        abspath(p, (const char *)p->da0, c->path);   /* resolve relative paths against cwd */
-        c->flags = (uint32_t)p->da1;                 /* open flags (VFS_O_*) */
+    if (!g_fs_q || !c) return do_syscall(p->cur->dnum, p->cur->da0, p->cur->da1, p->cur->da2);
+    c->op = p->cur->dnum;
+    if (p->cur->dnum == SYS_open) {
+        abspath(p, (const char *)p->cur->da0, c->path);   /* resolve relative paths against cwd */
+        c->flags = (uint32_t)p->cur->da1;                 /* open flags (VFS_O_*) */
     } else {                                         /* close */
-        c->fd = (uint32_t)p->da0;
+        c->fd = (uint32_t)p->cur->da0;
     }
     c->result = -1;
     g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
@@ -2224,21 +2649,21 @@ static long fs_meta(proc_t *p)
 {
     int     slot = (int)(p - g_proc);
     fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
-    if (!g_fs_q || !c) return do_syscall(p->dnum, p->da0, p->da1, p->da2);
-    c->op = p->dnum;
-    if (p->dnum == SYS_symlink) {
-        abspath(p, (const char *)p->da1, c->path);            /* linkpath (where to create) */
-        cp_path(c->path2, (const char *)p->da0);              /* target (stored verbatim) */
-    } else if (p->dnum == SYS_rename) {
-        abspath(p, (const char *)p->da0, c->path);            /* oldpath */
-        abspath(p, (const char *)p->da1, c->path2);           /* newpath */
+    if (!g_fs_q || !c) return do_syscall(p->cur->dnum, p->cur->da0, p->cur->da1, p->cur->da2);
+    c->op = p->cur->dnum;
+    if (p->cur->dnum == SYS_symlink) {
+        abspath(p, (const char *)p->cur->da1, c->path);            /* linkpath (where to create) */
+        cp_path(c->path2, (const char *)p->cur->da0);              /* target (stored verbatim) */
+    } else if (p->cur->dnum == SYS_rename) {
+        abspath(p, (const char *)p->cur->da0, c->path);            /* oldpath */
+        abspath(p, (const char *)p->cur->da1, c->path2);           /* newpath */
     } else {
-        abspath(p, (const char *)p->da0, c->path);            /* primary path (cwd-relative) */
-        if (p->dnum == SYS_readlink) {
-            uint32_t sz = (uint32_t)p->da2; if (sz > FS_PATH_MAX) sz = FS_PATH_MAX;
+        abspath(p, (const char *)p->cur->da0, c->path);            /* primary path (cwd-relative) */
+        if (p->cur->dnum == SYS_readlink) {
+            uint32_t sz = (uint32_t)p->cur->da2; if (sz > FS_PATH_MAX) sz = FS_PATH_MAX;
             c->len = sz;                                      /* clamp target buffer to path2 */
-        } else if (p->dnum == SYS_readdir) {
-            c->off = (uint32_t)p->da1;                        /* entry index */
+        } else if (p->cur->dnum == SYS_readdir) {
+            c->off = (uint32_t)p->cur->da1;                        /* entry index */
         }
     }
     c->result = -1;
@@ -2246,19 +2671,19 @@ static long fs_meta(proc_t *p)
     xQueueSend(g_fs_q, &slot, portMAX_DELAY);
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     if (c->result >= 0) {                                     /* results -> client memory */
-        if (p->dnum == SYS_stat || p->dnum == SYS_lstat) {
-            struct xt_stat *u = (struct xt_stat *)p->da1;
+        if (p->cur->dnum == SYS_stat || p->cur->dnum == SYS_lstat) {
+            struct xt_stat *u = (struct xt_stat *)p->cur->da1;
             if (u) { u->mode = c->st[0]; u->size = c->st[1]; u->mtime = c->st[2]; }
-        } else if (p->dnum == SYS_readlink) {
-            char *ub = (char *)p->da1; uint32_t usz = (uint32_t)p->da2;
+        } else if (p->cur->dnum == SYS_readlink) {
+            char *ub = (char *)p->cur->da1; uint32_t usz = (uint32_t)p->cur->da2;
             long n = c->result; if (n > (long)usz) n = (long)usz;
             for (long i = 0; i < n; i++) ub[i] = c->path2[i];
-        } else if (p->dnum == SYS_readdir && c->result == 1) {
-            struct xt_dirent *u = (struct xt_dirent *)p->da2;
+        } else if (p->cur->dnum == SYS_readdir && c->result == 1) {
+            struct xt_dirent *u = (struct xt_dirent *)p->cur->da2;
             if (u) { u->mode = c->st[0];
                      int i = 0; while (c->path2[i] && i < 255) { u->name[i] = c->path2[i]; i++; } u->name[i] = 0; }
-        } else if (p->dnum == SYS_statfs) {           /* total/free sectors + sector size -> client u32[3] */
-            uint32_t *u = (uint32_t *)p->da1;
+        } else if (p->cur->dnum == SYS_statfs) {           /* total/free sectors + sector size -> client u32[3] */
+            uint32_t *u = (uint32_t *)p->cur->da1;
             if (u) { u[0] = c->st[0]; u[1] = c->st[1]; u[2] = c->st[2]; }
         }
     }
@@ -2273,15 +2698,15 @@ static long fs_getdents(proc_t *p)
     int     slot = (int)(p - g_proc);
     fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
     if (!g_fs_q || !c) return -1;                        /* no fs task -> shim uses readdir/stat */
-    c->op = p->dnum;
-    abspath(p, (const char *)p->da0, c->path);           /* directory (cwd-relative -> absolute) */
-    c->off = (uint32_t)p->da1;                           /* start entry index */
+    c->op = p->cur->dnum;
+    abspath(p, (const char *)p->cur->da0, c->path);           /* directory (cwd-relative -> absolute) */
+    c->off = (uint32_t)p->cur->da1;                           /* start entry index */
     c->result = -1;
     g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
     xQueueSend(g_fs_q, &slot, portMAX_DELAY);
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     if (c->result < 0) return -1;
-    uint8_t *ub = (uint8_t *)p->da2;                     /* caller's buffer (>= FS_BATCH_BYTES) */
+    uint8_t *ub = (uint8_t *)p->cur->da2;                     /* caller's buffer (>= FS_BATCH_BYTES) */
     uint32_t bytes = c->st[1];
     if (bytes > FS_BATCH_BYTES) bytes = FS_BATCH_BYTES;
     if (ub) for (uint32_t i = 0; i < bytes; i++) ub[i] = g_fs_batch[slot][i];
@@ -2311,9 +2736,9 @@ static uint8_t *fs_getpage(int slot, int fd, uint32_t pi, uint32_t *valid, int f
 static long fs_read(proc_t *p)
 {
     int      slot = (int)(p - g_proc);
-    int      fd   = (int)p->da0;
-    uint8_t *buf  = (uint8_t *)p->da1;
-    uint32_t n    = (uint32_t)p->da2;
+    int      fd   = (int)p->cur->da0;
+    uint8_t *buf  = (uint8_t *)p->cur->da1;
+    uint32_t n    = (uint32_t)p->cur->da2;
     if (fd < 0 || fd >= NFD || !p->fd[fd].open || p->fd[fd].pipei || p->fd[fd].con ||
         p->fd[fd].vf.chr)
         return -1;                       /* fd<3 allowed: `< file` redirected stdin */
@@ -2346,9 +2771,9 @@ static long fs_read(proc_t *p)
 static long fs_write(proc_t *p)
 {
     int            slot = (int)(p - g_proc);
-    int            fd   = (int)p->da0;
-    const uint8_t *buf  = (const uint8_t *)p->da1;
-    uint32_t       n    = (uint32_t)p->da2;
+    int            fd   = (int)p->cur->da0;
+    const uint8_t *buf  = (const uint8_t *)p->cur->da1;
+    uint32_t       n    = (uint32_t)p->cur->da2;
     if (fd < 0 || fd >= NFD || !p->fd[fd].open || p->fd[fd].pipei || p->fd[fd].con ||
         p->fd[fd].vf.chr)
         return -1;                       /* fd<3 allowed: `> file` redirected stdout */
@@ -2377,7 +2802,7 @@ static long fs_mmap(proc_t *p)
     int     slot = (int)(p - g_proc);
     fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
     if (!g_fs_q || !c) return -1;
-    c->op = FS_OP_MMAP; c->fd = (uint32_t)p->da0; c->len = (uint32_t)p->da1; c->off = (uint32_t)p->da2;
+    c->op = FS_OP_MMAP; c->fd = (uint32_t)p->cur->da0; c->len = (uint32_t)p->cur->da1; c->off = (uint32_t)p->cur->da2;
     c->page_addr = 0; c->result = -1;
     g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
     xQueueSend(g_fs_q, &slot, portMAX_DELAY);
@@ -2391,8 +2816,8 @@ static long fs_munmap(proc_t *p)
 {
     int     slot = (int)(p - g_proc);
     fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
-    if (!g_fs_q || !c) return vm_munmap(slot, (uint32_t)p->da0, (uint32_t)p->da1);
-    c->op = FS_OP_MUNMAP; c->off = (uint32_t)p->da0; c->len = (uint32_t)p->da1;
+    if (!g_fs_q || !c) return vm_munmap(slot, (uint32_t)p->cur->da0, (uint32_t)p->cur->da1);
+    c->op = FS_OP_MUNMAP; c->off = (uint32_t)p->cur->da0; c->len = (uint32_t)p->cur->da1;
     c->result = -1;
     g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
     xQueueSend(g_fs_q, &slot, portMAX_DELAY);
@@ -2434,12 +2859,12 @@ void frtos_fs_start(void)
 /* ---- blocking-syscall deferral -------------------------------------------
  * A blocking syscall (waitpid, stdin read) can't run in the SVC handler — its
  * yield (svc #0) would nest inside svc #1. So k_syscall_dispatch saves the PL0
- * caller's full exception frame in p->dctx and redirects the resume to
+ * caller's full exception frame in p->cur->dctx and redirects the resume to
  * deferral_thunk, which runs at PL1 (System) in TASK context (return 1, like the
  * exit thunk). The thunk does the blocking work, then __sysret (svc #2) restores
- * p->dctx with the result in r0 and returns to PL0. cur_dctx() hands the asm
+ * p->cur->dctx with the result in r0 and returns to PL0. cur_dctx() hands the asm
  * svc #2 path the saved frame ({r0..r12, lr=PC, sp_usr, spsr}). */
-void *cur_dctx(void) { proc_t *p = cur_proc(); return p ? p->dctx : (void *)0; }
+void *cur_dctx(void) { thread_t *t = cur_thread(); return t ? t->dctx : (void *)0; }
 
 static long do_syscall(uint32_t num, long a0, long a1, long a2);   /* run the normal handler in task ctx */
 
@@ -2452,29 +2877,39 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
     if (p) {
         stop_park(p);                                      /* ^Z/SIGSTOP: park before dispatch;
                                                             * the syscall runs after SIGCONT */
-        if (p->dnum == SYS_spawn) {                        /* may load libs from the SD (FatFs) */
-            r = frtos_spawn_argv((const char *)p->da0, (int)p->da1, (char **)p->da2, g_khost);
-        } else if (p->dnum == SYS_spawn_fd) {              /* spawn + wire child stdio to pipe ends */
-            char **av = (char **)p->da1; int ac = 0;
+        if (p->cur->dnum == SYS_thread_create) {            /* xTaskCreateStatic + a mapped stack */
+            r = k_thread_create(p, (uint32_t)p->cur->da0, (uint32_t)p->cur->da1, (uint32_t)p->cur->da2);
+        } else if (p->cur->dnum == SYS_thread_join) {       /* BLOCKS until the thread exits */
+            r = k_thread_join(p, (int)p->cur->da0, (int *)p->cur->da1);
+        } else if (p->cur->dnum == SYS_thread_detach) {
+            r = k_thread_detach(p, (int)p->cur->da0);
+        } else if (p->cur->dnum == SYS_futex_wait) {        /* BLOCKS on the (proc, addr) queue */
+            r = k_futex_wait(p, (uint32_t)p->cur->da0, (uint32_t)p->cur->da1, p->cur->da2);
+        } else if (p->cur->dnum == SYS_futex_wake) {        /* touches the scheduler -> task ctx */
+            r = k_futex_wake(p, (uint32_t)p->cur->da0, (int)p->cur->da1);
+        } else if (p->cur->dnum == SYS_spawn) {                 /* may load libs from the SD (FatFs) */
+            r = frtos_spawn_argv((const char *)p->cur->da0, (int)p->cur->da1, (char **)p->cur->da2, g_khost);
+        } else if (p->cur->dnum == SYS_spawn_fd) {              /* spawn + wire child stdio to pipe ends */
+            char **av = (char **)p->cur->da1; int ac = 0;
             while (av && av[ac]) ac++;
-            const int *aux = (const int *)p->da2;          /* struct xt_spawn_aux {int fds[4]; char **envp;} */
+            const int *aux = (const int *)p->cur->da2;          /* struct xt_spawn_aux {int fds[4]; char **envp;} */
             char **envp = aux ? *(char ***)(aux + 4) : NULL;
-            r = frtos_spawn_argv_fds((const char *)p->da0, ac, av, envp, g_khost, aux);
-        } else if (p->dnum == SYS_pipe) {                  /* allocate a pipe + two end fds */
-            r = k_pipe_create(p, (int *)p->da0);
-        } else if (p->dnum == SYS_svc_register) {
-            r = k_svc_register(p, (const char *)p->da0);
-        } else if (p->dnum == SYS_svc_connect) {
-            r = k_svc_connect(p, (const char *)p->da0);
-        } else if (p->dnum == SYS_svc_accept) {
-            r = k_svc_accept(p, (int)p->da0);
-        } else if (p->dnum == SYS_poll) {
-            r = k_poll(p, (struct xt_pollfd *)p->da0, (int)p->da1, (int)p->da2);
-        } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
-                   p->da0 < NFD && p->fd[p->da0].open &&
-                   (p->fd[p->da0].rpipe || p->fd[p->da0].wpipe)) {
-            if (p->dnum == SYS_read)
-                r = k_chan_read(p, (int)p->da0, (char *)p->da1, (uint32_t)p->da2);
+            r = frtos_spawn_argv_fds((const char *)p->cur->da0, ac, av, envp, g_khost, aux);
+        } else if (p->cur->dnum == SYS_pipe) {                  /* allocate a pipe + two end fds */
+            r = k_pipe_create(p, (int *)p->cur->da0);
+        } else if (p->cur->dnum == SYS_svc_register) {
+            r = k_svc_register(p, (const char *)p->cur->da0);
+        } else if (p->cur->dnum == SYS_svc_connect) {
+            r = k_svc_connect(p, (const char *)p->cur->da0);
+        } else if (p->cur->dnum == SYS_svc_accept) {
+            r = k_svc_accept(p, (int)p->cur->da0);
+        } else if (p->cur->dnum == SYS_poll) {
+            r = k_poll(p, (struct xt_pollfd *)p->cur->da0, (int)p->cur->da1, (int)p->cur->da2);
+        } else if ((p->cur->dnum == SYS_read || p->cur->dnum == SYS_write) &&
+                   p->cur->da0 < NFD && p->fd[p->cur->da0].open &&
+                   (p->fd[p->cur->da0].rpipe || p->fd[p->cur->da0].wpipe)) {
+            if (p->cur->dnum == SYS_read)
+                r = k_chan_read(p, (int)p->cur->da0, (char *)p->cur->da1, (uint32_t)p->cur->da2);
             else {
                 /* NO SIGPIPE ON A CHANNEL. A pipe write with no reader kills the writer, which
                  * is right for a shell pipeline -- and CATASTROPHIC for a service. It would mean
@@ -2482,60 +2917,60 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                  * gemd must survive client death (§3, §9); that is the whole point of it being
                  * the arbiter. A dead peer is an ERROR RETURN here, and the server notices the
                  * hangup the same way it notices everything else: EOF on the next read. */
-                r = k_chan_write(p, (int)p->da0, (const char *)p->da1, (uint32_t)p->da2);
+                r = k_chan_write(p, (int)p->cur->da0, (const char *)p->cur->da1, (uint32_t)p->cur->da2);
             }
-        } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
-                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
-            if (p->dnum == SYS_read)
-                r = k_pipe_read(p, (int)p->da0, (char *)p->da1, (uint32_t)p->da2);
+        } else if ((p->cur->dnum == SYS_read || p->cur->dnum == SYS_write) &&
+                   p->cur->da0 < NFD && p->fd[p->cur->da0].open && p->fd[p->cur->da0].pipei) {
+            if (p->cur->dnum == SYS_read)
+                r = k_pipe_read(p, (int)p->cur->da0, (char *)p->cur->da1, (uint32_t)p->cur->da2);
             else {
-                r = k_pipe_write(p, (int)p->da0, (const char *)p->da1, (uint32_t)p->da2);
+                r = k_pipe_write(p, (int)p->cur->da0, (const char *)p->cur->da1, (uint32_t)p->cur->da2);
                 /* SIGPIPE semantics: writing a pipe with no readers kills the
                  * writer (128+13). stdio-buffered writers never check errors —
                  * without this, `yes | head` style pipelines spin forever. */
                 if (r < 0) proc_exit_self(p, 141);    /* no return */
             }
-        } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
-                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].vf.chr) {
+        } else if ((p->cur->dnum == SYS_read || p->cur->dnum == SYS_write) &&
+                   p->cur->da0 < NFD && p->fd[p->cur->da0].open && p->fd[p->cur->da0].vf.chr) {
             /* char device: unbounded stream — the driver directly, no page store */
-            fd_t *cf = &p->fd[p->da0];
-            if (p->dnum == SYS_read)
-                r = cf->vf.read ? cf->vf.read(&cf->vf, (void *)p->da1, (uint32_t)p->da2) : -1;
+            fd_t *cf = &p->fd[p->cur->da0];
+            if (p->cur->dnum == SYS_read)
+                r = cf->vf.read ? cf->vf.read(&cf->vf, (void *)p->cur->da1, (uint32_t)p->cur->da2) : -1;
             else
-                r = cf->vf.write ? cf->vf.write(&cf->vf, (const void *)p->da1, (uint32_t)p->da2) : -1;
-        } else if (p->dnum >= SYS_socket && p->dnum <= SYS_resolve) {
+                r = cf->vf.write ? cf->vf.write(&cf->vf, (const void *)p->cur->da1, (uint32_t)p->cur->da2) : -1;
+        } else if (p->cur->dnum >= SYS_socket && p->cur->dnum <= SYS_resolve) {
             r = k_socket_call(p);                          /* the socket family (net/sockets.c) */
-        } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
-                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].sock) {
+        } else if ((p->cur->dnum == SYS_read || p->cur->dnum == SYS_write) &&
+                   p->cur->da0 < NFD && p->fd[p->cur->da0].open && p->fd[p->cur->da0].sock) {
             extern long xt_sock_recv(int, void *, unsigned, int (*)(void *), void *, int);
             extern long xt_sock_send(int, const void *, unsigned);
-            int si = p->fd[p->da0].sock - 1;
-            if (p->dnum == SYS_read)
-                r = xt_sock_recv(si, (void *)p->da1, (unsigned)p->da2, sock_tick, p,
-                                 p->fd[p->da0].nonblock);
+            int si = p->fd[p->cur->da0].sock - 1;
+            if (p->cur->dnum == SYS_read)
+                r = xt_sock_recv(si, (void *)p->cur->da1, (unsigned)p->cur->da2, sock_tick, p,
+                                 p->fd[p->cur->da0].nonblock);
             else
-                r = xt_sock_send(si, (const void *)p->da1, (unsigned)p->da2);
-        } else if (p->dnum == SYS_recvfrom &&
-                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].sock) {
+                r = xt_sock_send(si, (const void *)p->cur->da1, (unsigned)p->cur->da2);
+        } else if (p->cur->dnum == SYS_recvfrom &&
+                   p->cur->da0 < NFD && p->fd[p->cur->da0].open && p->fd[p->cur->da0].sock) {
             extern long xt_sock_recvfrom(int, void *, unsigned, unsigned *, unsigned *,
                                          int (*)(void *), void *);
-            unsigned *a = (unsigned *)p->da2;              /* a[0]=len in, a[1]=ip, a[2]=port out */
-            r = a ? xt_sock_recvfrom(p->fd[p->da0].sock - 1, (void *)p->da1, a[0],
+            unsigned *a = (unsigned *)p->cur->da2;              /* a[0]=len in, a[1]=ip, a[2]=port out */
+            r = a ? xt_sock_recvfrom(p->fd[p->cur->da0].sock - 1, (void *)p->cur->da1, a[0],
                                      &a[1], &a[2], sock_tick, p) : -1;
-        } else if (p->dnum == SYS_close &&
-                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].sock) {
+        } else if (p->cur->dnum == SYS_close &&
+                   p->cur->da0 < NFD && p->fd[p->cur->da0].open && p->fd[p->cur->da0].sock) {
             extern void xt_sock_close(int);
-            xt_sock_close(p->fd[p->da0].sock - 1);
-            p->fd[p->da0].open = 0; p->fd[p->da0].sock = 0;
+            xt_sock_close(p->fd[p->cur->da0].sock - 1);
+            p->fd[p->cur->da0].open = 0; p->fd[p->cur->da0].sock = 0;
             r = 0;
-        } else if (p->dnum == SYS_ioctl && p->da0 < NFD && p->fd[p->da0].open &&
-                   (p->da1 == XT_FIONBIO || (p->da1 == XT_FIONREAD && p->fd[p->da0].pipei))) {
+        } else if (p->cur->dnum == SYS_ioctl && p->cur->da0 < NFD && p->fd[p->cur->da0].open &&
+                   (p->cur->da1 == XT_FIONBIO || (p->cur->da1 == XT_FIONREAD && p->fd[p->cur->da0].pipei))) {
             /* FIONBIO on any fd: set/clear O_NONBLOCK. FIONREAD on a pipe: buffered bytes
              * (accurate poll — an empty pipe is NOT readable, unlike the always-ready
              * fallback). */
-            fd_t *cf = &p->fd[p->da0];
-            if (p->da1 == XT_FIONBIO) {
-                cf->nonblock = cf->vf.nonblock = (p->da2 && *(int *)p->da2) ? 1 : 0;
+            fd_t *cf = &p->fd[p->cur->da0];
+            if (p->cur->da1 == XT_FIONBIO) {
+                cf->nonblock = cf->vf.nonblock = (p->cur->da2 && *(int *)p->cur->da2) ? 1 : 0;
                 r = 0;
             } else {
                 /* FIONREAD on a pipe: buffered bytes; returns 1 (not 0) when the
@@ -2544,62 +2979,62 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                  * the writer went away. */
                 kpipe_t *pp = &g_pipes[cf->pipei - 1];
                 int avail = (int)xStreamBufferBytesAvailable(pp->sb);
-                if (p->da2) *(int *)p->da2 = avail;
+                if (p->cur->da2) *(int *)p->cur->da2 = avail;
                 r = (!avail && pp->writers <= 0) ? 1 : 0;
             }
-        } else if (p->dnum == SYS_ioctl && p->da0 < NFD &&
-                   p->fd[p->da0].open && p->fd[p->da0].sock) {
+        } else if (p->cur->dnum == SYS_ioctl && p->cur->da0 < NFD &&
+                   p->fd[p->cur->da0].open && p->fd[p->cur->da0].sock) {
             extern long xt_sock_avail(int);                /* FIONREAD = poll readability */
             extern int  xt_ifreq_ioctl(unsigned, void *);  /* SIOCGIF* = ifconfig display */
             extern int  xt_sock_endpoint(int, int, unsigned *, unsigned *);
-            if (p->da1 == XT_FIONREAD && p->da2)
-                r = (*(int *)p->da2 = (int)xt_sock_avail(p->fd[p->da0].sock - 1), 0);
-            else if ((p->da1 == XT_SIOCGPEER || p->da1 == XT_SIOCGNAME) && p->da2) {
+            if (p->cur->da1 == XT_FIONREAD && p->cur->da2)
+                r = (*(int *)p->cur->da2 = (int)xt_sock_avail(p->fd[p->cur->da0].sock - 1), 0);
+            else if ((p->cur->da1 == XT_SIOCGPEER || p->cur->da1 == XT_SIOCGNAME) && p->cur->da2) {
                 /* getpeername/getsockname: u32[2] out = {ip_be32, port} */
-                unsigned *o = (unsigned *)p->da2;
-                r = xt_sock_endpoint(p->fd[p->da0].sock - 1,
-                                     p->da1 == XT_SIOCGPEER, &o[0], &o[1]);
+                unsigned *o = (unsigned *)p->cur->da2;
+                r = xt_sock_endpoint(p->fd[p->cur->da0].sock - 1,
+                                     p->cur->da1 == XT_SIOCGPEER, &o[0], &o[1]);
             }
-            else if ((p->da1 & 0xFF00u) == 0x8900u)        /* SIOCGIF* interface queries */
-                r = xt_ifreq_ioctl((unsigned)p->da1, (void *)p->da2);
+            else if ((p->cur->da1 & 0xFF00u) == 0x8900u)        /* SIOCGIF* interface queries */
+                r = xt_ifreq_ioctl((unsigned)p->cur->da1, (void *)p->cur->da2);
             else
                 r = -1;
-        } else if (p->dnum == SYS_ioctl) {                 /* device controls (tty modes, i2c, ...) */
-            uint32_t ifd = p->da0;
+        } else if (p->cur->dnum == SYS_ioctl) {                 /* device controls (tty modes, i2c, ...) */
+            uint32_t ifd = p->cur->da0;
             int is_con = (ifd < 3 && !(ifd < NFD && p->fd[ifd].open)) ||   /* raw console stdio */
                          (ifd < NFD && p->fd[ifd].open && p->fd[ifd].con); /* console alias */
             if (is_con)
-                r = k_tty_ioctl(p, (unsigned)p->da1, (void *)p->da2);
+                r = k_tty_ioctl(p, (unsigned)p->cur->da1, (void *)p->cur->da2);
             else {
                 fd_t *cf = (ifd < NFD && p->fd[ifd].open) ? &p->fd[ifd] : 0;
                 r = (cf && cf->vf.chr && cf->vf.ioctl)
-                    ? cf->vf.ioctl(&cf->vf, (unsigned)p->da1, (void *)p->da2) : -1;
+                    ? cf->vf.ioctl(&cf->vf, (unsigned)p->cur->da1, (void *)p->cur->da2) : -1;
             }
-        } else if (p->dnum == SYS_net_up) {
+        } else if (p->cur->dnum == SYS_net_up) {
             /* boot-script networking bring-up (/bin/netup); idempotent */
             extern void net_init(void);
             net_init(); r = 0;
-        } else if (p->dnum == SYS_close &&
-                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
-            k_pipe_close_end(&p->fd[p->da0]); r = 0;
-        } else if (p->dnum == SYS_dup2) {                  /* pipe-end duplication */
-            r = k_dup2(p, (int)p->da0, (int)p->da1);
-        } else if (p->dnum == SYS_waitpid && (p->da1 & XT_WAIT_PEEK)) {  /* peek: no reap */
-            extern int frtos_waitpid_peek(int); r = frtos_waitpid_peek((int)p->da0);
-        } else if (p->dnum == SYS_waitpid && (p->da1 & 1)) {   /* poll (WNOHANG) */
-            extern int frtos_waitpid_poll(int); r = frtos_waitpid_poll((int)p->da0);
-        } else if (p->dnum == SYS_waitpid) {               /* blocks until the child exits */
-            extern int frtos_waitpid_notify(int); r = frtos_waitpid_notify((int)p->da0);
-        } else if (p->dnum == SYS_read &&
-                   ((p->da0 == 0 && !p->fd[0].open) ||   /* fd0 open = redirected file stdin */
-                    (p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].con))) {
+        } else if (p->cur->dnum == SYS_close &&
+                   p->cur->da0 < NFD && p->fd[p->cur->da0].open && p->fd[p->cur->da0].pipei) {
+            k_pipe_close_end(&p->fd[p->cur->da0]); r = 0;
+        } else if (p->cur->dnum == SYS_dup2) {                  /* pipe-end duplication */
+            r = k_dup2(p, (int)p->cur->da0, (int)p->cur->da1);
+        } else if (p->cur->dnum == SYS_waitpid && (p->cur->da1 & XT_WAIT_PEEK)) {  /* peek: no reap */
+            extern int frtos_waitpid_peek(int); r = frtos_waitpid_peek((int)p->cur->da0);
+        } else if (p->cur->dnum == SYS_waitpid && (p->cur->da1 & 1)) {   /* poll (WNOHANG) */
+            extern int frtos_waitpid_poll(int); r = frtos_waitpid_poll((int)p->cur->da0);
+        } else if (p->cur->dnum == SYS_waitpid) {               /* blocks until the child exits */
+            extern int frtos_waitpid_notify(int); r = frtos_waitpid_notify((int)p->cur->da0);
+        } else if (p->cur->dnum == SYS_read &&
+                   ((p->cur->da0 == 0 && !p->fd[0].open) ||   /* fd0 open = redirected file stdin */
+                    (p->cur->da0 < NFD && p->fd[p->cur->da0].open && p->fd[p->cur->da0].con))) {
             /* stdin (or a console alias): the tty line discipline — the console
              * is a raw UART, so ECHO / backspace-erase / CR->NL live HERE, once,
              * for every program (a shell expects a cooked tty). One console =
              * one line buffer; reads drain it, empty refills. Raw mode
              * (XT_TTY_SETMODE canon=0 — vi, hexedit) bypasses all of it. */
-            char *buf = (char *)p->da1;
-            if (!buf || p->da2 == 0) r = 0;
+            char *buf = (char *)p->cur->da1;
+            if (!buf || p->cur->da2 == 0) r = 0;
             else if (!g_tty.canon) {
                 /* raw: bytes verbatim as they arrive — no line buffer, no erase.
                  * ONE mapping survives: this console's Enter is CRLF, so a \n
@@ -2610,7 +3045,7 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                  * Serve cooked leftover first; else block until one deliverable
                  * byte arrives, then drain what's already buffered so escape
                  * sequences arrive in one read where possible. */
-                uint32_t want = (uint32_t)p->da2, k = 0;
+                uint32_t want = (uint32_t)p->cur->da2, k = 0;
                 while (k < want && g_lpos < g_llen) buf[k++] = g_lbuf[g_lpos++];
                 while (!k && !g_con_eof) {
                     int c = con_tty_readc();
@@ -2682,39 +3117,39 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                     }
                 }
                 uint32_t avail = (uint32_t)(g_llen - g_lpos);
-                uint32_t n = (uint32_t)p->da2 < avail ? (uint32_t)p->da2 : avail;
+                uint32_t n = (uint32_t)p->cur->da2 < avail ? (uint32_t)p->cur->da2 : avail;
                 if (n) { memcpy(buf, g_lbuf + g_lpos, n); g_lpos += (int)n; }
                 r = (long)n;                              /* 0 = EOF */
             }
-        } else if (p->dnum == SYS_read) {
+        } else if (p->cur->dnum == SYS_read) {
             /* file read over the page store, in the CLIENT's space (buf is mapped here);
              * pages are filled by the fs task, copied out one memcpy each. */
             r = fs_read(p);
-        } else if (p->dnum == SYS_write && p->da0 < NFD &&
-                   p->fd[p->da0].open && !p->fd[p->da0].con) {
+        } else if (p->cur->dnum == SYS_write && p->cur->da0 < NFD &&
+                   p->fd[p->cur->da0].open && !p->fd[p->cur->da0].con) {
             /* file write over the page store (client space, buf mapped here); pages are
              * dirtied in place and flushed by the fs task on evict/close. CONSOLE
              * writes fall through to do_syscall — normally inline, they only land
              * here when the stop gate (^Z) force-defers every syscall. */
             r = fs_write(p);
-        } else if (p->dnum == SYS_open || p->dnum == SYS_close) {
+        } else if (p->cur->dnum == SYS_open || p->cur->dnum == SYS_close) {
             /* metadata ops (no client data buffer) -> the fs service task owns them. */
             r = fs_call(p);
-        } else if (p->dnum == SYS_stat || p->dnum == SYS_lstat || p->dnum == SYS_readlink ||
-                   p->dnum == SYS_symlink || p->dnum == SYS_unlink || p->dnum == SYS_readdir ||
-                   p->dnum == SYS_mkdir || p->dnum == SYS_chdir || p->dnum == SYS_rename ||
-                   p->dnum == SYS_statfs) {
+        } else if (p->cur->dnum == SYS_stat || p->cur->dnum == SYS_lstat || p->cur->dnum == SYS_readlink ||
+                   p->cur->dnum == SYS_symlink || p->cur->dnum == SYS_unlink || p->cur->dnum == SYS_readdir ||
+                   p->cur->dnum == SYS_mkdir || p->cur->dnum == SYS_chdir || p->cur->dnum == SYS_rename ||
+                   p->cur->dnum == SYS_statfs) {
             /* path metadata + symlinks + dir enumeration + mkdir/chdir/rename: fs task walks FatFs. */
             r = fs_meta(p);
-        } else if (p->dnum == SYS_getdents) {              /* batch dir read (entries + metadata) */
+        } else if (p->cur->dnum == SYS_getdents) {              /* batch dir read (entries + metadata) */
             r = fs_getdents(p);
-        } else if (p->dnum == SYS_mmap) {
+        } else if (p->cur->dnum == SYS_mmap) {
             /* mmap a backing-store file: the fs task eager-fills + maps it into our space. */
             r = fs_mmap(p);
-        } else if (p->dnum == SYS_munmap) {
+        } else if (p->cur->dnum == SYS_munmap) {
             /* munmap: the fs task writes back dirty pages (if any) then unmaps. */
             r = fs_munmap(p);
-        } else if (p->dnum == SYS_input) {
+        } else if (p->cur->dnum == SYS_input) {
             /* Block for the next input event. THE QUEUE IS THE SOURCE OF TRUTH (input_dev.c):
              * one decoder task drains the serial lane and everybody — this syscall and
              * /OS/dev/input — is a view on the same queue, so there is never a second reader
@@ -2724,24 +3159,24 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             extern int  xt_input_pop(struct os_event *, int);
             extern void xt_input_set_raw(int);
             extern void xt_input_pos(int *, int *);
-            struct os_event *ev = (struct os_event *)p->da0;
+            struct os_event *ev = (struct os_event *)p->cur->da0;
             if (!ev) { r = -1; }
             else {
                 memset(ev, 0, sizeof *ev);
-                xt_input_set_raw((int)p->da2);
-                if (!xt_input_pop(ev, (int)p->da1)) {          /* timeout: the old contract */
+                xt_input_set_raw((int)p->cur->da2);
+                if (!xt_input_pop(ev, (int)p->cur->da1)) {          /* timeout: the old contract */
                     ev->type = OS_EV_TIMER;
                     xt_input_pos(&ev->mx, &ev->my);
                 }
                 r = 0;
             }
         } else {
-            r = do_syscall(p->dnum, p->da0, p->da1, p->da2);
+            r = do_syscall(p->cur->dnum, p->cur->da0, p->cur->da1, p->cur->da2);
         }
     }
-    if (p && p->strace) { extern void strace_ret(uint32_t, long); strace_ret(p->dnum, r); }
+    if (p && p->strace) { extern void strace_ret(uint32_t, long); strace_ret(p->cur->dnum, r); }
     if (p) {
-        p->dctx[0] = (uint32_t)r;         /* result into dctx[0] (.Lsysret no longer stores it) */
+        p->cur->dctx[0] = (uint32_t)r;         /* result into dctx[0] (.Lsysret no longer stores it) */
         extern void deliver_deferred(proc_t *);
         if (p->sig_pending & ~p->sig_blocked) deliver_deferred(p);   /* inject a pending handler */
     }
@@ -2754,13 +3189,13 @@ static int defer_syscall(struct k_regs *regs, uint32_t num)
 {
     proc_t *p = cur_proc();
     if (!p) { regs->r[0] = (uint32_t)-1; return 0; }       /* no proc -> can't defer */
-    for (int i = 0; i < 13; i++) p->dctx[i] = regs->r[i];
-    p->dctx[13] = regs->lr;                                /* user resume PC */
+    for (int i = 0; i < 13; i++) p->cur->dctx[i] = regs->r[i];
+    p->cur->dctx[13] = regs->lr;                                /* user resume PC */
     uint32_t spsr, spu, lru;
     __asm__ volatile("mrs %0, spsr" : "=r"(spsr));
     __asm__ volatile("cps #0x1f\n\tmov %0, sp\n\tmov %1, lr\n\tcps #0x13" : "=r"(spu), "=r"(lru) :: "memory"); /* sp_usr + r14_usr */
-    p->dctx[14] = spu; p->dctx[15] = spsr; p->dctx[16] = lru;
-    p->dnum = num; p->da0 = regs->r[0]; p->da1 = regs->r[1]; p->da2 = regs->r[2];
+    p->cur->dctx[14] = spu; p->cur->dctx[15] = spsr; p->cur->dctx[16] = lru;
+    p->cur->dnum = num; p->cur->da0 = regs->r[0]; p->cur->da1 = regs->r[1]; p->cur->da2 = regs->r[2];
     regs->lr = (uint32_t)(uintptr_t)deferral_thunk;
     return 1;
 }
@@ -2778,6 +3213,18 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return -1;
     case SYS_getpid: return p ? p->pid : 0;
     case SYS_envp:   return p ? (long)(uintptr_t)p->envp : 0;   /* inherited env (shim seeds environ) */
+    /* threads: the two that neither block nor allocate answer inline. The rest go
+     * through the deferral (needs_task_ctx), because creating a task, joining one and
+     * waiting on a futex all need a context that can yield. */
+    case SYS_thread_self: { thread_t *t = cur_thread(); return t ? t->tid : 0; }
+    case SYS_thread_tls: {                                   /* (ptr) -> previous */
+        thread_t *t = cur_thread();
+        if (!t) return 0;
+        long old = (long)t->tls;
+        t->tls = (uint32_t)a0;
+        __asm__ volatile("mcr p15,0,%0,c13,c0,2" :: "r"((uint32_t)a0));   /* effective NOW */
+        return old;
+    }
     case SYS_reboot: {                                       /* (cmd) -> no return: PS soft reset */
         volatile uint32_t *slcr = (volatile uint32_t *)0xF8000000u;
         __asm__ volatile("cpsid if");                        /* mask interrupts */
@@ -3142,6 +3589,11 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     uint32_t fd = regs->r[0];
     switch (num) {
     case SYS_waitpid: return 1;                    /* blocks on the child */
+    case SYS_thread_create: return 1;              /* xTaskCreateStatic + vm_stack_map */
+    case SYS_thread_join:   return 1;              /* BLOCKS until the thread exits */
+    case SYS_thread_detach: return 1;              /* may reclaim an already-exited thread */
+    case SYS_futex_wait:    return 1;              /* BLOCKS */
+    case SYS_futex_wake:    return 1;              /* notifies tasks -> not from the SVC handler */
     case SYS_spawn:   return 1;                    /* may load a DT_NEEDED lib from the SD */
     case SYS_spawn_fd: return 1;                   /* spawn + pipe-end refcounts */
     case SYS_pipe:    return 1;                    /* takes the FreeRTOS heap (stream buffer) */
@@ -3224,6 +3676,10 @@ static const char *strace_name(uint32_t n)
     case SYS_envp: return "envp";       case SYS_strace: return "strace";
     case SYS_connect: return "connect"; case SYS_bind: return "bind";
     case SYS_listen: return "listen";
+    case SYS_thread_create: return "thread_create"; case SYS_thread_exit: return "thread_exit";
+    case SYS_thread_join: return "thread_join";     case SYS_thread_detach: return "thread_detach";
+    case SYS_thread_self: return "thread_self";     case SYS_thread_tls: return "thread_tls";
+    case SYS_futex_wait: return "futex_wait";       case SYS_futex_wake: return "futex_wake";
     default: return 0;
     }
 }
@@ -3314,16 +3770,16 @@ static void deliver_inline(proc_t *p, struct k_regs *regs)
     }
 }
 
-/* deferred (blocking) syscall-return delivery: context lives in p->dctx. dctx[0]
+/* deferred (blocking) syscall-return delivery: context lives in p->cur->dctx. dctx[0]
  * must already hold the syscall result (the frame saves it as r0 for sigreturn). */
 void deliver_deferred(proc_t *p)
 {
     uint32_t r[16], cpsr;
-    for (int i = 0; i < 13; i++) r[i] = p->dctx[i];
-    r[13] = p->dctx[14]; r[14] = p->dctx[16]; r[15] = p->dctx[13]; cpsr = p->dctx[15];
+    for (int i = 0; i < 13; i++) r[i] = p->cur->dctx[i];
+    r[13] = p->cur->dctx[14]; r[14] = p->cur->dctx[16]; r[15] = p->cur->dctx[13]; cpsr = p->cur->dctx[15];
     if (deliver_signals(p, r, &cpsr, 1)) {             /* blocked-syscall return: eligible for SA_RESTART */
-        for (int i = 0; i < 13; i++) p->dctx[i] = r[i];
-        p->dctx[13] = r[15]; p->dctx[14] = r[13]; p->dctx[16] = r[14]; p->dctx[15] = cpsr;
+        for (int i = 0; i < 13; i++) p->cur->dctx[i] = r[i];
+        p->cur->dctx[13] = r[15]; p->cur->dctx[14] = r[13]; p->cur->dctx[16] = r[14]; p->cur->dctx[15] = cpsr;
     }
 }
 
@@ -3347,11 +3803,11 @@ void xt_sig_async_hook(uint32_t *sp)
     uint32_t cpsr = sp[off + 15];
     if ((cpsr & 0x1f) != 0x10) return;       /* not User(PL0) mode -> leave it */
     uint32_t fwords = off + 16;              /* whole frame size (words), through CPSR */
-    for (int i = 0; i < 13; i++) p->async_ctx[i] = rg[i];
-    p->async_ctx[13] = (uint32_t)(uintptr_t)(sp + fwords);  /* r13/sp (implicit in the frame) */
-    p->async_ctx[14] = rg[13];               /* r14 */
-    p->async_ctx[15] = sp[off + 14];         /* r15/PC */
-    p->async_cpsr = cpsr;
+    for (int i = 0; i < 13; i++) p->cur->async_ctx[i] = rg[i];
+    p->cur->async_ctx[13] = (uint32_t)(uintptr_t)(sp + fwords);  /* r13/sp (implicit in the frame) */
+    p->cur->async_ctx[14] = rg[13];               /* r14 */
+    p->cur->async_ctx[15] = sp[off + 14];         /* r15/PC */
+    p->cur->async_cpsr = cpsr;
     sp[off + 14] = p->sig_trap;              /* resume at __sig_trap instead of the real PC */
 }
 
@@ -3395,6 +3851,21 @@ int k_syscall_dispatch(struct k_regs *regs)
         regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;   /* resume the thunk (at PL1) */
         return 1;
     }
+    if (num == SYS_thread_exit) {
+        /* End ONE flow. The main thread is not a special case by accident: a process is
+         * defined by its main thread, so tid 0 leaving is the process leaving — which is
+         * also what C's `return from main` has always meant. */
+        thread_t *t = cur_thread();
+        if (!t || t->tid == 0) {
+            proc_t *p = cur_proc();
+            if (p) p->exit_code = (int)regs->r[0];
+            regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;
+        } else {
+            t->retval = (int)regs->r[0];
+            regs->lr = (uint32_t)(uintptr_t)thread_exit_thunk;
+        }
+        return 1;                                          /* resume the thunk at PL1 */
+    }
     if (num == SYS_sigreturn) {                            /* restore the interrupted context */
         do_sigreturn(cur_proc(), regs, (long)regs->r[0]);
         return 0;
@@ -3403,8 +3874,8 @@ int k_syscall_dispatch(struct k_regs *regs)
         proc_t *p = cur_proc();
         if (p) {
             uint32_t r[16], cpsr;
-            for (int i = 0; i < 16; i++) r[i] = p->async_ctx[i];
-            cpsr = p->async_cpsr;
+            for (int i = 0; i < 16; i++) r[i] = p->cur->async_ctx[i];
+            cpsr = p->cur->async_cpsr;
             deliver_signals(p, r, &cpsr, 0);               /* -> handler, or unchanged = resume as-is */
             for (int i = 0; i < 13; i++) regs->r[i] = r[i];
             regs->lr = r[15];
@@ -3628,6 +4099,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
      * the console waited for a signal that had already been sent and thrown away. */
     if (g_claim_init) { g_claim_init = 0; g_init_pid = p->pid; }
     p->killed = 0;                       /* slot reuse must not inherit a SYS_kill */
+    p->dying  = 0;                       /* ...nor a teardown claim */
     p->stopped = 0;                      /* ...nor a SIGSTOP */
     p->sig_pending = 0; p->sig_blocked = 0; p->sig_trap = 0;   /* exec resets signal state */
     for (int si = 0; si < XT_NSIG; si++) { p->sigact[si].handler = XT_SIG_DFL; p->sigact[si].mask = 0; p->sigact[si].flags = 0; p->sigact[si].restorer = 0; p->sigact[si].trap = 0; }
@@ -3684,14 +4156,21 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
         depth -= ARGV_WORDS;
         p->envp = copy_argv(envc, envp, stk + depth, ARGV_WORDS * sizeof(StackType_t));
     }
+    /* the main thread (tid 0): its stack is the stackguard arena slot, not the
+     * per-process thread-stack window, and it lives inline in proc_t. */
+    memset(&p->main, 0, sizeof p->main);
+    for (int i = 0; i < MAXTHREAD; i++) p->thr[i] = 0;
+    p->main.used = 1; p->main.tid = 0; p->main.proc = p;
+    p->thr[0] = &p->main; p->cur = &p->main; p->nthread = 1;
     /* xTaskCreateStatic returns the handle (unlike xTaskCreate's out-param), and
      * the new task is higher priority than us — it would run (and look itself up via
-     * cur_proc) BEFORE p->task is assigned. Suspend the scheduler so the assignment
-     * lands first. */
+     * cur_thread) BEFORE its TLS pointer is installed. Suspend the scheduler so both
+     * assignments land first. */
     vTaskSuspendAll();
-    p->task = xTaskCreateStatic(app_main, nm, depth, p, 3, stk, &p->tcb);
+    p->main.task = xTaskCreateStatic(app_main, nm, depth, p, 3, stk, &p->main.tcb);
+    if (p->main.task) vTaskSetThreadLocalStoragePointer(p->main.task, 0, &p->main);
     xTaskResumeAll();
-    if (!p->task) { vSemaphoreDelete(p->done); p->used = 0; return -1; }
+    if (!p->main.task) { vSemaphoreDelete(p->done); p->used = 0; return -1; }
     return p->pid;
 }
 
@@ -4139,7 +4618,13 @@ static int frtos_reap(proc_t *p)
       for (int i = 0; !any && i < FS_MAXMAP; i++) if (g_wrmap[slot][i].used) any = 1;  /* writable map, fd maybe closed */
       if (any) { if (g_fs_q) kfs_call(KFS_CLOSEALL, 0, 0, (uint32_t)slot, 0);
                  else        fs_close_all(slot); } }
-    if (p->task) { vTaskDelete(p->task); p->task = 0; }   /* the child parked in vTaskSuspend */
+    /* Every worker thread first: they must be gone before the address space is, since
+     * their stacks live IN it. threads_teardown gives a sibling parked in the kernel a
+     * bounded chance to unwind, then takes it. */
+    futex_forget(p);
+    threads_teardown(p, 0);
+    if (p->main.task) { vTaskDelete(p->main.task); p->main.task = 0; }   /* parked in vTaskSuspend */
+    p->main.used = 0; p->nthread = 0; p->cur = &p->main;
     if (p->done) { vSemaphoreDelete(p->done); p->done = 0; }
     if (g_fb_owner_pid == p->pid) g_fb_owner_pid = -1;    /* M7 gate: a dead display owner
                                                            * frees the claim — a restarted
