@@ -10,6 +10,8 @@
 #include "lwip/apps/mdns.h"
 #include "lwip/apps/sntp.h"
 #include "lwip/dns.h"
+#include "lwip/igmp.h"
+#include "lwip/timeouts.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -64,6 +66,26 @@ static void tcpip_ready(void *arg)
     g_lwip_ready = 1;
 }
 
+/* mDNS keepalive (2026-08-10): xtos.local resolution died repeatedly minutes
+ * into a session while unicast stayed perfect — the responder itself was
+ * healthy (it answered a UNICAST dig @board -p 5353 mid-wedge), so inbound
+ * MULTICAST delivery is what stops, most plausibly an IGMP-snooping switch
+ * aging out the 224.0.0.251 registration.  Re-sending the membership
+ * reports refreshes the switch; the gratuitous announce additionally
+ * repopulates peer caches directly, so names keep resolving even while
+ * inbound multicast is being filtered.  Runs on the tcpip thread via a
+ * self-re-arming sys_timeout (one MEMP_NUM_SYS_TIMEOUT slot). */
+#define MDNS_KEEPALIVE_MS 60000
+static void mdns_keepalive(void *arg)
+{
+    (void)arg;
+    if (netif_is_up(&g_nif) && !ip4_addr_isany_val(*netif_ip4_addr(&g_nif))) {
+        igmp_report_groups(&g_nif);
+        mdns_resp_announce(&g_nif);
+    }
+    sys_timeout(MDNS_KEEPALIVE_MS, mdns_keepalive, 0);
+}
+
 static void net_status(struct netif *nif)
 {
     if (netif_is_up(nif) && !ip4_addr_isany_val(*netif_ip4_addr(nif))) {
@@ -105,6 +127,7 @@ static void net_task(void *arg)
     netif_set_up(&g_nif);
     mdns_resp_init();
     mdns_resp_add_netif(&g_nif, "xtos");             /* xtos.local */
+    sys_timeout(MDNS_KEEPALIVE_MS, mdns_keepalive, 0);   /* see the note above */
     dhcp_start(&g_nif);
     /* static DNS from /OS/etc/resolv.conf ("nameserver a.b.c.d" lines) —
      * indices 0..1, so DHCP's DNS (also set here) fills the rest */

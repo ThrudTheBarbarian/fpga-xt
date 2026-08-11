@@ -121,3 +121,108 @@ construction.
   its board A/B are Simon's** — XL window render, ACID-in-fabric,
   textured-background fidelity.
 - Phases 3-5: not started.
+
+
+## Phase 6 — one clock domain (the Atari realm on clk_sally)
+
+Added 2026-08-10, from the antic-sally-interop campaign's conclusion and
+Simon's steer ("antic was a simple chip... why are we so close to timing?").
+
+Every seam the campaign patched — bus-arrival skew, the read/write sampling
+asymmetry, the early POKEY write lane, the per-BOOT mesochronous phase
+lottery in the marginal POKEY trio — is the tax on the CPU (clk_sally) and
+chipset (clk_sys) living in different domains and talking through
+mesochronous bridges.  The sim proves the endgame: `a8_core` is the same
+antic2 RTL in ONE domain and scores 55/58 with zero seams.  (MiSTer's A800
+takes the same shape: one clock, enable chains, no crossings — architecture
+noted as reference only; its GPL source is never copied.)
+
+Move antic2 + a2_video + both POKEYs onto clk_sally beside the fid core:
+
+- **Timing headroom**: clk_sally is 10 ns against clk_sys's 7.5 — antic2's
+  worst cones gain 2.5 ns before any constraint work.  The remaining
+  pressure is undeclared MULTICYCLE paths: tick-gated logic forced to close
+  in one clock while its data is stable for ~75.  With one domain the
+  enables become plain clock enables and MCP constraints are safe to write
+  per block (care: antic_pf_stream's fetch FSM and the mem handshake are
+  clk-rate — never blanket the whole core).
+- **The crossings that REMAIN**: the render/lb stream into the writeback
+  (clk_sally -> clk_sys at the line-buffer boundary — a data stream where
+  cycle semantics do not matter), the GP0 register file (already
+  domain-agnostic strobes), and the BRAM ports (dual-clock BRAMs).
+- **What DISSOLVES**: the hwreg write/read CDC (bus ops become native),
+  the early POKEY lane + skid, the chipset delay lines, the RANDOM
+  lookahead, the rw_* authority syncs, and the phase lottery itself.
+- **Gate**: full acid sweep (target = the sim's 55 with serdirect/skstat na
+  pending peri-RP serial), DespatchRider + OS boot, timing at WNS >= 0 on
+  all clocks without directive roulette.
+
+
+### Phase 6 status (2026-08-10)
+
+**LANDED — the Atari realm runs on clk_sally.**
+
+- **Chunk 1** (04ac8092): antic2_fabric native — same phi2_tick_fid as the
+  fid core, native bus (reads combinational with 49 clk settle, writes
+  strobed exactly-once), lb_stream_cdc carrying the render stream with the
+  line number riding each start marker, native rdy/nmi/steal wires, the
+  fabric resets WITH the CPU on SALLYRST (deterministic CPU-cycle-0-on-
+  line-0 every launch — the phase lottery is structurally gone).  Deleted:
+  rw_phi2_dl delay taps, split time bases, the snoop toggle crossing, the
+  VCOUNT/NMIST mbit CDC, the rdy/nmi/steal 2-FF syncs, hwreg read-CDC for
+  the native pages, the antic_gtia fallback branch.
+- **Chunk 2** (75951a58): both POKEYs native beside the CPU — write/read
+  strobes on the fid grid, native /IRQ, keyboard toggle-crossed in, POT
+  shadows/POTGO/SEROUT bridged to the peri machinery left in antic_top,
+  audio channels 2-FF'd into the I2S mixer.  Deleted: the early $D2xx
+  lane, the write skid, the RANDOM lookahead.  The fire button now threads
+  from joy_ovr to the fabric's TRIG0.  The turbo core loses POKEY by
+  design (debug core; nothing on the crossed path decodes $D2xx).
+- **Strobe instant** (ba04f4a6): chipset writes strobe at SUB_DATA, the
+  sim's own contract — the commit slot's registered strobe could land ON
+  the next tick under the fractional phi2 divider's 54..57-clk cycles and
+  lost antic_wsync's release-cycle re-arm (d5, "$14 != $34").  tb_acid
+  gained an `acid2j` target that runs the hardware's 55.866-clk jittered
+  cadence for exactly this class of HW-vs-sim question.
+- **Timing**: both builds met WNS >= 0 on ALL clocks first try, no
+  directive roulette (clk_sys shed the fabric's worst cones; the fabric
+  gained clk_sally's 10 ns).
+- **ACID**: 50 pass (chunk 1, run 2026-08-10-4) -> 54 pass (chunk 2, run
+  -5).  dlitiming/dmapattern/noise/timertiming went green with native
+  POKEY; virtdma with the native last-bus.  Open: antic_wsync (the strobe
+  fix above, in validation), serdirect/skstat (environmental — no serial
+  bus device; na candidates pending Simon's call).
+- **Still to retire**: the legacy antic_top machine (timing master +
+  peri/i2s host today), its delayed time base, and the crossed-bus
+  register lanes for the pages that remain clk_sys.
+
+### Phase 6 worklist (scoped 2026-08-10)
+
+1. **Clocking**: `u_antic2_fab` moves to clk_sally/rst_sally in fpga_xt_top;
+   both POKEYs likewise (they live in antic_top, which is otherwise clk_sys —
+   pull the POKEY pair + their phi2 divider up into a clk_sally subtree, or
+   re-clock antic_top's POKEY slice; the audio ch outputs cross to
+   pokey_i2s_tx as slow-changing sample values — a 2-FF sync per 4-bit
+   channel is sufficient, samples change at audio rates).
+2. **CPU bus, native**: the fid core's addr/data/rw/strobes drive
+   antic2_fabric and POKEY directly on clk_sally.  DELETE: the hwreg write
+   toggle crossing (for $D0/$D2/$D4 pages), hwreg_rd_cdc for those pages,
+   the early POKEY lane + skid, the RANDOM lookahead, both chipset delay
+   lines, the antic2 bus snoop crossing (the last-bus latch reads the native
+   bus).  KEEP hwreg paths for the pages that stay clk_sys (blitter regs are
+   already local; audit $D5xx/$D1xx consumers).
+3. **Video stream**: lb_wr/lb_color/lb_line_start (clk_sally) into
+   antic_wb_adapt (clk_sys): a shallow async FIFO (or dual-clock BRAM line
+   buffer) at exactly this boundary — data stream, no cycle semantics.
+   The compositor/writeback stay clk_sys.
+4. **NMI/RDY/steal to the fid core**: become same-domain wires — the
+   rwnmi/rwrdy/rwsteal syncs and the recognition-window sensitivity go away.
+5. **VCOUNT/NMIST reads**: native (the hwreg_rd_cdc round-trip dies).
+6. **BRAMs**: display shadow / charset ports serving antic2 move to
+   clk_sally ports (dual-clock BRAM primitives where both domains touch).
+7. **Constraints**: clk_sally gains the antic2 block — 10 ns budget; add
+   scoped MCP for tick-gated groups where analysis allows (NOT
+   antic_pf_stream's fetch FSM / mem handshake — clk-rate).  Retire the
+   directive-roulette notes if WNS stabilizes.
+8. **Gate**: acid sweep >= the sim's 55-with-2-na, DespatchRider + OS boot
+   + `make boot`, READY/reset geometry grabs, timing WNS >= 0 first try.

@@ -50,7 +50,6 @@ HDL_SRCS := \
     $(HDL_DIR)/pokey_serial.sv    \
     $(HDL_DIR)/pokey_i2s_tx.sv    \
     $(HDL_DIR)/pokey.sv           \
-    $(HDL_DIR)/pokey_serial.sv    \
     $(HDL_DIR)/sally_clock.sv     \
     $(HDL_DIR)/bank_xlat.sv       \
     $(HDL_DIR)/sally_mem.sv       \
@@ -347,6 +346,7 @@ pokey: $(BUILD_DIR)/tb_pokey.vvp
 POKEY_HDL := \
     $(HDL_DIR)/pokey_regs.sv     \
     $(HDL_DIR)/pokey_audio.sv    \
+    $(HDL_DIR)/pokey_serial.sv   \
     $(HDL_DIR)/pokey_pot.sv      \
     $(HDL_DIR)/pokey_i2s_tx.sv   \
     $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv
@@ -1483,7 +1483,8 @@ build/tb_antic_gtia.vvp: tb_antic_gtia.sv $(ANTIC_GTIA_SRC) | build
 # suite loses the whole pokey_* family plus antic_dmapattern and
 # antic_wsync, which MEASURE through RANDOM at $$D20A.
 POKEY_SRC = $(HDL_DIR)/pia_regs.sv $(HDL_DIR)/pokey.sv $(HDL_DIR)/pokey_regs.sv \
-	    $(HDL_DIR)/pokey_audio.sv $(HDL_DIR)/pokey_pot.sv
+	    $(HDL_DIR)/pokey_audio.sv $(HDL_DIR)/pokey_pot.sv \
+	    $(HDL_DIR)/pokey_serial.sv
 
 ANTIC2_SRC = $(HDL_DIR)/antic2.sv $(HDL_DIR)/antic2_seq.sv \
 	    $(HDL_DIR)/antic2_regs.sv $(HDL_DIR)/antic2_line.sv \
@@ -1508,6 +1509,13 @@ ANTIC2_FABRIC_SRC = $(HDL_DIR)/antic2_fabric.sv $(ANTIC2_SRC) \
 	    $(HDL_DIR)/gtia_reg_file.sv $(HDL_DIR)/gtia_stage.sv \
 	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
 	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/gtia_special.sv
+
+lb_cdc: tb_lb_cdc.sv $(HDL_DIR)/lb_stream_cdc.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -o build/tb_lb_cdc.vvp -s tb_lb_cdc \
+	    tb_lb_cdc.sv $(HDL_DIR)/lb_stream_cdc.sv
+	@vvp build/tb_lb_cdc.vvp | tee build/tb_lb_cdc.log
+	@grep -q 'LB_CDC OK' build/tb_lb_cdc.log || (echo "FAIL: tb_lb_cdc"; exit 1)
+	@echo "PASS: tb_lb_cdc"
 
 antic2_fabric_lint: $(ANTIC2_FABRIC_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o build/antic2_fabric_lint.vvp \
@@ -1536,6 +1544,15 @@ acid2: build/tb_acid2.vvp
 build/tb_acid2.vvp: tb_acid.sv $(A8_CORE_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
 	    -Ptb_acid.USE_ANTIC2=1 -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
+
+# antic2 with the HARDWARE's jittered tick cadence (55.866 clk/cycle) --
+# reproduces the fabric's mesochronous phi2 spacing for HW-vs-sim bisects.
+acid2j: build/tb_acid2j.vvp
+	@vvp -N $< +TEST=$(TEST)
+
+build/tb_acid2j.vvp: tb_acid.sv $(A8_CORE_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
+	    -Ptb_acid.USE_ANTIC2=1 -Ptb_acid.JITTER=1 -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
 
 build/tb_acid.vvp: tb_acid.sv $(A8_CORE_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \

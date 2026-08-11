@@ -493,8 +493,6 @@ module tb_boot;
         .dma_rw_o           (),
         .dma_oe             (),
         .diag_wsync_overdue_count(),
-        .kbd_event_valid    (1'b0),
-        .kbd_event_code     (8'h00),
         // joy SPI MISO idles HIGH: an open PCAL9722's inputs pull high ($FF =
         // no buttons, switches released, PORTB MMU pull-up).  With it tied 0 the
         // joy_bridge poll read all-zeros and overwrote joy_portb_in's $FF reset →
@@ -779,21 +777,8 @@ module tb_boot;
     // Log which IRQST bit is pending + whether IRQEN enables it + the live
     // SEROC level, whenever irq_n is asserted and the CPU is in the $C0xx IIR.
     // ════════════════════════════════════════════════════════════════════
-    bit pk_irq_prev = 1'b1;
-    int pk_probe_n = 0;
-    always @(posedge clk_sys) begin
-        if (!rst_sys) begin
-            // Falling edge of POKEY's own irq_n (regardless of CPU PC / masking).
-            if (!u_antic_top.u_pokey_l.irq_n && pk_irq_prev && pk_probe_n < 60) begin
-                $display("[%0t] POKEY-IRQ assert: irqen=%02h pending=%02h seroc=%b",
-                         $time, u_antic_top.u_pokey_l.u_regs.irqen_q,
-                         u_antic_top.u_pokey_l.u_regs.irq_pending,
-                         u_antic_top.u_pokey_l.ser_out_complete);
-                pk_probe_n <= pk_probe_n + 1;
-            end
-            pk_irq_prev <= u_antic_top.u_pokey_l.irq_n;
-        end
-    end
+    // (POKEY IRQ probe removed — the pair is native to the CPU domain in
+    // fpga_xt_top now; the turbo path this tb models has no POKEY.)
 
     // ════════════════════════════════════════════════════════════════════
     // SELF-TEST ENTRY TRACE — REMOVED with the Arlet/SALLY core.  It logged the

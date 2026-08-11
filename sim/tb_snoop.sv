@@ -70,6 +70,14 @@ module tb_snoop;
 
     // ---- Failure tracking -----------------------------------------------
     int fail_count = 0;
+    // Phase 6: the POKEY pair is native to the CPU domain; the snoop path's
+    // job here is the ADDRESS DECODE (the 130XE addr[4] L/R split).  Count
+    // the decode strobes instead of peeking into the departed hierarchy.
+    integer snoop_l_hits = 0, snoop_r_hits = 0;
+    always @(posedge clk_bus) begin
+        if (u_dut.snoop_we_pokey_l) snoop_l_hits = snoop_l_hits + 1;
+        if (u_dut.snoop_we_pokey_r) snoop_r_hits = snoop_r_hits + 1;
+    end
 
     task automatic expect_eq(input string label,
                              input logic [7:0] actual,
@@ -183,12 +191,12 @@ module tb_snoop;
         // still 0 before the first $D21x write.
         do_write_sysmem(16'hD200, 8'h11);   // left AUDF1 ← $11
         repeat (4) @(posedge clk_bus);
-        if (u_dut.stereo_active_q !== 1'b0) begin
-            $display("FAIL stereo_active before $D21x: expected 0, got %0b",
-                     u_dut.stereo_active_q);
+        if (snoop_r_hits !== 0) begin
+            $display("FAIL pokey_r decode before $D21x: expected 0 strobes, got %0d",
+                     snoop_r_hits);
             fail_count++;
         end
-        do_write_sysmem(16'hD210, 8'h22);   // right AUDF1 ← $22 (latches stereo)
+        do_write_sysmem(16'hD210, 8'h22);   // right AUDF1 ← $22 ($D21x decode)
 
         // HITCLR strobe ($D01E write).
         do_write_d0xx(8'h1E, 8'h00);
@@ -235,11 +243,10 @@ module tb_snoop;
         // now exercised by tb_sally_mem (region routing) and
         // tb_xt_blitter (AXI write reach).
 
-        // M23-stereo: confirm the dual-POKEY decode routed $D200 to
-        // u_pokey_l's AUDF1 and $D210 to u_pokey_r's AUDF1 — the two
-        // values must NOT cross-talk.
-        expect_eq("pokey_l AUDF1", u_dut.u_pokey_l.u_regs.audf1_q, 8'h11);
-        expect_eq("pokey_r AUDF1", u_dut.u_pokey_r.u_regs.audf1_q, 8'h22);
+        // M23-stereo: confirm the dual-POKEY DECODE split $D200 from $D210
+        // on addr[4] — two left strobes ($D200 ×2 above), one right.
+        expect_eq("pokey_l decode strobes", snoop_l_hits[7:0], 8'd2);
+        expect_eq("pokey_r decode strobes", snoop_r_hits[7:0], 8'd1);
 
         // ANTIC audit fix #1: write-only registers must read $FF, not
         // their stored value. Issue read cycles to a representative
@@ -286,12 +293,11 @@ module tb_snoop;
         @(negedge clk_bus);
         bus_addr = 16'h0000;  d4xx_n = 1'b1;
 
-        // M23-stereo: the $D210 write should have latched
-        // stereo_active_q = 1, switching the right-channel mixer
-        // from dual-mono to true stereo.
-        if (u_dut.stereo_active_q !== 1'b1) begin
-            $display("FAIL stereo_active after $D21x: expected 1, got %0b",
-                     u_dut.stereo_active_q);
+        // M23-stereo: exactly one $D21x decode landed (the stereo opt-in
+        // latch itself lives with the native pair in fpga_xt_top now).
+        if (snoop_r_hits !== 1) begin
+            $display("FAIL pokey_r decode after $D21x: expected 1 strobe, got %0d",
+                     snoop_r_hits);
             fail_count++;
         end
 

@@ -702,8 +702,6 @@ module tb_fid_raster;
         .dma_rw_o           (),
         .dma_oe             (),
         .diag_wsync_overdue_count(),
-        .kbd_event_valid    (1'b0),
-        .kbd_event_code     (8'h00),
         .sally_cold         (1'b0),
         // joy SPI MISO idles HIGH: an open PCAL9722's inputs pull high ($FF =
         // no buttons, switches released, PORTB MMU pull-up).  With it tied 0 the

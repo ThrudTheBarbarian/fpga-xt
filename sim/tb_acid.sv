@@ -59,7 +59,13 @@ module tb_acid #(
     // multiple of 4 -- px_tick fires four times per machine cycle, evenly
     // spaced -- and at 56 the generator below yields exactly the phases it
     // always did: 13, 27, 41, 55.
-    parameter int PHASES = 56
+    parameter int PHASES = 56,
+    // JITTER=1 replaces the uniform generator with the HARDWARE's tick
+    // cadence: phi2 comes from antic_top's clk_sys divider synced into
+    // clk_sally, so ticks arrive every 55.866 clk on average — a mix of
+    // 55- and 56-clk machine cycles, never uniform.  Default 0 keeps the
+    // ACID-validated uniform grid.
+    parameter bit JITTER = 1'b0
 );
 
     logic clk = 0, rst = 1, cold = 0;
@@ -69,12 +75,39 @@ module tb_acid #(
 
     logic [5:0] phase = 6'd0;
     logic       tick, px_tick;
+    generate if (!JITTER) begin : g_tick_uniform
     always_ff @(posedge clk) begin
         phase   <= (phase == 6'(PHASES-1)) ? 6'd0 : phase + 6'd1;
         tick    <= (phase == 6'(PHASES-1));
         px_tick <= (phase == 6'(PXSTEP-1))   || (phase == 6'(2*PXSTEP-1)) ||
                    (phase == 6'(3*PXSTEP-1)) || (phase == 6'(4*PXSTEP-1));
     end
+    end else begin : g_tick_jitter
+    localparam int CYC_M = 55866;           // clk per machine cycle × 1000
+    int    jacc    = 0;                     // millis-of-clk accumulator
+    int    jlen    = 55;                    // current cycle length in clk
+    int    jpos    = 0;                     // clk position within the cycle
+    always_ff @(posedge clk) begin
+        tick    <= 1'b0;
+        px_tick <= 1'b0;
+        if (jpos == jlen - 1) begin
+            tick    <= 1'b1;
+            px_tick <= 1'b1;                // 4th px rides the tick, as uniform
+            jpos    <= 0;
+            // next cycle length: accumulator carries the .866 fraction
+            if (jacc + (CYC_M - 55000) >= 1000) begin
+                jlen <= 56;  jacc <= jacc + (CYC_M - 55000) - 1000;
+            end else begin
+                jlen <= 55;  jacc <= jacc + (CYC_M - 55000);
+            end
+        end else begin
+            jpos <= jpos + 1;
+            if (jpos == (jlen/4) - 1 || jpos == (jlen/2) - 1
+                                     || jpos == (3*jlen/4) - 1)
+                px_tick <= 1'b1;
+        end
+    end
+    end endgenerate
 
     wire [15:0] cpu_addr, antic_addr;
     wire [7:0]  cpu_wdata;
@@ -1070,6 +1103,10 @@ module tb_acid #(
             end
         end
     end
+    // (hoisted above the instance -- iverilog cannot bind a port to a later declaration)
+    wire        rom_hit;
+    wire [14:0] rom_addr;
+
 
     a8_core #(.USE_ANTIC2(USE_ANTIC2)) dut (
         .clk(clk), .rst(rst), .cold(cold),
@@ -1093,8 +1130,6 @@ module tb_acid #(
     // BASIC 8K at 16K.  a8_core owns the decode (rom_hit / rom_addr); this
     // side owns the bytes, serves reads, and blocks the write-through --
     // the RAM underneath keeps its contents.
-    wire        rom_hit;
-    wire [14:0] rom_addr;
     logic [7:0] rom [0:24575];
     // FOUR entries: _testEnd, _testPassed, _testFailed, _testSkipped.  Sized to
     // match acid2mem's output -- an array a slot short does not fail loudly, it

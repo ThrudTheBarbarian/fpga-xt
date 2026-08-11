@@ -93,3 +93,31 @@ set_false_path -quiet -from [get_pins rst_pix_pipe_reg[*]/C] \
 # sally_core CLR/PRE paths from rst_sally_pipe
 set_false_path -quiet -from [get_pins rst_sally_pipe_reg[*]/C] \
                -to [get_pins -hier -filter {NAME =~ */CLR || NAME =~ */PRE}]
+
+# ---- Phase-6 multicycle: the chipset stall cone (clk_sally) ---------------
+# The routed worst path (WNS +0.001 on the ba04f4a6 build) was a 17-level
+# cone: antic2 DMACTL -> dma_stop/beam geometry -> dma_steal -> fid_rdy ->
+# hwreg_we -> register-file CEs.  Every producer on that cone changes only
+# at the machine-cycle tick (slot 0 of ~56 clk_sally) or at the SUB_DATA
+# write strobe (slot 49); the EARLIEST consumer samples at slot 2
+# (fid_mem_step, sally_mem's read step).  The tightest genuine
+# launch->capture window through the stall nets is therefore 2 clocks —
+# a 2-cycle setup exception is conservative by construction, and hold
+# moves back to the launch edge (-hold 1, the standard pairing).
+# Scoped -through the KEEP-anchored nets so ONLY the stall cone relaxes:
+# the fabric's clock-rate internals (mem_req/mem_valid handshake, strobe
+# registration, last-bus latch) do not route through these nets.
+# rw_nmi_n is deliberately excluded — the core edge-detects it every clk.
+set_multicycle_path -setup 2 -through [get_nets rw_steal]
+set_multicycle_path -hold  1 -through [get_nets rw_steal]
+set_multicycle_path -setup 2 -through [get_nets rw_rdy_n]
+set_multicycle_path -hold  1 -through [get_nets rw_rdy_n]
+
+# Same stall-cone contract for the legacy timing machine's branch of the
+# authority mux (iteration 2: with the rewrite cone relaxed, the next worst
+# path was dl_ctl -> tm_cycle_type -> fid_rdy -> mbox WE — the identical
+# class through the tm nets).
+set_multicycle_path -setup 2 -through [get_nets {tm_cycle_type[*]}]
+set_multicycle_path -hold  1 -through [get_nets {tm_cycle_type[*]}]
+set_multicycle_path -setup 2 -through [get_nets tm_rdy_n]
+set_multicycle_path -hold  1 -through [get_nets tm_rdy_n]

@@ -446,7 +446,7 @@ module pokey_regs (
             4'h7: rdata = pot7;
             4'h8: rdata = allpot;       // ALLPOT
             4'h9: rdata = kbcode_q;     // KBCODE
-            4'hA: rdata = random_byte;  // RANDOM
+            4'hA: rdata = random_byte;   // RANDOM -- native reads sample post-tick
             4'hD: rdata = serin_q;       // SERIN
             4'hE: rdata = ~irq_pending;  // IRQST (0 = pending; bit 3 live)
             // SKSTAT layout (Atari):

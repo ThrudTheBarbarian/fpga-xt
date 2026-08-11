@@ -71,7 +71,6 @@ module tb_wedge;
         .unlock_antic(1'b1),
         .unlock_sprite(1'b1),
         .unlock_blit(1'b1),
-        .kbd_event_valid(1'b0), .kbd_event_code(8'h00),
         .bram_addr(bram_addr), .bram_rdata(bram_rdata_r),
         .cmp_bram_addr(cmp_bram_addr), .cmp_bram_rdata(cmp_bram_rdata_r),
         .wb_pix_valid(wb_pix_valid), .wb_pix_pair(wb_pix_pair),

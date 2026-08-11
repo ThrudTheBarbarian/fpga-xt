@@ -111,6 +111,24 @@ module antic_top #(
     // its machine cycles, so the fid CPU's cycle grid is identical to ANTIC's
     // (no second free-running divider to drift against). See fpga_xt_top.sv.
     output wire        phi2_level_o,
+    // ---- POKEY subtree link (unification phase 6) ----------------------
+    // The POKEY pair lives NATIVELY in the CPU's domain (fpga_xt_top,
+    // clk_sally) now.  antic_top keeps the clk_bus consumers/producers it
+    // still owns -- the I2S/HDMI audio mixer, the peri bridge's POT scan and
+    // serial queue -- and links them here.  Channel values are raw clk_sally
+    // nets, 2-FF synced below (4-bit levels changing once per phi2 tick;
+    // a torn sample lasts one clk and is re-sampled correct -- inaudible).
+    input  wire [3:0]  pk_ch1_l, pk_ch2_l, pk_ch3_l, pk_ch4_l,
+    input  wire [3:0]  pk_ch1_r, pk_ch2_r, pk_ch3_r, pk_ch4_r,
+    input  wire        pk_potgo_tog,     // toggle idiom: POTGO strobe (clk_sally)
+    input  wire        pk_fast_scan,     // level (SKCTL fast-scan)
+    input  wire [7:0]  pk_serout_byte,   // payload, stable across the toggle
+    input  wire        pk_serout_tog,    // toggle idiom: SEROUT strobe
+    // POT shadow values back to the POKEY pair (peri_bridge owns them;
+    // slow scan-rate values, 2-FF synced on the consumer side).
+    output wire [7:0]  pk_pot0, pk_pot1, pk_pot2, pk_pot3,
+    output wire [7:0]  pk_pot4, pk_pot5, pk_pot6, pk_pot7,
+    output wire [7:0]  pk_allpot,
 
     // ANTIC-driven status (active-low)
     output wire        nmi_n,
@@ -171,17 +189,8 @@ module antic_top #(
     // Diagnostic counters (consumed by serial-link logic in later milestones)
     output wire [31:0] diag_wsync_overdue_count,
 
-    // ---- Keyboard event ingest (M23-4) -----------------------------------
-    // Pre-translated Atari KBCODE byte (scan code [5:0] + shift [6] +
-    // ctrl [7]) from the RP2354's USB-HID handler. A 1-cycle valid
-    // pulse loads the byte into POKEY's KBCODE register and pulses
-    // KEY_INT. Side channel is one of the spare RP→FPGA control wires
-    // (per pinmap.h); the synth wrapper above re-clocks the pulse
-    // into clk_bus before it reaches this port.
-    input  wire        kbd_event_valid,
-    input  wire [7:0]  kbd_event_code,
-    input  wire        kbd_release,         // all-keys-up strobe -> SKSTAT key-down clear
-    input  wire        kbd_break_pulse,     // F12 -> Atari BREAK (OR'd with the SIO break)
+    // (Keyboard event ingest moved with the POKEY pair to fpga_xt_top --
+    // the KBCODE consumer is native clk_sally now.)
 
     // ---- Peripheral RP link (M25-2 + M25-2c-rev + M25-3c) --------------
     // The peri-RP2354B handles POT / SIO / SD card. peri_pot_bridge
@@ -335,8 +344,28 @@ module antic_top #(
             end
         end
     end
-    wire phi2_tick = phi2 & ~phi2_q;     // 1-cycle pulse on phi2 rising edge
-    wire phi2_fall = phi2_q & ~phi2;     // 1-cycle pulse on phi2 falling edge
+    // ---- the legacy machine's own delayed time base -----------------------
+    // Historical: this delay compensated the mesochronous write-arrival skew
+    // for the observed chipset (POKEY + antic2).  Phase 6 moved both to
+    // clk_sally-native, so nothing CPU-visible ticks off this base any more —
+    // but the legacy raster's internal pulse taps (line_end, DLI ticks,
+    // wsync_release, NMIST status) were all built against it and keep their
+    // phase by leaving it exactly as it was.  It is the legacy machine's own
+    // affair now; it retires with the legacy machine.
+    localparam int unsigned CHIPSET_PHI2_DELAY = 12;
+    logic [CHIPSET_PHI2_DELAY-1:0] phi2_dl = '0;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) phi2_dl <= '0;
+        else         phi2_dl <= {phi2_dl[CHIPSET_PHI2_DELAY-2:0], phi2};
+    end
+    wire phi2_chip = phi2_dl[CHIPSET_PHI2_DELAY-1];
+    logic phi2_chip_q = 1'b0;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) phi2_chip_q <= 1'b0;
+        else         phi2_chip_q <= phi2_chip;
+    end
+    wire phi2_tick = phi2_chip & ~phi2_chip_q;   // 1-cycle pulse, DELAYED base
+    wire phi2_fall = phi2_chip_q & ~phi2_chip;   // 1-cycle pulse, DELAYED base
 
     // Dedicated, lightly-loaded launch FF for the fid-core CDC.  The fid 6502
     // (clk_sally) paces its machine cycles off ANTIC's phi2 so the two grids
@@ -693,40 +722,67 @@ module antic_top #(
         .hitclr_strobe  (hitclr_strobe)
     );
 
-    // ---- POKEY × 2 (stereo, M23-1..M23-7) -------------------------------
-    // Two POKEY instances — left at $D20x (full I/O: keyboard, POT,
-    // serial / IRQ aggregation), right at $D21x (audio-only stereo
-    // companion, all I/O tied off, irq_n unused). The 130XE-style
-    // stereo mod address decoding lives in bus_snoop.
-    //
-    // Per-side channel outputs feed pokey_i2s_tx, which builds the
-    // 4-deep HDMI audio packet buffer. SEROUT / SKCTL outputs dangle
-    // for the future SIO state machine (M25); right-side equivalents
-    // are unused.
-    wire [7:0] pokey_l_read_data, pokey_r_read_data;
-    wire [3:0] pokey_l_ch1, pokey_l_ch2, pokey_l_ch3, pokey_l_ch4;
-    wire [3:0] pokey_r_ch1, pokey_r_ch2, pokey_r_ch3, pokey_r_ch4;
-    wire [7:0] pokey_l_serout_byte;
-    wire       pokey_l_serout_strobe;
-    wire [7:0] pokey_l_skctl;
-    wire       pokey_l_irq_n;       // POKEY's own irq_n, before M-PBI /EXTIRQ wired-OR
+    // ---- POKEY subtree link (unification phase 6) -----------------------
+    // The POKEY pair itself lives in fpga_xt_top on clk_sally, next to the
+    // CPU that owns its registers.  antic_top keeps only the clk_bus
+    // machinery around it: the I2S/HDMI audio mixer below and the peri
+    // bridge's POT scan + serial queue.  Everything crossing here is either
+    // a slow level (2-FF) or a toggle+payload pair.
     wire       pia_irq_n;           // PIA IRQA2/IRQB2 (CA2/CB2 input-mode, enabled)
-    // IRQ tree: POKEY irq_n wired-OR with the PIA /IRQ and PBI /EXTIRQ (all
-    // active-low, AND combines). Drives both the external irq_n pin and
-    // SALLY's .irq_n input.
-    wire       irq_n_combined = pokey_l_irq_n & pia_irq_n & bus_extirq_n_q;
-    assign irq_n = irq_n_combined;
-    wire       pokey_r_irq_n_unused;        // intentionally ignored
+    // IRQ tree: the POKEY /IRQ is native to the CPU's domain now and is
+    // ANDed in there; this export carries the clk_bus sources only.
+    assign irq_n = pia_irq_n & bus_extirq_n_q;
 
-    // M25-3c POT + M25-4 SIO shadow signals from peri_bridge
-    // (instantiated near peri_link below). Forward-declared so the
-    // pokey instances + the bridge can both reference them.
+    // Channel values into clk_bus for the mixer (see the port comment).
+    (* ASYNC_REG = "TRUE" *) logic [3:0] chs_l1_s1, chs_l2_s1, chs_l3_s1, chs_l4_s1;
+    (* ASYNC_REG = "TRUE" *) logic [3:0] chs_r1_s1, chs_r2_s1, chs_r3_s1, chs_r4_s1;
+    logic [3:0] chs_l1, chs_l2, chs_l3, chs_l4;
+    logic [3:0] chs_r1, chs_r2, chs_r3, chs_r4;
+    always_ff @(posedge clk_bus) begin
+        chs_l1_s1 <= pk_ch1_l;  chs_l1 <= chs_l1_s1;
+        chs_l2_s1 <= pk_ch2_l;  chs_l2 <= chs_l2_s1;
+        chs_l3_s1 <= pk_ch3_l;  chs_l3 <= chs_l3_s1;
+        chs_l4_s1 <= pk_ch4_l;  chs_l4 <= chs_l4_s1;
+        chs_r1_s1 <= pk_ch1_r;  chs_r1 <= chs_r1_s1;
+        chs_r2_s1 <= pk_ch2_r;  chs_r2 <= chs_r2_s1;
+        chs_r3_s1 <= pk_ch3_r;  chs_r3 <= chs_r3_s1;
+        chs_r4_s1 <= pk_ch4_r;  chs_r4 <= chs_r4_s1;
+    end
+
+    // POT bridge glue: shadows out (raw; consumer syncs), strobes in.
     wire [7:0] pot_shadow_0, pot_shadow_1, pot_shadow_2, pot_shadow_3;
     wire [7:0] pot_shadow_4, pot_shadow_5, pot_shadow_6, pot_shadow_7;
     wire [7:0] pot_shadow_allpot;
-    wire       pot_bridge_potgo_pulse;
-    wire       pot_bridge_fast_scan;
-    // SIO bridge wires.
+    assign pk_pot0 = pot_shadow_0;  assign pk_pot1 = pot_shadow_1;
+    assign pk_pot2 = pot_shadow_2;  assign pk_pot3 = pot_shadow_3;
+    assign pk_pot4 = pot_shadow_4;  assign pk_pot5 = pot_shadow_5;
+    assign pk_pot6 = pot_shadow_6;  assign pk_pot7 = pot_shadow_7;
+    assign pk_allpot = pot_shadow_allpot;
+    (* ASYNC_REG = "TRUE" *) logic [2:0] potgo_tog_s;
+    (* ASYNC_REG = "TRUE" *) logic [1:0] fast_scan_s;
+    (* ASYNC_REG = "TRUE" *) logic [2:0] serout_tog_s;
+    logic [7:0] serout_byte_s1, serout_byte_q;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            potgo_tog_s  <= 3'b000;
+            fast_scan_s  <= 2'b00;
+            serout_tog_s <= 3'b000;
+            serout_byte_s1 <= 8'h00;
+            serout_byte_q  <= 8'h00;
+        end else begin
+            potgo_tog_s  <= {potgo_tog_s[1:0], pk_potgo_tog};
+            fast_scan_s  <= {fast_scan_s[0], pk_fast_scan};
+            serout_tog_s <= {serout_tog_s[1:0], pk_serout_tog};
+            serout_byte_s1 <= pk_serout_byte;
+            if (serout_tog_s[2] ^ serout_tog_s[1]) serout_byte_q <= serout_byte_s1;
+        end
+    end
+    wire pot_bridge_potgo_pulse = potgo_tog_s[2] ^ potgo_tog_s[1];
+    wire pot_bridge_fast_scan   = fast_scan_s[1];
+    wire pokey_l_serout_strobe  = serout_tog_s[2] ^ serout_tog_s[1];
+    wire [7:0] pokey_l_serout_byte = serout_byte_q;
+    // SIO bridge wires (peri_bridge outputs; the RP is not populated, the
+    // POKEY-side handshake is tied neutral over in fpga_xt_top).
     wire [7:0] sio_bridge_in_byte;
     wire       sio_bridge_in_byte_pulse;
     wire       sio_bridge_framing_err;
@@ -736,132 +792,12 @@ module antic_top #(
     wire       sio_bridge_out_ready_pulse;
     wire       sio_bridge_out_complete;
 
-    pokey #(.CLK_BUS_HZ(POKEY_CLK_BUS_HZ)) u_pokey_l (
-        .clk                  (clk_bus),
-        .rst                  (rst_bus),
-        .cold_boot            (cold_boot_bus),
-        .phi2_tick            (phi2_tick),
-        .we                   (snoop_we_pokey_l),
-        .waddr                (snoop_addr[7:0]),
-        .wdata                (snoop_data),
-        .re                   (snoop_re_pokey_l),
-        .re_addr              (snoop_addr[7:0]),
-        .raddr                (read_addr_w[7:0]),
-        .rdata                (pokey_l_read_data),
-        .kbd_event_valid      (kbd_event_valid),
-        .kbd_event_code       (kbd_event_code),
-        .kbd_release          (kbd_release),
-        .shadow_pot0          (pot_shadow_0),
-        .shadow_pot1          (pot_shadow_1),
-        .shadow_pot2          (pot_shadow_2),
-        .shadow_pot3          (pot_shadow_3),
-        .shadow_pot4          (pot_shadow_4),
-        .shadow_pot5          (pot_shadow_5),
-        .shadow_pot6          (pot_shadow_6),
-        .shadow_pot7          (pot_shadow_7),
-        .shadow_allpot        (pot_shadow_allpot),
-        .bridge_potgo_pulse   (pot_bridge_potgo_pulse),
-        .bridge_fast_scan     (pot_bridge_fast_scan),
-        .ch1_out              (pokey_l_ch1),
-        .ch2_out              (pokey_l_ch2),
-        .ch3_out              (pokey_l_ch3),
-        .ch4_out              (pokey_l_ch4),
-        // M25-4: SIO via peri_bridge ↔ peri-RP firmware
-        .ser_out_ready_pulse  (sio_bridge_out_ready_pulse),
-        .ser_out_complete     (sio_bridge_out_complete),
-        .ser_in_byte_pulse    (sio_bridge_in_byte_pulse),
-        .ser_in_byte          (sio_bridge_in_byte),
-        .break_key_pulse      (sio_bridge_break_key_pulse | kbd_break_pulse),
-        .ser_framing_err      (sio_bridge_framing_err),
-        .ser_input_overrun    (sio_bridge_input_overrun),
-        .ser_input_busy       (sio_bridge_input_busy),
-        .irq_n                (pokey_l_irq_n),
-        .serout_byte          (pokey_l_serout_byte),
-        .serout_strobe        (pokey_l_serout_strobe),
-        .skctl_out            (pokey_l_skctl)
-    );
-
-    // Right POKEY ($D21x) — audio-only. Keyboard, POT shadow, and all
-    // serial / IRQ sources tied off. The OS doesn't know about a
-    // second POKEY for IRQ purposes, so its IRQ output is intentionally
-    // dropped on the floor here.
-    wire [7:0] pokey_r_serout_byte_unused;
-    wire       pokey_r_serout_strobe_unused;
-    wire [7:0] pokey_r_skctl_unused;
-    wire       pokey_r_bridge_potgo_unused;
-    wire       pokey_r_bridge_fast_unused;
-
-    pokey #(.CLK_BUS_HZ(POKEY_CLK_BUS_HZ)) u_pokey_r (
-        .clk                  (clk_bus),
-        .rst                  (rst_bus),
-        .cold_boot            (cold_boot_bus),
-        .phi2_tick            (phi2_tick),
-        .we                   (snoop_we_pokey_r),
-        .waddr                (snoop_addr[7:0]),
-        .wdata                (snoop_data),
-        .re                   (snoop_re_pokey_r),
-        .re_addr              (snoop_addr[7:0]),
-        .raddr                (read_addr_w[7:0]),
-        .rdata                (pokey_r_read_data),
-        .kbd_event_valid      (1'b0),
-        .kbd_event_code       (8'h00),
-        .kbd_release          (1'b0),
-        .shadow_pot0          (8'h00),
-        .shadow_pot1          (8'h00),
-        .shadow_pot2          (8'h00),
-        .shadow_pot3          (8'h00),
-        .shadow_pot4          (8'h00),
-        .shadow_pot5          (8'h00),
-        .shadow_pot6          (8'h00),
-        .shadow_pot7          (8'h00),
-        .shadow_allpot        (8'h00),
-        .bridge_potgo_pulse   (pokey_r_bridge_potgo_unused),
-        .bridge_fast_scan     (pokey_r_bridge_fast_unused),
-        .ch1_out              (pokey_r_ch1),
-        .ch2_out              (pokey_r_ch2),
-        .ch3_out              (pokey_r_ch3),
-        .ch4_out              (pokey_r_ch4),
-        .ser_out_ready_pulse  (1'b0),
-        .ser_out_complete     (1'b1),
-        .ser_in_byte_pulse    (1'b0),
-        .ser_in_byte          (8'h00),
-        .break_key_pulse      (1'b0),
-        .ser_framing_err      (1'b0),
-        .ser_input_overrun    (1'b0),
-        .ser_input_busy       (1'b0),
-        .irq_n                (pokey_r_irq_n_unused),
-        .serout_byte          (pokey_r_serout_byte_unused),
-        .serout_strobe        (pokey_r_serout_strobe_unused),
-        .skctl_out            (pokey_r_skctl_unused)
-    );
-
-    // M23-stereo: dual-mono fallback until software identifies itself
-    // as stereo-aware by writing to $D21x. The Atari OS and the
-    // overwhelming majority of titles only know about a single POKEY
-    // at $D200, so playing back POKEY-R as silence by default would
-    // give those titles half-volume mono on the left channel only.
-    // Instead, we mirror POKEY-L to the right output until the first
-    // $D21x write, then switch to true stereo. There is no published
-    // register-based way for software to detect dual-POKEY, so the
-    // first $D21x write is the de-facto opt-in signal.
-    //
-    // Once latched, the flag stays set until /G_RST. Stereo titles
-    // that do their own initialisation will overwrite the
-    // POKEY-R registers from idle anyway; mono titles after a stereo
-    // title would see the previous program's POKEY-R state, but
-    // that's identical to running on real hardware with two physical
-    // POKEY chips and no soft-reset between programs.
-    logic stereo_active_q;
-    always_ff @(posedge clk_bus or posedge rst_bus) begin
-        if (rst_bus)                  stereo_active_q <= 1'b0;
-        else if (snoop_we_pokey_r)    stereo_active_q <= 1'b1;
-    end
-
-    // Right-channel mux: dual-mono until stereo_active_q goes high.
-    wire [3:0] ch1_r_mix_w = stereo_active_q ? pokey_r_ch1 : pokey_l_ch1;
-    wire [3:0] ch2_r_mix_w = stereo_active_q ? pokey_r_ch2 : pokey_l_ch2;
-    wire [3:0] ch3_r_mix_w = stereo_active_q ? pokey_r_ch3 : pokey_l_ch3;
-    wire [3:0] ch4_r_mix_w = stereo_active_q ? pokey_r_ch4 : pokey_l_ch4;
+    // The mixer inputs (mono-mirroring/stereo mux happens natively with the
+    // pair; these arrive post-mux).
+    wire [3:0] ch1_r_mix_w = chs_r1;
+    wire [3:0] ch2_r_mix_w = chs_r2;
+    wire [3:0] ch3_r_mix_w = chs_r3;
+    wire [3:0] ch4_r_mix_w = chs_r4;
 
     // ---- M-aux-audio — PCM1808 I²S RX ----------------------------------
     // Drives BCK / LRCK out + samples SDATA. Outputs adc_l_w / adc_r_w
@@ -888,8 +824,8 @@ module antic_top #(
                    .SAMPLE_HZ(AUDIO_SAMPLE_HZ)) u_audio_pack (
         .clk               (clk_bus),
         .rst               (rst_bus),
-        .ch1_l             (pokey_l_ch1), .ch2_l (pokey_l_ch2),
-        .ch3_l             (pokey_l_ch3), .ch4_l (pokey_l_ch4),
+        .ch1_l             (chs_l1), .ch2_l (chs_l2),
+        .ch3_l             (chs_l3), .ch4_l (chs_l4),
         .ch1_r             (ch1_r_mix_w), .ch2_r (ch2_r_mix_w),
         .ch3_r             (ch3_r_mix_w), .ch4_r (ch4_r_mix_w),
         .adc_l_in          (adc_l_w),       // M-aux-audio: PCM1808 L channel (SIO AUDIO_IN)
@@ -1459,7 +1395,7 @@ module antic_top #(
     // capture records the gating NMIEN value at that scanline (is bit7 set?).
     wire [7:0] tb_data8 =
           (tb_mode == 3'd1 || tb_mode == 3'd5 || tb_mode == 3'd6) ? snoop_data
-        : (tb_mode == 3'd2)  ? (tb_pokey_rd ? pokey_l_read_data : antic_read_data)
+        : (tb_mode == 3'd2)  ? antic_read_data   // pokey rd-diag retired with the native move
         :                                                           nmien_q;
 
     // 16-entry ring in distributed RAM: {scanline[8:0], phi2_in_line[7:0], data[7:0]}.
@@ -2106,8 +2042,9 @@ module antic_top #(
 
     wire [7:0] bus_data_out_w = d0xx_read   ? gtia_read_data
                               : d4xx_read   ? (antic_read_data | draw_read_data )
-                              : d2xx_read_l ? pokey_l_read_data
-                              : d2xx_read_r ? pokey_r_read_data
+                              // $D2xx: the POKEY pair is native to the CPU's
+                              // domain (phase 6); the legacy/external read
+                              // path no longer answers it.
                               : d3xx_read   ? pia_read_data
                               : 8'h00;
     wire       bus_data_oe_w  = d0xx_read | d4xx_read | d2xx_read | d3xx_read;

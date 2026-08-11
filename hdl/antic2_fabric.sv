@@ -29,7 +29,8 @@
 `default_nettype none
 
 module antic2_fabric #(
-    parameter int NMI_LOW_TICKS = 8
+    parameter int NMI_LOW_TICKS = 8,
+    parameter int TICK_DELAY    = 0   // see the tick-delay note below
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -81,6 +82,35 @@ module antic2_fabric #(
     output wire [7:0]  nmist_o
 );
 
+    // Delay antic2's WHOLE time base by this many clk cycles relative to the
+    // incoming tick stream.  The fid core's register writes strobe at its
+    // commit slot and cross the mesochronous bridge, arriving a handful of
+    // clk_sys after the phi2 boundary -- without this margin they land in the
+    // cycle AFTER the one the program wrote them in ("VSCROL took effect too
+    // late", antic2-hw bisect 2026-08-09), and reads sample state that has
+    // already advanced past the architectural instant.  Delaying tick AND
+    // px_tick together preserves their phase; one machine cycle is 75 clk_sys
+    // so the default 16 keeps the pixel pipe well inside the same cycle.
+    // 0 = passthrough (sim).
+    wire tick_d, px_tick_d;
+    generate if (TICK_DELAY == 0) begin : g_tick_pass
+        assign tick_d    = tick;
+        assign px_tick_d = px_tick;
+    end else begin : g_tick_delay
+        logic [TICK_DELAY-1:0] tick_sr, px_sr;
+        always_ff @(posedge clk or posedge rst) begin
+            if (rst) begin
+                tick_sr <= '0;
+                px_sr   <= '0;
+            end else begin
+                tick_sr <= {tick_sr[TICK_DELAY-2:0], tick};
+                px_sr   <= {px_sr[TICK_DELAY-2:0],   px_tick};
+            end
+        end
+        assign tick_d    = tick_sr[TICK_DELAY-1];
+        assign px_tick_d = px_sr[TICK_DELAY-1];
+    end endgenerate
+
     // ---- antic2 <-> a2_video fabric ---------------------------------------
     wire        a2_nmi, a2_wsync_take;
     wire [7:0]  a2_rdata, gtia_rdata;
@@ -104,6 +134,10 @@ module antic2_fabric #(
 
     // Last byte on the bus: ANTIC's own reads fold in on the cycle their
     // data lands; the snooped CPU data phase arrives via bus_byte_stb.
+    // ANTIC's fold-in wins a same-window coincidence — MATCHING a8_core (the
+    // ACID-validated reference), whose latch is `if (mem_valid) ... else if
+    // (cpu data phase)`.  A CPU-wins experiment did not move antic_virtdma
+    // (04 != $05 either way), so the reference order stands.
     logic [7:0] last_bus;
     always_ff @(posedge clk or posedge rst) begin
         if (rst)               last_bus <= 8'h00;
@@ -114,7 +148,7 @@ module antic2_fabric #(
     antic2 #(
         .LINE_CYCLES(114), .LINES(262), .DISPLAY_TOP(8), .DISPLAY_BOTTOM(248)
     ) u_antic2 (
-        .clk(clk), .rst(rst), .tick(tick), .px_tick(px_tick),
+        .clk(clk), .rst(rst), .tick(tick_d), .tune(tune), .px_tick(px_tick_d),
         .cs(cs_antic), .we(we && cs_antic), .addr(addr[3:0]), .wdata(wdata),
         .rdata(a2_rdata), .cpu_writing(cpu_writing),
         .mem_addr(mem_addr), .mem_data(mem_data),
@@ -133,7 +167,7 @@ module antic2_fabric #(
     );
 
     a2_video u_a2_video (
-        .clk(clk), .rst(rst), .px_tick(px_tick),
+        .clk(clk), .rst(rst), .px_tick(px_tick_d),
         .cs(cs_gtia), .we(we && cs_gtia), .addr(addr), .wdata(wdata),
         .rdata(gtia_rdata),
         .px_wr(px_wr), .px_pf_src(px_pf_src), .px_val(px_val),
@@ -156,7 +190,7 @@ module antic2_fabric #(
     always_ff @(posedge clk or posedge rst) begin
         if (rst)          nmi_cnt <= '0;
         else if (a2_nmi)  nmi_cnt <= NMI_LOW_TICKS[$bits(nmi_cnt)-1:0];
-        else if (tick && nmi_cnt != '0) nmi_cnt <= nmi_cnt - 1'b1;
+        else if (tick_d && nmi_cnt != '0) nmi_cnt <= nmi_cnt - 1'b1;
     end
     assign nmi_n = ~(a2_nmi || (nmi_cnt != '0));
 
@@ -165,7 +199,7 @@ module antic2_fabric #(
 
     // The bisect port is accepted but must stay inert until phase 3 (see
     // header).  Referenced so lint sees it consumed.
-    wire _unused_tune = ^tune | cold;
+    wire _unused_tune = cold;
 
 endmodule
 
