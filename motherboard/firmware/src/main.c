@@ -9,8 +9,9 @@
  *   - Atari SIO host controller on the physical DIN port    (task #10)
  *
  * The loop is a cooperative poll rather than an RTOS: every subsystem here is
- * either interrupt-driven or a short state machine, and the paddle reads want
- * to be revisited quickly rather than on a fixed tick.
+ * either interrupt-driven or a short state machine.  Anything with real timing
+ * requirements — the paddle sampler, the tachometer, the console UART — lives in
+ * an interrupt precisely so the loop's latency cannot reach it.
  */
 #include "board.h"
 #include "clock.h"
@@ -44,7 +45,6 @@ int main(void)
 
     for (;;) {
         repl_poll();
-        pots_poll();
         fan_poll();
 
         uint32_t now = clock_millis();

@@ -6,13 +6,15 @@
  * floating input, and time how long it takes the RC to climb through the GPIO
  * Schmitt threshold.  The count maps onto POKEY's 0..228.
  *
- * NOT timer input capture.  The obvious mapping (TIM3_CH1..4 on PB4/PB5/PB0/PB1
- * plus TIM4_CH1..4 on PB6..PB9) collides with the fan: PC8/PC9 are TIM3_CH3 and
- * TIM3_CH4, and one compare unit cannot serve two pins.  Polling GPIOB->IDR
- * against the DWT cycle counter needs no timer channels at all, samples all
- * eight pots simultaneously, and still resolves far finer than 228 steps —
- * a full-scale charge is ~33 ms, so one step is ~145 us and the main loop
- * revisits far more often than that.
+ * Sampled on a timer event, not by input capture.  Input capture is not
+ * available anyway — PC8/PC9 (fan) expose exactly one timer function each, both
+ * on TIM3, and PB0/PB1's only other timer option is TIM1_CH2N/CH3N, which are
+ * complementary outputs with no capture path (DocID026289 Rev 7, Table 8).  But
+ * a periodic sample is the better fit regardless: one TIM2 tick reads all eight
+ * pots at once from a single IDR, so they share a time base exactly, and the
+ * cadence is immune to whatever the main loop is doing.  That last property is
+ * what matters once USB host is running — main-loop polling would let enumeration
+ * and HID transfers jitter straight into paddle values.
  *
  * All eight pins are on GPIOB, so discharge (one BSRR write) and release (one
  * MODER write) are simultaneous for every pot — they share a common t0.
@@ -20,10 +22,17 @@
 #include "pots.h"
 
 #include "board.h"
-#include "clock.h"
 
 #define DISCHARGE_US    500U                /* pin drives ~25 ohm; plenty */
 #define POT_MAX         228U                /* POKEY full scale */
+
+/* Sample rate.  A full-scale charge is ~33 ms with the stock 1 MOhm x 47 nF, so
+ * 20 kHz gives ~660 steps across the range — comfortably finer than the 228
+ * POKEY levels, with room to spare if the cap is ever shrunk.  The ISR is a
+ * couple of dozen cycles, so this costs well under 1% of the core. */
+#define TICK_HZ         20000U
+#define US_PER_TICK     (1000000U / TICK_HZ)
+#define DISCHARGE_TICKS (DISCHARGE_US / US_PER_TICK)
 
 static const uint8_t s_pin[POT_COUNT] = {
     [POT_ILL_A] = PIN_ILL_POTA, [POT_ILL_B] = PIN_ILL_POTB,
@@ -34,16 +43,14 @@ static const uint8_t s_pin[POT_COUNT] = {
 
 enum { ST_DISCHARGE, ST_CHARGE };
 
-static int      s_state;
-static uint32_t s_t0;                       /* DWT cycles at state entry */
-static uint32_t s_pending;                  /* pin-mask still charging */
-static uint32_t s_cycles[POT_COUNT];        /* last completed measurement */
-static uint8_t  s_value[POT_COUNT];
+static volatile int      s_state;
+static volatile uint32_t s_ticks;           /* ticks since entering the state */
+static volatile uint32_t s_pending;         /* pin-mask still charging */
+static volatile uint32_t s_us[POT_COUNT];   /* last completed measurement */
+static volatile uint8_t  s_value[POT_COUNT];
 static uint32_t s_cal_min_us = 0;
 static uint32_t s_cal_max_us = 33000;
-static uint32_t s_frames;
-
-#define US_TO_CYCLES(us)    ((us) * (SYSCLK_HZ / 1000000UL))
+static volatile uint32_t s_frames;
 
 static void drive_low(void)
 {
@@ -81,66 +88,86 @@ void pots_init(void)
 
     drive_low();
     s_state = ST_DISCHARGE;
-    s_t0    = clock_cycles();
+    s_ticks = 0;
+
+    /* TIM2 free-runs at TICK_HZ purely as an event source — no channel, no
+     * pin, so it does not compete with the fan for TIM3. */
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2;
+    TIM2->PSC = 0;
+    TIM2->ARR = (APB1_TIMER_HZ / TICK_HZ) - 1U;
+    TIM2->EGR = TIM_EGR_UG;
+    TIM2->SR  = 0;
+    TIM2->DIER |= TIM_DIER_UIE;
+    TIM2->CR1 |= TIM_CR1_CEN;
+
+    /* Below the fan and console interrupts: a late paddle tick costs
+     * resolution, whereas a late USB tick costs an enumeration. */
+    nvic_priority(IRQ_TIM2, 10);
+    nvic_enable(IRQ_TIM2);
 }
 
-static uint8_t to_pokey(uint32_t cycles)
+static uint8_t to_pokey(uint32_t us)
 {
-    uint32_t lo = US_TO_CYCLES(s_cal_min_us);
-    uint32_t hi = US_TO_CYCLES(s_cal_max_us);
+    uint32_t lo = s_cal_min_us;
+    uint32_t hi = s_cal_max_us;
 
-    if (hi <= lo || cycles >= hi)
+    if (hi <= lo || us >= hi)
         return POT_MAX;
-    if (cycles <= lo)
+    if (us <= lo)
         return 0;
-    return (uint8_t)(((cycles - lo) * POT_MAX) / (hi - lo));
+    return (uint8_t)(((us - lo) * POT_MAX) / (hi - lo));
 }
 
-void pots_poll(void)
+/* One TIM2 tick.  Everything the measurement needs happens here, so the sample
+ * cadence does not depend on the main loop being free. */
+void tim2_handler(void)
 {
-    uint32_t now = clock_cycles();
+    if (!(TIM2->SR & TIM_SR_UIF))
+        return;
+    TIM2->SR = ~TIM_SR_UIF;
+
+    s_ticks++;
 
     if (s_state == ST_DISCHARGE) {
-        if ((now - s_t0) < US_TO_CYCLES(DISCHARGE_US))
+        if (s_ticks < DISCHARGE_TICKS)
             return;
         release();
-        s_t0      = clock_cycles();
+        s_ticks   = 0;
         s_pending = POT_MASK;
         s_state   = ST_CHARGE;
         return;
     }
 
-    /* ST_CHARGE: one IDR read services every pot still climbing */
-    uint32_t idr     = GPIO_POTS->IDR;
-    uint32_t crossed = s_pending & idr;
-    uint32_t elapsed = now - s_t0;
+    /* ST_CHARGE: one IDR read services every pot still climbing, so all eight
+     * are measured against the same t0 and the same tick. */
+    uint32_t crossed = s_pending & GPIO_POTS->IDR;
+    uint32_t elapsed = s_ticks * US_PER_TICK;
 
     if (crossed) {
         for (int i = 0; i < POT_COUNT; i++) {
-            uint32_t bit = 1UL << s_pin[i];
-            if (crossed & bit) {
-                s_cycles[i] = elapsed;
-                s_value[i]  = to_pokey(elapsed);
+            if (crossed & (1UL << s_pin[i])) {
+                s_us[i]    = elapsed;
+                s_value[i] = to_pokey(elapsed);
             }
         }
         s_pending &= ~crossed;
     }
 
     /* A disconnected pot never crosses; time out at full scale rather than
-     * hanging the frame waiting for it. */
-    if (s_pending && elapsed < US_TO_CYCLES(s_cal_max_us + s_cal_max_us / 8U))
+     * stretching the sweep waiting for it. */
+    if (s_pending && elapsed < s_cal_max_us + s_cal_max_us / 8U)
         return;
 
     for (int i = 0; i < POT_COUNT; i++) {
         if (s_pending & (1UL << s_pin[i])) {
-            s_cycles[i] = elapsed;
-            s_value[i]  = POT_MAX;
+            s_us[i]    = elapsed;
+            s_value[i] = POT_MAX;
         }
     }
 
     s_frames++;
     drive_low();
-    s_t0    = clock_cycles();
+    s_ticks = 0;
     s_state = ST_DISCHARGE;
 }
 
@@ -153,7 +180,7 @@ uint32_t pots_micros(int pot)
 {
     if (pot < 0 || pot >= POT_COUNT)
         return 0;
-    return s_cycles[pot] / (SYSCLK_HZ / 1000000UL);
+    return s_us[pot];
 }
 
 uint32_t pots_frames(void)

@@ -13,8 +13,7 @@ enum {
     POT_COUNT
 };
 
-void     pots_init(void);
-void     pots_poll(void);                       /* non-blocking state machine */
+void     pots_init(void);                       /* starts the TIM2 sampler */
 uint8_t  pots_value(int pot);                   /* 0..228, POKEY scale */
 uint32_t pots_micros(int pot);                  /* raw charge time */
 uint32_t pots_frames(void);                     /* completed sweeps */

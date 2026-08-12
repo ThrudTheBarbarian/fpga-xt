@@ -369,6 +369,8 @@ typedef struct {
 
 #define TIM_CR1_CEN             (1UL << 0)
 #define TIM_CR1_ARPE            (1UL << 7)
+#define TIM_DIER_UIE            (1UL << 0)
+#define TIM_SR_UIF              (1UL << 0)
 #define TIM_EGR_UG              (1UL << 0)
 #define TIM_CCER_CC3E           (1UL << 8)
 #define TIM_CCMR2_OC3M_PWM1     (6UL << 4)
