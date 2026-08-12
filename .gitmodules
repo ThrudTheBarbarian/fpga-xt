@@ -5,3 +5,6 @@
 [submodule "third_party/Rocks"]
 	path = third_party/Rocks
 	url = https://github.com/ThrudTheBarbarian/Rocks
+[submodule "motherboard/third_party/tinyusb"]
+	path = motherboard/third_party/tinyusb
+	url = https://github.com/hathach/tinyusb.git
