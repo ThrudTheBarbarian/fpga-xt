@@ -4,6 +4,31 @@
 
 #include <stdint.h>
 
+#define KEYMAP_SIZE     256         /* one entry per HID usage */
+
+/* Table entry encoding.  A matrix key is its KBCODE in bits 0-5 with the
+ * modifiers the ROM's own table uses: shift is bit 6, ctrl is bit 7.  That
+ * leaves no room for the keys which are not matrix keys at all, so those are
+ * encoded as SPECIAL values — which is honest, because START/SELECT/OPTION are
+ * GTIA CONSOL bits, BREAK is a separate POKEY interrupt source, and RESET is a
+ * line, not a code. */
+#define KEYMAP_SHIFT    0x40
+#define KEYMAP_CTRL     0x80
+
+/* Both modifier bits set marks a table entry as not-a-KBCODE.  Test for both,
+ * never for either — the arrow entries legitimately carry ctrl on its own.
+ * The cost is that a table entry cannot pre-set shift AND ctrl together; no
+ * default needs to, and a lookup can still RETURN that combination when the
+ * user holds both. */
+#define KEYMAP_SPECIAL  0xC0
+#define KEYMAP_BREAK    (KEYMAP_SPECIAL | 0x01)
+#define KEYMAP_RESET    (KEYMAP_SPECIAL | 0x02)
+#define KEYMAP_START    (KEYMAP_SPECIAL | 0x04)
+#define KEYMAP_SELECT   (KEYMAP_SPECIAL | 0x08)
+#define KEYMAP_OPTION   (KEYMAP_SPECIAL | 0x10)
+
+#define KEYMAP_NONE     0xFF        /* no Atari key */
+
 /* HID boot-protocol modifier bits (report byte 0) */
 #define HID_MOD_LCTRL   0x01
 #define HID_MOD_LSHIFT  0x02
@@ -11,27 +36,16 @@
 #define HID_MOD_RCTRL   0x10
 #define HID_MOD_RSHIFT  0x20
 
-/* HID usages we treat specially */
-#define HID_KEY_ENTER       0x28
-#define HID_KEY_ESCAPE      0x29
-#define HID_KEY_BACKSPACE   0x2A
-#define HID_KEY_TAB         0x2B
-#define HID_KEY_CAPSLOCK    0x39
-#define HID_KEY_F1          0x3A
-#define HID_KEY_F2          0x3B
-#define HID_KEY_F3          0x3C
-#define HID_KEY_F4          0x3D
-#define HID_KEY_F11         0x44
-#define HID_KEY_F12         0x45
-
 enum {
-    KEYMAP_NONE = 0,        /* no Atari equivalent  */
-    KEYMAP_KEY,             /* *out is a KBCODE     */
-    KEYMAP_BREAK            /* the BREAK key        */
+    KEYMAP_R_NONE = 0,      /* nothing here                          */
+    KEYMAP_R_KEY,           /* *out is a KBCODE with modifier bits   */
+    KEYMAP_R_SPECIAL        /* *out is one of the KEYMAP_* specials  */
 };
 
-/* Returns one of the KEYMAP_* codes above; *out is the Atari KBCODE with
- * shift in bit 6 and ctrl in bit 7. */
-int keymap_hid_to_atari(uint8_t usage, uint8_t modifiers, uint8_t *out);
+void    keymap_init(void);
+void    keymap_reset(void);                     /* restore the built-in table */
+void    keymap_set(uint8_t usage, uint8_t value);
+uint8_t keymap_get(uint8_t usage);
+int     keymap_lookup(uint8_t usage, uint8_t modifiers, uint8_t *out);
 
 #endif /* KEYMAP_H */

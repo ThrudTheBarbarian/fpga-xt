@@ -22,12 +22,19 @@
 #define SPI_REG_MOUSE_DX    0x16    /* signed 8-bit delta since last read   */
 #define SPI_REG_MOUSE_DY    0x17
 #define SPI_REG_MOUSE_BTN   0x18
+#define SPI_REG_CONSOL      0x19    /* GTIA CONSOL value, ACTIVE-LOW:
+                                     * bit0 START, bit1 SELECT, bit2 OPTION,
+                                     * matching XT_CTRL_CONSOL. Reset $07. */
 
 /* writes (cmd bit 7 = 0) */
 #define SPI_REG_POT_OE      0x04
 #define SPI_REG_CMD         0x05    /* PIA CB2 command strobe               */
 #define SPI_REG_SIO_OUT     0x06
 #define SPI_REG_TEMP        0x07    /* Zynq XADC junction temperature, deg C */
+#define SPI_REG_KEYMAP_IDX  0x08    /* HID usage to write next               */
+#define SPI_REG_KEYMAP_VAL  0x09    /* value; stores and auto-increments IDX
+                                     * so a whole table can be streamed      */
+#define SPI_REG_KEYMAP_CTL  0x0A    /* 1 = restore the built-in table        */
 
 /* STATUS bits — the FPGA reads STATUS to find out why the doorbell rang */
 #define SPI_STATUS_KBD      0x01
@@ -35,6 +42,7 @@
 #define SPI_STATUS_SIO      0x04
 #define SPI_STATUS_JOY      0x08
 #define SPI_STATUS_WANT_TEMP 0x10   /* STM32 is asking for a temperature */
+#define SPI_STATUS_CONSOL   0x20    /* console keys changed              */
 
 #define SPI_SIO_STAT_TX_PENDING 0x01
 
@@ -45,12 +53,14 @@
 #define SPI_KBD_DOWN        0x01
 #define SPI_KBD_ALLUP       0x02
 #define SPI_KBD_BREAK       0x04
+#define SPI_KBD_RESET       0x08    /* warm reset; a line, not a key code    */
 
 void     spi_link_init(void);
 void     spi_link_post_key(uint8_t kbcode, uint8_t stat);
 void     spi_link_post_mouse(int8_t dx, int8_t dy, uint8_t buttons);
 void     spi_link_post_sio(uint8_t byte);
 void     spi_link_request_temp(void);           /* ring the doorbell for a temp */
+void     spi_link_post_consol(uint8_t active_low);
 void     spi_link_status(void);
 uint32_t spi_link_transactions(void);
 uint32_t spi_link_resyncs(void);

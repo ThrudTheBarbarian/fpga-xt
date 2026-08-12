@@ -30,6 +30,7 @@
 #include "console.h"
 #include "fan.h"
 #include "joystick.h"
+#include "keymap.h"
 #include "pots.h"
 
 /* A whole transaction is ~4 us at 5 MHz. Anything arriving more than this
@@ -55,6 +56,8 @@ static volatile uint8_t s_kbd_code;
 static volatile uint8_t s_kbd_stat;
 static volatile int8_t  s_mouse_dx, s_mouse_dy;
 static volatile uint8_t s_mouse_btn;
+static volatile uint8_t s_consol = 0x07;    /* active low; $07 = nothing held */
+static volatile uint8_t s_keymap_idx;
 
 void spi_link_init(void)
 {
@@ -101,6 +104,7 @@ static uint8_t reg_read(uint8_t addr)
     case SPI_REG_MOUSE_DX:  return (uint8_t)s_mouse_dx;
     case SPI_REG_MOUSE_DY:  return (uint8_t)s_mouse_dy;
     case SPI_REG_MOUSE_BTN: return s_mouse_btn;
+    case SPI_REG_CONSOL:    return s_consol;
     default:
         break;
     }
@@ -128,6 +132,21 @@ static void reg_write(uint8_t addr, uint8_t data)
          * better split anyway: if the A9 hangs, cooling does not stop. */
         fan_set_temperature(data);
         s_status &= (uint8_t)~SPI_STATUS_WANT_TEMP;      /* request satisfied */
+        break;
+
+    case SPI_REG_KEYMAP_IDX:
+        s_keymap_idx = data;
+        break;
+
+    case SPI_REG_KEYMAP_VAL:
+        /* Auto-increment so the Desktop can stream a whole layout without a
+         * round trip per byte. */
+        keymap_set(s_keymap_idx++, data);
+        break;
+
+    case SPI_REG_KEYMAP_CTL:
+        if (data & 1U)
+            keymap_reset();
         break;
 
     case SPI_REG_CMD:
@@ -216,6 +235,13 @@ void spi_link_post_mouse(int8_t dx, int8_t dy, uint8_t buttons)
 void spi_link_request_temp(void)
 {
     s_status |= SPI_STATUS_WANT_TEMP;
+    board_doorbell();
+}
+
+void spi_link_post_consol(uint8_t active_low)
+{
+    s_consol  = active_low;
+    s_status |= SPI_STATUS_CONSOL;
     board_doorbell();
 }
 

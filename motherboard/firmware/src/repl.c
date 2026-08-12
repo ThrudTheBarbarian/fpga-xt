@@ -375,27 +375,49 @@ static void cmd_usb(int argc, char **argv)
 
 static void cmd_key(int argc, char **argv)
 {
-    uint32_t usage = 0, mods = 0;
+    uint32_t usage = 0, mods = 0, val = 0;
 
-    if (argc < 2 || !parse_u32(argv[1], &usage)) {
+    if (argc >= 2 && !strcmp(argv[1], "reset")) {
+        keymap_reset();
+        console_puts("keymap restored to the built-in table\r\n");
+        return;
+    }
+    if (argc >= 4 && !strcmp(argv[1], "set")) {
+        if (parse_u32(argv[2], &usage) && parse_u32(argv[3], &val) && usage < 256) {
+            keymap_set((uint8_t)usage, (uint8_t)val);
+            console_printf("usage %02lx -> %02lx\r\n", usage, val);
+        }
+        return;
+    }
+    if (argc < 2 || !parse_u32(argv[1], &usage) || usage > 255) {
         console_puts("usage: key <hid_usage> [modifiers]\r\n"
-                     "  mods: 01 lctrl  02 lshift  10 rctrl  20 rshift\r\n");
+                     "       key set <usage> <value>\r\n"
+                     "       key reset\r\n"
+                     "  mods: 01 lctrl  02 lshift  10 rctrl  20 rshift\r\n"
+                     "  numbers are decimal unless prefixed 0x\r\n");
         return;
     }
     if (argc > 2)
         parse_u32(argv[2], &mods);
 
     uint8_t code = 0;
-    switch (keymap_hid_to_atari((uint8_t)usage, (uint8_t)mods, &code)) {
-    case KEYMAP_KEY:
+    switch (keymap_lookup((uint8_t)usage, (uint8_t)mods, &code)) {
+    case KEYMAP_R_KEY:
         console_printf("usage %02lx mods %02lx -> KBCODE %02x  (base %02x%s%s)\r\n",
                        usage, mods, code, code & 0x3F,
-                       (code & 0x40) ? " +shift" : "",
-                       (code & 0x80) ? " +ctrl"  : "");
+                       (code & KEYMAP_SHIFT) ? " +shift" : "",
+                       (code & KEYMAP_CTRL)  ? " +ctrl"  : "");
         break;
-    case KEYMAP_BREAK:
-        console_printf("usage %02lx -> BREAK\r\n", usage);
+    case KEYMAP_R_SPECIAL: {
+        const char *n = "?";
+        if (code == KEYMAP_BREAK)  n = "BREAK";
+        if (code == KEYMAP_RESET)  n = "RESET";
+        if (code == KEYMAP_START)  n = "START";
+        if (code == KEYMAP_SELECT) n = "SELECT";
+        if (code == KEYMAP_OPTION) n = "OPTION";
+        console_printf("usage %02lx -> %s\r\n", usage, n);
         break;
+    }
     default:
         console_printf("usage %02lx mods %02lx -> no Atari key\r\n", usage, mods);
         break;
@@ -501,7 +523,7 @@ static const struct command s_cmds[] = {
     { "pot",    "pot [cal lo hi]",      "paddle values",                cmd_pot    },
     { "fan",    "fan [duty|rpm|temp]",  "fan duty, tach, PID, thermal", cmd_fan    },
     { "usb",    "usb [hub]",            "USB host + HID state",         cmd_usb    },
-    { "key",    "key <usage> [mods]",   "HID -> Atari KBCODE",          cmd_key    },
+    { "key",    "key <usage>|set|reset","HID -> Atari KBCODE",          cmd_key    },
     { "freq",   "freq [test|pin X]",    "frequency counter",            cmd_freq   },
     { "mco",    "mco [2] [on|off]",     "24 MHz out on PA8 / PC9",      cmd_mco    },
     { "spi",    "spi",                  "FPGA link state",              cmd_spi    },

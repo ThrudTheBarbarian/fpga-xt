@@ -169,38 +169,58 @@ static int was_held(uint8_t usage)
     return 0;
 }
 
+static uint8_t s_consol = 0x07;     /* active low: bit0 START, 1 SELECT, 2 OPTION */
+
 static void handle_keyboard(const uint8_t *report)
 {
-    uint8_t mods = report[0];
-    int     held = 0;
+    uint8_t mods   = report[0];
+    uint8_t consol = 0x07;
+    int     held   = 0;
 
     s_kbd.modifiers = mods;
     s_kbd.count     = 0;
 
     for (int i = 2; i < 8; i++) {
         uint8_t usage = report[i];
+        uint8_t v;
+
         if (!usage || usage == 1)               /* 1 = rollover error */
             continue;
         held++;
         if (s_kbd.count < KEY_RING)
             s_kbd.keys[s_kbd.count++] = usage;
 
+        int kind = keymap_lookup(usage, mods, &v);
+
+        /* Console keys are levels, not events — the 6502 reads CONSOL and sees
+         * what is held right now — so they are rebuilt from every report
+         * rather than diffed against the last one. */
+        if (kind == KEYMAP_R_SPECIAL) {
+            if (v == KEYMAP_START)  consol &= (uint8_t)~0x01;
+            if (v == KEYMAP_SELECT) consol &= (uint8_t)~0x02;
+            if (v == KEYMAP_OPTION) consol &= (uint8_t)~0x04;
+        }
+
         if (was_held(usage))
             continue;                           /* still down, not a new press */
 
-        uint8_t code;
-        switch (keymap_hid_to_atari(usage, mods, &code)) {
-        case KEYMAP_KEY:
-            spi_link_post_key(code, SPI_KBD_DOWN);
+        if (kind == KEYMAP_R_KEY) {
+            spi_link_post_key(v, SPI_KBD_DOWN);
             s_kbd.events++;
-            break;
-        case KEYMAP_BREAK:
-            spi_link_post_key(0, SPI_KBD_BREAK);
-            s_kbd.events++;
-            break;
-        default:
-            break;                              /* no Atari equivalent */
+        } else if (kind == KEYMAP_R_SPECIAL) {
+            if (v == KEYMAP_BREAK) {
+                spi_link_post_key(0, SPI_KBD_BREAK);
+                s_kbd.events++;
+            } else if (v == KEYMAP_RESET) {
+                spi_link_post_key(0, SPI_KBD_RESET);
+                s_kbd.events++;
+            }
         }
+    }
+
+    if (consol != s_consol) {
+        s_consol = consol;
+        spi_link_post_consol(consol);
     }
 
     if (!held && s_prev[0])
@@ -208,6 +228,11 @@ static void handle_keyboard(const uint8_t *report)
 
     for (unsigned i = 0; i < sizeof s_prev; i++)
         s_prev[i] = report[2 + i];
+}
+
+uint8_t usb_consol(void)
+{
+    return s_consol;
 }
 
 /* ------------------------------------------------------------------- HID ---*/

@@ -20,6 +20,7 @@
 #include "fault.h"
 #include "freqcount.h"
 #include "joystick.h"
+#include "keymap.h"
 #include "pots.h"
 #include "repl.h"
 #include "spi_link.h"
@@ -36,6 +37,7 @@ int main(void)
     joystick_init();
     pots_init();
     fan_init();
+    keymap_init();
     spi_link_init();
 
     /* 24 MHz on PA8 before the hub leaves reset, in case it is being clocked
