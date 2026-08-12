@@ -41,6 +41,22 @@
  * output above the stall point. */
 #define DUTY_MIN_CLOSED 150
 
+/* Thermal curve.  The Zynq's XADC junction temperature arrives over the SPI
+ * link (the A9 pushes it; we cannot ask for it — we are the SPI slave, and a
+ * slave cannot initiate).  Below LO the fan sits at a quiet floor; between LO
+ * and HI the target ramps linearly; above HI the PID is bypassed entirely and
+ * the fan goes to full duty, because at that point airflow matters more than
+ * hitting a number.
+ */
+#define TEMP_LO_C       55U
+#define TEMP_HI_C       70U
+#define TEMP_RPM_LO     1200U
+#define TEMP_RPM_HI     4500U
+
+/* If the A9 stops sending temperatures, assume the worst.  The Zynq locks up
+ * without cooling, so a silent sender must mean full speed, not last-known. */
+#define TEMP_STALE_MS   10000U
+
 static volatile uint32_t s_tach_edges;
 static uint32_t          s_last_update;
 static uint32_t          s_rpm;
@@ -49,6 +65,10 @@ static int32_t           s_prev_error;
 static uint16_t          s_target_rpm;
 static uint16_t          s_duty;            /* per mille, 0..1000 */
 static int               s_closed_loop;
+static volatile uint8_t  s_temp_c;
+static volatile uint32_t s_temp_ms;
+static int               s_temp_valid;
+static int               s_thermal;
 
 static void set_duty_raw(uint16_t per_mille)
 {
@@ -132,6 +152,40 @@ void fan_tach_input(int on)
     set_duty_raw(DUTY_MAX);
 }
 
+/* Called from the SPI interrupt when the A9 writes the temperature register.
+ * Stores and timestamps only; the curve is evaluated in fan_poll(). */
+void fan_set_temperature(uint8_t celsius)
+{
+    s_temp_c  = celsius;
+    s_temp_ms = clock_millis();
+}
+
+void fan_set_thermal(int on)
+{
+    s_thermal = on;
+    if (on)
+        fan_set_target_rpm(TEMP_RPM_LO);
+}
+
+int      fan_thermal(void)     { return s_thermal; }
+uint8_t  fan_temperature(void) { return s_temp_c; }
+uint32_t fan_temp_age_ms(void)
+{
+    return s_temp_valid ? (clock_millis() - s_temp_ms) : 0xFFFFFFFFUL;
+}
+
+/* temperature -> target RPM, piecewise linear between LO and HI */
+static uint16_t curve(uint8_t c)
+{
+    if (c <= TEMP_LO_C)
+        return TEMP_RPM_LO;
+    if (c >= TEMP_HI_C)
+        return TEMP_RPM_HI;
+    return (uint16_t)(TEMP_RPM_LO +
+                      ((uint32_t)(c - TEMP_LO_C) * (TEMP_RPM_HI - TEMP_RPM_LO)) /
+                      (TEMP_HI_C - TEMP_LO_C));
+}
+
 void fan_set_duty(uint16_t per_mille)
 {
     s_closed_loop = 0;
@@ -156,6 +210,26 @@ void fan_poll(void)
 
     if ((uint32_t)(now - s_last_update) < UPDATE_MS)
         return;
+
+    if (s_thermal) {
+        uint32_t age = (uint32_t)(now - s_temp_ms);
+
+        if (!s_temp_valid && s_temp_ms != 0)
+            s_temp_valid = 1;
+
+        if (!s_temp_valid || age > TEMP_STALE_MS) {
+            /* no temperature, or a stale one: maximum airflow, no argument */
+            s_closed_loop = 0;
+            set_duty_raw(DUTY_MAX);
+        } else if (s_temp_c >= TEMP_HI_C) {
+            s_closed_loop = 0;
+            set_duty_raw(DUTY_MAX);
+        } else {
+            uint16_t want = curve(s_temp_c);
+            if (!s_closed_loop || want != s_target_rpm)
+                fan_set_target_rpm(want);
+        }
+    }
 
     uint32_t window = now - s_last_update;
     s_last_update   = now;

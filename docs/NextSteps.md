@@ -788,6 +788,18 @@ loader-wx-multi-segment.) Open:
 
 ## Thermal / cooling (closed-loop fan)
 
+- **DONE on the STM32 side (2026-08-12), with the split changed: the A9 pushes
+  TEMPERATURE, not duty, and the STM32 owns the curve.** Forced by the link
+  direction — the FPGA is the SPI master, so the STM32 *cannot poll it*; a slave
+  cannot initiate. It is also the better split: the controller lives next to the
+  actuator, so an A9 hang cannot stop the fan. The A9 writes the XADC junction temp
+  to **`SPI_REG_TEMP` ($07)**; `fan.c` maps it to an RPM setpoint (quiet floor 1200
+  rpm below 55 °C, linear ramp to 4500 rpm at 70 °C, full duty above that) and the
+  existing tach PID holds it. **Failsafe verified on hardware**: no temperature ever
+  received, or one older than 10 s, forces 100 % duty. Measured: 50 °C -> 1200 rpm,
+  62 °C -> 2740 target, 68 °C -> 4060. REPL `fan thermal` / `fan temp <c>`.
+  Remaining on the A9 side: push the temp byte each period, and surface tach RPM +
+  target in `/proc`.
 - **Closed-loop fan control (A9 curve → STM32 PWM/tach, failsafe-to-100%).** HW
   outlet added on the motherboard (5V / GND / Tach / PWM); Tach+PWM wired to the
   STM32 companion. Planned fan: **Noctua NF-A4x20 5V PWM**, mounted in the case

@@ -298,6 +298,20 @@ static void cmd_pot(int argc, char **argv)
 
 static void cmd_fan(int argc, char **argv)
 {
+    if (argc >= 2 && !strcmp(argv[1], "thermal")) {
+        int on = argc < 3 || strcmp(argv[2], "off") != 0;
+        fan_set_thermal(on);
+        console_printf("thermal control %s\r\n", on ? "on" : "off");
+        return;
+    }
+    if (argc >= 3 && !strcmp(argv[1], "temp")) {
+        uint32_t c;
+        if (parse_u32(argv[2], &c)) {
+            fan_set_temperature((uint8_t)c);
+            console_printf("injected %lu C\r\n", c);
+        }
+        return;
+    }
     if (argc >= 3 && !strcmp(argv[1], "rpm")) {
         uint32_t rpm;
         if (parse_u32(argv[2], &rpm)) {
@@ -324,6 +338,18 @@ static void cmd_fan(int argc, char **argv)
     if (fan_closed_loop())
         console_printf("%u rpm", fan_target_rpm());
     console_puts("\r\n");
+
+    if (fan_thermal()) {
+        uint32_t age = fan_temp_age_ms();
+        console_printf("thermal on, %u C", fan_temperature());
+        if (age == 0xFFFFFFFFUL)
+            console_puts(" (never received — running full speed)");
+        else
+            console_printf(" (%lu ms old)", age);
+        console_puts("\r\n");
+    } else {
+        console_puts("thermal off\r\n");
+    }
 }
 
 static void cmd_fault(int argc, char **argv)
@@ -357,7 +383,7 @@ static void cmd_freq(int argc, char **argv)
 
     uint32_t hz = freqcount_measure();
 
-    console_printf("PA0 = %lu Hz", hz);
+    console_printf("PD12 (joystick IRR, DE-9 pin 4) = %lu Hz", hz);
     if (hz >= 1000000U)
         console_printf("  (%lu.%03lu MHz)", hz / 1000000U, (hz / 1000U) % 1000U);
     else if (hz >= 1000U)
@@ -435,7 +461,7 @@ static const struct command s_cmds[] = {
     { "hub",    "hub [cycle|hold|run]", "USB hub reset on PA9",         cmd_hub    },
     { "js",     "js",                   "joystick and button state",    cmd_js     },
     { "pot",    "pot [cal lo hi]",      "paddle values",                cmd_pot    },
-    { "fan",    "fan [duty|rpm n]",     "fan duty, tach and PID",       cmd_fan    },
+    { "fan",    "fan [duty|rpm|temp]",  "fan duty, tach, PID, thermal", cmd_fan    },
     { "usb",    "usb [hub]",            "USB host + HID state",         cmd_usb    },
     { "freq",   "freq [test]",          "count frequency on PA0",       cmd_freq   },
     { "mco",    "mco [2] [on|off]",     "24 MHz out on PA8 / PC9",      cmd_mco    },

@@ -1,9 +1,17 @@
-/* freqcount.c — a frequency counter on PA0, for bringing up other people's clocks.
+/* freqcount.c — a frequency counter on a joystick port, for bringing up other
+ * people's clocks.
  *
- * TIM5 is a 32-bit counter clocked from its own TI1 input rather than the
- * internal clock, so it simply tallies edges on PA0.  Gate that over a known
- * interval and the count is the frequency.  At 24 MHz over 100 ms that is 2.4M
- * edges — comfortable in 32 bits, and resolution is 10 Hz.
+ * TIM4 is clocked from its own TI1 input rather than the internal clock, so it
+ * simply tallies edges on PD12.  Gate that over a known interval and the count
+ * is the frequency.
+ *
+ * PD12 is deliberate: it is IRR_RT, which lands on **pin 4 of joystick port
+ * IRR** with ground on pin 8 of the same DE-9.  So anything on the board can be
+ * measured by poking a wire into a connector — no soldering to a 0.5 mm-pitch
+ * LQFP lead, which is otherwise the only way to reach a free pin on this part.
+ * The port is restored to a joystick input as soon as the measurement ends.
+ *
+ * TIM4 is 16-bit, so the gate is sized to keep 24 MHz inside 65535 counts.
  *
  * This exists because a handheld DMM cannot help you here: most cap out around
  * 1 MHz, and their input capacitance loads an oscillator node badly enough to
@@ -17,8 +25,12 @@
 #include "board.h"
 #include "clock.h"
 
-#define GATE_MS     100U
-#define FREQ_PIN    0                       /* PA0 = TIM5_CH1, AF2 */
+/* 2 ms holds 24 MHz to 48000 counts — inside TIM4's 16 bits, with headroom to
+ * ~32 MHz.  Resolution is 500 Hz, which is ample for "is this clock alive and
+ * roughly right". */
+#define GATE_MS     2U
+#define FREQ_PIN    PIN_IRR_RT              /* PD12 = TIM4_CH1, AF2 */
+#define FREQ_PORT   GPIO_JOY_DIR
 
 /* SMCR fields */
 #define SMCR_SMS_EXT_CLK1   (7UL << 0)      /* external clock mode 1 */
@@ -26,19 +38,29 @@
 
 void freqcount_init(void)
 {
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOA;
-    RCC->APB1ENR |= RCC_APB1ENR_TIM5;
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOD;
+    RCC->APB1ENR |= RCC_APB1ENR_TIM4;
 
-    gpio_af(GPIOA, FREQ_PIN, AF_TIM3_TIM5);
-    gpio_pull(GPIOA, FREQ_PIN, GPIO_PULL_NONE);
+    TIM4->PSC   = 0;
+    TIM4->ARR   = 0xFFFFU;
+    TIM4->CCMR1 = (1UL << 0);               /* CC1S = 01: IC1 mapped to TI1 */
+    TIM4->CCER  = 0;                        /* rising edge, not inverted    */
+    TIM4->SMCR  = SMCR_TS_TI1FP1 | SMCR_SMS_EXT_CLK1;
+    TIM4->EGR   = TIM_EGR_UG;
+    TIM4->CR1  |= TIM_CR1_CEN;
+}
 
-    TIM5->PSC   = 0;
-    TIM5->ARR   = 0xFFFFFFFFUL;
-    TIM5->CCMR1 = (1UL << 0);               /* CC1S = 01: IC1 mapped to TI1 */
-    TIM5->CCER  = 0;                        /* rising edge, not inverted    */
-    TIM5->SMCR  = SMCR_TS_TI1FP1 | SMCR_SMS_EXT_CLK1;
-    TIM5->EGR   = TIM_EGR_UG;
-    TIM5->CR1  |= TIM_CR1_CEN;
+/* Claim PD12 from the joystick port for the duration of a measurement. */
+static void claim_pin(void)
+{
+    gpio_af(FREQ_PORT, FREQ_PIN, AF_TIM3_TIM5);
+    gpio_pull(FREQ_PORT, FREQ_PIN, GPIO_PULL_NONE);
+}
+
+static void release_pin(void)
+{
+    gpio_mode(FREQ_PORT, FREQ_PIN, GPIO_MODE_IN);
+    gpio_pull(FREQ_PORT, FREQ_PIN, GPIO_PULL_UP);   /* joystick idle */
 }
 
 /* Prove the counter before trusting what it says about someone else's clock.
@@ -54,40 +76,41 @@ uint32_t freqcount_selftest(unsigned edges)
 {
     uint32_t before, after;
 
-    gpio_af(GPIOA, FREQ_PIN, AF_TIM3_TIM5);
-    gpio_pull(GPIOA, FREQ_PIN, GPIO_PULL_DOWN);
+    claim_pin();
+    gpio_pull(FREQ_PORT, FREQ_PIN, GPIO_PULL_DOWN);
     clock_delay_us(10);
 
-    before = TIM5->CNT;
+    before = TIM4->CNT;
     for (unsigned i = 0; i < edges; i++) {
-        gpio_pull(GPIOA, FREQ_PIN, GPIO_PULL_UP);
+        gpio_pull(FREQ_PORT, FREQ_PIN, GPIO_PULL_UP);
         clock_delay_us(3);
-        gpio_pull(GPIOA, FREQ_PIN, GPIO_PULL_DOWN);
+        gpio_pull(FREQ_PORT, FREQ_PIN, GPIO_PULL_DOWN);
         clock_delay_us(3);
     }
-    after = TIM5->CNT;
+    after = (uint16_t)TIM4->CNT;
 
-    /* leave it floating so it does not load whatever gets probed next */
-    gpio_pull(GPIOA, FREQ_PIN, GPIO_PULL_NONE);
-    return after - before;
+    release_pin();
+    return (uint16_t)(after - before);
 }
 
 uint32_t freqcount_measure(void)
 {
-    /* re-arm: the gpio command can have left PA0 as a plain output */
-    gpio_af(GPIOA, FREQ_PIN, AF_TIM3_TIM5);
-    gpio_pull(GPIOA, FREQ_PIN, GPIO_PULL_NONE);
+    claim_pin();
 
-    uint32_t start_cnt = TIM5->CNT;
-    uint32_t start_ms  = clock_millis();
+    /* Gate on the cycle counter, not milliseconds: at a 2 ms gate a whole
+     * SysTick of jitter would be a 50% error. */
+    uint32_t gate  = GATE_MS * (SYSCLK_HZ / 1000UL);
+    uint32_t t0    = clock_cycles();
+    uint16_t c0    = (uint16_t)TIM4->CNT;
 
-    while ((uint32_t)(clock_millis() - start_ms) < GATE_MS)
+    while ((clock_cycles() - t0) < gate)
         ;
 
-    uint32_t edges = TIM5->CNT - start_cnt;
-    uint32_t ms    = clock_millis() - start_ms;
+    uint16_t c1    = (uint16_t)TIM4->CNT;
+    uint32_t took  = clock_cycles() - t0;
 
-    if (ms == 0)
-        return 0;
-    return edges * (1000U / ms);            /* GATE_MS divides 1000 exactly */
+    release_pin();
+
+    uint32_t edges = (uint16_t)(c1 - c0);
+    return (uint32_t)(((uint64_t)edges * SYSCLK_HZ) / took);
 }

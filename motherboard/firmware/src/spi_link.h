@@ -27,6 +27,7 @@
 #define SPI_REG_POT_OE      0x04
 #define SPI_REG_CMD         0x05    /* PIA CB2 command strobe               */
 #define SPI_REG_SIO_OUT     0x06
+#define SPI_REG_TEMP        0x07    /* Zynq XADC junction temperature, deg C */
 
 /* STATUS bits — the FPGA reads STATUS to find out why the doorbell rang */
 #define SPI_STATUS_KBD      0x01

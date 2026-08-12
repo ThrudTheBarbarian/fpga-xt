@@ -28,6 +28,7 @@
 #include "board.h"
 #include "clock.h"
 #include "console.h"
+#include "fan.h"
 #include "joystick.h"
 #include "pots.h"
 
@@ -119,6 +120,13 @@ static void reg_write(uint8_t addr, uint8_t data)
         /* SIO transmit lands here; the SIO layer picks it up (task #10). */
         s_sio_stat |= SPI_SIO_STAT_TX_PENDING;
         s_sio_in    = data;
+        break;
+
+    case SPI_REG_TEMP:
+        /* The A9 owns the sensor; we own the fan.  Pushing rather than polling
+         * is forced by the link direction — we are the slave — and is the
+         * better split anyway: if the A9 hangs, cooling does not stop. */
+        fan_set_temperature(data);
         break;
 
     case SPI_REG_CMD:
