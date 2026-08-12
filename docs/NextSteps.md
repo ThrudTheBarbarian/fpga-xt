@@ -357,26 +357,28 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 - **HW: confirm HUB_RST polarity on PA9** — firmware assumes active low
   (`HUB_RST_ACTIVE_LOW` in `motherboard/firmware/src/board.c`). Check the hub page
   of the schematic before debugging a failed enumeration.
-- **HW: USB device attaches but answers nothing** — TinyUSB host runs; the core sees
-  a full-speed device appear when HUB_RST is released and vanish when asserted, and
-  sends GET_DESCRIPTOR correctly, but gets 0 bytes back every retry. Everything on the
-  STM32 side is verified good: PLLCFGR 0x08413004 + DCKCFGR CK48MSEL=0 (48 MHz PHY
-  clock), HPRT 0x21405 (host mode, port powered + enabled, FS), interrupts serviced,
-  NOVBUSSENS made no difference, and a DP/DM swap would have presented as low speed.
-  The hub is a **USB2514B (IC6)** and its schematic checks out clean against Microchip's
-  own design checklist (DS00004541) — RESET_N 10K+1uF active low exactly per Fig 7-2,
-  RBIAS 12K 1%, CFG_SEL[1:0]=00 (straps enabled, self-powered), NON_REM=00, 0.1uF per
-  supply pin + 1uF bulk, CRFILT/PLLFILT 0.1uF ("up to 0.1uF, or unconnected"), VBUS_DET
-  via 100K to 3V3 ("permissible"), DP/DM the right way round, and TPS2051B enable is
-  active-high as Microchip requires. So suspect **assembly, in this order**:
-  1. **ePAD.** The datasheet is explicit: "the package slug is the **only VSS** for the
-     device and must be tied to ground with multiple vias." An unsoldered QFN-36 pad
-     leaves the chip with no ground — it can still hold up a pull-up through its bias
-     structures but cannot run logic. Best match for the symptom.
-  2. **Crystal Y2.** Scope XTALOUT (pin 32): ~1.2 Vpp, 24 MHz. Spec is parallel
-     resonant, fundamental, **24 MHz +/-350 ppm** — and C29/C30 = 18 pF implies a
-     crystal specified for CL ~9.5 pF, so check Y2's actual load capacitance.
-  3. **3V3 at the hub's own pins** (5, 10, 15, 23, 29, 36), not just at the regulator.
+- **HW: USB hub has no clock — Y2 is an active oscillator in a passive-crystal
+  footprint.** ROOT CAUSE FOUND 2026-08-12. `hw/bom-match.csv` fitted Y2 =
+  **YXC OT2EL4C4JI-111OLP-24M**, LCSC category *Crystal Oscillators*, spec
+  "1.8V~3.3V 24MHz CMOS" — an **active XO**. The schematic wires Y2 as a passive
+  crystal (pin1 -> XTALIN, pin3 -> XTALOUT, **pins 2 and 4 to GND**), which grounds an
+  XO's **VDD**: it has never been powered, so the USB2514B has no 24 MHz reference.
+  Explains the symptom exactly — pads/bias/reset run off 3V3 so the hub holds up its
+  D+ pull-up and obeys HUB_RST, but the USB core cannot run, so SETUP is never
+  answered. The Altium BOM intended `RH10024000181020EXTTR` (Raltron RH100-24.000-18,
+  a passive 18 pF crystal); the substitution happened at BOM-match time.
+  **Fix: fit a passive 24 MHz crystal.** C29/C30 = 18 pF present ~10 pF of load, so
+  CL ~10-12 pF is the best match (the original 18 pF part also works, ~+90 ppm fast vs
+  the +/-350 ppm allowed). Contrast Y1 (8 MHz, STM32): category *Crystals*, 8 pF — a
+  real crystal, which is why HSE locks. **Audit the rest of bom-match.csv for the same
+  class of substitution.**
+  Everything else on the hub sheet was verified clean against Microchip's design
+  checklist (DS00004541) and the USB251xB datasheet: RESET_N 10K+1uF active low exactly
+  per Fig 7-2, RBIAS 12K 1%, CFG_SEL[1:0]=00 (straps enabled, self-powered),
+  NON_REM=00, 0.1uF per supply pin + 1uF bulk, CRFILT/PLLFILT 0.1uF ("up to 0.1uF, or
+  unconnected"), VBUS_DET via 100K to 3V3 ("permissible"), TEST to GND ("no connect or
+  connect to ground"), ePAD grounded with 3 vias, DP/DM correctly oriented, and
+  TPS2051B enable active-high as Microchip requires.
   *(src: motherboard/README.md)*
 - **Companion: HID -> POKEY routing** — once enumeration works, translate boot-protocol
   keyboard reports to Atari KBCODE and mouse deltas, and carry them over the SPI link.
