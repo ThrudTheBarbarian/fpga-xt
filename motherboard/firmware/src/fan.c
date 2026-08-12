@@ -14,6 +14,7 @@
 
 #include "board.h"
 #include "clock.h"
+#include "spi_link.h"
 
 #define PWM_HZ          25000U              /* 4-wire fan spec: 21-28 kHz */
 #define PWM_TOP         (APB1_TIMER_HZ / PWM_HZ)    /* 3840 at 96 MHz */
@@ -56,6 +57,11 @@
 /* If the A9 stops sending temperatures, assume the worst.  The Zynq locks up
  * without cooling, so a silent sender must mean full speed, not last-known. */
 #define TEMP_STALE_MS   10000U
+
+/* How old a reading may get before we ring the doorbell for a fresh one.  Well
+ * inside TEMP_STALE_MS, so several requests go unanswered before the failsafe
+ * trips — a single dropped transaction should not spin the fan up. */
+#define TEMP_REFRESH_MS 1000U
 
 static volatile uint32_t s_tach_edges;
 static uint32_t          s_last_update;
@@ -216,6 +222,9 @@ void fan_poll(void)
 
         if (!s_temp_valid && s_temp_ms != 0)
             s_temp_valid = 1;
+
+        if (!s_temp_valid || age > TEMP_REFRESH_MS)
+            spi_link_request_temp();
 
         if (!s_temp_valid || age > TEMP_STALE_MS) {
             /* no temperature, or a stale one: maximum airflow, no argument */

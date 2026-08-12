@@ -374,6 +374,14 @@ static void cmd_usb(int argc, char **argv)
 
 static void cmd_freq(int argc, char **argv)
 {
+    if (argc >= 3 && !strcmp(argv[1], "pin")) {
+        if (!freqcount_select(argv[2]))
+            console_puts("usage: freq pin <d12|a0>\r\n");
+        else
+            console_printf("counting on %s (%s)\r\n",
+                           freqcount_pin(), freqcount_where());
+        return;
+    }
     if (argc >= 2 && !strcmp(argv[1], "test")) {
         uint32_t got = freqcount_selftest(100);
         console_printf("self-test: drove 100 edges, counted %lu — %s\r\n",
@@ -383,7 +391,7 @@ static void cmd_freq(int argc, char **argv)
 
     uint32_t hz = freqcount_measure();
 
-    console_printf("PD12 (joystick IRR, DE-9 pin 4) = %lu Hz", hz);
+    console_printf("%s (%s) = %lu Hz", freqcount_pin(), freqcount_where(), hz);
     if (hz >= 1000000U)
         console_printf("  (%lu.%03lu MHz)", hz / 1000000U, (hz / 1000U) % 1000U);
     else if (hz >= 1000U)
@@ -463,7 +471,7 @@ static const struct command s_cmds[] = {
     { "pot",    "pot [cal lo hi]",      "paddle values",                cmd_pot    },
     { "fan",    "fan [duty|rpm|temp]",  "fan duty, tach, PID, thermal", cmd_fan    },
     { "usb",    "usb [hub]",            "USB host + HID state",         cmd_usb    },
-    { "freq",   "freq [test]",          "count frequency on PA0",       cmd_freq   },
+    { "freq",   "freq [test|pin X]",    "frequency counter",            cmd_freq   },
     { "mco",    "mco [2] [on|off]",     "24 MHz out on PA8 / PC9",      cmd_mco    },
     { "spi",    "spi",                  "FPGA link state",              cmd_spi    },
     { "ring",   "ring",                 "pulse the FPGA doorbell",      cmd_ring   },

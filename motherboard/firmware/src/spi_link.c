@@ -127,6 +127,7 @@ static void reg_write(uint8_t addr, uint8_t data)
          * is forced by the link direction — we are the slave — and is the
          * better split anyway: if the A9 hangs, cooling does not stop. */
         fan_set_temperature(data);
+        s_status &= (uint8_t)~SPI_STATUS_WANT_TEMP;      /* request satisfied */
         break;
 
     case SPI_REG_CMD:
@@ -203,6 +204,18 @@ void spi_link_post_mouse(int8_t dx, int8_t dy, uint8_t buttons)
     s_mouse_dy  = dy;
     s_mouse_btn = buttons;
     s_status   |= SPI_STATUS_MOUSE;
+    board_doorbell();
+}
+
+/* We are the SPI slave and cannot start a transaction — but PA4 exists exactly
+ * so we can ask.  Raise the flag, ring the doorbell, and the FPGA comes and
+ * reads STATUS; seeing WANT_TEMP, the A9 writes SPI_REG_TEMP.  That puts the
+ * cadence under our control rather than the A9's, which is what a controller
+ * wants.  The staleness failsafe in fan.c still stands behind it, so an A9 that
+ * never answers means full airflow rather than a stalled loop. */
+void spi_link_request_temp(void)
+{
+    s_status |= SPI_STATUS_WANT_TEMP;
     board_doorbell();
 }
 

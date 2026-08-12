@@ -366,6 +366,9 @@ typedef struct {
 #define TIM3 ((tim_t *)0x40000400UL)
 #define TIM4 ((tim_t *)0x40000800UL)
 #define TIM5 ((tim_t *)0x40000C00UL)
+#define TIM9 ((tim_t *)0x40014000UL)        /* APB2, 2 channels */
+#define TIM10 ((tim_t *)0x40014400UL)
+#define TIM11 ((tim_t *)0x40014800UL)
 
 #define TIM_CR1_CEN             (1UL << 0)
 #define TIM_CR1_ARPE            (1UL << 7)

@@ -34,6 +34,7 @@
 #define SPI_STATUS_MOUSE    0x02
 #define SPI_STATUS_SIO      0x04
 #define SPI_STATUS_JOY      0x08
+#define SPI_STATUS_WANT_TEMP 0x10   /* STM32 is asking for a temperature */
 
 #define SPI_SIO_STAT_TX_PENDING 0x01
 
@@ -41,6 +42,7 @@ void     spi_link_init(void);
 void     spi_link_post_key(uint8_t kbcode, uint8_t stat);
 void     spi_link_post_mouse(int8_t dx, int8_t dy, uint8_t buttons);
 void     spi_link_post_sio(uint8_t byte);
+void     spi_link_request_temp(void);           /* ring the doorbell for a temp */
 void     spi_link_status(void);
 uint32_t spi_link_transactions(void);
 uint32_t spi_link_resyncs(void);
