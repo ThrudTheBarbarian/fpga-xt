@@ -151,18 +151,27 @@ uint32_t freqcount_measure(void)
 
     /* Gate on the cycle counter, not milliseconds: at a 2 ms gate a whole
      * SysTick of jitter would be a 50% error. */
-    uint32_t gate  = GATE_MS * (SYSCLK_HZ / 1000UL);
-    uint32_t t0    = clock_cycles();
-    uint16_t c0    = (uint16_t)FREQ_TIM->CNT;
+    /* Read time then count at BOTH ends, in the same order and with the same
+     * instruction spacing, so the few cycles between the two reads cancel
+     * instead of accumulating.  Timing the count window against a timestamp
+     * taken after it biased every reading low by ~120 ppm — invisible for "is
+     * this clock alive", but the hub wants its reference inside +/-350 ppm, so
+     * the instrument should not eat a third of that budget by itself. */
+    uint32_t gate = GATE_MS * (SYSCLK_HZ / 1000UL);
+
+    uint32_t t0 = clock_cycles();
+    uint16_t c0 = (uint16_t)FREQ_TIM->CNT;
 
     while ((clock_cycles() - t0) < gate)
         ;
 
-    uint16_t c1    = (uint16_t)FREQ_TIM->CNT;
-    uint32_t took  = clock_cycles() - t0;
+    uint32_t t1 = clock_cycles();
+    uint16_t c1 = (uint16_t)FREQ_TIM->CNT;
 
     release_pin();
 
     uint32_t edges = (uint16_t)(c1 - c0);
+    uint32_t took  = t1 - t0;
+
     return (uint32_t)(((uint64_t)edges * SYSCLK_HZ) / took);
 }

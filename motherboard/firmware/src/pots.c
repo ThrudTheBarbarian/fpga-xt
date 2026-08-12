@@ -48,8 +48,19 @@ static volatile uint32_t s_ticks;           /* ticks since entering the state */
 static volatile uint32_t s_pending;         /* pin-mask still charging */
 static volatile uint32_t s_us[POT_COUNT];   /* last completed measurement */
 static volatile uint8_t  s_value[POT_COUNT];
-static uint32_t s_cal_min_us = 0;
-static uint32_t s_cal_max_us = 33000;
+/* Endpoints derived from the documented network rather than guessed: the
+ * carrier fits 1K series + 47 nF per pot line, the pot is 1 MOhm, and the wiper
+ * rail is **+5 V** (DE-9 pin 7) — see docs/Zynq/zynq-parameters.md.  Charging
+ * toward 5 V, the 3.3 V-domain Schmitt threshold (~1.8 V) is crossed at
+ * t = RC * ln(5 / (5 - 1.8)) ~= 0.45 RC.
+ *
+ *   pot at 0:    RC = 1K    * 47nF = 47 us   -> ~21 us
+ *   pot at max:  RC = 1M+1K * 47nF = 47 ms   -> ~21 ms
+ *
+ * An earlier 0..33000 assumed the line charged toward 3.3 V, which it does not.
+ * Still worth confirming against a real paddle with `pot cal`. */
+static uint32_t s_cal_min_us = 21;
+static uint32_t s_cal_max_us = 21000;
 static volatile uint32_t s_frames;
 
 static void drive_low(void)
