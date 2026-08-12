@@ -6,6 +6,7 @@
 
 void     fan_init(void);
 void     fan_poll(void);                        /* call from the main loop */
+void     fan_tach_input(int on);                /* release PC9 for MCO2 */
 void     fan_set_duty(uint16_t per_mille);      /* open loop, 0..1000 */
 void     fan_set_target_rpm(uint16_t rpm);      /* 0 disables the PID */
 uint32_t fan_rpm(void);

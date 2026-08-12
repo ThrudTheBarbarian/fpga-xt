@@ -106,6 +106,24 @@ void exti9_5_handler(void)
     }
 }
 
+/* Release PC9 so it can be used for something else — notably MCO2, which puts
+ * 24 MHz on the fan connector where it is far easier to reach than an LQFP pin.
+ * Disabling the EXTI is not optional: 24 MHz into a falling-edge interrupt is
+ * 24 million interrupts a second and the CPU would never leave the handler. */
+void fan_tach_input(int on)
+{
+    if (on) {
+        gpio_mode(GPIO_FAN, PIN_FAN_TACH, GPIO_MODE_IN);
+        gpio_pull(GPIO_FAN, PIN_FAN_TACH, GPIO_PULL_UP);
+        EXTI->PR   = (1UL << PIN_FAN_TACH);
+        EXTI->IMR |= (1UL << PIN_FAN_TACH);
+    } else {
+        EXTI->IMR &= ~(1UL << PIN_FAN_TACH);
+        EXTI->PR   = (1UL << PIN_FAN_TACH);
+        gpio_pull(GPIO_FAN, PIN_FAN_TACH, GPIO_PULL_NONE);
+    }
+}
+
 void fan_set_duty(uint16_t per_mille)
 {
     s_closed_loop = 0;

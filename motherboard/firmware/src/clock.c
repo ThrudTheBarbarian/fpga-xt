@@ -145,6 +145,39 @@ void clock_mco_24mhz(int on)
     gpio_pull(GPIOA, 8, GPIO_PULL_NONE);
 }
 
+/* MCO2 on PC9 = PLLCLK / 4 = 24 MHz, same as MCO1 but on a pin that is far
+ * easier to reach: PC9 runs to J3 pin 3, the fan connector's tach pin, so the
+ * clock can be picked up at a 4-way Molex header instead of an LQFP-100 pin at
+ * 0.5 mm pitch.
+ *
+ * Costs the fan tachometer while enabled (open loop still works), and the fan
+ * must be UNPLUGGED — its tach output is open collector and would fight this
+ * push-pull drive.  The caller is responsible for fan_tach_input(0) first.
+ */
+void clock_mco2_24mhz(int on)
+{
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOC;
+
+    if (!on) {
+        gpio_mode(GPIOC, 9, GPIO_MODE_IN);
+        return;
+    }
+
+    /* MCO2 = PLL (0b11 << 30), MCO2PRE = /4 (0b110 << 27) */
+    RCC->CFGR = (RCC->CFGR & ~((3UL << 30) | (7UL << 27))) |
+                (3UL << 30) | (6UL << 27);
+
+    gpio_af(GPIOC, 9, 0);                       /* MCO2 is AF0 */
+    gpio_speed(GPIOC, 9, GPIO_SPEED_MED);
+    gpio_pull(GPIOC, 9, GPIO_PULL_NONE);
+}
+
+int clock_mco2_enabled(void)
+{
+    return ((RCC->CFGR >> 30) & 3UL) == 3UL &&
+           ((GPIOC->MODER >> 18) & 3UL) == GPIO_MODE_AF;
+}
+
 int clock_mco_enabled(void)
 {
     return ((RCC->CFGR >> 21) & 3UL) == 3UL &&
