@@ -1,181 +1,319 @@
-/* keymap.c — USB HID keyboard -> Atari key, positionally.
+/* keymap.c — USB HID keyboard -> Atari key.
  *
- * The mapping is by KEY, not by character: pressing the PC key legended "2"
- * presses the Atari's "2" key, so shifting it gives whatever the Atari's
- * keyboard gives (a double-quote), not what the PC's does. That is what makes
- * the machine behave like the machine. The layouts agree more than they differ
- * — ":" really is shift-semicolon on both — but the number row diverges (Atari
- * shift-6 is "&", shift-7 is "'", shift-8 is "@") and following the Atari is
- * the point.
+ * Fully programmable: every HID usage has two independent entries, unshifted
+ * and shifted, and both can be set from the Desktop over the SPI link. The
+ * firmware does not decide what your keyboard means; it ships two sensible
+ * starting points and gets out of the way.
  *
- * KBCODE values come from the machine's own ROM: TCKD, the table of character
- * key definitions at $FB51 in the XL OS (refs/OS-xl-rev-2-Disassembly.lst).
- * That table's index is also the authority for the modifier bits — shift is
- * bit 6, ctrl is bit 7.
+ *   POSITIONAL  the PC key in a given place presses the Atari key in the same
+ *               place, so the machine behaves like the machine — shift-2 gives
+ *               a double-quote because that is what the Atari's 2 key does.
  *
- * The table lives in RAM and is replaceable a byte at a time over the SPI link
- * (SPI_REG_KEYMAP_IDX / _VAL), so the Desktop can ship international layouts
- * without new firmware. What is here is only the default.
+ *   SYMBOLIC    the symbol printed on the key you press is the symbol you get,
+ *               so shift-2 on a US keyboard gives "@" (which the Atari makes
+ *               with shift-8). Better for typing, and the right basis for
+ *               international layouts, where key positions do not correspond at
+ *               all.
  *
- * Physical-row correspondence, which is where the punctuation choices come
- * from — the Atari has two keys the PC does not (+ and *) and lacks four the
- * PC has ([ ] ' \), so the rows are lined up and the leftovers paired off:
+ * Entries hold a COMPLETE Atari code — KBCODE in bits 0-5 with shift already
+ * folded into bit 6 where the layout needs it — so the shifted column is a
+ * lookup, not a modification. Ctrl is OR'd at read time, since no default needs
+ * to pre-set it except the arrows.
  *
- *   Atari  ESC 1..0 <   >   BKSP        PC  ESC 1..0 -  =  BKSP
- *   Atari  TAB Q..P -   =   RETURN      PC  TAB Q..P [  ]  \
- *   Atari  CTL A..L ;   +   *    CAPS   PC  CAP A..L ;  '  RETURN
- *   Atari  SHF Z..M ,   .   /    ATARI  PC  SHF Z..M ,  .  /
+ * All KBCODE values come from the machine's own ROM: TCKD, the table of
+ * character key definitions at $FB51 in the XL OS
+ * (refs/OS-xl-rev-2-Disassembly.lst). That table's index is also the authority
+ * for the modifier bits — shift is bit 6, ctrl is bit 7.
+ *
+ * Keys that are not matrix codes at all are encoded as SPECIAL, because that is
+ * what they are: START/SELECT/OPTION are GTIA CONSOL bits, BREAK is a separate
+ * POKEY interrupt source, and RESET is a line.
  */
 #include "keymap.h"
 
-/* ------------------------------------------------- Atari matrix keycodes ---*/
-
-#define K_L     0x00
-#define K_J     0x01
-#define K_SEMI  0x02
-#define K_K     0x05
-#define K_PLUS  0x06
-#define K_STAR  0x07
-#define K_O     0x08
-#define K_P     0x0A
-#define K_U     0x0B
-#define K_RET   0x0C
-#define K_I     0x0D
-#define K_MINUS 0x0E
-#define K_EQUAL 0x0F
-#define K_V     0x10
-#define K_HELP  0x11
-#define K_C     0x12
-#define K_B     0x15
-#define K_X     0x16
-#define K_Z     0x17
-#define K_4     0x18
-#define K_3     0x1A
-#define K_6     0x1B
-#define K_ESC   0x1C
-#define K_5     0x1D
-#define K_2     0x1E
-#define K_1     0x1F
-#define K_COMMA 0x20
-#define K_SPACE 0x21
-#define K_DOT   0x22
-#define K_N     0x23
-#define K_M     0x25
-#define K_SLASH 0x26
-#define K_INV   0x27            /* the Atari (inverse video) key */
-#define K_R     0x28
-#define K_E     0x2A
-#define K_Y     0x2B
-#define K_TAB   0x2C
-#define K_T     0x2D
-#define K_W     0x2E
-#define K_Q     0x2F
-#define K_9     0x30
-#define K_0     0x32
-#define K_7     0x33
-#define K_BKSP  0x34
-#define K_8     0x35
-#define K_LESS  0x36            /* CLEAR when shifted  */
-#define K_GT    0x37            /* INSERT when shifted */
-#define K_F     0x38
-#define K_H     0x39
-#define K_D     0x3A
-#define K_CAPS  0x3C
-#define K_G     0x3D
-#define K_S     0x3E
-#define K_A     0x3F
-
-/* Arrows are ctrl-<key> on this keyboard, so the PC arrow keys map to the
- * matching key with ctrl already folded in. */
-#define K_UP    (K_MINUS | KEYMAP_CTRL)
-#define K_DOWN  (K_EQUAL | KEYMAP_CTRL)
-#define K_LEFT  (K_PLUS  | KEYMAP_CTRL)
-#define K_RIGHT (K_STAR  | KEYMAP_CTRL)
-
-#define __      KEYMAP_NONE
-
-static uint8_t s_map[KEYMAP_SIZE];
-
-static const uint8_t s_default[KEYMAP_SIZE] = {
-    /* 0x00 */ __, __, __, __,
-    /* 0x04 a..z, in HID order */
-    K_A, K_B, K_C, K_D, K_E, K_F, K_G, K_H, K_I, K_J, K_K, K_L, K_M,
-    K_N, K_O, K_P, K_Q, K_R, K_S, K_T, K_U, K_V, K_W, K_X, K_Y, K_Z,
-    /* 0x1E 1..9 0 */
-    K_1, K_2, K_3, K_4, K_5, K_6, K_7, K_8, K_9, K_0,
-    /* 0x28 */ K_RET, K_ESC, K_BKSP, K_TAB, K_SPACE,
-    /* 0x2D - =  : the Atari's top row ends < > where the PC's ends - = */
-    K_LESS, K_GT,
-    /* 0x2F [ ]  : the Atari's second row ends - = where the PC's ends [ ] */
-    K_MINUS, K_EQUAL,
-    /* 0x31 backslash : nothing there on the Atari; give it the * key, which
-     * BASIC needs and which the PC has nowhere else */
-    K_STAR,
-    /* 0x32 non-US #  */ K_STAR,
-    /* 0x33 ; 0x34 '  : ' sits where the Atari's + does */
-    K_SEMI, K_PLUS,
-    /* 0x35 grave : no Atari equivalent, so give it the Atari/inverse key */
-    K_INV,
-    /* 0x36 , 0x37 . 0x38 / */
-    K_COMMA, K_DOT, K_SLASH,
-    /* 0x39 caps lock */ K_CAPS,
-    /* 0x3A F1..F12 — console keys follow the emulator convention, so F1 and
-     * the 1200XL's F-key codes lose out to OPTION/SELECT/START/RESET */
-    __, KEYMAP_OPTION, KEYMAP_SELECT, KEYMAP_START, KEYMAP_RESET,
-    K_HELP, KEYMAP_BREAK, __, __, __, __, KEYMAP_BREAK,
-    /* 0x46 printscreen, scroll lock, pause */ __, __, __,
-    /* 0x49 insert, home, pageup, delete, end, pagedown */
-    (K_GT | KEYMAP_SHIFT), (K_LESS | KEYMAP_SHIFT), __,
-    (K_BKSP | KEYMAP_SHIFT), __, __,
-    /* 0x4F right, left, down, up */
-    K_RIGHT, K_LEFT, K_DOWN, K_UP,
-    /* 0x53 num lock */ __,
-    /* 0x54 KP / * - +  : matches the xtmouse keypad convention already in
-     * CTRL_CONSOL — KP_* is OPTION, KP_- is SELECT, KP_+ is START */
-    K_SLASH, KEYMAP_OPTION, KEYMAP_SELECT, KEYMAP_START,
-    /* 0x58 KP enter, KP 1..9, KP 0, KP . */
-    K_RET, K_1, K_2, K_3, K_4, K_5, K_6, K_7, K_8, K_9, K_0, K_DOT,
+static const uint8_t s_positional[][2] = {
+    [0x00] = { 0xFF, 0xFF },
+    [0x01] = { 0xFF, 0xFF },
+    [0x02] = { 0xFF, 0xFF },
+    [0x03] = { 0xFF, 0xFF },
+    [0x04] = { 0x3F, 0x7F },
+    [0x05] = { 0x15, 0x55 },
+    [0x06] = { 0x12, 0x52 },
+    [0x07] = { 0x3A, 0x7A },
+    [0x08] = { 0x2A, 0x6A },
+    [0x09] = { 0x38, 0x78 },
+    [0x0A] = { 0x3D, 0x7D },
+    [0x0B] = { 0x39, 0x79 },
+    [0x0C] = { 0x0D, 0x4D },
+    [0x0D] = { 0x01, 0x41 },
+    [0x0E] = { 0x05, 0x45 },
+    [0x0F] = { 0x00, 0x40 },
+    [0x10] = { 0x25, 0x65 },
+    [0x11] = { 0x23, 0x63 },
+    [0x12] = { 0x08, 0x48 },
+    [0x13] = { 0x0A, 0x4A },
+    [0x14] = { 0x2F, 0x6F },
+    [0x15] = { 0x28, 0x68 },
+    [0x16] = { 0x3E, 0x7E },
+    [0x17] = { 0x2D, 0x6D },
+    [0x18] = { 0x0B, 0x4B },
+    [0x19] = { 0x10, 0x50 },
+    [0x1A] = { 0x2E, 0x6E },
+    [0x1B] = { 0x16, 0x56 },
+    [0x1C] = { 0x2B, 0x6B },
+    [0x1D] = { 0x17, 0x57 },
+    [0x1E] = { 0x1F, 0x5F },
+    [0x1F] = { 0x1E, 0x5E },
+    [0x20] = { 0x1A, 0x5A },
+    [0x21] = { 0x18, 0x58 },
+    [0x22] = { 0x1D, 0x5D },
+    [0x23] = { 0x1B, 0x5B },
+    [0x24] = { 0x33, 0x73 },
+    [0x25] = { 0x35, 0x75 },
+    [0x26] = { 0x30, 0x70 },
+    [0x27] = { 0x32, 0x72 },
+    [0x28] = { 0x0C, 0x4C },
+    [0x29] = { 0x1C, 0x5C },
+    [0x2A] = { 0x34, 0x74 },
+    [0x2B] = { 0x2C, 0x6C },
+    [0x2C] = { 0x21, 0x61 },
+    [0x2D] = { 0x36, 0x76 },
+    [0x2E] = { 0x37, 0x77 },
+    [0x2F] = { 0x0E, 0x4E },
+    [0x30] = { 0x0F, 0x4F },
+    [0x31] = { 0x07, 0x47 },
+    [0x32] = { 0x07, 0x47 },
+    [0x33] = { 0x02, 0x42 },
+    [0x34] = { 0x06, 0x46 },
+    [0x35] = { 0x27, 0x67 },
+    [0x36] = { 0x20, 0x60 },
+    [0x37] = { 0x22, 0x62 },
+    [0x38] = { 0x26, 0x66 },
+    [0x39] = { 0x3C, 0x7C },
+    [0x3A] = { 0xFF, 0xFF },
+    [0x3B] = { 0xD0, 0xD0 },
+    [0x3C] = { 0xC8, 0xC8 },
+    [0x3D] = { 0xC4, 0xC4 },
+    [0x3E] = { 0xC2, 0xC2 },
+    [0x3F] = { 0x11, 0x51 },
+    [0x40] = { 0xC1, 0xC1 },
+    [0x41] = { 0xFF, 0xFF },
+    [0x42] = { 0xFF, 0xFF },
+    [0x43] = { 0xFF, 0xFF },
+    [0x44] = { 0xFF, 0xFF },
+    [0x45] = { 0xC1, 0xC1 },
+    [0x46] = { 0xFF, 0xFF },
+    [0x47] = { 0xFF, 0xFF },
+    [0x48] = { 0xFF, 0xFF },
+    [0x49] = { 0x77, 0x77 },
+    [0x4A] = { 0x76, 0x76 },
+    [0x4B] = { 0xFF, 0xFF },
+    [0x4C] = { 0x74, 0x74 },
+    [0x4D] = { 0xFF, 0xFF },
+    [0x4E] = { 0xFF, 0xFF },
+    [0x4F] = { 0x87, 0xC7 },
+    [0x50] = { 0x86, 0xC6 },
+    [0x51] = { 0x8F, 0xCF },
+    [0x52] = { 0x8E, 0xCE },
+    [0x53] = { 0xFF, 0xFF },
+    [0x54] = { 0x26, 0x66 },
+    [0x55] = { 0xD0, 0xD0 },
+    [0x56] = { 0xC8, 0xC8 },
+    [0x57] = { 0xC4, 0xC4 },
+    [0x58] = { 0x0C, 0x4C },
+    [0x59] = { 0x1F, 0x5F },
+    [0x5A] = { 0x1E, 0x5E },
+    [0x5B] = { 0x1A, 0x5A },
+    [0x5C] = { 0x18, 0x58 },
+    [0x5D] = { 0x1D, 0x5D },
+    [0x5E] = { 0x1B, 0x5B },
+    [0x5F] = { 0x33, 0x73 },
+    [0x60] = { 0x35, 0x75 },
+    [0x61] = { 0x30, 0x70 },
+    [0x62] = { 0x32, 0x72 },
+    [0x63] = { 0x22, 0x62 },
+    [0x64] = { 0xFF, 0xFF },
+    [0x65] = { 0xFF, 0xFF },
+    [0x66] = { 0xFF, 0xFF },
+    [0x67] = { 0xFF, 0xFF },
+    [0x68] = { 0xFF, 0xFF },
+    [0x69] = { 0xFF, 0xFF },
+    [0x6A] = { 0xFF, 0xFF },
+    [0x6B] = { 0xFF, 0xFF },
+    [0x6C] = { 0xFF, 0xFF },
+    [0x6D] = { 0xFF, 0xFF },
+    [0x6E] = { 0xFF, 0xFF },
+    [0x6F] = { 0xFF, 0xFF },
 };
+
+static const uint8_t s_symbolic[][2] = {
+    [0x00] = { 0xFF, 0xFF },
+    [0x01] = { 0xFF, 0xFF },
+    [0x02] = { 0xFF, 0xFF },
+    [0x03] = { 0xFF, 0xFF },
+    [0x04] = { 0x3F, 0x7F },
+    [0x05] = { 0x15, 0x55 },
+    [0x06] = { 0x12, 0x52 },
+    [0x07] = { 0x3A, 0x7A },
+    [0x08] = { 0x2A, 0x6A },
+    [0x09] = { 0x38, 0x78 },
+    [0x0A] = { 0x3D, 0x7D },
+    [0x0B] = { 0x39, 0x79 },
+    [0x0C] = { 0x0D, 0x4D },
+    [0x0D] = { 0x01, 0x41 },
+    [0x0E] = { 0x05, 0x45 },
+    [0x0F] = { 0x00, 0x40 },
+    [0x10] = { 0x25, 0x65 },
+    [0x11] = { 0x23, 0x63 },
+    [0x12] = { 0x08, 0x48 },
+    [0x13] = { 0x0A, 0x4A },
+    [0x14] = { 0x2F, 0x6F },
+    [0x15] = { 0x28, 0x68 },
+    [0x16] = { 0x3E, 0x7E },
+    [0x17] = { 0x2D, 0x6D },
+    [0x18] = { 0x0B, 0x4B },
+    [0x19] = { 0x10, 0x50 },
+    [0x1A] = { 0x2E, 0x6E },
+    [0x1B] = { 0x16, 0x56 },
+    [0x1C] = { 0x2B, 0x6B },
+    [0x1D] = { 0x17, 0x57 },
+    [0x1E] = { 0x1F, 0x5F },
+    [0x1F] = { 0x1E, 0x75 },
+    [0x20] = { 0x1A, 0x5A },
+    [0x21] = { 0x18, 0x58 },
+    [0x22] = { 0x1D, 0x5D },
+    [0x23] = { 0x1B, 0x47 },
+    [0x24] = { 0x33, 0x5B },
+    [0x25] = { 0x35, 0x07 },
+    [0x26] = { 0x30, 0x70 },
+    [0x27] = { 0x32, 0x72 },
+    [0x28] = { 0x0C, 0x0C },
+    [0x29] = { 0x1C, 0x1C },
+    [0x2A] = { 0x34, 0x34 },
+    [0x2B] = { 0x2C, 0x2C },
+    [0x2C] = { 0x21, 0x21 },
+    [0x2D] = { 0x0E, 0x4E },
+    [0x2E] = { 0x0F, 0x06 },
+    [0x2F] = { 0x60, 0xFF },
+    [0x30] = { 0x62, 0x76 },
+    [0x31] = { 0x46, 0x4F },
+    [0x32] = { 0xFF, 0xFF },
+    [0x33] = { 0x02, 0x42 },
+    [0x34] = { 0x73, 0x5E },
+    [0x35] = { 0xFF, 0x34 },
+    [0x36] = { 0x20, 0x36 },
+    [0x37] = { 0x22, 0x37 },
+    [0x38] = { 0x26, 0x66 },
+    [0x39] = { 0x3C, 0x3C },
+    [0x3A] = { 0xFF, 0xFF },
+    [0x3B] = { 0xD0, 0xD0 },
+    [0x3C] = { 0xC8, 0xC8 },
+    [0x3D] = { 0xC4, 0xC4 },
+    [0x3E] = { 0xC2, 0xC2 },
+    [0x3F] = { 0x11, 0x11 },
+    [0x40] = { 0xC1, 0xC1 },
+    [0x41] = { 0xFF, 0xFF },
+    [0x42] = { 0xFF, 0xFF },
+    [0x43] = { 0xFF, 0xFF },
+    [0x44] = { 0xFF, 0xFF },
+    [0x45] = { 0xC1, 0xC1 },
+    [0x46] = { 0xFF, 0xFF },
+    [0x47] = { 0xFF, 0xFF },
+    [0x48] = { 0xFF, 0xFF },
+    [0x49] = { 0x77, 0x77 },
+    [0x4A] = { 0x76, 0x76 },
+    [0x4B] = { 0xFF, 0xFF },
+    [0x4C] = { 0x74, 0x74 },
+    [0x4D] = { 0xFF, 0xFF },
+    [0x4E] = { 0xFF, 0xFF },
+    [0x4F] = { 0x87, 0x87 },
+    [0x50] = { 0x86, 0x86 },
+    [0x51] = { 0x8F, 0x8F },
+    [0x52] = { 0x8E, 0x8E },
+    [0x53] = { 0xFF, 0xFF },
+    [0x54] = { 0x26, 0x26 },
+    [0x55] = { 0xD0, 0xD0 },
+    [0x56] = { 0xC8, 0xC8 },
+    [0x57] = { 0xC4, 0xC4 },
+    [0x58] = { 0x0C, 0x0C },
+    [0x59] = { 0x1F, 0x1F },
+    [0x5A] = { 0x1E, 0x1E },
+    [0x5B] = { 0x1A, 0x1A },
+    [0x5C] = { 0x18, 0x18 },
+    [0x5D] = { 0x1D, 0x1D },
+    [0x5E] = { 0x1B, 0x1B },
+    [0x5F] = { 0x33, 0x33 },
+    [0x60] = { 0x35, 0x35 },
+    [0x61] = { 0x30, 0x30 },
+    [0x62] = { 0x32, 0x32 },
+    [0x63] = { 0x22, 0x22 },
+    [0x64] = { 0xFF, 0xFF },
+    [0x65] = { 0xFF, 0xFF },
+    [0x66] = { 0xFF, 0xFF },
+    [0x67] = { 0xFF, 0xFF },
+    [0x68] = { 0xFF, 0xFF },
+    [0x69] = { 0xFF, 0xFF },
+    [0x6A] = { 0xFF, 0xFF },
+    [0x6B] = { 0xFF, 0xFF },
+    [0x6C] = { 0xFF, 0xFF },
+    [0x6D] = { 0xFF, 0xFF },
+    [0x6E] = { 0xFF, 0xFF },
+    [0x6F] = { 0xFF, 0xFF },
+};
+
+static uint8_t s_map[KEYMAP_SIZE][2];
+static uint8_t s_layout = KEYMAP_POSITIONAL;
 
 void keymap_init(void)
 {
-    keymap_reset();
+    keymap_load(KEYMAP_POSITIONAL);
 }
 
-void keymap_reset(void)
+void keymap_load(uint8_t layout)
 {
-    for (unsigned i = 0; i < KEYMAP_SIZE; i++)
-        s_map[i] = i < sizeof s_default ? s_default[i] : KEYMAP_NONE;
+    const uint8_t (*src)[2] = (layout == KEYMAP_SYMBOLIC) ? s_symbolic : s_positional;
+    unsigned n = (layout == KEYMAP_SYMBOLIC)
+               ? sizeof s_symbolic / sizeof s_symbolic[0]
+               : sizeof s_positional / sizeof s_positional[0];
+
+    s_layout = (layout == KEYMAP_SYMBOLIC) ? KEYMAP_SYMBOLIC : KEYMAP_POSITIONAL;
+
+    for (unsigned i = 0; i < KEYMAP_SIZE; i++) {
+        s_map[i][0] = i < n ? src[i][0] : KEYMAP_NONE;
+        s_map[i][1] = i < n ? src[i][1] : KEYMAP_NONE;
+    }
 }
 
-void keymap_set(uint8_t usage, uint8_t value)
+uint8_t keymap_layout(void)
 {
-    s_map[usage] = value;
+    return s_layout;
 }
 
-uint8_t keymap_get(uint8_t usage)
+void keymap_set(uint8_t usage, int shifted, uint8_t value)
 {
-    return s_map[usage];
+    s_map[usage][shifted ? 1 : 0] = value;
+}
+
+uint8_t keymap_get(uint8_t usage, int shifted)
+{
+    return s_map[usage][shifted ? 1 : 0];
 }
 
 int keymap_lookup(uint8_t usage, uint8_t modifiers, uint8_t *out)
 {
-    uint8_t v = s_map[usage];
+    const int shift = (modifiers & (HID_MOD_LSHIFT | HID_MOD_RSHIFT)) != 0;
+    uint8_t   v     = s_map[usage][shift];
 
     if (v == KEYMAP_NONE)
         return KEYMAP_R_NONE;
 
-    /* BOTH modifier bits, not either: a plain ctrl-key entry (the arrows carry
-     * one) has bit 7 set and is not special. */
+    /* BOTH modifier bits, not either: a plain ctrl entry (the arrows carry one)
+     * has bit 7 set and is not special. */
     if ((v & KEYMAP_SPECIAL) == KEYMAP_SPECIAL) {
         *out = v;
         return KEYMAP_R_SPECIAL;
     }
 
-    /* Modifiers from the host are OR'd onto whatever the table already carries
-     * — the arrow keys, for instance, arrive with ctrl already set. */
-    if (modifiers & (HID_MOD_LSHIFT | HID_MOD_RSHIFT))
-        v |= KEYMAP_SHIFT;
     if (modifiers & (HID_MOD_LCTRL | HID_MOD_RCTRL))
         v |= KEYMAP_CTRL;
 

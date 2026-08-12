@@ -58,6 +58,7 @@ static volatile int8_t  s_mouse_dx, s_mouse_dy;
 static volatile uint8_t s_mouse_btn;
 static volatile uint8_t s_consol = 0x07;    /* active low; $07 = nothing held */
 static volatile uint8_t s_keymap_idx;
+static volatile uint8_t s_keymap_col;
 
 void spi_link_init(void)
 {
@@ -139,14 +140,19 @@ static void reg_write(uint8_t addr, uint8_t data)
         break;
 
     case SPI_REG_KEYMAP_VAL:
-        /* Auto-increment so the Desktop can stream a whole layout without a
+        /* Auto-increment so the Desktop can stream a whole column without a
          * round trip per byte. */
-        keymap_set(s_keymap_idx++, data);
+        keymap_set(s_keymap_idx++, s_keymap_col, data);
         break;
 
     case SPI_REG_KEYMAP_CTL:
-        if (data & 1U)
-            keymap_reset();
+        switch (data) {
+        case SPI_KEYMAP_COL_PLAIN:   s_keymap_col = 0; s_keymap_idx = 0; break;
+        case SPI_KEYMAP_COL_SHIFTED: s_keymap_col = 1; s_keymap_idx = 0; break;
+        case SPI_KEYMAP_POSITIONAL:  keymap_load(KEYMAP_POSITIONAL); break;
+        case SPI_KEYMAP_SYMBOLIC:    keymap_load(KEYMAP_SYMBOLIC);   break;
+        default: break;
+        }
         break;
 
     case SPI_REG_CMD:

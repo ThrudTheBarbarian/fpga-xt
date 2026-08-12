@@ -375,24 +375,39 @@ static void cmd_usb(int argc, char **argv)
 
 static void cmd_key(int argc, char **argv)
 {
-    uint32_t usage = 0, mods = 0, val = 0;
+    uint32_t usage = 0, mods = 0, val = 0, col = 0;
 
-    if (argc >= 2 && !strcmp(argv[1], "reset")) {
-        keymap_reset();
-        console_puts("keymap restored to the built-in table\r\n");
+    if (argc >= 2 && !strcmp(argv[1], "layout")) {
+        if (argc >= 3) {
+            if (argv[2][0] == 'p')
+                keymap_load(KEYMAP_POSITIONAL);
+            else if (argv[2][0] == 's')
+                keymap_load(KEYMAP_SYMBOLIC);
+            else {
+                console_puts("usage: key layout [positional|symbolic]\r\n");
+                return;
+            }
+        }
+        console_printf("layout %s\r\n",
+                       keymap_layout() == KEYMAP_SYMBOLIC ? "symbolic" : "positional");
         return;
     }
     if (argc >= 4 && !strcmp(argv[1], "set")) {
+        /* key set <usage> <unshifted> [shifted] */
         if (parse_u32(argv[2], &usage) && parse_u32(argv[3], &val) && usage < 256) {
-            keymap_set((uint8_t)usage, (uint8_t)val);
-            console_printf("usage %02lx -> %02lx\r\n", usage, val);
+            keymap_set((uint8_t)usage, 0, (uint8_t)val);
+            if (argc >= 5 && parse_u32(argv[4], &col))
+                keymap_set((uint8_t)usage, 1, (uint8_t)col);
+            console_printf("usage %02lx -> %02x / %02x\r\n", usage,
+                           keymap_get((uint8_t)usage, 0),
+                           keymap_get((uint8_t)usage, 1));
         }
         return;
     }
     if (argc < 2 || !parse_u32(argv[1], &usage) || usage > 255) {
         console_puts("usage: key <hid_usage> [modifiers]\r\n"
-                     "       key set <usage> <value>\r\n"
-                     "       key reset\r\n"
+                     "       key set <usage> <unshifted> [shifted]\r\n"
+                     "       key layout [positional|symbolic]\r\n"
                      "  mods: 01 lctrl  02 lshift  10 rctrl  20 rshift\r\n"
                      "  numbers are decimal unless prefixed 0x\r\n");
         return;
@@ -523,7 +538,7 @@ static const struct command s_cmds[] = {
     { "pot",    "pot [cal lo hi]",      "paddle values",                cmd_pot    },
     { "fan",    "fan [duty|rpm|temp]",  "fan duty, tach, PID, thermal", cmd_fan    },
     { "usb",    "usb [hub]",            "USB host + HID state",         cmd_usb    },
-    { "key",    "key <usage>|set|reset","HID -> Atari KBCODE",          cmd_key    },
+    { "key",    "key <usage>|set|layout","HID -> Atari key",             cmd_key    },
     { "freq",   "freq [test|pin X]",    "frequency counter",            cmd_freq   },
     { "mco",    "mco [2] [on|off]",     "24 MHz out on PA8 / PC9",      cmd_mco    },
     { "spi",    "spi",                  "FPGA link state",              cmd_spi    },

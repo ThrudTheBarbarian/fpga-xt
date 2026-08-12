@@ -386,22 +386,31 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   Do not cite them as the assembly record for the current board; ask for the current
   outputs, or get them from JLCPCB. (Same trap as [docs/carrier].)
 - **Companion: HID -> POKEY routing — keyboard DONE, mouse pending.**
-  `motherboard/firmware/src/keymap.c` maps HID usages to Atari keys **positionally**:
-  the PC key legended "2" presses the Atari's "2", so shifting gives what the Atari's
-  keyboard gives (a double-quote), not the PC's "@". KBCODE values come from the
-  machine's own ROM — **TCKD** at $FB51 in `refs/OS-xl-rev-2-Disassembly.lst` — which is
-  also the authority for the modifier bits: **shift is bit 6, ctrl is bit 7**.
-  The table lives in RAM and is **replaceable a byte at a time from the Desktop** over
-  the link (`SPI_REG_KEYMAP_IDX`/`_VAL`, auto-incrementing so a whole layout streams;
-  `_CTL` bit 0 restores the default), so international layouts need no new firmware.
-  Non-matrix keys are handled properly rather than faked: **START/SELECT/OPTION** drive
+  `motherboard/firmware/src/keymap.c`. Every HID usage has **two independently
+  settable entries** (unshifted, shifted), so a Desktop app can assign anything to any
+  keypress; the firmware only ships starting points. Two are built in:
+  **POSITIONAL** (the PC key in a place presses the Atari key in the same place —
+  shift-2 gives `"`, because that is what the Atari's 2 key does) and **SYMBOLIC**
+  (the symbol on the key you press is what you get — shift-2 on a US keyboard gives
+  `@`, which the Atari makes with shift-8). Symbolic is the right basis for
+  international layouts, where positions do not correspond at all. Default is
+  positional; `key layout [positional|symbolic]` switches.
+  Entries hold a COMPLETE Atari code (shift folded into bit 6 where the layout needs
+  it), so the shifted column is a lookup rather than a modification. All KBCODE values
+  come from the machine's own ROM — **TCKD** at $FB51 in
+  `refs/OS-xl-rev-2-Disassembly.lst` — which is also the authority for the modifier
+  bits: **shift is bit 6, ctrl is bit 7**.
+  Desktop upload: `SPI_REG_KEYMAP_CTL` selects a column (and rewinds), then
+  `SPI_REG_KEYMAP_VAL` streams 256 bytes auto-incrementing; two passes load a whole
+  layout. CTL can also reload either built-in.
+  Non-matrix keys are handled as what they are: **START/SELECT/OPTION** drive
   `SPI_REG_CONSOL` (active-low, matching `XT_CTRL_CONSOL`) and are rebuilt from every
   report because the 6502 reads them as levels; **BREAK** and **RESET** are events on
-  `KBD_STAT`; **HELP** is a real KBCODE ($11). Console keys are on F2/F3/F4 and the
-  keypad +/-/* (matching the xtmouse convention already in CTRL_CONSOL), RESET on F5,
-  HELP on F6, BREAK on F7/F12. Arrows map to the ctrl-combinations the real keyboard
-  uses. Verified on hardware with `key <usage> [mods]` / `key set` / `key reset`.
-  Remaining: mouse deltas, and the FPGA side consuming CONSOL + the reset event.
+  `KBD_STAT`; **HELP** is a real KBCODE ($11). Console keys on F2/F3/F4 and keypad
+  +/-/* (the xtmouse convention already in CTRL_CONSOL), RESET F5, HELP F6, BREAK
+  F7/F12; arrows use the ctrl-combinations the real keyboard uses.
+  Remaining: mouse deltas, the FPGA side consuming CONSOL + the reset event, and the
+  Desktop-side keymap editor.
 - **Companion: paddle calibration** — endpoints are computed for 1 MOhm x 47 nF
   (0..33000 us); measure against a real paddle and set with `pot cal <lo> <hi>`.
 - **SIO: PIA CA1/CA2/CB1/CB2 control lines** — PROCEED/MOTOR/INTERRUPT/COMMAND in

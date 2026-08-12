@@ -34,7 +34,15 @@
 #define SPI_REG_KEYMAP_IDX  0x08    /* HID usage to write next               */
 #define SPI_REG_KEYMAP_VAL  0x09    /* value; stores and auto-increments IDX
                                      * so a whole table can be streamed      */
-#define SPI_REG_KEYMAP_CTL  0x0A    /* 1 = restore the built-in table        */
+#define SPI_REG_KEYMAP_CTL  0x0A    /* command; see SPI_KEYMAP_* below        */
+
+/* KEYMAP_CTL commands.  Selecting a column also rewinds the index, so loading
+ * a whole layout is: select plain, stream 256 bytes, select shifted, stream
+ * 256 more. */
+#define SPI_KEYMAP_COL_PLAIN    0x01
+#define SPI_KEYMAP_COL_SHIFTED  0x02
+#define SPI_KEYMAP_POSITIONAL   0x10    /* reload the built-in positional map */
+#define SPI_KEYMAP_SYMBOLIC     0x11    /* reload the built-in symbolic map   */
 
 /* STATUS bits — the FPGA reads STATUS to find out why the doorbell rang */
 #define SPI_STATUS_KBD      0x01

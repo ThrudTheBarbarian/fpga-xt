@@ -42,10 +42,15 @@ enum {
     KEYMAP_R_SPECIAL        /* *out is one of the KEYMAP_* specials  */
 };
 
+/* Built-in starting points; the Desktop can overwrite any entry afterwards. */
+#define KEYMAP_POSITIONAL   0
+#define KEYMAP_SYMBOLIC     1
+
 void    keymap_init(void);
-void    keymap_reset(void);                     /* restore the built-in table */
-void    keymap_set(uint8_t usage, uint8_t value);
-uint8_t keymap_get(uint8_t usage);
+void    keymap_load(uint8_t layout);            /* KEYMAP_POSITIONAL|SYMBOLIC */
+uint8_t keymap_layout(void);
+void    keymap_set(uint8_t usage, int shifted, uint8_t value);
+uint8_t keymap_get(uint8_t usage, int shifted);
 int     keymap_lookup(uint8_t usage, uint8_t modifiers, uint8_t *out);
 
 #endif /* KEYMAP_H */
