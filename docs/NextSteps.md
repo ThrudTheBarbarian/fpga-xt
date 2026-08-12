@@ -342,6 +342,29 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 - none
 
 ## SIO / PBI / cartridge / companion MCU
+- **HW: PB2/BOOT1 is unconnected** — the F411 samples BOOT1 on PB2 shortly after
+  reset; with no net and no reset-state pull, the level is undefined, so "FPGA
+  raises BOOT0 and pulses NRST to reach the AN3155 ROM bootloader" is a coin flip.
+  PB2 is otherwise unused: tack a wire or 10K to GND. Blocks the UART firmware-
+  update path; SWD is unaffected. *(src: motherboard/README.md)*
+- **HW: confirm HUB_RST polarity on PA9** — firmware assumes active low
+  (`HUB_RST_ACTIVE_LOW` in `motherboard/firmware/src/board.c`). Check the hub page
+  of the schematic before debugging a failed enumeration.
+- **HW: no fan tach pulses** — PC8 PWM is confirmed running at 100% duty and PC9 is
+  pulled up, but `fan` reports 0 RPM. Confirm a fan is fitted to J3 and that +5V
+  reaches it, then tune the PID gains. *(src: motherboard/README.md)*
+- **Probe firmware lacks RTT** — stock Black Magic v2.0.0 answers "Target does not
+  support this command" to `monitor rtt`; an interactive console needs a probe
+  rebuilt with `ENABLE_RTT=1`. Until then `motherboard/tools/rtt-gdb.sh` runs the
+  REPL one command per invocation.
+- **Companion: USB host (TinyUSB dwc2 + hub + HID)** — OTG-FS on PA11/PA12 with
+  **VBUS sensing disabled** (PA9 is HUB_RST, not VBUS). Needs `CFG_TUH_HUB` for the
+  on-board 4-way hub. *(src: motherboard/README.md)*
+- **Companion: SPI1 slave link + doorbell** — PA5/6/7 with SSM=1/SSI=0 (no NSS,
+  FPGA is master), PA4 doorbell out, PB13/14 INTERRUPT/PROCEED out, PB15 COMMAND in
+  on EXTI15. Pairs with the peri-link re-point below.
+- **Companion: paddle calibration** — endpoints are computed for 1 MOhm x 47 nF
+  (0..33000 us); measure against a real paddle and set with `pot cal <lo> <hi>`.
 - **SIO: PIA CA1/CA2/CB1/CB2 control lines** — PROCEED/MOTOR/INTERRUPT/COMMAND in
   `pia_regs.sv` store bits but drive nothing; implement + add the pad/GPIO path.
   *(main remaining SIO RTL; src: docs/OS/sio-bridge.md)*

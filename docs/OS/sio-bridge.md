@@ -293,3 +293,36 @@ the escape hatch for a *4th* serial role, not a way down to two.
 So the **data plane is done and already byte-level** (the key architectural bet);
 the remaining SIO RTL is the **PIA control lines** plus plumbing the GPIO to pads.
 Nothing here is POKEY's job beyond the serial data it already handles.
+
+## 12. Companion firmware
+
+The firmware lives in [`motherboard/`](../../motherboard/README.md); that README
+is the authority on the pin map, the build and the console. Three decisions made
+there change what this note assumed:
+
+**Paddles use no timer channels.** The natural mapping — TIM3_CH1..4 on
+PB4/PB5/PB0/PB1 and TIM4_CH1..4 on PB6..PB9 — collides with fan control, because
+PC8 and PC9 are TIM3_CH3 and TIM3_CH4 and a compare unit cannot serve two pins.
+The fan keeps TIM3; the eight pots are timed by polling `GPIOB->IDR` against the
+DWT cycle counter instead. All eight pins are on one port, so discharge and
+release stay simultaneous, and a full-scale ~33 ms charge resolves to ~145 µs per
+POKEY step — far finer than the 228 levels need. No board change, nothing lost.
+
+**The fan tachometer is edge-counted on EXTI9**, not input-captured: TIM3 is
+generating a 40 µs PWM period, so a capture unit on the same timer would see
+hundreds of overflows per tach pulse. A 250 ms edge-count window is ample for
+500-3000 RPM.
+
+**The console is RTT over SWD**, not SWO. J17 leaves SWO unconnected and PB3
+(TRACESWO) is spent on USART1_RX, so the developer console rides ring buffers in
+target RAM that the debug probe reads and writes while the CPU runs. The same
+REPL is also served on USART2, which is the Zynq's channel.
+
+### Open hardware item: BOOT1
+
+§6 assumes the FPGA can drive BOOT0 high, pulse NRST, and land in the AN3155
+ROM bootloader. That needs **BOOT1 (PB2) low**, and PB2 is unconnected on the
+schematic with no pull in its reset state — so the boot mode is undefined
+between system memory and embedded SRAM. PB2 is otherwise unused; a wire or a
+10 kΩ resistor to GND settles it. Until then SWD is the reliable programming
+path.
