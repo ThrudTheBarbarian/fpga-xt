@@ -15,7 +15,7 @@ DDR3 over the Zynq AXI-HP port. Today `hdl/banked_axi_reader.sv` is a **single
 
 So random-ish reads and all writes do **not** keep up with the 100 MHz CPU.
 
-The xtc usage pattern is "map a page (`$D5C0` code / `$D5C1` data), then hammer
+The xcc usage pattern is "map a page (`$D5C0` code / `$D5C1` data), then hammer
 it before swapping" (the heap reserves data pages on demand). That pattern wants
 a **resident page cache**: once a page's lines are in BRAM, *every* access to that
 page — random reads **and** writes — hits BRAM at single-cycle latency. The only

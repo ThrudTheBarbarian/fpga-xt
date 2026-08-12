@@ -1,6 +1,6 @@
 # The XTOS DWARF subset — emitter/reader contract
 
-> **Status: spec.** The precise, restricted DWARF profile xtc emits for **all three
+> **Status: spec.** The precise, restricted DWARF profile xcc emits for **all three
 > backends** (ARM / m68k / 6502) and the bespoke IDE debugger reads. It makes
 > concrete the conceptual profile in [xtos-vision.md](xtos-vision.md) §3, with the
 > settled **full-backtrace** decision folded in. Goal: emit *only* what we use, so a
@@ -29,8 +29,8 @@ One `DW_TAG_compile_unit` per translation unit:
 
 | Attribute | Value |
 |-----------|-------|
-| `DW_AT_producer` | `"xtc <version> <backend>"` |
-| `DW_AT_language` | a `DW_LANG_*` (xtc's own once registered; `DW_LANG_C11` as a stand-in until then) |
+| `DW_AT_producer` | `"xcc <version> <backend>"` |
+| `DW_AT_language` | a `DW_LANG_*` (xcc's own once registered; `DW_LANG_C11` as a stand-in until then) |
 | `DW_AT_name` / `DW_AT_comp_dir` | source path / compile dir |
 | `DW_AT_low_pc` / `DW_AT_high_pc` | unit flat-PC span (§3) |
 | `DW_AT_stmt_list` | offset into `.debug_line` |
@@ -143,13 +143,13 @@ prologue** so this stays mechanical; release builds may unwind approximately.
 ### 7c. Per-backend register vocabulary
 
 DWARF register numbers (the per-target extension point). ARM/m68k use the
-standard, published numbering; **6502 is bespoke — xtc defines it here**:
+standard, published numbering; **6502 is bespoke — xcc defines it here**:
 
 | Backend | Registers (DWARF numbers) | Return-address reg | CFA (typical) |
 |---------|---------------------------|--------------------|---------------|
 | **ARM** (AAPCS32) | standard ARM: `r0–r15` = 0–15, VFP/NEON above | `r14` (LR) | `SP/FP + offset` |
 | **m68k** | standard: `d0–d7` = 0–7, `a0–a7` = 8–15, PC | return addr at `a6` frame (LINK/UNLK) | `a6/a7 + offset` |
-| **6502** (xtc-defined) | `A`=0, `X`=1, `Y`=2, `P`=3, **ext-SP**=4 (12-bit hw stack), **SSP**=5 (soft stack), `PC`=6; register-allocated ZP slots numbered from 16 | a synthetic RA column off the hardware stack (§8) | ext-SP `+ offset` |
+| **6502** (xcc-defined) | `A`=0, `X`=1, `Y`=2, `P`=3, **ext-SP**=4 (12-bit hw stack), **SSP**=5 (soft stack), `PC`=6; register-allocated ZP slots numbered from 16 | a synthetic RA column off the hardware stack (§8) | ext-SP `+ offset` |
 
 The 6502 numbering (0–6 for architectural state, 16+ for ZP-allocated soft
 registers) is published *here* so the emitter and the debugger's 6502 reader agree;
@@ -215,6 +215,6 @@ unnecessary:
 
 - [xtos-vision.md](xtos-vision.md) §3 — the conceptual profile this realises; P6
   the debugger that consumes it.
-- [xtc-on-arm9.md](xtc-on-arm9.md) §7 — the ARM emitter's slice of this contract.
+- [xcc-on-arm9.md](xcc-on-arm9.md) §7 — the ARM emitter's slice of this contract.
 - [dynamic-loading.md](dynamic-loading.md) — the flat-address space and `ET_DYN`
   the addresses live in.

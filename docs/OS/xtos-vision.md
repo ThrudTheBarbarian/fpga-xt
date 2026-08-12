@@ -28,7 +28,7 @@ Those are table stakes. Beyond them:
 
 - **FreeRTOS loads and runs applications dynamically**, not just the static
   tasks built into the binary;
-- an **IDE** on the A9 drives the **xtc** compiler to build for ARM, 6502 *and*
+- an **IDE** on the A9 drives the **xcc** compiler to build for ARM, 6502 *and*
   m68k;
 - a **source-level cross-core debugger** can halt the other cores, set
   breakpoints in them, and inspect their state in the IDE — with machine-level
@@ -138,7 +138,7 @@ Rules:
   though the IDE/debugger that exercise it come later.
 
 Reserve-now to keep this open: the registry + interface-handle abstraction;
-**PIC / relocatable** xtc ARM codegen; a loader that relocates code+data and
+**PIC / relocatable** xcc ARM codegen; a loader that relocates code+data and
 resolves a library's own imports through the service table.
 
 ### P5 — Per-app launcher, VFS, and devices
@@ -226,9 +226,9 @@ the on-board NAND holds the card-independent registry, not a boot image.
 - The debugger is **bespoke** (part of the IDE), **source-level** first,
   machine-level optional.
 
-## 3. What xtc must emit (debug info)
+## 3. What xcc must emit (debug info)
 
-xtc emits **none** of this today; it is net-new backend work, best designed
+xcc emits **none** of this today; it is net-new backend work, best designed
 alongside the multi-backend re-architecture (the ARM backend doesn't exist yet —
 the cheapest possible time to bake it in). The format is a **restricted profile
 of standard DWARF, emitted for all three backends** in flat-address coordinates.
@@ -251,7 +251,7 @@ small hand-rolled reader for our subset.
 > bespoke 6502 numbering), and the 6502 unwind specials — is
 > **[dwarf-subset.md](dwarf-subset.md)**.
 
-Per backend, xtc emits:
+Per backend, xcc emits:
 
 1. **The logical-address contract** — the flat 32-bit `{bank}{offset}` address
    (retro cores; native 24-/32-bit for m68k/ARM) that the line table, breakpoint
@@ -269,7 +269,7 @@ Per backend, xtc emits:
    - `static` → `DW_OP_addr` at a flat address (globals, ZP globals,
      statically-allocated locals);
    - `frame-base + offset` → `DW_AT_frame_base` + `DW_OP_fbreg` for soft-stack
-     locals (the frame base is a runtime value xtc names — *which ZP/reg holds
+     locals (the frame base is a runtime value xcc names — *which ZP/reg holds
      the soft-SP/FP* — plus a compile-time offset);
    - `register` → `DW_OP_regN` for ARM/AAPCS register-allocated locals.
 
@@ -314,7 +314,7 @@ later:
   clk_sally timing is thin, and nothing reads these hooks yet.
 - **m68k JIT:** precise-instruction-boundary exits + an interpreter fallback
   path.
-- **xtc:** PIC/relocatable ARM codegen; debug-info emission (§3); the flat
+- **xcc:** PIC/relocatable ARM codegen; debug-info emission (§3); the flat
   logical-address model.
 - **Service-call indirection** (apps via interface tables, never globals) — so
   MMU protection is a later enforcement detail, not an ABI break.
@@ -337,9 +337,9 @@ later:
   image drives; SQLite attributes on NAND; trashcan; FujiNet/sockets; shell.
 - **Phase 4 — Dynamic loading + interface/registry.** PIC/ELF ARM loader; the
   registry; ops-table libraries + task services; `ABIVER`.
-- **Phase 5 — IDE + on-device xtc** (builds ARM / 6502 / m68k).
+- **Phase 5 — IDE + on-device xcc** (builds ARM / 6502 / m68k).
 - **Phase 6 — Cross-core source-level debugger.** xt6502 debug RTL + m68k
-  interpreter-debug + xtc debug-info consumer + IDE integration.
+  interpreter-debug + xcc debug-info consumer + IDE integration.
 
 > **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "XTOS / OS / boot / fonts / Lua".
 

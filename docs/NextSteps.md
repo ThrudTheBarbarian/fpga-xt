@@ -342,21 +342,21 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 - none
 
 ## SIO / PBI / cartridge / companion MCU
-- **HW: PB2/BOOT1 is unconnected** — the F411 samples BOOT1 on PB2 shortly after
-  reset; with no net and no reset-state pull, the level is undefined, so "FPGA
-  raises BOOT0 and pulses NRST to reach the AN3155 ROM bootloader" is a coin flip.
-  PB2 is otherwise unused: tack a wire or 10K to GND. Blocks the UART firmware-
-  update path; SWD is unaffected. *(src: motherboard/README.md)*
+- **HW: PB2/BOOT1 is unconnected** — datasheet-confirmed (DocID026289 Rev 7 Table 8:
+  PB2's only additional function is BOOT1, and it has no reset-state pull). With no
+  net, the level is undefined, so "FPGA raises BOOT0 and pulses NRST to reach the
+  AN3155 ROM bootloader" is a coin flip between system memory and embedded SRAM.
+  Fix: **10K from PB2 to GND** (firmware now parks PB2 as an analog input so it can
+  never drive the pin). Blocks the UART firmware-update path; SWD is unaffected.
+  *(src: motherboard/README.md)*
+- **Companion: own bootloader as the durable answer to BOOT1** — a resident loader in
+  flash sector 0 that takes images over USART2 and self-programs makes BOOT0/BOOT1
+  irrelevant, and lets us checksum + validate + fall back rather than trusting the
+  ROM protocol. Must never overwrite itself and must refuse an invalid app image.
+  Alternative to the 10K bodge, not a replacement for it.
 - **HW: confirm HUB_RST polarity on PA9** — firmware assumes active low
   (`HUB_RST_ACTIVE_LOW` in `motherboard/firmware/src/board.c`). Check the hub page
   of the schematic before debugging a failed enumeration.
-- **HW: no fan tach pulses** — PC8 PWM is confirmed running at 100% duty and PC9 is
-  pulled up, but `fan` reports 0 RPM. Confirm a fan is fitted to J3 and that +5V
-  reaches it, then tune the PID gains. *(src: motherboard/README.md)*
-- **Probe firmware lacks RTT** — stock Black Magic v2.0.0 answers "Target does not
-  support this command" to `monitor rtt`; an interactive console needs a probe
-  rebuilt with `ENABLE_RTT=1`. Until then `motherboard/tools/rtt-gdb.sh` runs the
-  REPL one command per invocation.
 - **Companion: USB host (TinyUSB dwc2 + hub + HID)** — OTG-FS on PA11/PA12 with
   **VBUS sensing disabled** (PA9 is HUB_RST, not VBUS). Needs `CFG_TUH_HUB` for the
   on-board 4-way hub. *(src: motherboard/README.md)*

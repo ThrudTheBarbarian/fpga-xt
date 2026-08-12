@@ -1,10 +1,10 @@
-# Porting xtc to the Cortex-A9 (xtc-on-arm9)
+# Porting xcc to the Cortex-A9 (xcc-on-arm9)
 
-> **Status: requirements doc for the xtc ARM back-end.** Consolidates everything
+> **Status: requirements doc for the xcc ARM back-end.** Consolidates everything
 > the port must satisfy so the work can be scoped against one source. Pairs with
 > [dynamic-loading.md](dynamic-loading.md) (the loader/ABI it targets),
 > [memory-protection.md](memory-protection.md) (the tier-2 runtime), and
-> [xtos-vision.md](xtos-vision.md) §3 (debug-info). The xtc ARM back-end
+> [xtos-vision.md](xtos-vision.md) §3 (debug-info). The xcc ARM back-end
 > (`XTARMLowering`) is the critical-path compiler piece — it gates ARM-native apps,
 > the dynamic loader, and the GEM ARM client.
 
@@ -17,9 +17,9 @@ AArch32 (32-bit)**:
   AArch64 → AArch32 is a **genuine ISA change**, not a tweak (different register
   file, instruction set, and calling convention — see §1).
 
-Decision context (settled): **xtc is the XTOS system language** (ARC by default,
+Decision context (settled): **xcc is the XTOS system language** (ARC by default,
 unmanaged subset for the bottom — §6). Existing C dependencies stay C, cross-built
-on the host; on-device C compilation is deferred (no tcc for now). So xtc-ARM is
+on the host; on-device C compilation is deferred (no tcc for now). So xcc-ARM is
 the toolchain for *new* XTOS/app code, and must interoperate cleanly with the C
 that's already in the system.
 
@@ -41,12 +41,12 @@ the DWARF-emission framework, and the general "ARM-family" mental model.
 - **DWARF ARM register vocabulary** and A32 frame/unwind (§7).
 - **FP/SIMD** — VFPv3/NEON vs A64 SIMD, and the float-ABI choice (§2).
 
-Treat this as "a new ARM backend that shares xtc's middle-end," not "a port."
+Treat this as "a new ARM backend that shares xcc's middle-end," not "a port."
 
 ## 2. ABI: AAPCS32 / ARM EABI (R-ABI)
 
 **Requirement:** emit and consume the **ARM EABI (AAPCS32)** exactly as the
-existing toolchain does, because xtc objects link directly against the
+existing toolchain does, because xcc objects link directly against the
 C-cross-compiled kernel and libraries.
 
 - **Calling convention:** args in `r0–r3` then stack; return in `r0` (`r1:r0` for
@@ -56,7 +56,7 @@ C-cross-compiled kernel and libraries.
   packing/alignment, bitfield layout, `va_list` (AAPCS32 layout), `double`/`long
   long` alignment. Mismatch silently corrupts every C call.
 - **Float ABI must match the kernel/newlib build.** The system is built with
-  `arm-none-eabi-*` for the Cortex-A9; xtc must use the **same `-mcpu` / `-mfpu` /
+  `arm-none-eabi-*` for the Cortex-A9; xcc must use the **same `-mcpu` / `-mfpu` /
   `-mfloat-abi`** (hard vs soft float, VFP/NEON variant) as that build, or FP
   arguments and the newlib it links against will not agree. Read the actual flags
   from the platform build (`create_platform.py` / the Vitis BSP) — do not assume.
@@ -68,34 +68,34 @@ C-cross-compiled kernel and libraries.
   3. **Float ABI** (`soft` / `softfp` / `hard`) — purely *how floats cross
      function boundaries* (core regs vs VFP regs); a perf/compat choice, read
      from the BSP. It is **not** a statement that the FPU is absent.
-  "soft float" in the BSP means the *ABI*, NOT "no FPU". The trap to avoid: xtc
+  "soft float" in the BSP means the *ABI*, NOT "no FPU". The trap to avoid: xcc
   reading `-mfloat-abi=soft` and concluding "no FPU" → emitting soft-float
   *libcalls* for compute. For an A9-hosted FPU (e.g. serving the 6502), that is
-  the wrong path — **xtc must emit genuine VFP instructions for compute
+  the wrong path — **xcc must emit genuine VFP instructions for compute
   regardless of the param-passing ABI**, with the FPU enabled at boot. `softfp`
   (soft ABI + real VFP compute) is exactly what the qemu testbed runs
   (`-mfloat-abi=softfp -mfpu=neon-vfpv3`).
 
 ## 3. C interoperability (mandatory, not optional)
 
-xtc-ARM links a system that is mostly C: **newlib, FreeRTOS, FatFs, the GEM core,
+xcc-ARM links a system that is mostly C: **newlib, FreeRTOS, FatFs, the GEM core,
 SQLite, Lua, FreeType.** So:
 
 - **Call C and be called by C** with full AAPCS32 fidelity, including passing/
   returning C structs, arrays, function pointers, and varargs.
-- **Consume C type layouts** (so xtc code can use C headers' structs/handles —
+- **Consume C type layouts** (so xcc code can use C headers' structs/handles —
   e.g. FreeRTOS task handles, FatFs `FIL`, FreeType `FT_Face`).
 - **Resolve undefined symbols** against (a) loaded libraries' `.dynsym` and (b) the
   kernel's **curated export table** (newlib-level C symbols the kernel publishes) —
   the resolution order in [dynamic-loading.md](dynamic-loading.md) §5. The
   *syscalls* themselves go through the `svc #1` gateway (§5 here), not symbol
   binding.
-- The C-ABI surface is what [[gem_service_architecture]] means by "xtc↔C linking
+- The C-ABI surface is what [[gem_service_architecture]] means by "xcc↔C linking
   matters inside the A9 service" — get it right once, centrally.
 
 ## 4. Position-independent code for ELF `ET_DYN`
 
-xtc owns codegen, so it emits the **minimal-relocation PIC model the loader was
+xcc owns codegen, so it emits the **minimal-relocation PIC model the loader was
 designed around** ([dynamic-loading.md](dynamic-loading.md) §3):
 
 - **GOT-based PIC with PC-relative GOT access.** Produce `ET_DYN` (PIE and `.so`).
@@ -123,15 +123,15 @@ The per-arch harness (portable core + thin backend, per
   `syscall(n, …)`.
 - **`setjmp`/`longjmp`**, stack-unwind primitives, and any A32 asm intrinsics.
 - **The ARC runtime** — retain/release/autorelease entry points for ARM (§6), plus
-  the weak-reference machinery if xtc's ARC has it.
+  the weak-reference machinery if xcc's ARC has it.
 - **TLS** — per-task state via FreeRTOS thread-local-storage pointers (no ELF TLS).
 
 ## 6. ARC + the unmanaged subset (system-language requirement)
 
-xtc-ARM is the **system** language, so its ARC must work *and* get out of the way:
+xcc-ARM is the **system** language, so its ARC must work *and* get out of the way:
 
 - **ARC by default** for ordinary XTOS/app code — the memory-safety win that
-  motivated using xtc low in the stack.
+  motivated using xcc low in the stack.
 - **An explicit unmanaged subset** for the hardware-touching bottom, where
   retain/release traffic or ARC-driven ownership is wrong:
   - the kernel allocator, the scheduler, ISR/fault handlers, the loader itself;
@@ -174,7 +174,7 @@ decision — **full backtrace/unwind**. ARM is the *easy* backend for this (unif
 
 - **ELF32, little-endian, `EM_ARM`.** Emit `ET_DYN` with a populated `.dynamic`,
   `.dynsym`, `.dynstr`, hash, `DT_NEEDED`, `DT_INIT_ARRAY`/`DT_FINI_ARRAY`.
-- Decide and document whether xtc-ARM **emits final ELF directly** or emits
+- Decide and document whether xcc-ARM **emits final ELF directly** or emits
   relocatable objects consumed by an external linker (GNU `ld`) with a project
   linker script. Either is fine; the loader only cares about the resulting
   `ET_DYN` (§4). Keep `.dynamic`/dynsym and DWARF sections un-stripped.
@@ -183,7 +183,7 @@ decision — **full backtrace/unwind**. ARM is the *easy* backend for this (unif
 
 - **Host cross-build first** (on the valhalla build host), matching the platform's
   `arm-none-eabi` `-mcpu=cortex-a9` + the BSP's `-mfpu`/`-mfloat-abi`. On-device
-  xtc-on-xtc self-hosting comes later (see
+  xcc-on-xcc self-hosting comes later (see
   [../MultiTasking/self-hosting.md](../MultiTasking/self-hosting.md)); on-device C
   is deferred.
 - Produces both **libraries** (`OS/Library/*.so`, `ET_DYN`) and **apps**
@@ -193,12 +193,12 @@ decision — **full backtrace/unwind**. ARM is the *easy* backend for this (unif
 
 The port is "done enough" when:
 
-- [ ] An xtc function calls a C function (newlib `printf`, a FatFs call) and back,
+- [ ] An xcc function calls a C function (newlib `printf`, a FatFs call) and back,
       structs and varargs intact (AAPCS32 conformance).
-- [ ] A trivial xtc `ET_DYN` loads via the loader, relocates (the 3 reloc types),
+- [ ] A trivial xcc `ET_DYN` loads via the loader, relocates (the 3 reloc types),
       and runs — including resolving a libGEM/newlib symbol.
 - [ ] `svc #1` syscalls work end-to-end (`spawn`, `open`/`read`/`write`, `exit`).
-- [ ] A debugger backtrace walks a mixed xtc↔C call stack with correct
+- [ ] A debugger backtrace walks a mixed xcc↔C call stack with correct
       source lines and frame locals (CFI from an arbitrary stop).
 - [ ] ARC retain/release is correct, and an unmanaged region (a DMA/PL buffer)
       is not reclaimed while wired.
@@ -211,7 +211,7 @@ The port is "done enough" when:
   density once correct.
 - **Hard vs soft float** — *gated*: must match the newlib/BSP build, so it's read
   from the platform, not chosen here. See §2 for the three-knobs nuance (the soft
-  ABI is *not* "no FPU"; xtc must emit VFP for compute regardless of the ABI —
+  ABI is *not* "no FPU"; xcc must emit VFP for compute regardless of the ABI —
   matters for an A9-hosted FPU serving the 6502).
 - **NEON usage** — opportunistic vectorisation is a later optimisation; not a
   bring-up requirement.
@@ -225,7 +225,7 @@ The port is "done enough" when:
 - [memory-protection.md](memory-protection.md) — tier-2 runtime; the wired/ARC
   boundary (§6).
 - [xtos-vision.md](xtos-vision.md) §3 — the DWARF debug-info contract (§7).
-- [../MultiTasking/self-hosting.md](../MultiTasking/self-hosting.md) — the xtc
+- [../MultiTasking/self-hosting.md](../MultiTasking/self-hosting.md) — the xcc
   self-hosting roadmap; on-device bootstrap.
 - [../MultiTasking/multitasking.md](../MultiTasking/multitasking.md) §1 — earlier
   native-ARM loading notes (incl. the `r9` PIC problem, now folded into §4).

@@ -61,20 +61,39 @@ and non-intrusive.
 scan for. Nothing is linked in from SEGGER; only the in-memory structure is
 shared, which is what interoperating requires.
 
-**RTT must be compiled into the probe firmware** (`ENABLE_RTT=1`, or
-`rtt_support=true` under meson). Stock Black Magic firmware v2.0.0 does *not*
-include it — `monitor rtt` answers "Target does not support this command".
-Check with:
+**RTT must be compiled into the probe firmware.** Stock Black Magic v2.0.0 for
+this hardware ships without it — `monitor rtt` answers "Target does not support
+this command" — because the `bmp-v1-v2` cross-file sets `rtt_support = false` to
+fit the F103's 128 KB alongside the full target list. Check yours with:
 
 ```sh
 arm-none-eabi-gdb -batch -ex 'target extended-remote /dev/cu.usbmodem*1' \
                   -ex 'monitor help' | grep rtt
 ```
 
+The probe on this bench has been rebuilt from
+[Black Magic Debug](https://codeberg.org/blackmagic-debug/blackmagic) (v2.1.0-rc1)
+with RTT on and the target list trimmed to what fits — **`cortexm,stm,rp,nrf`**;
+LPC, NXP and SAM are dropped. 98.6 KB of the 120 KB application region.
+
+```sh
+meson setup --cross-file cross-file/arm-none-eabi.ini \
+            --cross-file cross-file/bmp-v1-v2.ini \
+            -Drtt_support=true -Dtargets=cortexm,stm,rp,nrf build-rtt
+ninja -C build-rtt
+dfu-util -e -d 1d50:6018                      # detach into the bootloader
+dfu-util -d 1d50:6017 -a 0 -s 0x08002000:leave \
+         -D build-rtt/blackmagic_bmp_v1_v2_firmware.bin
+```
+
+The original v2.0.0 image is backed up in `~/bmp-firmware/`; the DFU bootloader
+occupies 0x08000000-0x08001FFF and is never touched, so a bad flash is always
+recoverable by detaching again.
+
 With RTT in the probe, `../tools/bmp-console.sh` gives an interactive terminal.
-Without it, `../tools/rtt-gdb.sh "<command>"` drives the same REPL one command
-at a time through plain gdb memory access — slower, but it needs no reflash and
-is enough to bring a board up.
+Without it, `../tools/rtt-gdb.sh "<command>"` drives the same REPL one command at
+a time through plain gdb memory access — slower, but it needs no reflash and is
+enough to bring a board up.
 
 ### REPL commands
 
@@ -143,13 +162,38 @@ and time the climb through the GPIO Schmitt threshold, mapping onto POKEY's
 0..228.
 
 **Not** timer input capture, which is what the design note originally assumed.
-The obvious mapping (TIM3_CH1..4 on PB4/PB5/PB0/PB1 plus TIM4_CH1..4 on PB6..PB9)
-collides with the fan: PC8 and PC9 are TIM3_CH3 and TIM3_CH4, and one compare
-unit cannot serve two pins. Polling `GPIOB->IDR` against the DWT cycle counter
-needs no timer channels at all, reads all eight pots simultaneously, and still
-resolves far finer than 228 steps — a full-scale charge is ~33 ms, so one step
-is ~145 µs and the main loop revisits far more often than that. The measurement
-is a non-blocking state machine, so nothing stalls for the charge.
+Per the F411 datasheet (DocID026289 Rev 7, Table 8), the relevant pins offer:
+
+| Pin | Net | Timer alternate functions |
+|-----|-----|---------------------------|
+| PB0 | IRR_POTA | TIM1_CH2**N**, TIM3_CH3 |
+| PB1 | IRR_POTB | TIM1_CH3**N**, TIM3_CH4 |
+| PB4 | ILL_POTA | TIM3_CH1 |
+| PB5 | ILL_POTB | TIM3_CH2 |
+| PB6..PB9 | IL/IR pots | TIM4_CH1..CH4 |
+| PC8 | fan PWM | **TIM3_CH3 only** |
+| PC9 | fan tach | **TIM3_CH4 only** |
+
+So the collision is irreducible at the pin level. PC8 and PC9 have exactly one
+timer function each, both on TIM3; and although PB0/PB1 do have a second timer
+option, TIM1_CH2N/CH3N are *complementary outputs* — the N channels have no
+input-capture path at all. PB0 and PB1 can therefore capture on TIM3 or not at
+all, and TIM3 is where the fan has to live.
+
+Six of the eight pots could have used capture. Splitting the scheme — six on
+timers, two polled — would be worse than doing all eight the same way, and
+polling wins on its own merits anyway: the DWT counter is 32-bit, so a ~33 ms
+charge needs no prescaler and no overflow handling, where a 16-bit TIM3/TIM4 pair
+would need both *plus* the two timers aligned to a common t0. Polling
+`GPIOB->IDR` gives one time base for all eight pots, samples them
+simultaneously, and still resolves far finer than 228 steps — one step is ~145 µs
+and the main loop revisits far more often than that. The measurement is a
+non-blocking state machine, so nothing stalls for the charge.
+
+(If hardware capture is ever wanted regardless, the way to get it is to move the
+fan PWM off TIM3 entirely — a timer plus DMA into `GPIOC->BSRR` can drive PC8
+without a compare unit. That costs a DMA stream and more code than the polling
+it would replace.)
 
 Calibrate the endpoints against a real paddle with `pot cal <min_us> <max_us>`.
 Defaults are 0..33000 µs, computed for 1 MΩ × 47 nF.

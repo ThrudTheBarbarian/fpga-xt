@@ -1,12 +1,12 @@
 # Shared-library imports — the self-describing `.so`
 
-> **Status: decided (2026-06-28).** xtc imports symbols from shared libraries by
+> **Status: decided (2026-06-28).** xcc imports symbols from shared libraries by
 > reading the target `.so`'s own **`.dynsym` ∩ DWARF** — the export set plus
 > ABI-accurate types and struct layouts. Libraries are *self-describing*; there
 > are no separate per-library interface files to author or keep in sync. A small
-> hand-written `libc.xi` is a bootstrap only, until xtc can read DWARF directly.
+> hand-written `libc.xi` is a bootstrap only, until xcc can read DWARF directly.
 > See [dynamic-loading.md](dynamic-loading.md), [dwarf-subset.md](dwarf-subset.md),
-> [xtc-on-arm9.md](xtc-on-arm9.md).
+> [xcc-on-arm9.md](xcc-on-arm9.md).
 
 ## 1. The gap
 
@@ -30,7 +30,7 @@ libm.so, libGEM.so all load and link this way.
 > frozen ABI. The names are the raw `sys_*`, so they never collide with libc.so's
 > POSIX `write`/`open`/… Source: `loader/test/freertos/libs/libxtos.c`.
 
-What is missing is the **front-end** half: a way for xtc *source* to say "I want
+What is missing is the **front-end** half: a way for xcc *source* to say "I want
 what `libGEM.so` provides" and have the compiler pull that library's exported
 names and types into scope — so it can type-check the calls and emit them as
 undefined references. This is the **module-import** model (Go/Rust/Python): the
@@ -59,7 +59,7 @@ The fix is two separable things:
      convention: `lib` prefix + `.so` suffix implied, stem verbatim
      (`<c>`→`libc.so`, `<m>`→`libm.so`). Found a `.so` → **metadata import** (read
      its interface).
-   - in a **source-include path**, the name resolves to an xtc module → **textual
+   - in a **source-include path**, the name resolves to an xcc module → **textual
      include**, as today.
 
    So the **dispatch (library vs source module) is by what the resolver finds**,
@@ -68,7 +68,7 @@ The fix is two separable things:
    finds `$libDir/libGEM.so` because that's what lives there.)
 
    For a library import it brings the exported names **and types** into scope
-   (qualified, e.g. `gem.v_opnvwk`, or flat — an xtc naming choice); the source
+   (qualified, e.g. `gem.v_opnvwk`, or flat — an xcc naming choice); the source
    writes **no** signatures. Codegen emits the used symbols as undefined-global
    references (default visibility) and records `DT_NEEDED` (soname from the `.so`).
    `#import`'s include-once nature matches a `.so` import being idempotent.
@@ -88,7 +88,7 @@ declare, not a consumer-side re-declaration.
 
 ### The sysroot, until self-hosted
 
-While xtc cross-compiles on a dev host, "present at compile time" means a host copy
+While xcc cross-compiles on a dev host, "present at compile time" means a host copy
 of the target's `.so`s in `$libDir` — a **sysroot**. Because the interface *is*
 the `.so`, the SDK is just that copy of `$libDir`; there is no separate headers or
 import-library package to assemble. The discipline is lighter than "same exact
@@ -102,7 +102,7 @@ it on an incompatible change and the loader refuses a mismatched version rather
 than binding it. (The only route to silent struct-offset corruption is changing a
 layout while keeping the old soname *and* running an old client.) Shipping the same
 artifact to both places is just the trivially-safe case of that rule. No bootstrap circularity: the base libs (`libc.so`,
-`libm.so`) are C/newlib built by gcc, so they populate the sysroot without xtc.
+`libm.so`) are C/newlib built by gcc, so they populate the sysroot without xcc.
 **Self-hosting dissolves the sysroot** — on-device, `#import` reads the `.so`s in
 place. (In this tree, `loader/build/*.so` already serve runtime + the `xtcrun`
 harness; they are the sysroot too — one artifact, three uses.)
@@ -153,26 +153,26 @@ not matter that the device runs the stripped sibling. Result: efficient runtime,
 full DWARF exactly where it is used (compile + debug), and the DWARF bulk lives
 only under `Debug/`.
 
-### Types materialise as native xtc types
+### Types materialise as native xcc types
 
 Importing a library brings in more than function symbols: the DWARF type DIEs for
-the exported API become **first-class xtc types**. `#import`ing libGEM makes
+the exported API become **first-class xcc types**. `#import`ing libGEM makes
 `MFDB`, `gfx_surface`, `gem_window` declarable, nestable, and field-accessible in
-xtc source — a local `MFDB m`, `surf.px`, a `gem_window *`. The interface is types
+xcc source — a local `MFDB m`, `surf.px`, a `gem_window *`. The interface is types
 *and* symbols, not just symbols.
 
 The rule that makes it safe: synthesise each type **honouring the DWARF layout
 verbatim** — take `DW_AT_data_member_location` per member and `DW_AT_byte_size`
-for the whole — rather than re-running xtc's own struct-layout pass on the field
+for the whole — rather than re-running xcc's own struct-layout pass on the field
 types. The imported type is *layout-pinned* to what the library was actually built
-as: byte-identical by construction even if xtc's default packing ever differs from
+as: byte-identical by construction even if xcc's default packing ever differs from
 C's, and bitfield/alignment corner cases are *read*, not re-derived.
 
 Coverage: `DW_TAG_{structure,union,enumeration,typedef,pointer,array,base,
-subroutine}_type` map to the matching xtc constructs; a pointer to an incomplete
+subroutine}_type` map to the matching xcc constructs; a pointer to an incomplete
 type stays opaque (a handle, §6), a pointer to a laid-out type is shared. Type
 identity is by name + layout, so the same struct seen via two libraries (or via
-the program and a library) is **one** xtc type, not two.
+the program and a library) is **one** xcc type, not two.
 
 ## 4. Why DWARF (and not the alternatives)
 
@@ -181,11 +181,11 @@ the program and a library) is **one** xtc type, not two.
   reads the answer rather than re-deriving it. A wrong padding byte is a silent
   memory corruption, not a link error, so "compute it yourself" is unacceptable.
 - **`.dynsym` alone is insufficient** — names without types (§1).
-- **C headers are the wrong source** — they would force xtc to embed a C parser
+- **C headers are the wrong source** — they would force xcc to embed a C parser
   *and* re-implement C's layout rules exactly, and they drift from the built
   binary. DWARF is downstream of all of that.
 - **Uniform across source languages.** The same path works for C-built
-  `libc.so`/`libm.so`/`libGEM.so` and for a future xtc-authored `libfoo.so` — each
+  `libc.so`/`libm.so`/`libGEM.so` and for a future xcc-authored `libfoo.so` — each
   just describes itself. No per-library special-casing.
 - **It dovetails a decision already made** — *real DWARF for all three backends*
   (dwarf-subset.md). Every `.so` carries DWARF anyway; this reuses it.
@@ -198,10 +198,10 @@ never the layout. You could almost hand-write it.
 
 **libGEM is the case that proves the mechanism.** Its API *shares structs* the
 client dereferences — `gfx_surface { w, h, stride, px }`, `gem_window`, `MFDB`,
-the VDI parameter arrays. xtc must lay those out **byte-identically** to the C
+the VDI parameter arrays. xcc must lay those out **byte-identically** to the C
 ABI or `surf->px` lands at the wrong offset. Opaque pointers do not help here;
 only an ABI-accurate layout source does. So the validating test for this whole
-design is not "call `printf`" — it is **construct a `gfx_surface` in xtc, pass it
+design is not "call `printf`" — it is **construct a `gfx_surface` in xcc, pass it
 to `v_opnvwk`, and have `px`/`stride` read at the correct offsets**.
 
 ## 6. ABI fidelity — the parts that bite
@@ -212,13 +212,13 @@ to `v_opnvwk`, and have `px`/`stride` read at the correct offsets**.
   dereferenced in client code); `gfx_surface` is shared (full layout needed). The
   importer treats a pointer-to-incomplete-type as opaque and a
   pointer-to-laid-out-type as shared.
-- **Varargs** — `printf(const char *, ...)`. xtc needs varargs-ABI lowering, or
+- **Varargs** — `printf(const char *, ...)`. xcc needs varargs-ABI lowering, or
   the interface exposes only the fixed-arg forms actually used. This is the one
   genuinely hard signature in the libc surface.
 - **soname + versioning** — `DT_NEEDED` must name the soname (`DT_SONAME`), which
   is also the loader's dedup/registry key. The import records the soname, not the
   file path.
-- **C → xtc type mapping** — integer widths, pointer/`const` qualifiers, enums,
+- **C → xcc type mapping** — integer widths, pointer/`const` qualifiers, enums,
   unions, function-pointer types. A bounded, mechanical mapping, but it must be
   total over the libc/libGEM surface.
 
@@ -236,7 +236,7 @@ to `v_opnvwk`, and have `px`/`stride` read at the correct offsets**.
 
 ## 8. One `#import`, per-backend lowering
 
-xtc is multi-backend (6502, m68k, A9/ARM). **`#import <GEM>` is the same source
+xcc is multi-backend (6502, m68k, A9/ARM). **`#import <GEM>` is the same source
 construct on every backend; the backend chooses how a call is *lowered*:**
 
 - **A9 (native, in-process)** → a direct PIC call into the loaded `libGEM.so`
@@ -257,7 +257,7 @@ lowerings, **all generated** — the GEM-service "thin bindings" stop being
 hand-written per call/per backend; they are derived from the same DWARF.
 
 **This is what unblocks native-A9 direct linking.** The service design deferred
-A9 client-linking only because there was no way to hand xtc the C interface — the
+A9 client-linking only because there was no way to hand xcc the C interface — the
 DWARF import *is* that mechanism, so the blocker dissolves: native A9 can
 direct-call; guests keep the doorbell.
 
@@ -275,5 +275,5 @@ are service-routed.
   resolution, and the registry this import path emits into.
 - [dwarf-subset.md](dwarf-subset.md) — the DWARF every backend emits, which is the
   type source here.
-- [xtc-on-arm9.md](xtc-on-arm9.md) — the xtc backend that gains the
+- [xcc-on-arm9.md](xcc-on-arm9.md) — the xcc backend that gains the
   `extern`/import construct (§2.1) and the DWARF-reading importer.

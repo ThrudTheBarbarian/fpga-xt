@@ -14,7 +14,7 @@ facility and every accuracy quirk are **free**, live in `main`, in silicon, alwa
 
 This is deliberately **not** `xt6502` with a slow clock-enable. `xt6502` *compresses*
 work per fabric-clock to win fmax (registered MAR, prefetch, flattened states, in-clock
-memory round-trip, xtc embellishments in the datapath). Those are the right choices for
+memory round-trip, xcc embellishments in the datapath). Those are the right choices for
 a turbo core and the wrong shape for accuracy + observability — its bus phases and
 micro-state are squeezed out exactly where a fidelity core needs them exposed. So
 `xt6502` stays as-is (the turbo core, and a differential co-sim reference); the fidelity
@@ -102,7 +102,7 @@ address, sub 0–2), **late** = 486–558 ns where read data and the arch state 
 RMW does its 3 accesses across 3 whole cycles (§4), not within one. If a memory access
 needs longer than its slot (a cache/DDR miss on a banked access) the data phase
 *stretches* and the window extends past 558 ns — 1× real-time holds for the plain 64 KB
-BRAM path (1–2 clock accesses, the only path a pure 6502 uses); banked/xtc accesses are
+BRAM path (1–2 clock accesses, the only path a pure 6502 uses); banked/xcc accesses are
 turbo-only concerns. **EXTENB/MPD are exposed as first-class sub-cycle strobes** so a
 cycle-accurate PBI / expansion device ([[pbi-bridge-design]]) can decode and override
 internal ROM at exactly the silicon-correct instants.

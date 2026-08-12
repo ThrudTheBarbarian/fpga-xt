@@ -3,7 +3,7 @@
 This document specifies the wire format for VDI drawing commands flowing
 from the FPGA's 6502 over PSSI to the N6 graphics co-processor, plus
 the parallel set of VDI inquiry calls that flow over FMC RPC. It is
-the protocol contract between the 6502-side xtc VDI library and the
+the protocol contract between the 6502-side xcc VDI library and the
 N6-side DRAW dispatcher (see [n6-migration.md](./n6-migration.md) and
 [GEM-implementation.md](./GEM-implementation.md) for surrounding
 architecture).

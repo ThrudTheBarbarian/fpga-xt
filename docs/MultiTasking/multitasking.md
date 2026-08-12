@@ -168,7 +168,7 @@ The SALLY CPU is a 6502-class core in the PL fabric with significant hardware em
 - **Multiple stack banks** for fast context switching (see [banked-stack-context-switch.md](banked-stack-context-switch.md))
 - **Banked memory** with three independent page-switchable windows
 
-The memory model (from the xtc linker layout):
+The memory model (from the xcc linker layout):
 
 ```
 $D5C0        code bank selector (selects $6000-$9FFF, 16 KB window; 8-bit)
@@ -297,7 +297,7 @@ The scheduler tick comes from the ANTIC VBI (vertical blank interrupt, 50/60 Hz)
 3. Dispatches to the appropriate kernel service
 4. Restores context and returns via `RTI`
 
-The xtc compiler already uses `BRK` for its `_xcall` cross-bank mechanism; the syscall path reuses the same hardware vector.
+The xcc compiler already uses `BRK` for its `_xcall` cross-bank mechanism; the syscall path reuses the same hardware vector.
 
 ### 2.6 Process startup
 
@@ -468,8 +468,8 @@ per-process MMU machinery lands.
 
 | GEM layer | m68k (EmuTOS) | 6502 (custom kernel) |
 |-----------|---------------|----------------------|
-| **AES** (window management, events) | EmuTOS AES — fully featured, multi-process with message queues | AES rewritten in xtc, same API, simpler implementation |
-| **VDI** (drawing primitives) | EmuTOS VDI → blitter register pokes (like the 6502 case) | xtc direct blitter dispatch via `$D4Bx`/`$D4Cx` registers |
+| **AES** (window management, events) | EmuTOS AES — fully featured, multi-process with message queues | AES rewritten in xcc, same API, simpler implementation |
+| **VDI** (drawing primitives) | EmuTOS VDI → blitter register pokes (like the 6502 case) | xcc direct blitter dispatch via `$D4Bx`/`$D4Cx` registers |
 | **GEMDOS** (file I/O) | EmuTOS GEMDOS → FreeRTOS mailbox | Same mailbox protocol — identical on both CPUs |
 | **Process model** | Real MiNT with `Pexec()`, signals, ptrace | Custom kernel with `Pexec()` equivalent, simpler signal model |
 
@@ -495,11 +495,11 @@ Regardless of which target CPU runs the multitasking kernel, these components ca
 
 | Component | Language | Lines | Description |
 |-----------|----------|-------|-------------|
-| **GEMDOS RPC protocol** | C or xtc | ~200 | Message format, mailbox read/write, reply handling |
+| **GEMDOS RPC protocol** | C or xcc | ~200 | Message format, mailbox read/write, reply handling |
 | **FreeRTOS backend** | C | ~200 | Mailbox dispatch on the ARM side (identical regardless of sender CPU) |
-| **Ready-queue logic** | C or xtc | ~100 | Priority queue insert/remove/pick (portable if compiled for the target) |
-| **Binary format header** | C or xtc | ~30 | The `.xex` header struct (6502) or ELF parsing (m68k) is different, but the concept of "read header, allocate, load" is the same |
-| **GEM AES event model** | xtc | ~500 | AES message queues, evnt_multi(), wind_*() — runs on the target CPU, same API |
+| **Ready-queue logic** | C or xcc | ~100 | Priority queue insert/remove/pick (portable if compiled for the target) |
+| **Binary format header** | C or xcc | ~30 | The `.xex` header struct (6502) or ELF parsing (m68k) is different, but the concept of "read header, allocate, load" is the same |
+| **GEM AES event model** | xcc | ~500 | AES message queues, evnt_multi(), wind_*() — runs on the target CPU, same API |
 | **SALLY-to-FreeRTOS mailbox driver** | Verilog + C | ~200 | The mailbox registers in the PL, CDC handling, IRQ |
 
 ### Target-specific

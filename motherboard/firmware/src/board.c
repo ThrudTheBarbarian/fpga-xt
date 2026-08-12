@@ -18,6 +18,15 @@ void board_init(void)
                     RCC_AHB1ENR_GPIOD | RCC_AHB1ENR_GPIOE | RCC_AHB1ENR_GPIOH;
     RCC->APB2ENR |= RCC_APB2ENR_SYSCFG;
 
+    /* --- PB2 is BOOT1 --- unconnected on the schematic, so the boot mode is
+     * undefined when the FPGA raises BOOT0 (low selects the ROM bootloader,
+     * high selects embedded SRAM); the fix is a 10K to GND on the board.
+     * Park it as an analog input regardless: that guarantees the firmware can
+     * never drive the pin, so tying it low is safe, and it disconnects the
+     * Schmitt trigger on a pin that has no other job. */
+    gpio_mode(GPIOB, 2, GPIO_MODE_ANALOG);
+    gpio_pull(GPIOB, 2, GPIO_PULL_NONE);
+
     /* --- FPGA doorbell (PA4): STM raises it when it has something to say ---
      * The FPGA is the SPI master and cannot be interrupted by a slave, so this
      * line is the only way the STM can start a conversation.  Idle low. */

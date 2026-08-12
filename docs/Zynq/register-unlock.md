@@ -170,7 +170,7 @@ view doesn't disarm the A9.
 1. **Reset semantics — SETTLED.** PL/system reset clears; a 6502-only reset does
    NOT (the A9 owns the policy across a guest reset). See *Reset semantics*.
 2. **`BANK` boot order — SETTLED.** The A9 unlocks `BANK` **pre-launch** (before
-   it boots the XTC environment), since the XTC runtime needs banking but reset
+   it boots the XCC environment), since the XCC runtime needs banking but reset
    leaves it locked. Stock carts (which never expect XT banking) run with `BANK`
    locked, so their `$D5xx` cart-switching is undisturbed.
 3. **`KBD` is a group — SETTLED.** Kept as a defensive mask (bit 5): even though

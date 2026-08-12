@@ -2,7 +2,7 @@
 
 ## Motivation
 
-The xtc compiler is currently written in Objective-C and runs on macOS / Linux
+The xcc compiler is currently written in Objective-C and runs on macOS / Linux
 (GNUstep).  This is fine for development, but it means:
 
 - Every developer needs an ObjC toolchain.
@@ -11,10 +11,10 @@ The xtc compiler is currently written in Objective-C and runs on macOS / Linux
 - The compiler never compiles itself, so the language doesn't eat its own
   dogfood — slower to shake out bugs in the std lib, the IR, the codegen,
   and the runtime.
-- The ~81K LOC of ObjC is harder to maintain than an equivalent xtc program
+- The ~81K LOC of ObjC is harder to maintain than an equivalent xcc program
   would be, because ObjC's noisier syntax obscures the compiler logic.
 
-Goal: **the xtc compiler compiled by xtc**, producing a binary that runs on
+Goal: **the xcc compiler compiled by xcc**, producing a binary that runs on
 the Zynq hardware and can compile real programs (including itself).
 
 ## Target Platform Context
@@ -28,7 +28,7 @@ The target for "on the box" compilation is a **Zynq 7020** (MyIR board):
 | FPGA     | Artix-7 class fabric running a 6502 soft-core @ ~100 MHz |
 | 6502 memory | Up to 32 MB accessible (banked model) |
 | OS       | FreeRTOS on one ARM core; SD card / FAT32 routed to the 6502 |
-| Toolchain| xtc (ObjC, host) → 6502 asm → .xex, or IR → ARM binary |
+| Toolchain| xcc (ObjC, host) → 6502 asm → .xex, or IR → ARM binary |
 
 This is *very* different from the original Atari 8-bit target (64 KB RAM,
 1.79 MHz).  The Zynq's ARM cores have enough headroom to run the compiler
@@ -39,8 +39,8 @@ natively at useful speed.
 ### Route A — Native ARM (recommended)
 
 1. An ARM back-end is added to the IR pipeline.
-2. The compiler is written in xtc.
-3. The ObjC xtc compiler compiles `xtc.xt` → ARM binary.
+2. The compiler is written in xcc.
+3. The ObjC xcc compiler compiles `xcc.xt` → ARM binary.
 4. That ARM binary runs directly on the Zynq's Cortex-A9.
 5. It can then compile itself (bootstrap verified) and produce 6502 .xex
    binaries for the soft-core.
@@ -53,7 +53,7 @@ Advantages:
 
 ### Route B — 6502 Soft-Core
 
-Write the compiler in xtc, compile to 6502, run on the FPGA core at 100 MHz
+Write the compiler in xcc, compile to 6502, run on the FPGA core at 100 MHz
 with 32 MB addressable space.
 
 This is *possible* — 32 MB is plenty for the AST — but the 6502's three
@@ -94,14 +94,14 @@ Source .xt
 | 6502 asm optimiser (`XTOptimiser`) | ObjC, works | ~3,189 |
 | Assembler / linker (`XAAssembler`) | ObjC, works | ~3,050 |
 | Driver / CLI | ObjC, works | ~2,006 |
-| Std lib (Array.xt, Map.xt, String.xt, …) | xtc, works | ~12,000 |
+| Std lib (Array.xt, Map.xt, String.xt, …) | xcc, works | ~12,000 |
 
 The critical missing piece is the ARM back-end.  Everything else is
 already in place to be used *by* the compiler — the std lib provides
 the data structures, the IR provides the lowering API, and the pipeline
 provides the driver skeleton.
 
-## What the xtc Language Provides (for Writing a Compiler)
+## What the xcc Language Provides (for Writing a Compiler)
 
 - **`Array.xt`** — resizable `Object@` list with retain/release, grow,
   insert, remove, dealloc.  Autoboxing means primitives work too.
@@ -164,7 +164,7 @@ available.  Thumb-2 would produce smaller binaries but restrict register
 usage.  Recommend **ARM mode** for the initial back-end; Thumb can come
 later if code size becomes an issue.
 
-**Hardware float:** The Cortex-A9 has a VFPv3 FPU.  The xtc run-time math
+**Hardware float:** The Cortex-A9 has a VFPv3 FPU.  The xcc run-time math
 library already has software float/double routines; for the ARM back-end
 these can be replaced with VFP instructions (`vmov`, `vadd`, `vmul`,
 `vcmp`, etc.) for a large speedup.  Initial version can use the same
@@ -175,14 +175,14 @@ then optimise to VFP.
 choice — it can be fed to GCC/LLVM's assembler for linking, and it's
 well-supported on ARM Linux, QEMU, and bare-metal toolchains.
 
-## The Compiler Itself (Written in xtc)
+## The Compiler Itself (Written in xcc)
 
 ### Structural Similarity vs. Fresh Design
 
-Your question — should the xtc compiler look like the ObjC compiler,
+Your question — should the xcc compiler look like the ObjC compiler,
 or be a fresh design?  There are arguments both ways.
 
-**Keep similar structure** — if the xtc version mirrors the ObjC version's
+**Keep similar structure** — if the xcc version mirrors the ObjC version's
 class hierarchy (`XTPreprocessor`, `XTLexer`, `XTParser`,
 `XTSemanticAnalyzer`, `XTIRLowering`, `XT6502Lowering`), then:
 
@@ -195,33 +195,33 @@ class hierarchy (`XTPreprocessor`, `XTLexer`, `XTParser`,
 **Fresh design** — if starting from scratch, one would naturally:
 
 - Collapse the many per-category ObjC files (46 `.m` files in `codegen/`)
-  into fewer xtc modules.
-- Use xtc's visitor dispatch with protocols instead of the ObjC
+  into fewer xcc modules.
+- Use xcc's visitor dispatch with protocols instead of the ObjC
   `@protocol` / `@optional` pattern.
 - Build the symbol table directly with `Map.xt` and `Array.xt` instead
   of wrapping Foundation's `NSDictionary` and `NSMutableArray`.
 - Skip the ObjC `@property` / `@synthesize` boilerplate.
-- Use xtc tuples / multiple return values instead of `&out` parameters
+- Use xcc tuples / multiple return values instead of `&out` parameters
   where that's cleaner.
 
 **Recommendation:** Start *structurally similar* but let the design drift
-organically.  The ObjC and xtc versions will diverge over time as the
-xtc version takes advantage of the host language's features, and that's
+organically.  The ObjC and xcc versions will diverge over time as the
+xcc version takes advantage of the host language's features, and that's
 OK — the ObjC version only needs to stay healthy long enough to bootstrap
-the xtc version.  After that the ObjC version becomes a legacy reference
+the xcc version.  After that the ObjC version becomes a legacy reference
 and the bootstrap path is:
 
 ```
-ObjC xtc ──▶ xtc.xt ──▶ ARM binary (v1)
+ObjC xcc ──▶ xcc.xt ──▶ ARM binary (v1)
                            │
-                    compiles xtc.xt ──▶ ARM binary (v2, self-hosted)
+                    compiles xcc.xt ──▶ ARM binary (v2, self-hosted)
                            │
                     compiles everything else
 ```
 
 ### Size Estimate
 
-| Component | ObjC (LOC) | xtc (LOC, similar struct.) | xtc (LOC, fresh) |
+| Component | ObjC (LOC) | xcc (LOC, similar struct.) | xcc (LOC, fresh) |
 |-----------|-----------|---------------------------|------------------|
 | Lexer | ~400 | ~400 | ~350 |
 | Preprocessor | 1,243 | ~1,500 | ~1,200 |
@@ -251,28 +251,28 @@ real hardware but fine for initial bring-up.
 
 ```
 Phase 0 (current):
-  ObjC xtc ──▶ 6502 .xex (via IR path or legacy codegen)
-  ObjC xtc ──▶ IR dump (--emit-ir diagnostic)
+  ObjC xcc ──▶ 6502 .xex (via IR path or legacy codegen)
+  ObjC xcc ──▶ IR dump (--emit-ir diagnostic)
 
 Phase 1 — ARM back-end (~3 weeks):
   Add XTARMLowering.m + XTARMLowering.h
   Add ARM runtime routines (startup, heap, stdio)
   Add a Zynq memory model (.lnk)
-  Test: compile a trivial xtc program ──▶ ARM binary ──▶ runs on Zynq
+  Test: compile a trivial xcc program ──▶ ARM binary ──▶ runs on Zynq
 
-Phase 2 — Compiler in xtc, v1 (~8-12 weeks):
-  Write xtc.xt covering:
+Phase 2 — Compiler in xcc, v1 (~8-12 weeks):
+  Write xcc.xt covering:
     - Lexer + preprocessor + parser (subset: enough to parse itself)
     - Semantic analyser (type checking + overload resolution + ARC)
     - IR lowering (uses existing XTIRLowering-style dispatch)
     - ARM back-end (uses existing XTARMLowering)
     - Driver / CLI / file I/O
-  Compile with ObjC xtc ──▶ arm-xtc binary
+  Compile with ObjC xcc ──▶ arm-xcc binary
   Test: compile simple .xt files on the Zynq
 
 Phase 3 — Bootstrap (~1 week):
-  arm-xtc xtc.xt -o arm-xtc-v2
-  Verify arm-xtc-v2 produces byte-identical output for a test suite
+  arm-xcc xcc.xt -o arm-xcc-v2
+  Verify arm-xcc-v2 produces byte-identical output for a test suite
   ➜ Self-hosting achieved
 
 Phase 4 — Feature parity (~4-6 weeks):
@@ -283,7 +283,7 @@ Phase 4 — Feature parity (~4-6 weeks):
   Start compiling everything with the self-hosted compiler
 
 Phase 5 — Dogfood:
-  All new xtc development happens in xtc
+  All new xcc development happens in xcc
   ObjC compiler is maintained for bootstrapping only
   When the language changes, update both versions (mostly mechanical)
 ```
@@ -291,34 +291,34 @@ Phase 5 — Dogfood:
 ### How Long Until ObjC Can Be Retired?
 
 The ObjC compiler needs to be maintained until:
-1. The xtc compiler can compile itself (Phase 3).
-2. The xtc compiler can produce 6502 binaries for the soft-core (Phase 4).
-3. The xtc compiler has feature parity with the ObjC compiler for all
+1. The xcc compiler can compile itself (Phase 3).
+2. The xcc compiler can produce 6502 binaries for the soft-core (Phase 4).
+3. The xcc compiler has feature parity with the ObjC compiler for all
    shipping programs.
 
 After that, the ObjC version is a historical artifact.  New features
-are added to the xtc version first; the ObjC version can be updated
+are added to the xcc version first; the ObjC version can be updated
 from it (not the other way around) for as long as anyone cares to
 keep the bootstrap path alive.
 
 Realistically, maintaining both versions across weekly development would
 be a tax.  The better model is:
 
-1. Cut over to the xtc compiler as soon as it can compile itself and
+1. Cut over to the xcc compiler as soon as it can compile itself and
    produce working 6502 binaries.
 2. Keep the ObjC compiler in a known-good state (like a tagged release)
    for recovery, but don't evolve it further.
-3. All new development on the xtc compiler, in xtc.
+3. All new development on the xcc compiler, in xcc.
 
 ## What Goes Wrong (Risks)
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | ARM back-end is harder than expected | Phase 1 slips | Start with a minimal subset (no float, no varargs, no ARC intrinsics) and add later. |
-| xtc compiler is too slow on ARM | Wastes developer time | Profile and optimise the hot paths (lexer, parser). The heaviest workloads are character scanning and tree allocation — both are cache-friendly on ARM. |
+| xcc compiler is too slow on ARM | Wastes developer time | Profile and optimise the hot paths (lexer, parser). The heaviest workloads are character scanning and tree allocation — both are cache-friendly on ARM. |
 | Self-hosted compiler produces wrong code for the 6502 back-end | Hard to debug cross-target | Keep the 6502 back-end simple at first; compare output to the ObjC compiler's 6502 output for the same source. |
 | ARC / autoboxing bugs found at scale | The compiler exercises every alloc/free edge case | Run the compiler on itself repeatedly; use the existing test suite as a regression harness. |
-| ObjC compiler changes are copied to xtc version with bugs | Drift between the two | For Phase 2, implement each feature once in xtc and once in ObjC, testing both paths with the same test suite. |
+| ObjC compiler changes are copied to xcc version with bugs | Drift between the two | For Phase 2, implement each feature once in xcc and once in ObjC, testing both paths with the same test suite. |
 
 > **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "Multitasking / self-hosting / compiler".
 

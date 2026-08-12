@@ -69,7 +69,7 @@ Three tiers, lowest first:
 Both apps (PIE) and libraries (`.so`) are ELF `ET_DYN` — the same type; the only
 difference is whether `DT_NEEDED`/entry are used. One loader handles both.
 
-xtc owns the arm32 codegen, so we **co-design the relocation model to make the
+xcc owns the arm32 codegen, so we **co-design the relocation model to make the
 loader trivial** instead of accepting gcc's GOT + lazy-PLT machinery:
 
 - Eager binding only — **no lazy PLT**, no runtime resolver stub. The GOT is
@@ -80,14 +80,14 @@ loader trivial** instead of accepting gcc's GOT + lazy-PLT machinery:
   target word; the loader reads-modify-writes.
 
 Constraint: the output stays **valid ELF with DWARF**, so `addr2line`/gdb and the
-P6 debugger work. xtc's debug-info (vision §3) is emitted in the same flat-address
+P6 debugger work. xcc's debug-info (vision §3) is emitted in the same flat-address
 coordinates the loader uses — one logical-address contract, four consumers.
 
-xtc-ARM must also speak the **C ABI** (AAPCS32 + C type layout): it links the C
+xcc-ARM must also speak the **C ABI** (AAPCS32 + C type layout): it links the C
 kernel, newlib, and the C libraries (Lua/FreeType/SQLite). It is the **XTOS system
 language** (ARC by default, with an unmanaged subset for the hardware-touching
 bottom); existing C deps stay C, cross-compiled on the host; on-device C
-compilation is deferred. Full port requirements: [xtc-on-arm9.md](xtc-on-arm9.md).
+compilation is deferred. Full port requirements: [xcc-on-arm9.md](xcc-on-arm9.md).
 
 ## 4. The hypervisor surface: one service set, three transports
 
@@ -265,7 +265,7 @@ v1 entries (the rest of each block reserved):
 | `0x1_0000` | guest mgmt | `env_create` · `env_map_service` |
 
 **Frozen + implemented today** (the table above is the planned superset; this is what
-exists and what xtc targets *now*). Source of truth = `loader/kernel/xtsys.h`; `usys.h`
+exists and what xcc targets *now*). Source of truth = `loader/kernel/xtsys.h`; `usys.h`
 and `gem_stubs.c` `#include` it — never copy these numbers.
 
 | Num | `SYS_*` | Signature → return |
@@ -345,14 +345,14 @@ rewrites. For any lib (GEM, libc):
   doorbell sequence per transport), `setjmp`/`longjmp`, asm intrinsics. A few
   dozen lines.
 
-So "the m68k GEM" and "the arm32 GEM" differ only by harness. xtc emits the right
+So "the m68k GEM" and "the arm32 GEM" differ only by harness. xcc emits the right
 transport per backend from the same source.
 
 ## 11. Relation to the roadmap
 
 This is the spec for **Phase 4** (vision §5: *Dynamic loading + interface/
 registry*). It depends on Phase 3 (VFS, `OS/` layout) and feeds Phase 5/6 (the
-on-device xtc IDE produces these ELFs; the P6 debugger consumes their DWARF and
+on-device xcc IDE produces these ELFs; the P6 debugger consumes their DWARF and
 drives the `dbg_*` syscalls). The frozen artifacts here — the `SVC #1`
 convention, the syscall numbering, the `ET_DYN`/minimal-reloc format — are the
 "reserve-now" items (vision §4) that later phases bind to.

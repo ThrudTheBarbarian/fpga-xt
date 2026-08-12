@@ -1,4 +1,4 @@
-# Improving the 6502 for xtc
+# Improving the 6502 for xcc
 
 ## Motivation
 

@@ -1,6 +1,6 @@
 # Math coprocessor (A9-offloaded FPU + integer + SIMD)
 
-A memory-mapped math coprocessor for the 6502 (and the xtc runtime): operands
+A memory-mapped math coprocessor for the 6502 (and the xcc runtime): operands
 and a short op *program* go into an 8 KB **math page**, one doorbell write runs
 the whole program on the A9 (native VFP + libm), and the results come back into
 the same page.  Replaces bespoke software floating point with hardware IEEE-754
@@ -144,9 +144,9 @@ VDOTs (row stride 1, column stride 4) instead of 112 scalar ops.  Strides make
 matrix columns, interleaved buffers and reversals addressable without any
 CPU-side reshuffling; stride-0 broadcast gives scale/axpy forms via vmla.
 
-### xtc lowering
+### xcc lowering
 
-The op stream is exactly what a compiler back-end emits: the xtc expression
+The op stream is exactly what a compiler back-end emits: the xcc expression
 tree lowers to 3-address ops with the register allocator targeting the slot
 file, and array expressions lower to vector ops.  A float/integer expression
 compiles into a coprocessor program, emitting only "read the result slot".
@@ -189,7 +189,7 @@ floor is ~2300 6502 cycles (~700-odd instructions): *cheap* integer work (adds, 
 single narrow multiply) is now quicker inline, but a divide, a short expression
 like `y = x/b*c` (~4k cycles), or any float op still favour offload even at the
 top tier — it does **not** take vector/matrix batches to win; those are just where
-the margin is widest.  The xtc cost model must take the target `CLOCK_MULT` as an
+the margin is widest.  The xcc cost model must take the target `CLOCK_MULT` as an
 input.  Fast-path headroom if
 ever needed: ACP-coherent chunk traffic, NEON in the worker, a spin-polling
 worker to cut the IRQ→task handoff.

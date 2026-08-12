@@ -38,7 +38,7 @@ Zynq-7020, free with attribution, and cycle-accurate for our purposes:
 The core has been extended in-tree with stage A/B/C embellishments
 (4 KB hidden stack, 12-bit SP, SP-relative addressing, PSH/PLL bulk
 save/restore — see `docs/6502/6502-embellishments.md`) to support a
-practical C-style calling convention from XTC.
+practical C-style calling convention from XCC.
 
 Other niceties might be to enable Sweet 16 as actual hardware
 instructions (https://en.wikipedia.org/wiki/SWEET16) or possibly

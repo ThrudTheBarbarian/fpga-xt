@@ -51,7 +51,7 @@ specialize**, and neither has to be a compromise:
   nuance — all of which cost decode LUTs on the binding `clk_sally` loop that gates
   fmax. Once the fidelity core exists, **the turbo core no longer has to be accurate at
   all**. It can shed illegal-opcode decode, cycle-exact timing, and RMW bus nuance,
-  keeping only the documented ISA + the xtc embellishments (banking/math). Fewer decode
+  keeping only the documented ISA + the xcc embellishments (banking/math). Fewer decode
   levels on the binding path = a real shot at reclaiming the fmax the 120 target lost
   ([[xt6502_clean_sheet]] — the chase is paused; this *unblocks* it) and at un-parking
   the ~150 ps opcode-relocation work ([[xt_embellishment_opcode_relocation]]). Any app

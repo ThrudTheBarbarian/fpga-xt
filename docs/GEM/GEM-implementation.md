@@ -2,7 +2,7 @@
 
 Recommendations for porting GEM to the fpga-antic platform. Assumes the
 hardware design described in [n6-migration.md](./n6-migration.md) and the
-xtc language documented at <http://atari-xt.com/language/>.
+xcc language documented at <http://atari-xt.com/language/>.
 
 This is a recommendations document, not a spec. It captures *what to
 build, in what order, and why* — the wire formats, opcode lists, and
@@ -28,12 +28,12 @@ GEM's boundaries predate this hardware, but they line up with the chips
 unusually well. The 6502 handles control logic; the N6 handles pixels
 and storage; PSSI / FMC mailboxes are the bus between them.
 
-## Language: xtc
+## Language: xcc
 
-xtc is the right primary language for this work, and on this hardware
-the gap between "xtc" and "llvm-mos for 6502" is large.
+xcc is the right primary language for this work, and on this hardware
+the gap between "xcc" and "llvm-mos for 6502" is large.
 
-xtc provides:
+xcc provides:
 
 - **Classes** (heap and stack allocation), **single inheritance**,
   **protocols** (interfaces), **automatic reference counting** with weak
@@ -47,13 +47,13 @@ xtc provides:
   multi-byte values across 8-bit registers — directly applicable to the
   PSSI DRAW opcode encoding
 - **`:unroll`** loop hint for tight emit loops
-- Inline `asm { ... clobbers ... }` blocks that can read and write xtc
+- Inline `asm { ... clobbers ... }` blocks that can read and write xcc
   variables — a proper escape hatch for mailbox pokes, IRQ vectors, and
   MMU bank swaps
 
 This maps onto GEM concepts directly:
 
-| GEM concept | xtc realization |
+| GEM concept | xcc realization |
 |-------------|-----------------|
 | Window | `Window` class with `init` / `dealloc` / `draw` / `hitTest` methods |
 | Window list | `Array<Window@>` (Foundation collection, not an intrusive linked list) |
@@ -74,7 +74,7 @@ Use them as **behavioral references**, not source to port.
 
 FreeGEM and EmuTOS are mature, well-commented C codebases that document
 the correct behavior of every AES call and VDI primitive. They are
-*not*, however, idiomatic xtc. The class system, ARC, and Foundation
+*not*, however, idiomatic xcc. The class system, ARC, and Foundation
 collections make a fresh implementation substantially smaller and
 clearer than a literal port. A literal port also preserves decades of
 68000-isms (alignment assumptions, big-endian pointer arithmetic, manual
@@ -82,7 +82,7 @@ allocator discipline) that have no business in this codebase.
 
 Read FreeGEM / EmuTOS for "what does `wind_create` actually do?" and
 "what fields does `evnt_multi` expect?". Write the implementation
-native to xtc.
+native to xcc.
 
 ## Phased plan
 
@@ -92,8 +92,8 @@ Prerequisite, mostly on the n6-migration roadmap:
 
 - FMC mailboxes, PSSI DRAW stream, SPI event channel, USB HID input,
   SD mount from N6 firmware
-- xtc toolchain set up, memory model chosen
-- One-page hardware bring-up note mapping xtc identifiers to hardware
+- xcc toolchain set up, memory model chosen
+- One-page hardware bring-up note mapping xcc identifiers to hardware
   resources (mailbox addresses, IRQ vector numbers, MMU bank scheme)
 
 ### Phase 1 — VDI dispatch layer (keystone)
@@ -105,7 +105,7 @@ being right.
   filled rect, circle, filled polygon, blit, text, scroll, clip rect,
   palette load. Parameter encoding is a software contract; PSSI RTL
   doesn't care.
-- **6502-side VDI library** as an xtc module: each VDI call emits the
+- **6502-side VDI library** as an xcc module: each VDI call emits the
   corresponding opcode into the PSSI ring buffer.
 - **N6-side DRAW dispatcher**: parses opcodes, hands off to LVGL draw
   API (which is already wired through NeoChrom + DMA2D — see
@@ -144,12 +144,12 @@ clicks deliver to a test app.
 - Bulk file content uses the 0x00 W mailbox — N6 streams file bytes into
   6502 HyperRAM at the buffer address named by the syscall.
 
-Deliverable: `fopen` / `fread` / `fwrite` from xtc; files visible on the
+Deliverable: `fopen` / `fread` / `fwrite` from xcc; files visible on the
 SD card.
 
 ### Phase 4 — desktop and apps
 
-- Port the FreeGEM desktop concept — written fresh in xtc, using
+- Port the FreeGEM desktop concept — written fresh in xcc, using
   FreeGEM as design reference. Exercises most of AES and VDI in one
   app.
 - A few sample apps: text editor, calculator, simple paint
@@ -166,9 +166,9 @@ SD card.
 
 | Decision | Recommendation | Reasoning |
 |----------|----------------|-----------|
-| Primary language | xtc | Designed for this hardware; class / protocol / ARC system fits GEM |
-| Memory model | Bank-window via PORTB MMU, handled by xtc memory model | Compile-time, not runtime, banking discipline |
-| Source posture | EmuTOS / FreeGEM as behavioral reference, not source to port | Idiomatic xtc differs too much from K&R C for literal port to pay off |
+| Primary language | xcc | Designed for this hardware; class / protocol / ARC system fits GEM |
+| Memory model | Bank-window via PORTB MMU, handled by xcc memory model | Compile-time, not runtime, banking discipline |
+| Source posture | EmuTOS / FreeGEM as behavioral reference, not source to port | Idiomatic xcc differs too much from K&R C for literal port to pay off |
 | Wire color model | 8-bit indexed | Matches GEM heritage; palette LUT on N6 expands to RGB888 (LVGL `LV_COLOR_DEPTH 24`) |
 | Event channel | IRQ + SPI event payload pull | Already in [n6-migration.md](./n6-migration.md) |
 | Initial tasking | Single-task | Don't pay the multi-tasking cost before AES works |
@@ -177,7 +177,7 @@ SD card.
 ## SALLY CPU extensions for multi-tasking
 
 Several small additions to the FPGA SALLY core would substantially ease
-multi-tasking and improve xtc codegen. SALLY is project-owned RTL, so
+multi-tasking and improve xcc codegen. SALLY is project-owned RTL, so
 the question is RTL cost and fmax impact, not vendor support.
 
 ### Cooperative tasking package (cheapest)
@@ -211,12 +211,12 @@ If preemptive scheduling is wanted later:
   corrupt a half-saved state. ~100 LUTs. The correctness win
   (race-free swap) matters more than the speed win.
 
-### Wider hardware SP (kills xtc's software stack)
+### Wider hardware SP (kills xcc's software stack)
 
-This is bigger than the bank-register additions and changes xtc
+This is bigger than the bank-register additions and changes xcc
 codegen, not just kernel behaviour.
 
-xtc — like every 6502 C-family compiler — currently runs a **software
+xcc — like every 6502 C-family compiler — currently runs a **software
 stack** in parallel to the hardware stack: a 16-bit ZP pointer growing
 through main memory, used for function arguments, locals, and ARC
 references. Every software-stack access is 3–5 instructions vs 1
@@ -226,7 +226,7 @@ ARC retain/release, nested event dispatch — so this is the single
 biggest codegen win available.
 
 Widening SP to 11 bits gives a 2 KB stack per task — generous enough
-for typical xtc call depth (~20+ class-method frames at average ~100
+for typical xcc call depth (~20+ class-method frames at average ~100
 bytes each) without burning excessive BRAM. 10-bit (1 KB) is too tight
 for ARC-heavy code; 12-bit (4 KB) is more comfortable but doubles
 BRAM cost per task; 14/16-bit are overkill for GEM-style workloads.
@@ -286,9 +286,9 @@ trouble. If that closes, the codegen payoff is large; if it doesn't,
 the wider SP still helps somewhat (denser PHA/PLA-based code) but
 gives up the biggest single optimization.
 
-Critically, **the wider SP only pays off if xtc generates stack-relative
+Critically, **the wider SP only pays off if xcc generates stack-relative
 loads/stores**, which requires a compiler-side change. Worth checking
-whether xtc already has hooks for this target option before committing
+whether xcc already has hooks for this target option before committing
 to the hardware work.
 
 ### Decision matrix
@@ -298,7 +298,7 @@ to the hardware work.
 | Cooperative tasking | SP_BANK + ZP_BANK | ~50 | none | none |
 | Preemptive tasking | + Tick IRQ + atomic CAS | ~100 | none | minor |
 | Race-free preemption | + HW context-switch insn | ~200 | none | none |
-| Fast xtc codegen | Wider SP + stack-relative addr modes | ~100 + 32 KB BRAM | yes (decode path) | substantial (xtc target option) |
+| Fast xcc codegen | Wider SP + stack-relative addr modes | ~100 + 32 KB BRAM | yes (decode path) | substantial (xcc target option) |
 | Cheap IRQ entry | Auto-push A/X/Y on IRQ, auto-pull on RTI | ~40 | low | none |
 
 ### What to skip
@@ -314,7 +314,7 @@ to the hardware work.
 
 ## Risks
 
-1. **AES code volume**: even a clean xtc reimplementation will be
+1. **AES code volume**: even a clean xcc reimplementation will be
    several thousand lines. Bank-window addressing for the AES image
    needs to be planned, not discovered late.
 2. **VDI primitive coverage**: GEM apps assume a specific (and large)
@@ -323,7 +323,7 @@ to the hardware work.
    wire format.
 3. **ARC overhead in hot paths**: event loop, VDI emit, mouse tracking.
    Profile; opt out with `-farc=off` or `weak:` where shown to matter.
-4. **xtc stdlib gaps**: ten short pages of language reference is
+4. **xcc stdlib gaps**: ten short pages of language reference is
    encouraging (small, well-defined), but the standard library may have
    gaps. Specifically worth verifying: does Foundation `Array<T>` work
    cleanly with class types like `Array<Window@>`? Do `weak:` refs play
@@ -336,13 +336,13 @@ Before writing any AES code:
 1. **Lock the VDI opcode wire format.** Even a 50-opcode v0.1 spec is
    worth more than any code. Inventory FreeGEM's VDI source for the
    complete primitive set.
-2. **Wire one full vertical slice.** xtc program emits `v_pline` → PSSI
+2. **Wire one full vertical slice.** xcc program emits `v_pline` → PSSI
    → N6 → LVGL → screen. Once that path is live, AES is just code.
 3. **Profile early.** Instrument PSSI fill rate and FMC RPC roundtrip
    with a synthetic AES-like workload (event tick + ~20 DRAW calls /
    frame). Tells you whether batching matters before you build a
    batching layer.
-4. **Write a 100-line `Window` class.** Sanity-check that xtc's class
+4. **Write a 100-line `Window` class.** Sanity-check that xcc's class
    model handles GEM's window concept comfortably. If something fights,
    find out now, not at month four.
 
@@ -351,6 +351,6 @@ Before writing any AES code:
 - [n6-migration.md](./n6-migration.md) — hardware architecture, PSSI /
   FMC / SPI channels, mailbox map, latency budgets
 - [GEM.md](./GEM.md) — full POR architecture document
-- <http://atari-xt.com/language/> — xtc language reference
+- <http://atari-xt.com/language/> — xcc language reference
 - FreeGEM (GPL) — AES and VDI source, used as behavioral reference
 - EmuTOS — cleaner AES reimplementation, also used as reference

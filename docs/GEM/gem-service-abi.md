@@ -137,7 +137,7 @@ $A000)` and resolves the `{lo,hi,$FF}` array pointers inside it the same way.
 
 ### 3.3 ARM-native client
 
-Native A9 code (e.g. an xtc-ARM desktop shell, once that backend lands) calls
+Native A9 code (e.g. an xcc-ARM desktop shell, once that backend lands) calls
 the service in-process — a direct function call or the same shared mailbox —
 with no marshalling. The array layout is identical, so a client can move
 between transports with only its binding swapped.
@@ -196,7 +196,7 @@ and 6.
 
 A binding is the only per-client code, and it is small:
 
-- **XL / xtc-6502.** Ship an xtc `Vdi` / `Aes` stdlib class (sibling to
+- **XL / xcc-6502.** Ship an xcc `Vdi` / `Aes` stdlib class (sibling to
   `Stdio` / `Vbi`) that owns the arena bank, lays out the arrays, exposes
   typed methods (`vdi.pline(...)`, `aes.windCreate(...)`), and inlines the
   bank-map / doorbell drive / busy-spin / bank-restore. No linking against any
