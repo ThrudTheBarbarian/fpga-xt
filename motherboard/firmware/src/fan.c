@@ -117,11 +117,19 @@ void fan_tach_input(int on)
         gpio_pull(GPIO_FAN, PIN_FAN_TACH, GPIO_PULL_UP);
         EXTI->PR   = (1UL << PIN_FAN_TACH);
         EXTI->IMR |= (1UL << PIN_FAN_TACH);
-    } else {
-        EXTI->IMR &= ~(1UL << PIN_FAN_TACH);
-        EXTI->PR   = (1UL << PIN_FAN_TACH);
-        gpio_pull(GPIO_FAN, PIN_FAN_TACH, GPIO_PULL_NONE);
+        return;
     }
+
+    EXTI->IMR &= ~(1UL << PIN_FAN_TACH);
+    EXTI->PR   = (1UL << PIN_FAN_TACH);
+    gpio_pull(GPIO_FAN, PIN_FAN_TACH, GPIO_PULL_NONE);
+
+    /* The Zynq locks up without active cooling, so losing the tachometer must
+     * never mean losing airflow.  PWM on PC8 is untouched by any of this, but
+     * the PID would be reading a permanent zero RPM — so pin the fan open loop
+     * at full speed rather than leave a closed loop chasing a dead sensor. */
+    s_closed_loop = 0;
+    set_duty_raw(DUTY_MAX);
 }
 
 void fan_set_duty(uint16_t per_mille)

@@ -383,7 +383,9 @@ static void cmd_mco(int argc, char **argv)
             fan_tach_input(!on);        /* 24 MHz into EXTI would never return */
             clock_mco2_24mhz(on);
             if (on)
-                console_puts("UNPLUG THE FAN — its tach output fights this pin\r\n");
+                console_puts("fan forced to 100% open loop (tach is gone).\r\n"
+                             "Disconnect ONLY the fan's tach wire, not the fan:\r\n"
+                             "its open-collector tach would fight this output.\r\n");
         } else {
             clock_mco_24mhz(on);
         }

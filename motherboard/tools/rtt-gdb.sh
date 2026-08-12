@@ -38,6 +38,10 @@ trap 'rm -f "$SCRIPT"' EXIT
     echo 'attach 1'
     echo 'set var _SEGGER_RTT.up[0].wr = 0'
     echo 'set var _SEGGER_RTT.up[0].rd = 0'
+    # Zero the WRITE pointer before the read pointer and before staging any
+    # characters: the target is running, and if it sees rd=0 while wr still
+    # holds the previous command's length it will replay that command's tail.
+    echo 'set var _SEGGER_RTT.down[0].wr = 0'
     echo 'set var _SEGGER_RTT.down[0].rd = 0'
     i=0
     len=${#CMD}
