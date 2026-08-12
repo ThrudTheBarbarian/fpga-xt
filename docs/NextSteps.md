@@ -383,9 +383,18 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 - **Companion: HID -> POKEY routing** — once enumeration works, translate boot-protocol
   keyboard reports to Atari KBCODE and mouse deltas, and carry them over the SPI link.
   Blocked on the item above and on the SPI link below.
-- **Companion: SPI1 slave link + doorbell** — PA5/6/7 with SSM=1/SSI=0 (no NSS,
-  FPGA is master), PA4 doorbell out, PB13/14 INTERRUPT/PROCEED out, PB15 COMMAND in
-  on EXTI15. Pairs with the peri-link re-point below.
+- **SPI link: widen `HALF_GAP` in `peri_link.sv`** — the STM32 answers reads from its
+  SPI RX interrupt, and at 96 MHz an ISR entry alone is ~125 ns, so the current
+  HALF_GAP=32 cycles (~200 ns at 162 MHz) is too tight to decode the cmd byte and load
+  MISO. It is a module parameter and a byte costs 1.6 us at 5 MHz, so widening it to
+  ~512 cycles (~3 us) is nearly free. **Do this before the first link bring-up.**
+- **SPI link: STM32 side DONE** (`motherboard/firmware/src/spi_link.c`) — SPI1 slave
+  mode 0, SSM=1/SSI=0, two-phase cmd/data state machine matching `peri_link.sv`,
+  register file at the sio-bridge draft addresses plus joysticks at $10..$13 and
+  keyboard/mouse at $14..$18. Because PA4 is the doorbell there is **no hardware NSS
+  and so no byte framing**; the phase therefore also resyncs on an idle gap (>50 us
+  since the last byte = this is a cmd byte), so a glitch costs one transaction rather
+  than the link. Untestable until the FPGA side is re-pointed off the RP2354.
 - **Companion: paddle calibration** — endpoints are computed for 1 MOhm x 47 nF
   (0..33000 us); measure against a real paddle and set with `pot cal <lo> <hi>`.
 - **SIO: PIA CA1/CA2/CB1/CB2 control lines** — PROCEED/MOTOR/INTERRUPT/COMMAND in

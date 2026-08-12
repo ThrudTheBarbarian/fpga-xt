@@ -5,7 +5,7 @@
  *   - four joystick ports and eight paddle pots
  *   - fan PWM with a tachometer PID loop
  *   - USB host: hub plus HID keyboard and mouse
- *   - SPI slave link to the FPGA, with a doorbell           (task #8)
+ *   - SPI slave link to the FPGA, with a doorbell
  *   - Atari SIO host controller on the physical DIN port    (task #10)
  *
  * The loop is a cooperative poll rather than an RTOS: every subsystem here is
@@ -21,6 +21,7 @@
 #include "joystick.h"
 #include "pots.h"
 #include "repl.h"
+#include "spi_link.h"
 #include "usb.h"
 
 #define CONTROL_BAUD    115200U
@@ -34,6 +35,7 @@ int main(void)
     joystick_init();
     pots_init();
     fan_init();
+    spi_link_init();
 
     repl_banner();
 

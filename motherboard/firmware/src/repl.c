@@ -17,6 +17,7 @@
 #include "fault.h"
 #include "joystick.h"
 #include "pots.h"
+#include "spi_link.h"
 #include "usb.h"
 #include "stm32f411.h"
 
@@ -344,6 +345,14 @@ static void cmd_usb(int argc, char **argv)
     usb_status();
 }
 
+static void cmd_spi(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+
+    spi_link_status();
+}
+
 static void cmd_ring(int argc, char **argv)
 {
     (void)argc;
@@ -376,6 +385,7 @@ static const struct command s_cmds[] = {
     { "pot",    "pot [cal lo hi]",      "paddle values",                cmd_pot    },
     { "fan",    "fan [duty|rpm n]",     "fan duty, tach and PID",       cmd_fan    },
     { "usb",    "usb [hub]",            "USB host + HID state",         cmd_usb    },
+    { "spi",    "spi",                  "FPGA link state",              cmd_spi    },
     { "ring",   "ring",                 "pulse the FPGA doorbell",      cmd_ring   },
     { "fault",  "fault [clear]",        "saved fault record",           cmd_fault  },
     { "crash",  "crash",                "force a fault (test)",         cmd_crash  },
