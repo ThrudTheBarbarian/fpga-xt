@@ -357,9 +357,19 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 - **HW: confirm HUB_RST polarity on PA9** — firmware assumes active low
   (`HUB_RST_ACTIVE_LOW` in `motherboard/firmware/src/board.c`). Check the hub page
   of the schematic before debugging a failed enumeration.
-- **Companion: USB host (TinyUSB dwc2 + hub + HID)** — OTG-FS on PA11/PA12 with
-  **VBUS sensing disabled** (PA9 is HUB_RST, not VBUS). Needs `CFG_TUH_HUB` for the
-  on-board 4-way hub. *(src: motherboard/README.md)*
+- **HW: USB device attaches but answers nothing** — TinyUSB host runs; the core sees
+  a full-speed device appear when HUB_RST is released and vanish when asserted, and
+  sends GET_DESCRIPTOR correctly, but gets 0 bytes back every retry. Everything on the
+  STM32 side is verified good: PLLCFGR 0x08413004 + DCKCFGR CK48MSEL=0 (48 MHz PHY
+  clock), HPRT 0x21405 (host mode, port powered + enabled, FS), interrupts serviced,
+  NOVBUSSENS made no difference, and a DP/DM swap would have presented as low speed.
+  **Next check is the hub itself: is its crystal/oscillator running, and are its rails
+  up?** A hub that asserts its upstream pull-up (no clock needed) but cannot answer a
+  SETUP (clock needed) is the classic dead-oscillator signature.
+  *(src: motherboard/README.md)*
+- **Companion: HID -> POKEY routing** — once enumeration works, translate boot-protocol
+  keyboard reports to Atari KBCODE and mouse deltas, and carry them over the SPI link.
+  Blocked on the item above and on the SPI link below.
 - **Companion: SPI1 slave link + doorbell** — PA5/6/7 with SSM=1/SSI=0 (no NSS,
   FPGA is master), PA4 doorbell out, PB13/14 INTERRUPT/PROCEED out, PB15 COMMAND in
   on EXTI15. Pairs with the peri-link re-point below.
