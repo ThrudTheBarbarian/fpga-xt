@@ -18,6 +18,8 @@
 #include "board.h"
 #include "clock.h"
 #include "console.h"
+#include "keymap.h"
+#include "spi_link.h"
 #include "tusb.h"
 
 /* dwc2_remote_wakeup_delay() spins on this; see compat/stm32f4xx.h */
@@ -151,6 +153,63 @@ void tuh_umount_cb(uint8_t daddr)
     console_printf("usb: device %u removed\r\n", daddr);
 }
 
+/* ---------------------------------------------------------------- keyboard -*/
+
+/* A boot-protocol report is the SET of keys currently held, not an event — so
+ * the events have to be recovered by diffing against the previous report.
+ * Anything in the new set that was not in the old one is a fresh press; an
+ * empty set is the all-released that stops the OS auto-repeating. */
+static uint8_t s_prev[6];
+
+static int was_held(uint8_t usage)
+{
+    for (unsigned i = 0; i < sizeof s_prev; i++)
+        if (s_prev[i] == usage)
+            return 1;
+    return 0;
+}
+
+static void handle_keyboard(const uint8_t *report)
+{
+    uint8_t mods = report[0];
+    int     held = 0;
+
+    s_kbd.modifiers = mods;
+    s_kbd.count     = 0;
+
+    for (int i = 2; i < 8; i++) {
+        uint8_t usage = report[i];
+        if (!usage || usage == 1)               /* 1 = rollover error */
+            continue;
+        held++;
+        if (s_kbd.count < KEY_RING)
+            s_kbd.keys[s_kbd.count++] = usage;
+
+        if (was_held(usage))
+            continue;                           /* still down, not a new press */
+
+        uint8_t code;
+        switch (keymap_hid_to_atari(usage, mods, &code)) {
+        case KEYMAP_KEY:
+            spi_link_post_key(code, SPI_KBD_DOWN);
+            s_kbd.events++;
+            break;
+        case KEYMAP_BREAK:
+            spi_link_post_key(0, SPI_KBD_BREAK);
+            s_kbd.events++;
+            break;
+        default:
+            break;                              /* no Atari equivalent */
+        }
+    }
+
+    if (!held && s_prev[0])
+        spi_link_post_key(0, SPI_KBD_ALLUP);
+
+    for (unsigned i = 0; i < sizeof s_prev; i++)
+        s_prev[i] = report[2 + i];
+}
+
 /* ------------------------------------------------------------------- HID ---*/
 
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t idx,
@@ -194,14 +253,8 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t idx,
 {
     switch (tuh_hid_interface_protocol(dev_addr, idx)) {
     case HID_ITF_PROTOCOL_KEYBOARD:
-        if (len >= 8) {
-            s_kbd.modifiers = report[0];
-            s_kbd.count     = 0;
-            for (int i = 2; i < 8 && s_kbd.count < KEY_RING; i++)
-                if (report[i])
-                    s_kbd.keys[s_kbd.count++] = report[i];
-            s_kbd.events++;
-        }
+        if (len >= 8)
+            handle_keyboard(report);
         break;
 
     case HID_ITF_PROTOCOL_MOUSE:

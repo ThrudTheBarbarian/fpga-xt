@@ -38,6 +38,14 @@
 
 #define SPI_SIO_STAT_TX_PENDING 0x01
 
+/* KBD_STAT — how the FPGA should treat KBD_CODE.  DOWN emits $D4CF (KBCODE +
+ * POKEY IRQ), ALLUP emits $D4CD (clears the SKSTAT key-down so the OS stops
+ * auto-repeating), BREAK emits $D4CB (POKEY IRQST bit 7, a separate source
+ * from the key matrix). */
+#define SPI_KBD_DOWN        0x01
+#define SPI_KBD_ALLUP       0x02
+#define SPI_KBD_BREAK       0x04
+
 void     spi_link_init(void);
 void     spi_link_post_key(uint8_t kbcode, uint8_t stat);
 void     spi_link_post_mouse(int8_t dx, int8_t dy, uint8_t buttons);
