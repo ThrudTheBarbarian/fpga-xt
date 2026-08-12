@@ -18,6 +18,7 @@
 #include "console.h"
 #include "fan.h"
 #include "fault.h"
+#include "freqcount.h"
 #include "joystick.h"
 #include "pots.h"
 #include "repl.h"
@@ -40,6 +41,7 @@ int main(void)
     /* 24 MHz on PA8 before the hub leaves reset, in case it is being clocked
      * from here rather than from Y2 (see motherboard/README.md). */
     clock_mco_24mhz(1);
+    freqcount_init();
 
     repl_banner();
 

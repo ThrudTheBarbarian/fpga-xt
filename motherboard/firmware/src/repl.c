@@ -15,6 +15,7 @@
 #include "console.h"
 #include "fan.h"
 #include "fault.h"
+#include "freqcount.h"
 #include "joystick.h"
 #include "pots.h"
 #include "spi_link.h"
@@ -345,6 +346,25 @@ static void cmd_usb(int argc, char **argv)
     usb_status();
 }
 
+static void cmd_freq(int argc, char **argv)
+{
+    if (argc >= 2 && !strcmp(argv[1], "test")) {
+        uint32_t got = freqcount_selftest(100);
+        console_printf("self-test: drove 100 edges, counted %lu — %s\r\n",
+                       got, got == 100U ? "OK" : "FAULTY");
+        return;
+    }
+
+    uint32_t hz = freqcount_measure();
+
+    console_printf("PA0 = %lu Hz", hz);
+    if (hz >= 1000000U)
+        console_printf("  (%lu.%03lu MHz)", hz / 1000000U, (hz / 1000U) % 1000U);
+    else if (hz >= 1000U)
+        console_printf("  (%lu.%03lu kHz)", hz / 1000U, hz % 1000U);
+    console_puts("\r\n");
+}
+
 static void cmd_mco(int argc, char **argv)
 {
     if (argc >= 2) {
@@ -401,6 +421,7 @@ static const struct command s_cmds[] = {
     { "pot",    "pot [cal lo hi]",      "paddle values",                cmd_pot    },
     { "fan",    "fan [duty|rpm n]",     "fan duty, tach and PID",       cmd_fan    },
     { "usb",    "usb [hub]",            "USB host + HID state",         cmd_usb    },
+    { "freq",   "freq [test]",          "count frequency on PA0",       cmd_freq   },
     { "mco",    "mco [on|off]",         "24 MHz clock out on PA8",      cmd_mco    },
     { "spi",    "spi",                  "FPGA link state",              cmd_spi    },
     { "ring",   "ring",                 "pulse the FPGA doorbell",      cmd_ring   },

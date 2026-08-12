@@ -358,9 +358,10 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (`HUB_RST_ACTIVE_LOW` in `motherboard/firmware/src/board.c`). Check the hub page
   of the schematic before debugging a failed enumeration.
 - **HW: USB hub has no clock — Y2 is an active oscillator in a passive-crystal
-  footprint.** ROOT CAUSE FOUND 2026-08-12. `hw/bom-match.csv` fitted Y2 =
+  footprint.** ROOT CAUSE, confirmed 2026-08-12 **by JLCPCB** (the fitted part is
   **YXC OT2EL4C4JI-111OLP-24M**, LCSC category *Crystal Oscillators*, spec
-  "1.8V~3.3V 24MHz CMOS" — an **active XO**. The schematic wires Y2 as a passive
+  "1.8V~3.3V 24MHz CMOS" — an **active XO**). Note `hw/bom-match.csv` happens to agree
+  but is NOT evidence: see the staleness item below. The schematic wires Y2 as a passive
   crystal (pin1 -> XTALIN, pin3 -> XTALOUT, **pins 2 and 4 to GND**), which grounds an
   XO's **VDD**: it has never been powered, so the USB2514B has no 24 MHz reference.
   Explains the symptom exactly — pads/bias/reset run off 3V3 so the hub holds up its
@@ -380,6 +381,10 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   connect to ground"), ePAD grounded with 3 vias, DP/DM correctly oriented, and
   TPS2051B enable active-high as Microchip requires.
   *(src: motherboard/README.md)*
+- **`hw/` describes the PREVIOUS board spin, not the one on the bench** — the BOM,
+  pick-and-place and gerbers there are the 2026-07-16 carrier manufacture package.
+  Do not cite them as the assembly record for the current board; ask for the current
+  outputs, or get them from JLCPCB. (Same trap as [docs/carrier].)
 - **Companion: HID -> POKEY routing** — once enumeration works, translate boot-protocol
   keyboard reports to Atari KBCODE and mouse deltas, and carry them over the SPI link.
   Blocked on the item above and on the SPI link below.
