@@ -59,6 +59,12 @@ if ! kill -0 "$GDBPID" 2>/dev/null; then
 fi
 
 grep -i 'rtt' "$LOG" || true
-echo "--- ctrl-A k to quit (screen) ---"
+echo
+echo "connected — press Return for a prompt"
+echo "quit with: ctrl-A then k then y"
+echo
 
-exec screen "$AUX" 115200
+# Deliberately not exec: exec would replace this shell and discard the trap,
+# leaving gdb attached to the target after the terminal exits — which then
+# blocks the next 'make flash' with a target that is already claimed.
+screen "$AUX" 115200
