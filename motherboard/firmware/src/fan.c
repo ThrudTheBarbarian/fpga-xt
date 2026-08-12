@@ -194,6 +194,9 @@ static uint16_t curve(uint8_t c)
 
 void fan_set_duty(uint16_t per_mille)
 {
+    /* An explicit duty is a manual override: drop out of thermal mode too, or
+     * the next fan_poll() would quietly undo it. */
+    s_thermal     = 0;
     s_closed_loop = 0;
     set_duty_raw(per_mille);
 }

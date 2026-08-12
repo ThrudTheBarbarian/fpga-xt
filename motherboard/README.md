@@ -105,9 +105,15 @@ mr <addr> [n]          read memory words
 mw <addr> <val>        write a memory word
 gpio <pin> [state]     inspect or drive a pin      e.g. gpio c8, gpio a9 1
 hub [cycle|hold|run]   USB hub reset on PA9
+usb [hub]              USB host and HID state
 js                     joystick and button state
 pot [cal lo hi]        paddle values
 fan [duty|rpm n]       fan duty, tach and PID
+fan thermal [off]      temperature-driven cooling
+fan temp <c>           inject a temperature (testing)
+freq [test|pin X]      frequency counter, PD12 or PA0
+mco [2] [on|off]       24 MHz out on PA8 / PC9
+spi                    FPGA link state
 ring                   pulse the FPGA doorbell
 fault [clear]          saved fault record
 crash                  force a fault (test)
@@ -198,20 +204,53 @@ it would replace.)
 Calibrate the endpoints against a real paddle with `pot cal <min_us> <max_us>`.
 Defaults are 0..33000 µs, computed for 1 MΩ × 47 nF.
 
-### Fan — PWM and tach working, PID untested (no fan spinning yet)
+### Fan — working, including the thermal loop
 
 25 kHz PWM on PC8 via TIM3_CH3; tachometer on PC9 counted with EXTI9 rather than
 input capture, because TIM3 is busy generating a 40 µs PWM period and a capture
 unit on the same timer would see hundreds of overflows per tach pulse. Edge
 counting over a 250 ms window is ample for 500-3000 RPM.
 
-Both control modes are available: `fan <duty>` for the planned arrangement where
-the A9 reads XADC junction temperature and pushes a duty byte, and `fan rpm <n>`
-for a self-contained PID on the STM32. The integrator only accumulates when the
-output is off its rails, so a stalled or absent fan cannot wind it up into a
-permanent 100 % demand.
+Three control modes. `fan <duty>` is a manual override. `fan rpm <n>` closes the
+loop on the tachometer. `fan thermal` drives the RPM setpoint from the Zynq's
+XADC junction temperature — a quiet floor of 1200 rpm below 55 °C, a linear ramp
+to 4500 rpm at 70 °C, and full duty above that.
 
-### USB host, SPI link, SIO — not yet implemented
+The temperature arrives over the SPI link at `SPI_REG_TEMP` ($07). The STM32
+cannot read it directly — it is the SPI slave and a slave cannot start a
+transaction — so it sets `SPI_STATUS_WANT_TEMP` and rings the PA4 doorbell; the
+FPGA reads STATUS, and the A9 answers with a write. That keeps the sample
+cadence under the controller's own control.
+
+**The failsafe is the point.** The Zynq locks up without active cooling, so a
+temperature that never arrives, or one older than ten seconds, means 100 % duty
+— the safe failure of a thermal loop is loud, not off. Losing the tachometer
+(see `mco 2` below) does the same. Measured: 50 °C → 1200 rpm, 62 °C → 2740,
+68 °C → 4060, each tracked by the PID.
+
+### USB host — stack runs, blocked on the hub's clock
+
+TinyUSB dwc2 host on OTG-FS. The core reaches host mode, powers the port, and
+sees a full-speed device attach when HUB_RST is released — then `GET_DESCRIPTOR`
+comes back with zero bytes, every retry. See "the hub has no clock" below.
+`make USB_DEBUG=0` silences the enumeration log once it works.
+
+### SPI link — STM32 side done, untested against the FPGA
+
+`spi_link.c` implements the far end of `hdl/peri_link.sv`: two 8-bit frames
+(cmd then data), mode 0, register file at the sio-bridge draft addresses plus
+joysticks at $10-$13 and keyboard/mouse at $14-$18.
+
+Because PA4 is the doorbell there is **no hardware NSS, and therefore no byte
+framing** — the peripheral just shifts bytes forever. One lost byte would invert
+the cmd/data phase permanently, so the phase also resyncs on time: a byte
+arriving more than 50 µs after the last one starts a new transaction regardless.
+
+Two things are needed on the FPGA side: re-point the link off the RP2354, and
+**widen `HALF_GAP`** — at 32 cycles (~200 ns) it is shorter than an interrupt
+entry on a 96 MHz M4, so we cannot decode the command and load MISO in time.
+
+### SIO — not yet implemented
 
 See the task list in [`../docs/NextSteps.md`](../docs/NextSteps.md).
 
@@ -237,6 +276,42 @@ PC8/PC9 (fan) and PB0/PB1 (the IRR paddle pots) are the same two TIM3 compare
 units. The firmware resolves this without a board change — the fan keeps TIM3
 and the paddles use no timer channels at all (above) — so this is recorded for
 awareness, not as an open defect.
+
+### The USB hub has no reference clock
+
+`Y2` is an **active oscillator fitted into a passive-crystal footprint**
+(confirmed by JLCPCB: YXC OT2EL4C4JI-111OLP-24M, a 1.8-3.3 V CMOS-output XO).
+In SMD3225-4P an XO is pin 1 = OE, pin 2 = GND, **pin 3 = OUT, pin 4 = VDD**,
+whereas the schematic wires the part as a crystal with pins 2 and 4 to ground —
+so the oscillator's VDD is grounded and it has never been powered. The USB2514B
+therefore has no 24 MHz, which is why it does everything not needing a clock
+(holds its D+ pull-up, obeys HUB_RST) and nothing that does.
+
+Everything else on that sheet was checked against Microchip's design checklist
+(DS00004541) and the USB251xB datasheet and is correct: RESET_N 10K + 1 µF
+exactly per Figure 7-2, RBIAS 12K 1%, CFG_SEL[1:0]=00 (straps enabled,
+self-powered), NON_REM=00, 0.1 µF per supply pin plus 1 µF bulk, CRFILT and
+PLLFILT 0.1 µF ("up to 0.1 µF … or left unconnected"), TEST to ground
+("no connect … or connect to ground"), ePAD grounded through three vias, DP/DM
+correctly oriented, TPS2051B enable active-high as Microchip requires.
+
+**Fix:** fit a passive 24 MHz crystal, CL ≈ 10-12 pF to match the 18 pF loading
+caps. **To test before buying one**, with the Zynq disconnected so cooling is
+not needed:
+
+```
+mco 2 on          # 24 MHz on PC9 -> J3 pin 3, the fan header
+fan 0             # optional: silence the fan, it is not needed
+                  # remove Y2, wire J3 pin 3 -> Y2 pad 1 (XTALIN; verify to
+                  # hub pin 33 with a meter first)
+usb hub           # watch the enumeration log
+```
+
+Y2 must come off first either way: if it is the XO, its OE input sits on the
+XTALIN node and clamps any drive to ~0.6 V through the protection diode into
+its grounded VDD. `mco 2` costs the tachometer while it is on, so the fan drops
+to open-loop full duty — fine with the Zynq disconnected, and not something to
+leave enabled otherwise.
 
 ### PA9 is HUB_RST, not VBUS
 
