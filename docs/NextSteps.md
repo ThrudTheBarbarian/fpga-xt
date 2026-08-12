@@ -363,9 +363,20 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   STM32 side is verified good: PLLCFGR 0x08413004 + DCKCFGR CK48MSEL=0 (48 MHz PHY
   clock), HPRT 0x21405 (host mode, port powered + enabled, FS), interrupts serviced,
   NOVBUSSENS made no difference, and a DP/DM swap would have presented as low speed.
-  **Next check is the hub itself: is its crystal/oscillator running, and are its rails
-  up?** A hub that asserts its upstream pull-up (no clock needed) but cannot answer a
-  SETUP (clock needed) is the classic dead-oscillator signature.
+  The hub is a **USB2514B (IC6)** and its schematic checks out clean against Microchip's
+  own design checklist (DS00004541) — RESET_N 10K+1uF active low exactly per Fig 7-2,
+  RBIAS 12K 1%, CFG_SEL[1:0]=00 (straps enabled, self-powered), NON_REM=00, 0.1uF per
+  supply pin + 1uF bulk, CRFILT/PLLFILT 0.1uF ("up to 0.1uF, or unconnected"), VBUS_DET
+  via 100K to 3V3 ("permissible"), DP/DM the right way round, and TPS2051B enable is
+  active-high as Microchip requires. So suspect **assembly, in this order**:
+  1. **ePAD.** The datasheet is explicit: "the package slug is the **only VSS** for the
+     device and must be tied to ground with multiple vias." An unsoldered QFN-36 pad
+     leaves the chip with no ground — it can still hold up a pull-up through its bias
+     structures but cannot run logic. Best match for the symptom.
+  2. **Crystal Y2.** Scope XTALOUT (pin 32): ~1.2 Vpp, 24 MHz. Spec is parallel
+     resonant, fundamental, **24 MHz +/-350 ppm** — and C29/C30 = 18 pF implies a
+     crystal specified for CL ~9.5 pF, so check Y2's actual load capacitance.
+  3. **3V3 at the hub's own pins** (5, 10, 15, 23, 29, 36), not just at the regulator.
   *(src: motherboard/README.md)*
 - **Companion: HID -> POKEY routing** — once enumeration works, translate boot-protocol
   keyboard reports to Atari KBCODE and mouse deltas, and carry them over the SPI link.
