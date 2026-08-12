@@ -20,11 +20,26 @@
 #define TACH_PPR        2U                  /* pulses per revolution */
 #define UPDATE_MS       250U                /* PID period and tach window */
 
-/* Gains in per-mille-of-duty per RPM, scaled by 1024 to stay in integers. */
-#define KP_Q10          40
-#define KI_Q10          6
-#define KD_Q10          20
-#define INTEGRAL_LIMIT  (1000 << 10)
+/* PID gains, Q10 fixed point, all in "per mille of duty per RPM of error".
+ *
+ * The integrator carries the whole steady-state term, because proportional
+ * gain alone cannot: holding 2500 RPM needs ~50% duty, and at any sane Kp the
+ * error required to synthesise that from the P term would be thousands of RPM.
+ * So the integral is stored directly in Q10 duty units and clamped to the
+ * actual output range — which makes anti-windup exact rather than a guess at a
+ * magic limit.
+ */
+#define KP_Q10          102                 /* 0.10 duty per RPM of error */
+#define KI_Q10          20                  /* 0.02 duty per RPM per sample */
+#define KD_Q10          30                  /* 0.03 duty per RPM per sample */
+#define DUTY_MAX        1000
+#define INTEGRAL_LIMIT  (DUTY_MAX << 10)
+
+/* A 5 V fan will not start, and its tach will read zero, below roughly a fifth
+ * of full duty — and a zero tach reading looks to the loop exactly like a fan
+ * that needs more power, so it would chase itself.  Floor the closed-loop
+ * output above the stall point. */
+#define DUTY_MIN_CLOSED 150
 
 static volatile uint32_t s_tach_edges;
 static uint32_t          s_last_update;
@@ -101,8 +116,12 @@ void fan_set_target_rpm(uint16_t rpm)
 {
     s_target_rpm  = rpm;
     s_closed_loop = rpm != 0;
-    s_integral    = 0;
-    s_prev_error  = 0;
+
+    /* Bumpless transfer: seed the integrator with the duty already being
+     * driven, so entering closed loop nudges the fan from where it is rather
+     * than slamming it to whatever the proportional term alone suggests. */
+    s_integral   = (int32_t)s_duty << 10;
+    s_prev_error = 0;
 }
 
 void fan_poll(void)
@@ -126,29 +145,26 @@ void fan_poll(void)
     if (!s_closed_loop)
         return;
 
-    int32_t error = (int32_t)s_target_rpm - (int32_t)s_rpm;
-
-    /* Integrate only when the output is not already pinned, so a stalled or
-     * absent fan cannot wind the term up into a permanent 100% demand. */
-    if ((s_duty > 0 && s_duty < 1000) || (error < 0 && s_duty >= 1000) ||
-        (error > 0 && s_duty == 0)) {
-        s_integral += error;
-        if (s_integral > INTEGRAL_LIMIT)
-            s_integral = INTEGRAL_LIMIT;
-        else if (s_integral < -INTEGRAL_LIMIT)
-            s_integral = -INTEGRAL_LIMIT;
-    }
-
+    int32_t error      = (int32_t)s_target_rpm - (int32_t)s_rpm;
     int32_t derivative = error - s_prev_error;
     s_prev_error       = error;
 
-    int32_t out = (KP_Q10 * error + KI_Q10 * (s_integral >> 10) +
-                   KD_Q10 * derivative) >> 10;
+    /* Integral lives in Q10 duty units, clamped to the output range — so it
+     * can never demand more than the actuator can deliver, which is windup
+     * prevention by construction rather than by a tuned limit. */
+    s_integral += KI_Q10 * error;
+    if (s_integral > INTEGRAL_LIMIT)
+        s_integral = INTEGRAL_LIMIT;
+    else if (s_integral < 0)
+        s_integral = 0;
 
-    if (out < 0)
-        out = 0;
-    else if (out > 1000)
-        out = 1000;
+    int32_t out = ((KP_Q10 * error) >> 10) + (s_integral >> 10) +
+                  ((KD_Q10 * derivative) >> 10);
+
+    if (out < DUTY_MIN_CLOSED)
+        out = DUTY_MIN_CLOSED;
+    else if (out > DUTY_MAX)
+        out = DUTY_MAX;
 
     set_duty_raw((uint16_t)out);
 }
