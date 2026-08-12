@@ -37,6 +37,10 @@ int main(void)
     fan_init();
     spi_link_init();
 
+    /* 24 MHz on PA8 before the hub leaves reset, in case it is being clocked
+     * from here rather than from Y2 (see motherboard/README.md). */
+    clock_mco_24mhz(1);
+
     repl_banner();
 
     /* usb_init() cycles the hub itself, and refuses to start at all if the

@@ -345,6 +345,22 @@ static void cmd_usb(int argc, char **argv)
     usb_status();
 }
 
+static void cmd_mco(int argc, char **argv)
+{
+    if (argc >= 2) {
+        if (!strcmp(argv[1], "on") || !strcmp(argv[1], "1"))
+            clock_mco_24mhz(1);
+        else if (!strcmp(argv[1], "off") || !strcmp(argv[1], "0"))
+            clock_mco_24mhz(0);
+        else {
+            console_puts("usage: mco [on|off]\r\n");
+            return;
+        }
+    }
+    console_printf("PA8 MCO1 = %s (24 MHz, PLL/4)\r\n",
+                   clock_mco_enabled() ? "on" : "off");
+}
+
 static void cmd_spi(int argc, char **argv)
 {
     (void)argc;
@@ -385,6 +401,7 @@ static const struct command s_cmds[] = {
     { "pot",    "pot [cal lo hi]",      "paddle values",                cmd_pot    },
     { "fan",    "fan [duty|rpm n]",     "fan duty, tach and PID",       cmd_fan    },
     { "usb",    "usb [hub]",            "USB host + HID state",         cmd_usb    },
+    { "mco",    "mco [on|off]",         "24 MHz clock out on PA8",      cmd_mco    },
     { "spi",    "spi",                  "FPGA link state",              cmd_spi    },
     { "ring",   "ring",                 "pulse the FPGA doorbell",      cmd_ring   },
     { "fault",  "fault [clear]",        "saved fault record",           cmd_fault  },

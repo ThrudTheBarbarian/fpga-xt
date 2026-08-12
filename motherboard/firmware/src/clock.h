@@ -12,6 +12,8 @@ void        clock_delay_ms(uint32_t ms);
 uint32_t    clock_reset_cause(void);            /* raw RCC_CSR at boot       */
 const char *clock_reset_cause_str(void);
 int         clock_on_hse(void);                 /* 0 = fell back to HSI      */
+void        clock_mco_24mhz(int on);            /* PA8 = 24 MHz for the hub  */
+int         clock_mco_enabled(void);
 void        clock_reboot(void);                 /* system reset, no return   */
 
 #endif /* CLOCK_H */

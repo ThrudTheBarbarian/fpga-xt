@@ -115,6 +115,42 @@ void clock_delay_ms(uint32_t ms)
         wfi();
 }
 
+/* MCO1 on PA8 = PLLCLK / 4 = exactly 24 MHz.
+ *
+ * That is the USB2514B's reference frequency, and PA8 is otherwise unused — so
+ * if the hub's crystal is missing or wrong, one wire from PA8 to the crystal's
+ * XTALIN pad clocks the hub from our PLL instead.  Accuracy is set by the 8 MHz
+ * crystal (+/-10 ppm), far inside the hub's +/-350 ppm requirement.
+ *
+ * Left enabled by default: PA8 goes nowhere on an unmodified board, so this
+ * costs nothing, and it means the wire is all that is needed.
+ */
+void clock_mco_24mhz(int on)
+{
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOA;
+
+    if (!on) {
+        gpio_mode(GPIOA, 8, GPIO_MODE_IN);
+        return;
+    }
+
+    /* MCO1 = PLL (0b11 << 21), MCO1PRE = /4 (0b110 << 24) */
+    RCC->CFGR = (RCC->CFGR & ~((3UL << 21) | (7UL << 24))) |
+                (3UL << 21) | (6UL << 24);
+
+    /* Medium speed on purpose: driving the hub's 18 pF load cap with the
+     * fastest edges would draw ~30 mA peaks for no benefit at 24 MHz. */
+    gpio_af(GPIOA, 8, 0);                       /* MCO1 is AF0 */
+    gpio_speed(GPIOA, 8, GPIO_SPEED_MED);
+    gpio_pull(GPIOA, 8, GPIO_PULL_NONE);
+}
+
+int clock_mco_enabled(void)
+{
+    return ((RCC->CFGR >> 21) & 3UL) == 3UL &&
+           ((GPIOA->MODER >> 16) & 3UL) == GPIO_MODE_AF;
+}
+
 uint32_t clock_reset_cause(void)
 {
     return s_reset_cause;
