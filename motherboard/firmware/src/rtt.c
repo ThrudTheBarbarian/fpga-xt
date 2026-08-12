@@ -21,7 +21,7 @@
 
 #include "stm32f411.h"
 
-#define UP_SIZE     2048
+#define UP_SIZE     4096
 #define DOWN_SIZE   128
 
 typedef struct {

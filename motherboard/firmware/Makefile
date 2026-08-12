@@ -20,23 +20,42 @@ GDB         := $(CROSS)gdb
 
 SRCS        := $(wildcard src/*.c)
 OBJS        := $(patsubst src/%.c,$(BUILD)/%.o,$(SRCS))
+
+# TinyUSB — host only, so none of the device stack is listed.
+TUSB        := ../third_party/tinyusb/src
+TUSB_SRCS   := $(TUSB)/tusb.c \
+               $(TUSB)/common/tusb_fifo.c \
+               $(TUSB)/host/usbh.c \
+               $(TUSB)/host/hub.c \
+               $(TUSB)/class/hid/hid_host.c \
+               $(TUSB)/portable/synopsys/dwc2/dwc2_common.c \
+               $(TUSB)/portable/synopsys/dwc2/hcd_dwc2.c
+TUSB_OBJS   := $(patsubst $(TUSB)/%.c,$(BUILD)/tusb/%.o,$(TUSB_SRCS))
+
+OBJS        += $(TUSB_OBJS)
 DEPS        := $(OBJS:.o=.d)
 
 LDSCRIPT    := ld/stm32f411ve.ld
 
 ARCH        := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 
-CFLAGS      := $(ARCH) -std=c11 -Os -g3 \
+# TinyUSB log verbosity: 0 silent, 1 errors, 2 enumeration detail.
+USB_DEBUG   ?= 2
+
+CFLAGS      := $(ARCH) -std=c11 -Os -g3 -DCFG_TUSB_DEBUG=$(USB_DEBUG) \
                -ffunction-sections -fdata-sections \
                -fno-common -fno-builtin \
                -Wall -Wextra -Wshadow -Wundef -Wdouble-promotion \
                -Wno-unused-parameter \
-               -MMD -MP -Isrc
+               -MMD -MP -Isrc -Isrc/compat -I$(TUSB)
 
 LDFLAGS     := $(ARCH) -T$(LDSCRIPT) -nostdlib -static \
                -Wl,--gc-sections -Wl,-Map=$(BUILD)/$(TARGET).map \
                -Wl,--print-memory-usage
-LDLIBS      := -lgcc
+# -lc is here for exactly one symbol: TinyUSB's log dump calls isprint(), which
+# needs newlib's _ctype_ table.  The linker pulls only that object, and it has no
+# syscall dependencies, so the build stays freestanding.
+LDLIBS      := -lc -lgcc
 
 # ---------------------------------------------------------------- build ----
 
@@ -48,6 +67,14 @@ $(BUILD):
 $(BUILD)/%.o: src/%.c | $(BUILD)
 	@echo "  CC    $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
+
+# Vendored code, built with our flags minus the pedantic warnings we impose on
+# our own sources — churn in a submodule should not break our build.
+$(BUILD)/tusb/%.o: $(TUSB)/%.c
+	@mkdir -p $(dir $@)
+	@echo "  CC    tinyusb/$*.c"
+	@$(CC) $(CFLAGS) -Wno-extra -Wno-shadow -Wno-undef -Wno-unused-parameter \
+	    -Wno-sign-compare -Wno-cast-qual -c $< -o $@
 
 $(BUILD)/$(TARGET).elf: $(OBJS) $(LDSCRIPT)
 	@echo "  LD    $@"

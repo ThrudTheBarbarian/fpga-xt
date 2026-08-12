@@ -4,7 +4,7 @@
  *   - console + REPL, over SWD (RTT) and over USART2 to the Zynq
  *   - four joystick ports and eight paddle pots
  *   - fan PWM with a tachometer PID loop
- *   - USB host: hub plus HID keyboard and mouse            (task #7)
+ *   - USB host: hub plus HID keyboard and mouse
  *   - SPI slave link to the FPGA, with a doorbell           (task #8)
  *   - Atari SIO host controller on the physical DIN port    (task #10)
  *
@@ -21,6 +21,7 @@
 #include "joystick.h"
 #include "pots.h"
 #include "repl.h"
+#include "usb.h"
 
 #define CONTROL_BAUD    115200U
 
@@ -36,15 +37,15 @@ int main(void)
 
     repl_banner();
 
-    /* Release the USB hub once the rails have settled.  Enumeration itself
-     * waits for usb_init() (task #7); this just stops the hub sitting in
-     * reset, so a scope on the port shows something sensible today. */
-    board_hub_cycle();
+    /* usb_init() cycles the hub itself, and refuses to start at all if the
+     * crystal did not come up — 48 MHz off the HSI is not within USB spec. */
+    usb_init();
 
     uint32_t last_ms = clock_millis();
 
     for (;;) {
         repl_poll();
+        usb_task();
         fan_poll();
 
         uint32_t now = clock_millis();

@@ -17,6 +17,7 @@
 #include "fault.h"
 #include "joystick.h"
 #include "pots.h"
+#include "usb.h"
 #include "stm32f411.h"
 
 #define LINE_MAX    96
@@ -218,6 +219,11 @@ static void cmd_gpio(int argc, char **argv)
         }
     }
 
+    /* IDR lags a BSRR write by a cycle or two, so a read taken immediately
+     * after driving the pin reports the OLD level — which reads as "the write
+     * did not work" when it did. */
+    clock_delay_us(2);
+
     static const char *modes[] = { "in", "out", "af", "analog" };
     console_printf("P%c%lu = %d  (%s)\r\n", argv[1][0] & ~0x20, pin,
                    gpio_read(p, pin), modes[(p->MODER >> (pin * 2)) & 3U]);
@@ -328,6 +334,16 @@ static void cmd_fault(int argc, char **argv)
     fault_dump();
 }
 
+static void cmd_usb(int argc, char **argv)
+{
+    if (argc >= 2 && !strcmp(argv[1], "hub")) {
+        console_puts("cycling hub reset\r\n");
+        board_hub_cycle();
+        return;
+    }
+    usb_status();
+}
+
 static void cmd_ring(int argc, char **argv)
 {
     (void)argc;
@@ -359,6 +375,7 @@ static const struct command s_cmds[] = {
     { "js",     "js",                   "joystick and button state",    cmd_js     },
     { "pot",    "pot [cal lo hi]",      "paddle values",                cmd_pot    },
     { "fan",    "fan [duty|rpm n]",     "fan duty, tach and PID",       cmd_fan    },
+    { "usb",    "usb [hub]",            "USB host + HID state",         cmd_usb    },
     { "ring",   "ring",                 "pulse the FPGA doorbell",      cmd_ring   },
     { "fault",  "fault [clear]",        "saved fault record",           cmd_fault  },
     { "crash",  "crash",                "force a fault (test)",         cmd_crash  },
