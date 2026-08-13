@@ -57,7 +57,16 @@ module xt_sio_drive #(
     // the exact figure is not load-bearing (no loader measures the ACK gap that
     // tightly) but it must not be ZERO, or a guest that arms its receive IRQ
     // after releasing /COMMAND misses the byte entirely.
-    parameter int unsigned ACK_FRAMES = 3
+    parameter int unsigned ACK_FRAMES = 3,
+    // ACK turnaround, in clk_sally cycles -- ABSOLUTE TIME, not frame times.
+    // A real drive takes ~1 ms to answer because that is how long its
+    // controller needs; the figure does NOT shrink when the host picks a faster
+    // bit rate.  Pacing it in frame times (as ACK_FRAMES did) made the
+    // turnaround collapse for a fast loader, and we answered before the guest
+    // had re-enabled its receive IRQ -- so IRQST bit 5 never latched and the
+    // reply vanished.  Measured on HW: a complete 131-byte reply sent with
+    // irqen5_at_ack = 0 (2026-08-13).  100_000 cycles = 1 ms at 100 MHz.
+    parameter int unsigned ACK_DELAY_CLK = 100_000
 ) (
     input  wire        clk,              // clk_sally — the 6502's own domain
     input  wire        rst,
@@ -162,6 +171,7 @@ module xt_sio_drive #(
     // ZERO bytes captured (2026-08-13).  24 bits is 167 ms -- comfortably longer
     // than any frame, still short enough to recover from a wedged guest.
     logic [23:0] cmd_wd;
+    logic [19:0] ack_wait, ack_hold;
     logic [7:0] dcsum;                 // checksum of the data frame we send
 
     wire [7:0] dev_in  = frame[0];
@@ -187,6 +197,7 @@ module xt_sio_drive #(
             st <= S_IDLE; fidx <= 3'd0; req_valid <= 1'b0; reading <= 1'b0;
             dbg_frames <= 8'd0; dbg_bytes <= 8'd0; dbg_accepted <= 8'd0;
             dbg_replies <= 8'd0; dbg_irqen5_at_ack <= 1'b0;
+            ack_wait <= 20'd0; ack_hold <= 20'd0;
             ser_in_byte <= 8'h00; ser_in_byte_pulse <= 1'b0;
             rsp_idx <= 9'd0; dcsum <= 8'h00; busy <= 1'b0;
             tick_cnt <= 10'd0; pace_run <= 1'b0;
@@ -202,6 +213,7 @@ module xt_sio_drive #(
             if (cmd_assert) begin
                 st <= S_CMD; fidx <= 3'd0; busy <= 1'b1; pace_run <= 1'b0;
                 cmd_wd <= 24'd0; dbg_frames <= dbg_frames + 8'd1;
+                ack_hold <= 20'd0;
             end else case (st)
 
             S_IDLE: begin busy <= 1'b0; reading <= 1'b0; end
@@ -226,14 +238,24 @@ module xt_sio_drive #(
                     req_aux1 <= frame[2]; req_aux2 <= frame[3];
                     req_valid    <= 1'b1;
                     dbg_accepted <= dbg_accepted + 8'd1;
-                    pace(ACK_FRAMES);
+                    ack_wait     <= ACK_DELAY_CLK[19:0];
                     st <= S_ACKWAIT;
                 end else begin
                     st <= S_IDLE;
                 end
             end
 
-            S_ACKWAIT: if (pace_done) begin pace_run <= 1'b0; st <= S_ACK; end
+            // Hold off until BOTH the fixed turnaround has elapsed AND the
+            // guest has actually armed its receive interrupt.  The second
+            // condition is belt-and-braces -- a real drive cannot see IRQEN --
+            // but it costs nothing and makes the reply impossible to lose to a
+            // guest that is slower than our timer.  Bounded so a guest that
+            // never arms cannot wedge us.
+            S_ACKWAIT: begin
+                if (ack_wait != 20'd0) ack_wait <= ack_wait - 20'd1;
+                else if (guest_irqen[5] || ack_hold == 20'hFFFFF) st <= S_ACK;
+                else ack_hold <= ack_hold + 20'd1;
+            end
             S_ACK:     begin emit(8'h41); pace(1); st <= S_WORK;        // 'A'
                              dbg_irqen5_at_ack <= guest_irqen[5]; end
 
