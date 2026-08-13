@@ -301,13 +301,62 @@ free gap between R-Time 8 (`$D5B8-$D5BF`) and SIDE1/2 / SDX / U1MB
 (`$D5E0-$D5FF`); see the ecosystem Appendix at the end of this file.
 Do NOT extend XT registers into `$D5E0+`.
 
+**Allocating a new XT register — check these first, in order:**
+
+1. **Take it from `$D5CD-$D5CF` or `$D5D5-$D5DF`.** Those are the only free
+   bytes the XT owns, and `$D5CD-$D5CF` is already inside the decoded
+   `$D5C0-$D5CF` slot, so it costs no new decode.
+2. **Never `$D0xx`/`$D2xx`/`$D3xx`/`$D4xx`.** Those pages are zeroed at warm-
+   and cold-start (except `$D301`), so anything with a **write side effect**
+   there — a doorbell, a FIFO port — gets strobed 256 times by the OS's clear
+   loop on every boot. They also owe mirror fidelity to the stock chips.
+3. **Never `$D6xx`/`$D7xx`.** It is PBI space, and both the PBI bridge
+   ([../OS/expansion-options.md](../OS/expansion-options.md) — slots, `/CARDSEL`,
+   the `$D1FF` device select, the `/MPD` `$D800-$DFFF` shadow) and VBXE
+   compatibility (`$D640-$D65F` / `$D740-$D75F` install windows) need it clear.
+4. **Prefer a port over a window.** A byte-wide auto-incrementing data port
+   moves an arbitrary payload through one address; an aperture over
+   `$4000-$5FFF` costs 8 KB of the guest's RAM and everything that follows from
+   that. If the port has a read or write side effect it MUST fire exactly once
+   per machine cycle — gate it like `pk_re` (`fid_sub == 49 && fid_rdy`), or a
+   stalled/replayed fidelity-core cycle re-fires it.
+5. **Cross-check the ecosystem Appendix** at the end of this file before
+   claiming anything outside `$D5C0-$D5DF`.
+
 ### $D5C0-$D5C1 — bank selectors
 
 | Addr  | Name      | R/W | Purpose |
 |-------|-----------|-----|---------|
 | $D5C0 | CODE_BANK | R/W | Code bank selector — selects the page mapped into the `$6000-$9FFF` code window (16 KB). 8-bit (256 banks); bank 0 = flat BRAM. Readable (the scheduler saves/restores it). Relocated off zero page (was BASIC VNTP) into the CCTL gap. |
 | $D5C1 | DATA_BANK | R/W | Data bank selector — selects the page mapped into the `$A000-$CFFF` data window (12 KB). 8-bit (256 banks); bank 0 = flat BRAM; **bank `$FF` = the shared GEM arena** (see doorbell below). Readable. |
-| $D5C2-$D5CF | reserved | - | Reserved. Reads 0; writes ignored. |
+| $D5C2 | reserved | - | Reserved. Reads 0; writes ignored. |
+
+### $D5C3-$D5C8 — screen banking + math/mailbox aperture
+
+Decoded in `hdl/sally_mem.sv` (`is_scrn_*` / `is_math_*`); read-back is served
+through the shared CCTL slot, so `addr[3:0]` selects within `$D5C0-$D5CF`.
+Details: [../video/screen-banking.md](../video/screen-banking.md),
+[../Design/math-coprocessor.md](../Design/math-coprocessor.md).
+
+| Addr  | Name | R/W | Purpose |
+|-------|------|-----|---------|
+| $D5C3 | SCRN_CPU_BANK | R/W | Screen bank for the **CPU's** view of `$4000-$5FFF`. 0 = the flat 64 KB shadow. |
+| $D5C4 | SCRN_ANTIC_BANK | R/W | Screen bank for **ANTIC's** view of `$4000-$5FFF` (independent of the CPU's). |
+| $D5C5 | SCRN_STAT | R | `{7'b0, ready}`. |
+| $D5C6 | MATH_CTL | R/W | bit 0 = **MAP**: overlay the math page / SIO mailbox on `$4000-$5FFF` (CPU view only — ANTIC never sees it). Wins over `$D5C3`. **Hazard:** while MAP is set, `$4000-$5FFF` is *not* the guest's RAM, so an interrupt taken in that window runs with the aperture in place — see NextSteps "App launch". |
+| $D5C7 | MATH_EXEC / MATH_STAT | R/W | **Write** = doorbell to the A9 (any value). **Read** = `{5'b0, chunk_ready, busy, done}`. |
+| $D5C8 | MATH_CHUNK | R/W | Backing chunk index; the SIO stub writes `$FF` (the mailbox is always resident). |
+
+### $D5C9-$D5CC — math op-latency counter
+
+Read-only LE u32: `clk_sally` cycles from the `$D5C7` EXEC write to `done`
+rising. Raw 100 MHz fabric cycles (not step-gated), so it is turbo-independent —
+`count/100` = µs. Latched, static between ops.
+
+| Addr  | Name | R/W | Purpose |
+|-------|------|-----|---------|
+| $D5C9-$D5CC | MATH_LAT | R | Op-latency counter, little-endian u32. |
+| $D5CD-$D5CF | free | - | **Free** — 3 bytes, and already inside the decoded `$D5C0-$D5CF` slot, so claiming them costs no new decode. The first place to look for a new XT register. |
 
 ### $D5D0-$D5D4 — GEM service doorbell
 

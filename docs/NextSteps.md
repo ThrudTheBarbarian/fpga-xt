@@ -441,7 +441,14 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   `extirq_fallback` already force 1× on a condition, but those live in clk_sys — fine
   for a sustained IRQ, too slow for a single-cycle access. Open: does `$D4CA`
   read-back report the ceiling or the momentary force-1×? (lean: the ceiling).
-  *(design decided 2026-06-26; src: docs/OS/expansion-options.md §7)*
+  *(design decided 2026-06-26; src: docs/OS/expansion-options.md §8)*
+- **PBI device-RAM window ($D600-$D7FF) is undesigned** — the bridge covers the
+  `$D1FF` select and the `/MPD` `$D800-$DFFF` device-ROM shadow, but not the
+  card's RAM/scratch window, which needs the same suppress-and-route mux keyed on
+  addr ∈ `$D600-$D7FF` + selected.  Also the reason no XT register may ever be
+  allocated there: the range is contested by PBI device RAM, MIO/BlackBox RAM,
+  Covox and both VBXE install windows (`$D640-$D65F`, `$D740-$D75F`).
+  *(src: docs/OS/expansion-options.md §6; ecosystem table in docs/Zynq/register-map.md)*
 - **Cartridge "run" support** — suppress internal memory on RD4/RD5, drive /S4//S5,
   take read data from the cart, route $D5xx out /CCTL for bank-switching. *(same Tier-B
   work as /MPD shadow; src: docs/OS/expansion-options.md)*
@@ -537,6 +544,22 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 
 ## App launch (desktop → XL realm)
 
+- **The paravirtual SIO mailbox lives inside guest RAM, and it shows.**  The stub
+  (`tools/xl_sio_stub.s`) maps the mailbox over `$4000-$5FFF` with `$D5C6.0` and
+  leaves it mapped across the doorbell AND the whole milliseconds-long A9
+  round-trip, so any interrupt taken in that window runs guest code with
+  `$4000-$5FFF` replaced by the 512 B mailbox (aliased 16x).  Half of this is
+  fixed: `sally_mem`'s RAM write is now gated on `!math_mapped`, so an aperture
+  write no longer shadows into the guest RAM underneath (it used to burn the
+  12-byte DCB at `$4040-$404B` plus `$5A` at `$4005` into the running game on
+  EVERY sector; regression test `tb_sally_math_overlay` T5).  The mapping window
+  itself is still open, and `ElektraGlide.atr` still wedges on it — the game
+  derails into the aperture and executes the DCB's `$52` (DCOMND) as a KIL, which
+  parks the fidelity core in `ST_JAM` (RUN with icnt frozen, unhaltable).
+  Preferred fix: move the mailbox out of guest address space entirely, e.g.
+  `$D700-$D7FF` (free on a stock XL; 128 B payload + DCB/status fits) — no MAP
+  bit, no aperture, no interrupt hazard.  Cheaper interim: map only for the DCB
+  copy, unmap for the doorbell + wait, re-map briefly for the reply.
 - **Launch an 8-bit app from the desktop** — the A9 reads the file, looks up its
   prefs (a namespace in the single SQLite registry), serves it as a **virtual disk**
   (ATR direct; XEX wrapped in a synthesized boot disk; cart via the cart window) and

@@ -323,6 +323,23 @@ module tb_sally_math_overlay;
         $display("  (repro mode) T4 skipped");
 `endif
 
+        // T5 — GUEST RAM UNDER THE APERTURE SURVIVES A MAPPED WRITE.
+        // $4000-$5FFF is ordinary guest RAM whenever MAP=0, so an aperture write
+        // must land in the overlay ONLY: if it also shadows into the flat 64 KB
+        // BRAM it burns overlay traffic into the guest's memory permanently.
+        // The paravirtual SIO stub maps the aperture and writes its 12-byte DCB
+        // to $4040-$404B on every sector, so the un-gated shadow write scribbled
+        // 13 bytes of DCB into the running game's RAM per SIO call — the
+        // ElektraGlide derail (its depth table lives at $4000).
+        $display("[T5] guest RAM under the aperture survives a mapped write");
+        set_map(1'b0);
+        cpu_write(16'h4041, 8'hA5);                 // plain RAM write, MAP off
+        set_map(1'b1);
+        cpu_write(16'h4041, 8'h52);                 // overlay write (DCB scribble)
+        set_map(1'b0);
+        cpu_read(16'h4041, v);
+        expect_eq("T5 RAM $4041 after a mapped write", v, 8'hA5);
+
         if (fail_count == 0) begin
             $display("*** SALLY_MATH_OVERLAY OK ***");
             $finish;

@@ -160,12 +160,30 @@ pins. With ~56 internal clocks of slack this is unhurried:
 4. **Write:** drive `D[7:0]`. **Read:** tristate `D`, let the card drive, sample
    near the falling phi2 edge.
 5. Lower phi2, deassert; for a read, mux the sampled byte into the CPU read path
-   (§6). Release `rdy`.
+   (§7). Release `rdy`.
 
 At turbo (`CLOCK_MULT ≥ 2`) the pads are frozen exactly as today — no SSO, no
 EMI, no switching. The window only opens at 1×.
 
-## 6. /MPD shadow — device ROM/RAM replaces the $D800–$DFFF window
+## 6. The PBI address windows — what the bridge must keep clear
+
+A PBI card is reached through three distinct windows, and all three are
+**reserved to the PBI** — no XT register may be allocated into them. The full
+ecosystem catalogue of who else squats where is the Appendix in
+[../Zynq/register-map.md](../Zynq/register-map.md); this is the PBI-relevant
+subset.
+
+| Window | Role | Status here |
+|--------|------|-------------|
+| `$D1FF` | **Device select** — one-hot write, one bit per device ID; read side is the IRQ-status mask. The whole 8-ID pool is shared internal + external (§2). | Designed, §4. Note `$D1DF` (XT register-unlock) sits in the documented-free gap just below the MIO/1090 ACIA block — the only XT allocation inside `$D1xx`. |
+| `$D600–$D7FF` | **PBI device RAM** — the card's scratch/buffer window, mapped while the card is selected. Atari-official use is the 1400XL/1450XLD parallel-device RAM; in the wild it is also MIO RAM, BlackBox RAM, Covox (`$D600–$D603`) and both VBXE install windows (`$D640–$D65F` D6, `$D740–$D75F` D7). | **Not yet designed.** The bridge currently plans only select + `/MPD`; a card needing its RAM window will need the same suppress-and-route mux treatment as §7 below, keyed on addr ∈ `$D600–$D7FF` + selected. |
+| `$D800–$DFFF` | **PBI device ROM** — signature, init vectors, CIO handler; reached by the card pulling `/MPD`. | Designed, §7. |
+
+Because `$D600–$D7FF` is contested by VBXE as well as by PBI devices, it is the
+one part of I/O space the XT must stay out of entirely — see the "allocating a
+new XT register" checklist in [../Zynq/register-map.md](../Zynq/register-map.md).
+
+## 7. /MPD shadow — device ROM/RAM replaces the $D800–$DFFF window
 
 On a stock Atari $D800–$DFFF is the OS **floating-point math-pack ROM** (/MPD =
 **M**ath **P**ack **D**isable). **In the XT that window is shadow-RAM by default**
@@ -204,7 +222,7 @@ dormant. No bank-logic rework.
 > exactly $D800–$DFFF (vs. adjacent OS ROM), and the precise $D1FF select/IRQ-
 > status semantics. Verify before freezing the decode.
 
-## 7. Dynamic clock slowdown — the heart of it
+## 8. Dynamic clock slowdown — the heart of it
 
 The machine normally runs at a PS-configured turbo baseline. The bridge gets to
 **override that baseline downward** while the external bus is in use, and restore
@@ -286,7 +304,7 @@ so mapping them is pure plumbing — top-level ports + XDC + the cart-side **CB3
 only at real speed, frozen at turbo). No new RTL just to bring the pins out.
 
 Making a real cartridge actually **run** is the same Tier-B work as the PBI
-/MPD shadow (§6): when RD4/RD5 say a cart claims $8000/$A000, the FPGA must
+/MPD shadow (§7): when RD4/RD5 say a cart claims $8000/$A000, the FPGA must
 suppress internal memory in that window, drive /S4//S5, take read data from the
 cart on the shared data bus, and route $D5xx writes out /CCTL for bank-switching.
 Do it alongside the PBI /MPD read-mux.

@@ -682,7 +682,22 @@ module sally_mem #(
     // is a read-only slice of the OS ROM space, so a CPU write must be ignored
     // and must NOT fall through to the RAM beneath (ACID800 mmu_xlbanking:
     // "Write through self-test ROM was not blocked").
-    wire        cpu_w      = rdy && !rw && !stack_op && !rom_override && !selftest_en;
+    // `math_mapped` blocks the RAM write for the same reason `selftest_en` does:
+    // while the $D5C6.0 aperture overlays the SIO mailbox / math page onto the
+    // CPU's view of $4000-$5FFF, that write belongs to the OVERLAY, not to the
+    // RAM underneath it.  Letting the shadow write land is NOT harmless here —
+    // unlike the hwreg / bank-window addresses above, $4000-$5FFF is ordinary
+    // guest RAM the moment MAP goes back to 0, so the shadow write BURNS the
+    // overlay traffic into the guest's memory permanently.  The paravirtual SIO
+    // stub (tools/xl_sio_stub.s) maps the aperture and writes its 12-byte DCB to
+    // $4040-$404B plus the magic byte to $4005 on EVERY sector, so a disk load
+    // left 13 bytes of DCB scribble in guest RAM per SIO call.  ElektraGlide
+    // streams its image through $0400-$B9FF and keeps a depth-scale table at
+    // $4000: the corrupted entries fed wild indices back into the game and it
+    // derailed into the scribble itself ($4040: 31 01 52 -> AND ($01),Y then $52
+    // = KIL), which parks the fidelity core in ST_JAM — an unhaltable wedge.
+    wire        cpu_w      = rdy && !rw && !stack_op && !rom_override && !selftest_en
+                          && !math_mapped;
     wire        mem_we     = cpu_w || rom_we;
     wire [15:0] mem_addr_w = rom_we ? rom_addr : addr;
     wire  [7:0] mem_din_w  = rom_we ? rom_data : data_in;
