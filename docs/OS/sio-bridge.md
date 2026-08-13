@@ -430,6 +430,33 @@ protection measures, and a reply that arrives instantly is as much a tell as a
 reply with the wrong bytes.  The same applies to the inter-byte gap — pace SERIN
 at the programmed bit rate rather than as fast as the A9 can push.
 
+**Two rules the implementation had to learn the hard way, and they pull in
+opposite directions.**
+
+*The drive must not depend on the guest's clock.*  Pacing the reply off POKEY's
+shift tick tracks the guest's rate for free, which is why `pokey_serial` exports
+`shift_tick_o` — but the tick STOPS.  `SKCTL[1:0] == 00` is init mode and holds
+the dividers, and resetting the serial port that way between sending a command
+and receiving the answer is an ordinary thing for a guest to do.  A drive gated
+on that tick simply stops mid-reply: on hardware it sent exactly one byte — the
+ACK — per accepted frame and then waited forever.  A real drive has its own baud
+generator.
+
+*But it must still match the guest's rate.*  The obvious fix, a fixed fallback
+period, is only correct at 19200: at a US-Doubler rate (§13.6) or under a game's
+own fast loader the guest times out long before the reply lands, and RETRIES.
+That failure is invisible from the drive's side — every frame is accepted, every
+reply is sent — and shows up only as the same sector being asked for six to ten
+times.  So the period is **measured**: the guest transmits its command frame at
+its own rate, the ticks are flowing right up to the moment it stops them, and the
+interval between them is what the fallback uses.
+
+The ACK turnaround is the exception that proves the rule: it is an **absolute**
+~1 ms, because the time a drive takes to turn the bus around is physical and does
+not scale with the bit rate.  Pacing it in frame times instead meant the ACK
+arrived before the guest had finished switching POKEY to receive, with `IRQEN[5]`
+still clear — nobody was listening.
+
 ### 13.6 High-speed SIO (US-Doubler and friends)
 
 Standard SIO is 19200 baud, but the popular speed upgrades — **US-Doubler**,
