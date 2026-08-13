@@ -1602,6 +1602,16 @@ build/tb_antic_wb_adapt.vvp: tb_antic_wb_adapt.sv $(HDL_DIR)/antic_wb_adapt.sv |
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_wb_adapt \
 	    $(HDL_DIR)/antic_wb_adapt.sv tb_antic_wb_adapt.sv
 
+xt_sio_drive: build/tb_xt_sio_drive.vvp
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_xt_sio_drive.log
+	@grep -q 'tb_xt_sio_drive: PASS' $(BUILD_DIR)/tb_xt_sio_drive.log || \
+	    (echo "FAIL: tb_xt_sio_drive"; exit 1)
+	@echo "PASS: tb_xt_sio_drive"
+
+build/tb_xt_sio_drive.vvp: tb_xt_sio_drive.sv $(HDL_DIR)/xt_sio_drive.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_xt_sio_drive \
+	    $(HDL_DIR)/xt_sio_drive.sv tb_xt_sio_drive.sv
+
 xt_sio_mbox: build/tb_xt_sio_mbox.vvp
 	@vvp -N $<
 
