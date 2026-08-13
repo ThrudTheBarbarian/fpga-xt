@@ -147,7 +147,12 @@ module pokey_regs (
     // Tied 0 here in the chiplet build until M25's SIO state machine drives them.
     input  wire        ser_framing_err,
     input  wire        ser_input_overrun,
-    input  wire        ser_input_busy
+    input  wire        ser_input_busy,
+
+    // IRQEN, out for the virtual SIO drive: it needs to know whether the guest
+    // was actually LISTENING when a reply byte was injected (IRQST bit 5 only
+    // latches while IRQEN[5] is set, so a reply sent too early is lost silently).
+    output wire  [7:0] irqen_o
 );
 
     // ---- Storage -----------------------------------------------------
@@ -205,6 +210,7 @@ module pokey_regs (
     // measures the line, pokey_timertiming the bit.  Only the ASSERTING edge
     // is delayed -- an acknowledge clears the line at once.
     localparam int IRQ_LINE_LAG = 1;
+    assign irqen_o = irqen_q;
     wire  irq_now = |(irq_pending & irqen_q);
     logic irq_dly_q;
     always_ff @(posedge clk or posedge rst) begin

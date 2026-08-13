@@ -41,6 +41,8 @@ module xt_sio_cdc (
     input  wire [7:0]  dbg_frames,
     input  wire [7:0]  dbg_bytes,
     input  wire [7:0]  dbg_accepted,
+    input  wire [7:0]  dbg_replies,
+    input  wire        dbg_irqen5_at_ack,
     output wire        rsp_valid,        // LEVEL to xt_sio_drive
     output wire        rsp_ok,
     output wire [8:0]  rsp_len,
@@ -119,9 +121,14 @@ module xt_sio_cdc (
     (* ASYNC_REG = "TRUE" *) logic [23:0] dbg_s1, dbg_s2;
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin dbg_s1 <= 24'd0; dbg_s2 <= 24'd0; end
-        else     begin dbg_s1 <= {dbg_accepted, dbg_bytes, dbg_frames}; dbg_s2 <= dbg_s1; end
+        else     begin dbg_s1 <= {dbg_replies, dbg_accepted, dbg_frames}; dbg_s2 <= dbg_s1; end
     end
-    assign sio_dstat_word = {dbg_s2, 6'd0, busy_s2, req_pending};
+    (* ASYNC_REG = "TRUE" *) logic irq5_s1, irq5_s2;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) {irq5_s2, irq5_s1} <= 2'b00;
+        else     {irq5_s2, irq5_s1} <= {irq5_s1, dbg_irqen5_at_ack};
+    end
+    assign sio_dstat_word = {dbg_s2, 5'd0, irq5_s2, busy_s2, req_pending};
     assign sio_req_irq    = req_pending;
 
     // ---- quasi-static: the ownership table ------------------------------

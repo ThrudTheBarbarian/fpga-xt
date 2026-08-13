@@ -92,6 +92,7 @@ module pokey #(
     // POKEY's serial shift clock — the virtual drive paces replies off this so
     // it tracks the guest's programmed rate (docs/OS/sio-bridge.md §13.6).
     output wire        ser_shift_tick_o,
+    output wire  [7:0] irqen_o,   // for the virtual SIO drive (sio-bridge.md 13)
     output wire  [7:0] skctl_out
 );
 
@@ -116,6 +117,8 @@ module pokey #(
     // shifter itself (u_serial) and the story behind the _eff composition live
     // further down.
     wire ser_out_ready_int, ser_out_complete_int, ser_out_bit_w;
+    wire [7:0] pk_irqen_w;
+    assign irqen_o = pk_irqen_w;
     // POKEY's own shift clock, out to the virtual SIO drive (sio-bridge.md §13).
     wire ser_shift_tick;
     assign ser_shift_tick_o = ser_shift_tick;
@@ -159,6 +162,7 @@ module pokey #(
         .timer4_pulse         (timer4_pulse_w),
         .ser_out_complete     (ser_out_complete_eff),
         .ser_out_ready_pulse  (ser_out_ready_eff),
+        .irqen_o              (pk_irqen_w),
         .ser_in_byte_pulse    (ser_in_byte_pulse),
         .ser_in_byte          (ser_in_byte),
         .break_key_pulse      (break_key_pulse),

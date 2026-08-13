@@ -39,13 +39,15 @@ module tb_xt_sio_drive;
     xt_sio_drive #(.ACK_FRAMES(2)) dut (
         .clk(clk), .rst(rst),
         .cmd_n(cmd_n), .serout_byte(serout_byte), .serout_strobe(serout_strobe),
-        .shift_tick(shift_tick),
+        .shift_tick(shift_tick), .guest_irqen(8'hFF),
         .ser_in_byte(ser_in_byte), .ser_in_byte_pulse(ser_in_byte_pulse),
         .own_dev(own_dev),
         .req_valid(req_valid), .req_dev(req_dev), .req_cmd(req_cmd),
         .req_aux1(req_aux1), .req_aux2(req_aux2),
         .rsp_valid(rsp_valid), .rsp_ok(rsp_ok), .rsp_len(rsp_len),
-        .rsp_idx(rsp_idx), .rsp_byte(rsp_byte), .busy(busy)
+        .rsp_idx(rsp_idx), .rsp_byte(rsp_byte), .busy(busy), .reading(),
+        .dbg_frames(), .dbg_bytes(), .dbg_accepted(), .dbg_replies(),
+        .dbg_irqen5_at_ack()
     );
 
     // free-running shift clock — stands in for POKEY's divider

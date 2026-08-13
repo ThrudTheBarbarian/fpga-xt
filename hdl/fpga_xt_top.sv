@@ -1077,7 +1077,9 @@ module fpga_xt_top (
     wire       drv_req_valid, drv_busy_w, drv_reading_w, drv_rsp_valid, drv_rsp_ok;
     wire [7:0] drv_req_dev, drv_req_cmd, drv_req_aux1, drv_req_aux2;
     wire [8:0] drv_rsp_len, drv_rsp_idx;
-    wire [7:0] drv_dbg_frames, drv_dbg_bytes, drv_dbg_accepted;
+    wire [7:0] drv_dbg_frames, drv_dbg_bytes, drv_dbg_accepted, drv_dbg_replies;
+    wire       drv_dbg_irqen5;
+    wire [7:0] pk_irqen;
 
     // /COMMAND comes from the PIA inside antic_top, which is clocked on
     // clk_bus (= clk_sys).  The drive lives in clk_sally, so this is a genuine
@@ -1114,7 +1116,10 @@ module fpga_xt_top (
         .reading           (drv_reading_w),
         .dbg_frames        (drv_dbg_frames),
         .dbg_bytes         (drv_dbg_bytes),
-        .dbg_accepted      (drv_dbg_accepted)
+        .dbg_accepted      (drv_dbg_accepted),
+        .dbg_replies       (drv_dbg_replies),
+        .dbg_irqen5_at_ack (drv_dbg_irqen5),
+        .guest_irqen       (pk_irqen)
     );
 
     xt_sio_cdc u_sio_cdc (
@@ -1126,6 +1131,8 @@ module fpga_xt_top (
         .dbg_frames     (drv_dbg_frames),
         .dbg_bytes      (drv_dbg_bytes),
         .dbg_accepted   (drv_dbg_accepted),
+        .dbg_replies    (drv_dbg_replies),
+        .dbg_irqen5_at_ack (drv_dbg_irqen5),
         .rsp_valid      (drv_rsp_valid),
         .rsp_ok         (drv_rsp_ok),
         .rsp_len        (drv_rsp_len),
@@ -1386,6 +1393,7 @@ module fpga_xt_top (
         .serout_byte          (pk_serout_byte),
         .serout_strobe        (pk_serout_strobe),
         .ser_shift_tick_o     (pk_ser_shift_tick),
+        .irqen_o              (pk_irqen),
         .skctl_out            ()
     );
 

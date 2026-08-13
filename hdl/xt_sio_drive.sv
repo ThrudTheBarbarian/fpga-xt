@@ -67,6 +67,7 @@ module xt_sio_drive #(
     input  wire [7:0]  serout_byte,      // guest wrote $D20D ...
     input  wire        serout_strobe,    // ... 1-clk strobe
     input  wire        shift_tick,       // POKEY's own shift clock, 20 per frame
+    input  wire [7:0]  guest_irqen,      // POKEY IRQEN, to see if the guest is listening
 
     output logic [7:0] ser_in_byte,      // -> pokey_regs SERIN
     output logic       ser_in_byte_pulse,
@@ -102,7 +103,13 @@ module xt_sio_drive #(
     // device / bad checksum) rather than never seeing them.
     output logic [7:0] dbg_frames,      // /COMMAND assertions seen
     output logic [7:0] dbg_bytes,       // SEROUT bytes captured in S_CMD
-    output logic [7:0] dbg_accepted     // frames that passed device+checksum
+    output logic [7:0] dbg_accepted,    // frames that passed device+checksum
+    output logic [7:0] dbg_replies,     // reply bytes actually injected
+    // Sampled at the instant the ACK is injected.  IRQST bit 5 only latches
+    // while IRQEN[5] is set, so a reply sent before the guest re-arms its
+    // receive interrupt is swallowed without trace -- and BallBlazer toggles
+    // $D20E at six sites, so this is not hypothetical.
+    output logic       dbg_irqen5_at_ack
 );
 
     // ---- end-around-carry checksum ---------------------------------------
@@ -172,12 +179,14 @@ module xt_sio_drive #(
     task automatic emit(input [7:0] b);
         ser_in_byte       <= b;
         ser_in_byte_pulse <= 1'b1;
+        dbg_replies       <= dbg_replies + 8'd1;
     endtask
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             st <= S_IDLE; fidx <= 3'd0; req_valid <= 1'b0; reading <= 1'b0;
             dbg_frames <= 8'd0; dbg_bytes <= 8'd0; dbg_accepted <= 8'd0;
+            dbg_replies <= 8'd0; dbg_irqen5_at_ack <= 1'b0;
             ser_in_byte <= 8'h00; ser_in_byte_pulse <= 1'b0;
             rsp_idx <= 9'd0; dcsum <= 8'h00; busy <= 1'b0;
             tick_cnt <= 10'd0; pace_run <= 1'b0;
@@ -225,7 +234,8 @@ module xt_sio_drive #(
             end
 
             S_ACKWAIT: if (pace_done) begin pace_run <= 1'b0; st <= S_ACK; end
-            S_ACK:     begin emit(8'h41); pace(1); st <= S_WORK; end   // 'A'
+            S_ACK:     begin emit(8'h41); pace(1); st <= S_WORK;        // 'A'
+                             dbg_irqen5_at_ack <= guest_irqen[5]; end
 
             // The A9 is doing the disk work.  Its latency IS the rotational
             // latency as far as the guest can tell, which is the point: a
