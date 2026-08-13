@@ -577,11 +577,22 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   **accepted=12**, with `busy` set and `req_pending` clear — i.e. the full
   round trip completes.  ATR loading is unaffected (ElektraGlide and Despatch
   Rider both verified with D1: claimed).
-  **Open:** only 12 of 96 frames are accepted — ~2.3 bytes captured per frame,
-  so most arrive INCOMPLETE, and BallBlazer still sits in its wait loop at
-  `$BC4C`.  Next: find why the frame is cut short (does /COMMAND release before
-  the 5th byte is written? are we missing bytes the guest sends after release?),
-  and check what the guest makes of the replies it does get.
+  **Open — and the diagnosis has MOVED.**  Reading the counters as
+  "frames are truncated" was wrong.  Latching /COMMAND against transient PBCTL
+  mode changes (24d5e5cd) was built on that reading and changed nothing
+  measurable: 96/224/12 before, 94/214/10 after.  The better reading of the same
+  numbers is that there are only ~10 REAL command frames — each complete, each
+  ACCEPTED — plus ~84 spurious /COMMAND assertions that catch a stray byte or
+  two and are correctly rejected on checksum.  So the framing works.
+  That puts the problem in the REPLY: ten frames accepted, ten replies paced
+  back, and the guest still waits at `$BC4C`.  Next to check, in order — does
+  `ser_in_byte_pulse` actually raise IRQST bit 5 for the guest (is IRQEN[5]
+  set when we pulse?); is the ACK/COMPLETE/data ORDER right; is the data
+  checksum right; is the pacing inside the guest's timeout.  Instrument the
+  REPLY side rather than guessing again — the frame counters earned their build,
+  a reply-side counter will too.
+  **The 84 spurious asserts are themselves worth explaining** before trusting
+  any of this.
   Three bugs were found and fixed getting this far, all worth remembering:
   a missing CDC synchroniser on `/COMMAND` (antic_top is clk_sys, the drive is
   clk_sally) which stuck `busy` on; `drv_sel` following `busy` so a stuck drive
