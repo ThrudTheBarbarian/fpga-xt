@@ -314,14 +314,27 @@ void xl_sio_service(volatile uint8_t *page)
 
     if (outlen) {
         uint32_t l = (dbyt && dbyt < outlen) ? dbyt : outlen;
-        if (dbuf >= 0x1000) {                       /* straight into BRAM; also the
-                                                     * only safe route when DBUF is
-                                                     * under the mapped overlay */
-            romwin_write(dbuf, out, l);
-            flags |= MC_SIO_DELIVERED;
-        } else {
-            memcpy((uint8_t *)data, out, l);        /* stub copies (boot sectors) */
-        }
+        /* ALWAYS hand the payload back through the mailbox — never romwin_write()
+         * here.  The ROM window is only safe while the 6502 is HELD IN RESET.
+         * sally_mem shares one BRAM port between the CPU read and the ROM-load
+         * write, addressed by `mem_addr_w = rom_we ? rom_addr : addr`, and the
+         * CPU's read latch is `bram_dout_q <= mem[mem_addr_w]`.  So a rom_we
+         * landing in the same clk as a CPU read hands the CPU the byte at the
+         * ROM-WINDOW address instead of its own — a corrupted opcode fetch.
+         *
+         * This used to fire for every sector with DBUF >= $1000, i.e. while the
+         * game was running and spinning in the stub's wait loop.  Despatch Rider
+         * delivers 3 such sectors and survives; ElektraGlide streams $1000-$B9FF
+         * (~340 sectors, ~43k paced byte-writes) and a collision is near-certain
+         * — it derailed ~985k instructions in, landing on a KIL somewhere
+         * different every run.  That is the whole DR-works/EG-dies split.
+         *
+         * The old comment claimed the window was "the only safe route when DBUF
+         * is under the mapped overlay".  There is no overlay any more (the
+         * mailbox is a register port, hdl/xt_sio_mbox.sv), so the copy path is
+         * uniformly correct: <=256 B at MC_OFF_SIO_DATA, and the mailbox index
+         * is 9 bits so the stub walks it across $FF->$100 unaided. */
+        memcpy((uint8_t *)data, out, l);
     }
     page[MC_OFF_SIO_FLAGS] = flags;
     page[MC_OFF_STATUS]    = st;
