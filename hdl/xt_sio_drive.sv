@@ -145,10 +145,21 @@ module xt_sio_drive #(
     // one block is what makes it work: the decrement runs first, and a pace()
     // later in the same evaluation overwrites it (last assignment wins), so
     // loading a new interval on the tick that retires the old one is safe.
+    // PACING MUST NOT DEPEND ON A CLOCK THE GUEST MAY HAVE STOPPED.
+    // Tracking shift_tick keeps us at the guest's rate while it is running,
+    // which is what we want -- but a guest reprograms its POKEY timers between
+    // transmitting the command and receiving the reply, so the tick can simply
+    // STOP.  The first cut stalled forever there: hardware showed 12 frames
+    // accepted and exactly 12 reply bytes, one ACK each and nothing after
+    // (2026-08-13).  A real drive has its OWN baud generator and does not care
+    // what the host's divisor is doing, so fall back to an absolute period.
     localparam int unsigned TICKS_PER_FRAME = 20;
-    logic [9:0] tick_cnt;
-    logic       pace_run;
-    wire        pace_done = pace_run && (tick_cnt == 10'd0);
+    localparam int unsigned FALLBACK_CLK    = 52_000;   // ~520 us at 100 MHz
+    logic [9:0]  tick_cnt;
+    logic [16:0] fallback_cnt;
+    logic        pace_run;
+    wire         pace_done = pace_run &&
+                             ((tick_cnt == 10'd0) || (fallback_cnt == 17'd0));
 
     // ---- the state machine ------------------------------------------------
     typedef enum logic [3:0] {
@@ -182,8 +193,9 @@ module xt_sio_drive #(
     wire       csum_ok = (fcsum == frame[4]);
 
     task automatic pace(input int unsigned frames);
-        tick_cnt <= 10'(frames * TICKS_PER_FRAME);
-        pace_run <= 1'b1;
+        tick_cnt     <= 10'(frames * TICKS_PER_FRAME);
+        fallback_cnt <= 17'(FALLBACK_CLK);
+        pace_run     <= 1'b1;
     endtask
 
     task automatic emit(input [7:0] b);
@@ -206,6 +218,8 @@ module xt_sio_drive #(
             req_valid         <= 1'b0;
             if (pace_run && shift_tick && tick_cnt != 10'd0)
                 tick_cnt <= tick_cnt - 10'd1;
+            if (pace_run && fallback_cnt != 17'd0)
+                fallback_cnt <= fallback_cnt - 17'd1;
 
             // /COMMAND asserting ALWAYS restarts framing, whatever we were
             // doing.  A guest that gives up mid-transaction and re-commands

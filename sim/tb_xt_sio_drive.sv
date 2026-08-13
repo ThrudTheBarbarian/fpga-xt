@@ -139,20 +139,23 @@ module tb_xt_sio_drive;
         repeat (400) @(posedge clk);
         ck("no bytes emitted on bad checksum", ngot == 0);
 
-        // ---- T5: replies are PACED, never instant ------------------------
-        // Freeze the shift clock: with no ticks the drive must not emit, because
-        // its cadence is derived from the guest's own programmed rate.
-        $display("T5: no shift ticks -> no reply (cadence tracks the guest)");
+        // ---- T5: a stopped guest clock must NOT stall the reply -----------
+        // This test used to assert the opposite -- that no ticks meant no reply
+        // -- which encoded the wrong model and hid a real bug: a guest that
+        // reprograms its POKEY timers between sending the command and receiving
+        // the answer stops the tick, and the drive stalled forever mid-reply.
+        // A real drive has its own baud generator.  So: track the guest's rate
+        // when the tick runs, but fall back to an absolute period when it does
+        // not, and NEVER hang.
+        $display("T5: reply completes even with the guest's shift clock stopped");
         ngot = 0; rsp_valid = 0; rsp_len = 9'd4;
         send_frame(8'h31, 8'h52, 8'h02, 8'h00, 1'b0);
         wait (req_valid == 1);
         rsp_valid = 1;
         force shift_tick = 1'b0;                        // the guest's clock stops
-        repeat (2000) @(posedge clk);
-        ck("silent while the shift clock is stopped", ngot == 0);
-        release shift_tick;
         wait (ngot >= 7);                                // ACK+COMP+4+csum
-        ck("resumes once ticks return", ngot >= 7);
+        ck("full reply delivered on the fallback clock", ngot >= 7);
+        release shift_tick;
 
         $display("");
         if (errors == 0) $display("tb_xt_sio_drive: PASS (%0d checks)", checks);
