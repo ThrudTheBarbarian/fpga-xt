@@ -544,22 +544,30 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 
 ## App launch (desktop → XL realm)
 
-- **The paravirtual SIO mailbox lives inside guest RAM, and it shows.**  The stub
-  (`tools/xl_sio_stub.s`) maps the mailbox over `$4000-$5FFF` with `$D5C6.0` and
-  leaves it mapped across the doorbell AND the whole milliseconds-long A9
-  round-trip, so any interrupt taken in that window runs guest code with
-  `$4000-$5FFF` replaced by the 512 B mailbox (aliased 16x).  Half of this is
-  fixed: `sally_mem`'s RAM write is now gated on `!math_mapped`, so an aperture
-  write no longer shadows into the guest RAM underneath (it used to burn the
-  12-byte DCB at `$4040-$404B` plus `$5A` at `$4005` into the running game on
-  EVERY sector; regression test `tb_sally_math_overlay` T5).  The mapping window
-  itself is still open, and `ElektraGlide.atr` still wedges on it — the game
-  derails into the aperture and executes the DCB's `$52` (DCOMND) as a KIL, which
-  parks the fidelity core in `ST_JAM` (RUN with icnt frozen, unhaltable).
-  Preferred fix: move the mailbox out of guest address space entirely, e.g.
-  `$D700-$D7FF` (free on a stock XL; 128 B payload + DCB/status fits) — no MAP
-  bit, no aperture, no interrupt hazard.  Cheaper interim: map only for the DCB
-  copy, unmap for the doorbell + wait, re-map briefly for the reply.
+- **The paravirtual SIO mailbox is a PORT now, not a window** (`$D5CD` index /
+  `$D5CE` data, `hdl/xt_sio_mbox.sv`).  It used to be reached through the
+  `$D5C6.0` aperture over `$4000-$5FFF` — the guest's own RAM — held mapped
+  across the doorbell AND the whole milliseconds-long A9 round-trip, so any
+  interrupt in that window ran with `$4000-$5FFF` replaced by the 512 B mailbox
+  aliased 16×.  Two defects came out of it, both now addressed:
+  `sally_mem`'s RAM write is gated on `!math_mapped` so an aperture write can no
+  longer shadow into the RAM underneath (it used to burn the 12-byte DCB at
+  `$4040-$404B` plus `$5A` at `$4005` into the running game on EVERY sector;
+  regression `tb_sally_math_overlay` T5), and the stub no longer maps anything.
+  Mailbox offsets are unchanged, so the A9 service code did not move.
+  **Open: does this actually fix `ElektraGlide.atr`?**  It derails into the
+  mapped region and dies executing the DCB's `$52` (DCOMND) as a KIL, which
+  parks the fidelity core in `ST_JAM` (RUN, icnt frozen, unhaltable) — but the
+  RTI frame on its stack has D set, which neither the stub nor the OS ever sets,
+  so the PC was ALREADY off the rails upstream of the aperture.  Removing the
+  window may only move where it dies.  Verify on HW; if it still wedges, the
+  next question is what diverts the PC into `$4000-$5FFF` in the first place.
+- **Deferred, and it would simplify the stub further:** the A9 cannot write
+  SALLY `$0000-$0FFF` (the ROM-loader window maps GP0 `$1000-$FFFF` 1:1, and
+  `$0000-$0FFF` belongs to `xt_gp0_regs`), which is the only reason the stub
+  copies payloads at all — everything at `$1000+` is already delivered straight
+  to BRAM.  A poke path in `xt_gp0_regs` driving the existing `rom_we`/`rom_addr`
+  port would make `MC_SIO_DELIVERED` unconditional and delete the copy loop.
 - **Launch an 8-bit app from the desktop** — the A9 reads the file, looks up its
   prefs (a namespace in the single SQLite registry), serves it as a **virtual disk**
   (ATR direct; XEX wrapped in a synthesized boot disk; cart via the cart window) and

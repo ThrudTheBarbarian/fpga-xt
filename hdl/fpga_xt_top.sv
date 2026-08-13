@@ -369,6 +369,10 @@ module fpga_xt_top (
     wire        math_done, math_busy, math_chunk_ready;   // <- math_cop status
     wire        math_cpu_we;
     wire [7:0]  math_cpu_rdata;           // <- math_cop CPU port
+
+    // SIO mailbox register port ($D5CD index / $D5CE data) — see xt_sio_mbox.sv.
+    wire        sio_idx_we, sio_dat_we;
+    wire [7:0]  sio_reg_wval, sio_idx_rdata, sio_dat_rdata;
     wire        math_irq;                 // <- math_cop event FIFO non-empty -> IRQ_F2P[1]
 
     // ANTIC-view bank registers ($D488-$D48B) are currently unused in the
@@ -1178,6 +1182,25 @@ module fpga_xt_top (
     // on the advancing presentation — same qualification as the bus snoop.
     wire pk_re  = cpu_sel & fid_rw & fid_d2 & (fid_sub == 8'd49) & fid_rdy;
 
+    // $D5CE (SIO mailbox data) is a SIDE-EFFECTING read: it post-increments the
+    // mailbox index, so it has to fire exactly once per ADVANCING cycle for the
+    // same reason pk_re does, and carries the same qualification.  sally_mem
+    // cannot derive it — its `rdy` on a read is fid_mem_step (SUB=2), which
+    // re-fires on every stalled presentation and would walk the index forward
+    // several bytes per byte the CPU actually consumed.  The turbo core's
+    // sally_rdy never replays, so its leg needs no such care.
+    // NOT gated on the BANK unlock, deliberately: xt_unlock is a quasi-static
+    // clk_sys signal and sally_mem 2-FF syncs it before using it in clk_sally
+    // (unlock_bank_q).  Using the raw one here would be a CDC violation, and
+    // re-syncing it for this would buy nothing — the only effect of an ungated
+    // strobe is that a LOCKED machine reading $D5CE walks an index inside a
+    // mailbox nothing is using.  The WRITES stay gated, in sally_mem, where the
+    // synced copy already lives, and a locked read returns open bus regardless.
+    wire sio_dat_re = cpu_sel ? (fid_rw   & (fid_addr   == 16'hD5CE)
+                                          & (fid_sub == 8'd49) & fid_rdy)
+                              : (turbo_rw & (turbo_addr == 16'hD5CE)
+                                          & sally_rdy & dbg_core_run);
+
     // Keyboard events: the inject decodes live on clk_sys (bl_bridge, PS
     // writes to $D4CF/CD/CB) — toggle each 1-clk pulse across; the KBCODE
     // payload registers with its pulse and is long stable by the time the
@@ -1625,6 +1648,11 @@ module fpga_xt_top (
         .math_chunk_ready   (math_chunk_ready),
         .math_cpu_we        (math_cpu_we),
         .math_cpu_rdata     (math_cpu_rdata),
+        .sio_idx_we         (sio_idx_we),
+        .sio_dat_we         (sio_dat_we),
+        .sio_reg_wval       (sio_reg_wval),
+        .sio_idx_rdata      (sio_idx_rdata),
+        .sio_dat_rdata      (sio_dat_rdata),
         .unlock_bank        (xt_unlock[UNLK_BANK]),
         .portb              (portb_q),
         .bus_mpd_n_in       (1'b1),         // no PBI
@@ -2501,7 +2529,7 @@ module fpga_xt_top (
         // xt_sio_mbox serves that contract on its own: 512 B of dual-port BRAM
         // and a two-toggle handshake, no DDR engine, no AXI master.  See
         // hdl/xt_sio_mbox.sv.
-        xt_sio_mbox #(.APERTURE_LOG2(13), .MBOX_LOG2(9)) u_sio_mbox (
+        xt_sio_mbox #(.MBOX_LOG2(9)) u_sio_mbox (
             .clk        (clk_sys),        .rst      (rst_sys),
             .evt_data   (math_evt_data),  .evt_pop  (math_evt_pop),
             .evt_irq    (math_irq),
@@ -2510,20 +2538,22 @@ module fpga_xt_top (
             .a9_wdata   (sio_wdata),      .a9_we    (sio_we),
             .a9_rd      (sio_rd),         .a9_rdata (sio_rdata),
             .clk_cpu    (clk_sally),      .rst_cpu  (rst_sally),
-            .cpu_addr   (scrn_cpu_addr),  .cpu_we   (math_cpu_we),
-            .cpu_wdata  (scrn_cpu_wdata),
-            // mem_rdy, NOT sally_rdy: this gate exists so the page read register
-            // tracks sally_mem's bram_dout_q exactly, and sally_mem steps on
-            // mem_rdy.  The two are the same signal only for the turbo core;
-            // for the fid core (the one that is built) mem_rdy is the
-            // early-window pulse, so math_cop's original .cpu_rden(sally_rdy)
-            // would have frozen on the wrong edge and returned neighbouring
-            // bytes on any stalled cycle.
-            .cpu_rden   (mem_rdy),        .cpu_rdata(math_cpu_rdata),
+            // Reached through $D5CD/$D5CE, not the $4000-$5FFF aperture — the
+            // guest's RAM is never overlaid, so there is no window an interrupt
+            // can be taken inside.  The old .cpu_rden(mem_rdy) gate is gone with
+            // the aperture: the mailbox index moves only on an explicit access,
+            // so it cannot chase the address bus while the CPU stalls.
+            .cpu_idx_we    (sio_idx_we),  .cpu_dat_we (sio_dat_we),
+            .cpu_dat_re    (sio_dat_re),  .cpu_reg_wdata (sio_reg_wval),
+            .cpu_idx_rdata (sio_idx_rdata), .cpu_dat_rdata (sio_dat_rdata),
             .exec_we    (math_exec_we),
             .done       (math_done),      .busy     (math_busy),
             .chunk_ready(math_chunk_ready)
         );
+        // The $4000-$5FFF aperture no longer reaches the mailbox — nothing does.
+        // If MAP ($D5C6.0) is ever set now it overlays a page of $00 rather than
+        // the guest's RAM, which is inert; the stub never sets it.
+        assign math_cpu_rdata  = 8'h00;
         assign mc_araddr       = '0;
         assign mc_arlen        = 4'd0;
         assign mc_arsize       = 3'd0;

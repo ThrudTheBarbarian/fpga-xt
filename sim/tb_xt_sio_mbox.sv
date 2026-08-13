@@ -47,9 +47,8 @@ module tb_xt_sio_mbox;
     logic [31:0] a9_wdata = 0, a9_rdata;
 
     // 6502 side
-    logic [12:0] cpu_addr = 0;
-    logic        cpu_we = 0, cpu_rden = 1, exec_we = 0;
-    logic [7:0]  cpu_wdata = 0, cpu_rdata;
+    logic        cpu_idx_we = 0, cpu_dat_we = 0, cpu_dat_re = 0, exec_we = 0;
+    logic [7:0]  cpu_reg_wdata = 0, cpu_idx_rdata, cpu_dat_rdata;
     logic        done, busy, chunk_ready;
 
     xt_sio_mbox dut (
@@ -59,8 +58,9 @@ module tb_xt_sio_mbox;
         .a9_ptr(a9_ptr), .a9_ptr_we(a9_ptr_we),
         .a9_wdata(a9_wdata), .a9_we(a9_we), .a9_rd(a9_rd), .a9_rdata(a9_rdata),
         .clk_cpu(clk_cpu), .rst_cpu(rst_cpu),
-        .cpu_addr(cpu_addr), .cpu_we(cpu_we), .cpu_wdata(cpu_wdata),
-        .cpu_rden(cpu_rden), .cpu_rdata(cpu_rdata),
+        .cpu_idx_we(cpu_idx_we), .cpu_dat_we(cpu_dat_we), .cpu_dat_re(cpu_dat_re),
+        .cpu_reg_wdata(cpu_reg_wdata),
+        .cpu_idx_rdata(cpu_idx_rdata), .cpu_dat_rdata(cpu_dat_rdata),
         .exec_we(exec_we), .done(done), .busy(busy), .chunk_ready(chunk_ready)
     );
 
@@ -76,18 +76,42 @@ module tb_xt_sio_mbox;
 
     // ---- the 6502 port, driven on the negedge (stimulus must never race the
     // DUT's posedge -- that lesson cost a day twice; docs/ANTIC-rewrite.md) ----
+    // $D5CD -- set the byte index (8 bits; auto-increment carries above it)
+    task automatic cpu_setidx(input int idx);
+        @(negedge clk_cpu);
+        cpu_reg_wdata <= idx[7:0]; cpu_idx_we <= 1'b1;
+        @(negedge clk_cpu);
+        cpu_idx_we <= 1'b0;
+    endtask
+
+    // $D5CE write -- store at the index, then post-increment
+    task automatic cpu_put(input byte val);
+        @(negedge clk_cpu);
+        cpu_reg_wdata <= val; cpu_dat_we <= 1'b1;
+        @(negedge clk_cpu);
+        cpu_dat_we <= 1'b0;
+    endtask
+
+    // $D5CE read -- the byte at the index, then post-increment
+    task automatic cpu_get(output byte val);
+        @(negedge clk_cpu);
+        val = cpu_dat_rdata;         // sally_mem samples BEFORE the strobe
+        cpu_dat_re <= 1'b1;
+        @(negedge clk_cpu);
+        cpu_dat_re <= 1'b0;
+        @(negedge clk_cpu);          // let the read register track the new index
+    endtask
+
+    // The old aperture-shaped helpers, kept so the existing tests read the same
     task automatic cpu_write(input int addr, input byte val);
-        @(negedge clk_cpu);
-        cpu_addr <= addr[12:0]; cpu_wdata <= val; cpu_we <= 1'b1;
-        @(negedge clk_cpu);
-        cpu_we <= 1'b0;
+        cpu_setidx(addr);
+        cpu_put(val);
     endtask
 
     task automatic cpu_read(input int addr, output byte val);
-        @(negedge clk_cpu);
-        cpu_addr <= addr[12:0];
+        cpu_setidx(addr);
         @(negedge clk_cpu);          // registered read lands here
-        val = cpu_rdata;
+        val = cpu_dat_rdata;
     endtask
 
     task automatic cpu_doorbell();  // the $D5C7 write
@@ -256,20 +280,36 @@ module tb_xt_sio_mbox;
         wait_done(200, ok);
         ck("second request completes", ok === 1'b1);
 
-        // ---- T9: the stall-alignment rule -----------------------------------
-        // sally_mem's select and BRAM shadow freeze while the CPU is stalled;
-        // if this read register free-ran it would hand back a neighbouring word.
-        $display("T9: cpu_rden=0 freezes the read register");
-        cpu_read(OFF_DATA + 0, b);
-        ck("pre-stall value", b === 8'hEF);
-        @(negedge clk_cpu);
-        cpu_rden <= 1'b0;                   // CPU stalled (DMA steal / WSYNC)
-        cpu_addr <= (OFF_DATA + 4);         // MAR advances underneath us
-        repeat (4) @(negedge clk_cpu);
-        ck("read register frozen through the stall", cpu_rdata === 8'hEF);
-        cpu_rden <= 1'b1;
-        repeat (2) @(negedge clk_cpu);
-        ck("tracks again once rdy returns", cpu_rdata === 8'h04);
+        // ---- T9: the port walks, and only on a strobe -----------------------
+        // The aperture port needed an rden gate because its address came from
+        // the CPU's address bus and kept moving while the CPU was stalled.  The
+        // index register cannot do that: it moves ONLY on an explicit $D5CD
+        // write or a $D5CE access, so a stall is simply invisible to it.  That
+        // is the property the gate used to buy, for free.
+        $display("T9: index walks on access, and holds when nothing strobes");
+        cpu_setidx(OFF_DATA);
+        cpu_get(b); ck("auto-inc byte 0", b === 8'hEF);
+        cpu_get(b); ck("auto-inc byte 1", b === 8'hBE);
+        cpu_get(b); ck("auto-inc byte 2", b === 8'hAD);
+        ck("index advanced to +3", cpu_idx_rdata === 8'(OFF_DATA + 3));
+        repeat (8) @(negedge clk_cpu);        // CPU stalled: no strobes at all
+        ck("index held through the stall", cpu_idx_rdata === 8'(OFF_DATA + 3));
+        cpu_get(b); ck("resumes at +3", b === 8'hDE);
+
+        // ---- T10: the index carries past $FF --------------------------------
+        // The counter is MBOX_LOG2 bits but is SET 8 at a time, so a payload
+        // placed at $C0 walks across $FF -> $100 without the stub touching
+        // $D5CD again.  That is what lets the mailbox keep mathcop.h's layout.
+        $display("T10: auto-increment carries past $FF into the 9th bit");
+        a9_seek('h0FC); a9_write_word(32'hDDCCBBAA);   // bytes $FC..$FF
+        a9_seek('h100); a9_write_word(32'h44332211);   // bytes $100..$103
+        cpu_setidx('hFC);
+        cpu_get(b); ck("byte $FC", b === 8'hAA);
+        cpu_get(b); ck("byte $FD", b === 8'hBB);
+        cpu_get(b); ck("byte $FE", b === 8'hCC);
+        cpu_get(b); ck("byte $FF", b === 8'hDD);
+        cpu_get(b); ck("byte $100 (carried)", b === 8'h11);
+        cpu_get(b); ck("byte $101", b === 8'h22);
 
         // ---- result ---------------------------------------------------------
         $display("");

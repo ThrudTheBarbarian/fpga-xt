@@ -21,16 +21,30 @@
 //
 // THE CONTRACT (6502 side, all of it already decoded by sally_mem)
 // ----------------------------------------------------------------
-//   $D5C6.0  MAP    overlay this mailbox on the CPU's $4000-$5FFF view
-//   $D5C7    W      doorbell -- "a request is in the page"
+//   $D5CD    R/W    byte index into the mailbox (write = set; read = current)
+//   $D5CE    R/W    the byte AT that index; every access post-increments it
+//   $D5C7    W      doorbell -- "a request is in the mailbox"
 //            R      {5'b0, chunk_ready, busy, done}; the stub polls bit 0
-//   $D5C8    chunk  select (the stub writes $FF; we are always resident)
-//   $4000+   the mailbox itself: $4003 status, $4004 flags, $4005 magic,
-//            $4040 DCB (12 B), $40C0 payload (<=256 B)  [mathcop.h offsets]
 //
-// 448 bytes are live, so the mailbox is 512 -- one BRAM.  Reads above it return
-// $00 rather than aliasing, so a stray access to the rest of the 8 KB aperture
-// cannot look like data.
+// 448 bytes are live, so the mailbox is 512 -- one BRAM.  Offsets are unchanged
+// from mathcop.h ($03 status, $04 flags, $05 magic, $40 DCB, $C0 payload), so
+// the A9 service code did not move.
+//
+// A PORT, NOT A WINDOW -- and that is the whole point
+// ---------------------------------------------------
+// This mailbox used to be reached through the $D5C6.0 aperture, which overlaid
+// it on the CPU's view of $4000-$5FFF.  That range is the GUEST'S RAM, so for
+// as long as the stub held the map the guest's own memory was gone: an
+// interrupt taken anywhere in that window -- and the window spanned the entire
+// A9 round-trip, milliseconds -- ran with $4000-$5FFF replaced by a 512-byte
+// mailbox aliased sixteen times.  ElektraGlide, which streams its image
+// through $0400-$B9FF, derailed into it and died executing the DCB's $52
+// (DCOMND) as a KIL.  A two-register port has no window, so there is no
+// interval during which the guest's RAM is not its own.
+//
+// Address-space cost: $D5CD/$D5CE, two bytes inside the $D5C0-$D5CF block
+// sally_mem already decodes.  $D6xx/$D7xx were considered and rejected -- PBI
+// space, contested by VBXE's D6/D7 install windows (docs/Zynq/register-map.md).
 //
 // THE HANDSHAKE IS TWO TOGGLE BITS, AND THAT IS DELIBERATE
 // --------------------------------------------------------
@@ -70,8 +84,7 @@
 `define XT_SIO_MBOX_SV
 
 module xt_sio_mbox #(
-    parameter int unsigned APERTURE_LOG2 = 13,       // $4000-$5FFF CPU aperture
-    parameter int unsigned MBOX_LOG2     = 9,        // 512 B of it is the mailbox
+    parameter int unsigned MBOX_LOG2     = 9,        // 512 B mailbox = one BRAM
     parameter logic [7:0]  SIO_CHUNK     = 8'hFF     // chunk id the A9 sees on the event
 ) (
     // ---- clk_sys: the A9 side -------------------------------------------
@@ -94,13 +107,16 @@ module xt_sio_mbox #(
     output wire [31:0]              a9_rdata,
 
     // ---- clk_sally: the 6502 side ---------------------------------------
+    // Reached through two CCTL registers, NOT through a memory aperture — see
+    // the port-not-a-window note in the header.
     input  wire                     clk_cpu,
     input  wire                     rst_cpu,
-    input  wire [APERTURE_LOG2-1:0] cpu_addr,     // byte address within the aperture
-    input  wire                     cpu_we,       // aperture write (sally_mem math_cpu_we)
-    input  wire [7:0]               cpu_wdata,
-    input  wire                     cpu_rden,     // = SALLY rdy; see the freeze note below
-    output wire [7:0]               cpu_rdata,
+    input  wire                     cpu_idx_we,   // $D5CD write: set the byte index
+    input  wire                     cpu_dat_we,   // $D5CE write: store at index, index++
+    input  wire                     cpu_dat_re,   // $D5CE read  strobe (EXACTLY once): index++
+    input  wire [7:0]               cpu_reg_wdata,
+    output wire [7:0]               cpu_idx_rdata,
+    output wire [7:0]               cpu_dat_rdata,
     input  wire                     exec_we,      // $D5C7 write: the doorbell
     output wire                     done,         // $D5C7.0
     output wire                     busy,         // $D5C7.1
@@ -118,35 +134,46 @@ module xt_sio_mbox #(
     // ====================================================================
     (* ram_style = "block" *) logic [31:0] mbox [0:WORDS-1];
 
-    // ---- port A: the 6502 ----------------------------------------------
-    // Only the low MBOX_LOG2 bytes of the aperture are ours.
-    wire in_range = (cpu_addr[APERTURE_LOG2-1:MBOX_LOG2] == '0);
+    // ---- port A: the 6502, through $D5CD (index) / $D5CE (data) ---------
+    // The index moves ONLY on an explicit $D5CD write or a $D5CE access, so
+    // unlike the old aperture port it never chases the address bus while the
+    // CPU stalls — the rden gate that existed purely to stop that is gone.
+    //
+    // The index is MBOX_LOG2 bits but is SET 8 bits at a time (a $D5CD write
+    // zeroes the top bit).  Auto-increment carries into it, so the stub sets
+    // the index once per phase and walks a payload straight across $FF -> $100
+    // without touching $D5CD again — which is what lets the mailbox keep its
+    // existing mathcop.h layout (DCB $40, payload $C0) unchanged.
+    logic [MBOX_LOG2-1:0] idx_q;
 
-    wire [WORD_AW-1:0] cpu_word = cpu_addr[MBOX_LOG2-1:2];
-    wire [1:0]         cpu_boff = cpu_addr[1:0];
-    wire [3:0]         cpu_be   = (cpu_we && in_range) ? (4'd1 << cpu_boff) : 4'd0;
+    wire [WORD_AW-1:0] a_word = idx_q[MBOX_LOG2-1:2];
+    wire [1:0]         a_boff = idx_q[1:0];
+    wire [3:0]         a_be   = cpu_dat_we ? (4'd1 << a_boff) : 4'd0;
 
-    logic [31:0] cpu_rd_word_q;
-    logic [1:0]  cpu_boff_q;
-    logic        cpu_inr_q;
+    always_ff @(posedge clk_cpu or posedge rst_cpu) begin
+        if (rst_cpu)                      idx_q <= '0;
+        else if (cpu_idx_we)              idx_q <= {{(MBOX_LOG2-8){1'b0}}, cpu_reg_wdata};
+        else if (cpu_dat_we | cpu_dat_re) idx_q <= idx_q + 1'b1;
+    end
 
-    // cpu_rden (= sally_mem's rdy) gates the READ register for the same reason
-    // math_cop's did: sally_mem's was_math_q select and its BRAM shadow are both
-    // rdy-gated and FREEZE while the CPU is stalled.  A free-running read
-    // register would chase the address bus as the MAR advances during the stall
-    // and hand back a neighbouring word.  The write leg needs no such gate --
-    // cpu_we only asserts on an rdy=1 bus cycle.
+    logic [31:0] a_rd_q;
+    logic [1:0]  a_boff_q;
+
+    // READ TIMING.  a_rd_q/a_boff_q track idx_q one clk_cpu behind, and idx_q
+    // only moves on an access strobe — at most once per machine cycle (~56
+    // clk_sally).  sally_mem latches the CCTL read-back at its EARLY read step
+    // (fid_mem_step, SUB=2) while the strobe that advances the index lands at
+    // SUB_DATA=49, so the value sally_mem captures is always the byte at the
+    // PRE-increment index, and the new index has ~8 clks to settle before the
+    // next cycle's capture.  No rden gate, no race.
     always_ff @(posedge clk_cpu) begin
         for (int b = 0; b < 4; b = b + 1)
-            if (cpu_be[b]) mbox[cpu_word][b*8 +: 8] <= cpu_wdata;
-        if (cpu_rden) begin
-            cpu_rd_word_q <= mbox[cpu_word];
-            cpu_boff_q    <= cpu_boff;
-            cpu_inr_q     <= in_range;
-        end
+            if (a_be[b]) mbox[a_word][b*8 +: 8] <= cpu_reg_wdata;
+        a_rd_q   <= mbox[a_word];
+        a_boff_q <= a_boff;
     end
-    // Above the mailbox the aperture reads $00 — never an alias of the mailbox.
-    assign cpu_rdata = cpu_inr_q ? cpu_rd_word_q[cpu_boff_q*8 +: 8] : 8'h00;
+    assign cpu_dat_rdata = a_rd_q[a_boff_q*8 +: 8];
+    assign cpu_idx_rdata = idx_q[7:0];
 
     // ---- port B: the A9 -------------------------------------------------
     logic [WORD_AW-1:0] ptr_q;

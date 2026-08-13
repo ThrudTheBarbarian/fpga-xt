@@ -311,9 +311,9 @@ Do NOT extend XT registers into `$D5E0+`.
 
 **Allocating a new XT register — check these first, in order:**
 
-1. **Take it from `$D5CD-$D5CF` or `$D5D5-$D5DF`.** Those are the only free
-   bytes the XT owns, and `$D5CD-$D5CF` is already inside the decoded
-   `$D5C0-$D5CF` slot, so it costs no new decode.
+1. **Take it from `$D5CF` or `$D5D5-$D5DF`.** Those are the only free bytes the
+   XT owns.  `$D5CF` is the last one inside the decoded `$D5C0-$D5CF` slot, so
+   it costs no new decode — spend it last.
 2. **Never `$D0xx`/`$D2xx`/`$D3xx`/`$D4xx`.** Those pages are zeroed at warm-
    and cold-start (except `$D301`), so anything with a **write side effect**
    there — a doorbell, a FIFO port — gets strobed 256 times by the OS's clear
@@ -364,7 +364,9 @@ rising. Raw 100 MHz fabric cycles (not step-gated), so it is turbo-independent �
 | Addr  | Name | R/W | Purpose |
 |-------|------|-----|---------|
 | $D5C9-$D5CC | MATH_LAT | R | Op-latency counter, little-endian u32. |
-| $D5CD-$D5CF | free | - | **Free** — 3 bytes, and already inside the decoded `$D5C0-$D5CF` slot, so claiming them costs no new decode. The first place to look for a new XT register. |
+| $D5CD | SIO_IDX | R/W | **SIO mailbox byte index.** Write sets it (8 bits; the internal counter is 9, and auto-increment carries into the top bit); read returns the current low 8. |
+| $D5CE | SIO_DAT | R/W | **The mailbox byte at SIO_IDX.** Every access — read OR write — post-increments the index, so one `$D5CD` write walks a whole payload. The read is side-effecting, so its strobe is generated at the top level gated like `pk_re` (exactly once per advancing cycle); a stalled fidelity-core presentation must not advance the index. |
+| $D5CF | free | - | **Free** — the last unallocated byte in the decoded `$D5C0-$D5CF` slot. |
 
 ### $D5D0-$D5D4 — GEM service doorbell
 

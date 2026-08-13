@@ -166,6 +166,15 @@ module sally_mem #(
     output wire        math_cpu_we,        // aperture write -> math page
     input  wire [7:0]  math_cpu_rdata,     // registered read (aligned with bram_dout_q)
 
+    // SIO mailbox register port ($D5CD index / $D5CE data) — replaces the
+    // aperture for paravirtual SIO so the guest's $4000-$5FFF is never
+    // overlaid.  See hdl/xt_sio_mbox.sv.
+    output wire        sio_idx_we,         // 1-cycle strobe on a $D5CD write
+    output wire        sio_dat_we,         // 1-cycle strobe on a $D5CE write
+    output wire [7:0]  sio_reg_wval,       // value for either write
+    input  wire [7:0]  sio_idx_rdata,      // $D5CD read-back
+    input  wire [7:0]  sio_dat_rdata,      // $D5CE read-back (byte at index)
+
     // XT register-unlock: when 0 (locked / stock) the $D5C0/$D5C1 bank-select
     // writes are ignored, so a stock cart's own $D5xx CCTL bank-switching is
     // undisturbed.  See docs/Zynq/register-unlock.md (BANK group).
@@ -390,10 +399,24 @@ module sally_mem #(
     wire is_math_chunk = (addr[15:0] == (XTC_CTL_BASE + 16'd8));   // $D5C8
     wire is_math_lat   = (addr[15:4] == XTC_CTL_BASE[15:4])        // $D5C9-$D5CC: op-latency counter
                        && (addr[3:0] >= 4'd9) && (addr[3:0] <= 4'd12);
-    wire is_math_reg   = is_math_ctl | is_math_exec | is_math_chunk | is_math_lat;
+    // SIO mailbox port — the aperture's replacement.  $D5CD = byte index,
+    // $D5CE = the byte at it (see hdl/xt_sio_mbox.sv).
+    wire is_sio_idx    = (addr[15:0] == (XTC_CTL_BASE + 16'd13));  // $D5CD
+    wire is_sio_dat    = (addr[15:0] == (XTC_CTL_BASE + 16'd14));  // $D5CE
+    wire is_math_reg   = is_math_ctl | is_math_exec | is_math_chunk | is_math_lat
+                       | is_sio_idx  | is_sio_dat;
 
     assign math_exec_we  = rdy && !rw && is_math_exec  && unlock_bank_q;
     assign math_chunk_we = rdy && !rw && is_math_chunk && unlock_bank_q;
+    // Writes ride the same rdy gate as every other CCTL strobe, which for the
+    // fidelity core is fid_wr_commit (SUB_COMMIT & fid_rdy) — exactly once per
+    // ADVANCING cycle, so a stalled presentation never double-writes or
+    // double-increments.  The $D5CE READ strobe cannot be derived here (this
+    // module's `rdy` on a read is the early fid_mem_step, which DOES re-fire on
+    // a replay) so it comes in from the top level, gated like pk_re.
+    assign sio_idx_we    = rdy && !rw && is_sio_idx    && unlock_bank_q;
+    assign sio_dat_we    = rdy && !rw && is_sio_dat    && unlock_bank_q;
+    assign sio_reg_wval  = data_in;
 
     logic       math_map;
     logic [7:0] math_chunk;
@@ -810,8 +833,14 @@ module sally_mem #(
             // xtc control-reg read-back (served through the one ctlreg slot):
             //   $D5C0/$D5C1 = code/data bank; $D5C3/$D5C4 = screen banks;
             //   $D5C5 = {7'b0, ready}; $D5C6 = {7'b0, map};
-            //   $D5C7 = {5'b0, chunk_ready, busy, done}; $D5C8 = math chunk.
-            //   addr[3:0] selects within $D5C0-$D5CF.
+            //   $D5C7 = {5'b0, chunk_ready, busy, done}; $D5C8 = math chunk;
+            //   $D5C9-$D5CC = op-latency counter; $D5CD/$D5CE = SIO mailbox
+            //   index / data.  addr[3:0] selects within $D5C0-$D5CF.
+            // The $D5CE byte is captured HERE, at `rdy` — for the fidelity core
+            // that is fid_mem_step (SUB=2), while the strobe that advances the
+            // mailbox index lands at SUB_DATA=49.  So this always samples the
+            // PRE-increment byte, and a replayed presentation re-samples the
+            // same one because the index has not moved.
             case (addr[3:0])
                 4'd0:    ctlreg_dout_q <= cpu_code_bank;
                 4'd1:    ctlreg_dout_q <= cpu_data_bank;
@@ -825,6 +854,8 @@ module sally_mem #(
                 4'hA:    ctlreg_dout_q <= math_lat_q[15:8];
                 4'hB:    ctlreg_dout_q <= math_lat_q[23:16];
                 4'hC:    ctlreg_dout_q <= math_lat_q[31:24];
+                4'hD:    ctlreg_dout_q <= sio_idx_rdata;   // $D5CD mailbox index
+                4'hE:    ctlreg_dout_q <= sio_dat_rdata;   // $D5CE byte at index
                 default: ctlreg_dout_q <= 8'h00;
             endcase
             // Locked (BANK group off) → don't shadow these; the read falls

@@ -152,10 +152,14 @@ The pieces, as landed:
   memory), releases. `path=NULL` = eject + boot to BASIC.
 - **The stubs** (`tools/xl_sio_stub.s`, `xl_reset_stub.s`, assembled with `xa`, bytes
   embedded in `xl_boot.c`): position-independent, each ending in a `JMP` whose target the
-  kernel fixes up to the original vector. The SIO stub copies the DCB into the math-page
-  slots, emits one `MC_OP_SIO` op word, rings the doorbell, and either copies the payload
-  itself (boot sectors, DBUF < $1000) or lets the A9 deliver straight to BRAM (DBUF ≥
-  $1000 — which is also the only safe route when DBUF sits under the mapped math page).
+  kernel fixes up to the original vector. The SIO stub writes the DCB into the mailbox
+  **through the `$D5CD`/`$D5CE` register port** — `$D5CD` selects a byte, `$D5CE` is that
+  byte, and every access post-increments the index — rings the doorbell, and either reads
+  the payload back through the same port (boot sectors, DBUF < $1000) or lets the A9
+  deliver straight to BRAM (DBUF ≥ $1000). **It maps nothing.** Earlier revisions reached
+  the mailbox through the `$D5C6.0` aperture over `$4000-$5FFF`, which is the guest's own
+  RAM, and held that map across the whole A9 round-trip: any interrupt in those
+  milliseconds ran with `$4000-$5FFF` replaced. See `hdl/xt_sio_mbox.sv`.
 - **Sector service** rides the **math-cop worker** (`xl_sio_service`, dispatched from
   `mc_run_chunk` on the `MC_OP_SIO` opcode): decode DCB → the mount table → serve from the
   RAM-resident ATR. Mounts change only while the 6502 is held in reset, so no locks.
@@ -163,5 +167,6 @@ The pieces, as landed:
   the framed plane window; the close box / `WM_CLOSED` ejects (`SYS_xl_boot(NULL,0)`).
 
 **v1 boots ATRs only.** Documented gaps, all software follow-ups: XEX (needs the boot-disk
-synth), CAR/cart (no cart-window RTL), a write FROM a `$4000-$5FFF` buffer (staged through
-the overlay the stub maps), and media write-back to the SD (writes hit the RAM image only).
+synth), CAR/cart (no cart-window RTL), and media write-back to the SD (writes hit the RAM
+image only). The old "a write FROM a `$4000-$5FFF` buffer" gap is gone with the aperture —
+no address is special to the stub any more.
