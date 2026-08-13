@@ -556,6 +556,12 @@ module fpga_xt_top (
 
     // PORTB ($D301) from PIA — controls ROM vs banked/BRAM visibility.
     wire [7:0]  portb_q;
+    // Virtual SIO drive (docs/OS/sio-bridge.md §13) — a disk answering on the
+    // serial bus, for fast loaders that bypass SIOV.
+    wire        sio_cmd_n;              // /COMMAND, out of antic_top's PIA
+    wire [7:0]  drv_ser_in_byte;
+    wire        drv_ser_in_pulse;
+    wire        pk_ser_shift_tick;
 
     // Keyboard inject (boot blocker #5): the PS writes an
     // Atari KBCODE byte via the GP0 blitter-register bridge ($D4CF); that
@@ -1051,6 +1057,42 @@ module fpga_xt_top (
     wire       mem_rdy = cpu_sel ? (fid_rw ? fid_mem_step : fid_wr_commit)
                                  : sally_rdy;   // sally_mem steps with the ACTIVE core
 
+    // ================= virtual SIO drive ===================================
+    // A disk that answers on the SERIAL BUS, for the fast loaders that bypass
+    // SIOV entirely (docs/OS/sio-bridge.md §13; BallBlazer is the worked case).
+    //
+    // INERT UNTIL CLAIMED.  own_dev is the ownership table (§13.3): bit i = "we
+    // answer for device $31+i".  It is tied to 0 here, so the drive decodes
+    // frames and then stays SILENT, which is byte-for-byte the old behaviour --
+    // the SERIN inputs it feeds were previously tied off.  That is deliberate:
+    // it lets the RTL land and be timing-checked while the SIOV stub remains the
+    // live path (§13.7).  The A9 claims IDs through a GP0 register when the
+    // service side lands, and the same register is how a REAL peripheral on the
+    // DIN port keeps an ID for itself.
+    wire [7:0] drv_own_dev = 8'h00;
+
+    xt_sio_drive u_sio_drive (
+        .clk               (clk_sally),
+        .rst               (rst_sally),
+        .cmd_n             (sio_cmd_n),
+        .serout_byte       (pk_serout_byte),
+        .serout_strobe     (pk_serout_strobe),
+        .shift_tick        (pk_ser_shift_tick),
+        .ser_in_byte       (drv_ser_in_byte),
+        .ser_in_byte_pulse (drv_ser_in_pulse),
+        .own_dev           (drv_own_dev),
+        // Service side: the A9 does the disk work.  Tied inert with own_dev = 0
+        // -- no frame is ever accepted, so no request is ever raised.
+        .req_valid         (),
+        .req_dev           (), .req_cmd (), .req_aux1 (), .req_aux2 (),
+        .rsp_valid         (1'b0),
+        .rsp_ok            (1'b1),
+        .rsp_len           (9'd0),
+        .rsp_idx           (),
+        .rsp_byte          (8'h00),
+        .busy              ()
+    );
+
     // ---- Fidelity-core register inject (commit) -------------------------------
     // The fid core is the first-class debug/boot core, so its inject port is no
     // longer tied off.  Mirrors the turbo path (u_sally_dbg drives the turbo
@@ -1285,8 +1327,11 @@ module fpga_xt_top (
         // see the peri-RP note in antic_top's history).
         .ser_out_ready_pulse  (1'b0),
         .ser_out_complete     (1'b1),
-        .ser_in_byte_pulse    (1'b0),
-        .ser_in_byte          (8'h00),
+        // The virtual drive's replies enter here.  With own_dev = 0 (below) the
+        // drive is silent and these are held at their old tied-off values, so
+        // this is behaviourally identical until the A9 claims a device ID.
+        .ser_in_byte_pulse    (drv_ser_in_pulse),
+        .ser_in_byte          (drv_ser_in_byte),
         .break_key_pulse      (pk_kbd_break),
         .ser_framing_err      (1'b0),
         .ser_input_overrun    (1'b0),
@@ -1294,6 +1339,7 @@ module fpga_xt_top (
         .irq_n                (pk_irq_n),
         .serout_byte          (pk_serout_byte),
         .serout_strobe        (pk_serout_strobe),
+        .ser_shift_tick_o     (pk_ser_shift_tick),
         .skctl_out            ()
     );
 
@@ -2051,6 +2097,7 @@ module fpga_xt_top (
         .cmp_bram_rdata     (antic_cmpram_rdata),
         // PORTB state — consumed by sally_mem for ROM vs RAM control.
         .portb_q            (portb_q),
+        .sio_command_n      (sio_cmd_n),
         // Early POKEY write lane (see pkw_* above).
         // ANTIC render tap → DDR3 writeback (HP3, see antic_writeback below).
         .wb_pix_valid       (antic_wb_pix_valid),

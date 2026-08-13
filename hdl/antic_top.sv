@@ -237,6 +237,10 @@ module antic_top #(
 
     // PORTB ($D301) state — needed by sally_mem for ROM vs RAM control.
     output wire [7:0]  portb_q,
+    // /COMMAND (PIA CB2).  The PIA lives here, but the virtual SIO drive that
+    // frames on it lives in fpga_xt_top beside the native POKEYs, so thread it
+    // out the same way portb_q goes (docs/OS/sio-bridge.md §13).
+    output wire        sio_command_n,
 
     // ---- ANTIC render tap → compositor writeback (video-arch §5, phase 2) --
     // The per-pixel-pair render stream, palette writes and frame/line pulses
@@ -1873,6 +1877,7 @@ module antic_top #(
     wire [7:0] pia_joy_porta_in = joy_ovr[31] ? joy_ovr[7:0] : 8'hFF;
 
     pia_regs u_pia_regs (
+        .sio_command_n (sio_command_n),
         .clk           (clk_bus),
         .rst           (rst_bus),
         .we            (snoop_we_pia),
