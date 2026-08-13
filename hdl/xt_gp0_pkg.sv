@@ -113,6 +113,10 @@ package xt_gp0_pkg;
     // SIO
     localparam logic [7:0] SIO_PTR          = 8'h00;  // W byte pointer into the 512 B mailbox (word-aligned; [1:0] ignored). Writing it re-aims the window; each SIO_DAT access then auto-increments by 4, so a run of bytes is one seek plus N accesses
     localparam logic [7:0] SIO_DAT          = 8'h04;  // RW 32-bit little-endian word at the pointer; read or write auto-increments the pointer by 4. The BRAM read register tracks the pointer continuously and consecutive AXI transactions are tens of clocks apart, so a read always returns settled data
+    localparam logic [7:0] SIO_OWN          = 8'h08;  // RW virtual-drive OWNERSHIP TABLE (docs/OS/sio-bridge.md 13.3). Bit i = device $31+i is served by the virtual drive. 0 = we stay SILENT for that ID so a REAL peripheral on the DIN port, or nothing, can answer -- two devices answering one ID is a bus collision, so this must be settled BEFORE the first ACK window, never discovered after. Reset 0 = every ID unclaimed, which is also the safe state if the A9 never writes it
+    localparam logic [7:0] SIO_REQ          = 8'h0C;  // R virtual-drive command frame the guest just sent: {aux2[31:24], aux1[23:16], cmd[15:8], dev[7:0]}. Valid while SIO_STAT.req_pending is set. The 5th frame byte is the checksum and is verified in fabric, so it is not exposed
+    localparam logic [7:0] SIO_DSTAT        = 8'h10;  // R virtual-drive status: bit0 req_pending (a validated frame is waiting for the A9), bit1 busy (a transaction is in flight on the bus)
+    localparam logic [7:0] SIO_RSP          = 8'h14;  // W virtual-drive response: {len[24:16], 0, ok[0]}. len = payload bytes 0..256 already placed at mailbox offset $C0 via SIO_PTR/SIO_DAT; ok = 1 -> COMPLETE ($43), 0 -> ERROR ($45). Writing this releases the drive to pace the reply onto the bus and clears req_pending
 
 endpackage
 `endif
