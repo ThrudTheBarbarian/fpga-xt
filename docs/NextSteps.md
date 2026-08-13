@@ -577,6 +577,14 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   **accepted=12**, with `busy` set and `req_pending` clear — i.e. the full
   round trip completes.  ATR loading is unaffected (ElektraGlide and Despatch
   Rider both verified with D1: claimed).
+  **RESOLVED 2026-08-13: BallBlazer.atx loads off the virtual serial-bus drive.**
+  The bus log shows `dev=31 cmd=52` reads of D1: advancing one sector at a time
+  from $25 to $10B, every one `st=01 len=0080` with a clean FDC, no retries and
+  no errors, while the 6502 runs on through game code with interrupts enabled.
+  What finally did it was pacing the reply at a MEASURED bit rate (below).
+  Remaining: strip the diagnostic counters, and confirm the picture in a desktop
+  emulator window rather than from the transaction log.
+
   **Two more layers landed, and the guest now gets its data.**
   (a) The ACK turnaround was paced in FRAME TIMES, which scale with the bit
   rate; a real drive's turnaround is a fixed physical time.  Pacing it as an
