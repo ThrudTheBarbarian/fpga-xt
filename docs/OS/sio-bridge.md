@@ -378,8 +378,8 @@ entire point of one, so authentic timing is not the same as slow.
 
 A real peripheral may be plugged into the DIN port.  Two devices answering the
 same ID is a bus collision, so ownership must be decided BEFORE the first ACK
-window, not discovered afterwards.  Keep a per-ID table, `$31`-`$34`
-(D1:-D4:), each entry one of:
+window, not discovered afterwards.  Keep a per-ID table covering the full disk
+range the bus allows, `$31`-`$38` (D1:-D8:), each entry one of:
 
 | State | Meaning | Who answers |
 |-------|---------|-------------|
@@ -399,13 +399,19 @@ is not retrofitted.  Two ways to fill it once the port is live:
 Prefer (1); keep (2) as a safety net, because it also catches a device hot-plugged
 mid-session.
 
-### 13.4 Four drives, and per-drive rotation phase
+### 13.4 Drive count, and per-drive rotation phase
 
-Four simultaneous drives is a real requirement, not a round number: **Alternate
-Reality uses up to four disks at once**.  The mount table already has eight
-entries (`g_drv[]` in `xl_boot.c`), so what is needed is
+The SIO bus addresses **eight** disk devices, `$31`-`$38` (D1:-D8:), so eight is
+the architectural ceiling and the ownership table should be sized for it.  Four
+is the practical target — **Alternate Reality uses up to four disks at once**,
+and nothing in the wild has been seen to want more — but there is no reason to
+build in a limit of four when the bus and the mount table both already reach
+eight.
 
-- demux on the command frame's **device byte**, `$31`-`$34`, and
+The mount table already has eight entries (`g_drv[]` in `xl_boot.c`), so what is
+needed is
+
+- demux on the command frame's **device byte**, `$31`-`$38`, and
 - an **independent rotation phase per drive**.  One global angular clock is
   wrong: a title swapping between four disks is reading four platters that were
   never in sync.
@@ -424,7 +430,28 @@ protection measures, and a reply that arrives instantly is as much a tell as a
 reply with the wrong bytes.  The same applies to the inter-byte gap — pace SERIN
 at the programmed bit rate rather than as fast as the A9 can push.
 
-### 13.6 Policy: authentic by default, fast by exception
+### 13.6 High-speed SIO (US-Doubler and friends)
+
+Standard SIO is 19200 baud, but the popular speed upgrades — **US-Doubler**,
+Happy, Speedy, and the later XF551 — negotiate a faster rate, typically
+**38400 and upwards, some as high as ~56 kbaud**.  A title that supports one
+asks the drive for high speed and falls back cleanly if the drive declines, so
+this is a per-drive CAPABILITY, not a global mode:
+
+- the virtual drive advertises whether it is a "doubler" when the guest probes
+  (the high-speed handshake differs per clone — decide which one we emulate
+  before building, because the guest branches on the answer);
+- the rate itself is just a different divisor into the same shift timing
+  `pokey_serial.sv` already implements, so nothing new is needed at the bit
+  level;
+- it belongs in the same per-title settings as the fast/authentic switch below,
+  and on the same right-click menu: **"Enable US-Doubler"**.
+
+The practical effect is that the authentic path stops being slow for titles that
+support it: 38400 baud roughly halves the load time, and the fast loaders that
+roll their own rate (§13.1) are already faster than any of this.
+
+### 13.7 Policy: authentic by default, fast by exception
 
 Serving everything on the bus gives **one** implementation of "be a disk"
 instead of two that can disagree, and that is the main argument for doing it.
@@ -435,13 +462,14 @@ So: **serial-level is the default** (correct for every title), and the SIOV
 shortcut survives as an **opt-in per-title "fast load"** setting.  Per-title
 settings already have a home — the SQLite registry `desk_launch` consults — and
 this is one of the things the planned **right-click context menu on an ATR/ATX**
-should expose, alongside drive assignment (which of D1:-D4:) and write-protect.
+should expose, alongside drive assignment (which of D1:-D8:), write-protect and
+**Enable US-Doubler** (§13.6).
 Double-click keeps meaning "just run it".
 
 Do NOT remove the SIOV stub until the virtual drive is proven on Despatch Rider,
 ElektraGlide and BallBlazer; keep both and flip the default afterwards.
 
-### 13.7 Session lifecycle
+### 13.8 Session lifecycle
 
 A virtual drive exists for the lifetime of one launched title:
 
@@ -455,7 +483,7 @@ A virtual drive exists for the lifetime of one launched title:
 Nothing persists between sessions.  That also means a crashed guest cannot leave
 an ID claimed.
 
-### 13.8 What this buys beyond compatibility
+### 13.9 What this buys beyond compatibility
 
 `pokey_serdirect` and `pokey_skstat` are currently `na` in the ACID sweep for
 exactly one reason — "no serial bus device" (`tools/acid-sweep.sh`).  A virtual
