@@ -89,7 +89,12 @@ module xt_sio_drive #(
     output logic [8:0] rsp_idx,          // which payload byte we want
     input  wire [7:0]  rsp_byte,         // ... and it, combinationally
 
-    output logic       busy              // a transaction is in flight
+    output logic       busy,             // a transaction is in flight
+    // Asserted ONLY while the payload is actually being walked.  The mailbox's
+    // port A is shared with the 6502's $D5CD/$D5CE register port, and holding
+    // that for a whole transaction starves the SIOV stub -- which matters
+    // because both front ends stay live (§13.7).  Narrow is safer.
+    output logic       reading
 );
 
     // ---- end-around-carry checksum ---------------------------------------
@@ -130,6 +135,11 @@ module xt_sio_drive #(
 
     logic [7:0] frame [0:4];
     logic [2:0] fidx;
+    // A guest that asserts /COMMAND and never releases it -- or a decode of the
+    // PIA that is wrong -- must not leave the drive BUSY for ever.  Seen on HW
+    // (2026-08-13): busy stuck, req_pending clear, and because port A followed
+    // busy it starved the SIOV stub too.  Bound the command phase.
+    logic [15:0] cmd_wd;
     logic [7:0] dcsum;                 // checksum of the data frame we send
 
     wire [7:0] dev_in  = frame[0];
@@ -151,7 +161,7 @@ module xt_sio_drive #(
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            st <= S_IDLE; fidx <= 3'd0; req_valid <= 1'b0;
+            st <= S_IDLE; fidx <= 3'd0; req_valid <= 1'b0; reading <= 1'b0;
             ser_in_byte <= 8'h00; ser_in_byte_pulse <= 1'b0;
             rsp_idx <= 9'd0; dcsum <= 8'h00; busy <= 1'b0;
             tick_cnt <= 10'd0; pace_run <= 1'b0;
@@ -166,11 +176,14 @@ module xt_sio_drive #(
             // must not find us still replying to the previous frame.
             if (cmd_assert) begin
                 st <= S_CMD; fidx <= 3'd0; busy <= 1'b1; pace_run <= 1'b0;
+                cmd_wd <= 16'd0;
             end else case (st)
 
-            S_IDLE: busy <= 1'b0;
+            S_IDLE: begin busy <= 1'b0; reading <= 1'b0; end
 
             S_CMD: begin
+                cmd_wd <= cmd_wd + 16'd1;
+                if (cmd_wd == 16'hFFFF) st <= S_IDLE;    // give up, stay silent
                 if (serout_strobe && fidx < 3'd5) begin
                     frame[fidx] <= serout_byte;
                     fidx        <= fidx + 3'd1;
@@ -210,8 +223,8 @@ module xt_sio_drive #(
                 dcsum   <= 8'h00;
                 rsp_idx <= 9'd0;
                 pace(1);
-                if (rsp_ok && rsp_len != 9'd0) st <= S_DATA;
-                else                           st <= S_IDLE;
+                if (rsp_ok && rsp_len != 9'd0) begin st <= S_DATA; reading <= 1'b1; end
+                else                                 st <= S_IDLE;
             end
 
             S_DATA: if (pace_done) begin

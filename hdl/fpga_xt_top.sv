@@ -1074,7 +1074,7 @@ module fpga_xt_top (
     // service side lands, and the same register is how a REAL peripheral on the
     // DIN port keeps an ID for itself.
     wire [7:0] drv_own_dev;
-    wire       drv_req_valid, drv_busy_w, drv_rsp_valid, drv_rsp_ok;
+    wire       drv_req_valid, drv_busy_w, drv_reading_w, drv_rsp_valid, drv_rsp_ok;
     wire [7:0] drv_req_dev, drv_req_cmd, drv_req_aux1, drv_req_aux2;
     wire [8:0] drv_rsp_len, drv_rsp_idx;
 
@@ -1097,7 +1097,8 @@ module fpga_xt_top (
         .rsp_len           (drv_rsp_len),
         .rsp_idx           (drv_rsp_idx),
         .rsp_byte          (drv_rsp_byte),
-        .busy              (drv_busy_w)
+        .busy              (drv_busy_w),
+        .reading           (drv_reading_w)
     );
 
     xt_sio_cdc u_sio_cdc (
@@ -2623,7 +2624,7 @@ module fpga_xt_top (
             // lands: with drv_sel low, port A behaves exactly as before.
             // Payload reader: the drive walks the reply while it paces bytes.
             // MC_OFF_SIO_DATA is $C0, so rsp_idx is offset by that.
-            .drv_sel       (drv_busy_w),
+            .drv_sel       (drv_reading_w),
             .drv_addr      (9'h0C0 + drv_rsp_idx),
             .drv_rdata     (drv_rsp_byte),
             .exec_we    (math_exec_we),

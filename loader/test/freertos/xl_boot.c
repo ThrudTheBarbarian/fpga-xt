@@ -46,6 +46,11 @@ extern void  frtos_free(void *p, void *host);
 /* ---- hardware handles ---------------------------------------------------- */
 #define GP0_SALLYRST   (*(volatile uint32_t *)0x43C0031Cu)   /* XT_CTRL_SALLYRST */
 #define GP0_CONSOL     (*(volatile uint32_t *)0x43C00324u)   /* XT_CTRL_CONSOL: CONSOL keys the 6502 reads */
+/* Virtual SIO drive, GP0 block 0xA (hdl/regmap/xt_gp0_map.h; sio-bridge.md §13) */
+#define SIO_OWN_REG    (*(volatile uint32_t *)0x43C00A08u)   /* XT_SIO_OWN   ownership table */
+#define SIO_REQ_REG    (*(volatile uint32_t *)0x43C00A0Cu)   /* XT_SIO_REQ   {aux2,aux1,cmd,dev} */
+#define SIO_DSTAT_REG  (*(volatile uint32_t *)0x43C00A10u)   /* XT_SIO_DSTAT {..,busy,req_pending} */
+#define SIO_RSP_REG    (*(volatile uint32_t *)0x43C00A14u)   /* XT_SIO_RSP   {len[24:16], ok[0]} */
 /* Console-keys values (active-low: bit0=START bit1=SELECT bit2=OPTION, 0=pressed).
  * Games must boot with BASIC OFF; the XL OS leaves BASIC off only when OPTION is
  * held at coldstart. Hold OPTION ($03) across a game coldstart so $A000-$BFFF stays
@@ -443,6 +448,10 @@ static uint8_t atx_read(xl_drive *d, uint32_t sec, uint8_t *out, uint32_t *olen)
 
 static void xl_unmount_all(void)
 {
+    /* Release the WHOLE ownership table, not one drive: a session must not be
+     * able to leave an ID claimed, and the next one should re-decide from clean
+     * (docs/OS/sio-bridge.md §13.8). */
+    SIO_OWN_REG = 0; __asm__ volatile("dsb");
     for (int i = 0; i < 8; i++) {
         if (g_drv[i].img) frtos_free(g_drv[i].img, NULL);
         if (g_drv[i].atx) frtos_free(g_drv[i].atx, NULL);
@@ -453,38 +462,19 @@ static void xl_unmount_all(void)
 }
 
 /* ---- SIO service (runs in the mathcop worker task) ------------------------ */
-void xl_sio_service(volatile uint8_t *page)
+/* The disk operation itself, shared by BOTH front ends: the SIOV mailbox
+ * (xl_sio_service) and the virtual drive on the serial bus (xl_sio_bus_poll).
+ * ONE implementation of "be a disk" -- which is the whole argument for serving
+ * the bus at all rather than keeping two code paths that can disagree
+ * (docs/OS/sio-bridge.md 13.7).  Returns the SIO status byte and fills
+ * out/outlen with any payload.  `data` is only used by the write NAK path. */
+static uint8_t xl_disk_op(xl_drive *d, uint8_t cmd, uint16_t daux,
+                          uint8_t *out, uint32_t *outlenp)
 {
-    /* First SIO request after a hold = the XL OS is past its coldstart OPTION
-     * sample (the BASIC decision precedes the D1: boot attempt) — release it.
-     * Runs in the mathcop worker task; the flag/gen writes are benign races. */
-    if (g_consol_held) consol_release_now();
-
-    volatile uint8_t *dcb  = page + MC_OFF_SIO_DCB;
-    volatile uint8_t *data = page + MC_OFF_SIO_DATA;
-    uint8_t  ddevic = dcb[0], dunit = dcb[1], cmd = dcb[2], dstats = dcb[3];
-    uint16_t dbuf = (uint16_t)(dcb[4] | (dcb[5] << 8));
-    uint16_t dbyt = (uint16_t)(dcb[8] | (dcb[9] << 8));
-    uint16_t daux = (uint16_t)(dcb[10] | (dcb[11] << 8));
-    uint8_t  st = 0x01, flags = 0;
-
-    /* SIO bus id = DDEVIC + DUNIT-1: disks are DDEVIC $31 with DUNIT the drive
-     * number (D1: = $31/unit1, D2: = $31/unit2 ...). Some callers instead bump
-     * DDEVIC; handle both by summing the offsets. */
-    int drive = -1;
-    if (ddevic >= 0x31 && ddevic <= 0x38)
-        drive = (int)(ddevic - 0x31) + (dunit ? (int)dunit - 1 : 0);
-    if (drive < 0 || drive > 7 || !g_drv[drive].img) {
-        page[MC_OFF_SIO_FLAGS] = MC_SIO_NOTMINE;    /* the real bus's business */
-        page[MC_OFF_STATUS]    = 0x01;
-        return;
-    }
-    xl_drive *d = &g_drv[drive];
-
-    uint8_t  out[256];
+    uint8_t  st = 0x01;
     uint32_t outlen = 0;
-
-    switch (cmd) {
+    volatile uint8_t *data = 0;              /* writes are NAKed; nothing staged */
+        switch (cmd) {
     case 0x53: {                                    /* STATUS: 4 bytes */
         out[0] = (uint8_t)(d->secsz == 256 ? 0x20 : 0x00);   /* bit5 = DD */
         /* byte 1 is the FDC status, active-LOW ($FF = clean).  For an ATX the
@@ -517,6 +507,95 @@ void xl_sio_service(volatile uint8_t *page)
         st = 0x8B;                                  /* device NAK */
         break;
     }
+    *outlenp = outlen;
+    return st;
+}
+
+/* ---- the virtual drive on the SERIAL BUS (docs/OS/sio-bridge.md §13) ------
+ * The other front end.  xl_sio_service above is reached by patching SIOV, so it
+ * only ever sees titles that load through the OS; a FAST LOADER programs POKEY
+ * and drives the bus itself and never calls SIOV at all.  This is what answers
+ * those: the fabric (hdl/xt_sio_drive.sv) decodes and CHECKSUMS the command
+ * frame, we do the disk work, and it paces the reply back at whatever rate the
+ * guest programmed.
+ *
+ * Polling, not an interrupt, and that is fine on purpose: the drive holds the
+ * guest waiting until we answer, so OUR service latency simply BECOMES the
+ * rotational latency -- which the guest should be seeing anyway (§13.5). */
+static void sio_mbox_write(uint32_t off, const uint8_t *src, uint32_t n);  /* fwd */
+
+static void xl_sio_bus_poll(void)
+{
+    if (!(SIO_DSTAT_REG & 1u)) return;              /* nothing waiting */
+
+    uint32_t rq   = SIO_REQ_REG;
+    uint8_t  dev  = (uint8_t)(rq & 0xFFu);
+    uint8_t  cmd  = (uint8_t)((rq >> 8) & 0xFFu);
+    uint16_t daux = (uint16_t)((rq >> 16) & 0xFFFFu);   /* aux1 | aux2<<8 */
+
+    uint8_t  out[256];
+    uint32_t outlen = 0;
+    uint8_t  st = 0x8B;                             /* device NAK by default */
+
+    int drive = (dev >= 0x31 && dev <= 0x38) ? (int)(dev - 0x31) : -1;
+    if (drive >= 0 && g_drv[drive].img)
+        st = xl_disk_op(&g_drv[drive], cmd, daux, out, &outlen);
+
+    if (outlen) sio_mbox_write(MC_OFF_SIO_DATA, out, outlen);
+
+    /* Writing SIO_RSP releases the drive to pace the reply and clears
+     * req_pending.  ok=1 -> COMPLETE, ok=0 -> ERROR; a NAKed or absent device
+     * answers with ERROR and no payload, which is what a real drive does. */
+    SIO_RSP_REG = ((outlen & 0x1FFu) << 16) | ((st == 0x01u) ? 1u : 0u);
+    __asm__ volatile("dsb");
+}
+
+static void xl_sio_bus_task(void *arg)
+{
+    (void)arg;
+    for (;;) { xl_sio_bus_poll(); vTaskDelay(1); }
+}
+
+/* Claim device IDs for the virtual drive.  Bit i = $31+i.  Called at mount;
+ * cleared on eject so a session cannot leave an ID claimed (§13.8), and so a
+ * real peripheral that appeared meanwhile is seen on the next probe. */
+static void xl_sio_bus_claim(uint8_t mask)
+{
+    SIO_OWN_REG = mask; __asm__ volatile("dsb");
+}
+
+void xl_sio_service(volatile uint8_t *page)
+{
+    /* First SIO request after a hold = the XL OS is past its coldstart OPTION
+     * sample (the BASIC decision precedes the D1: boot attempt) — release it.
+     * Runs in the mathcop worker task; the flag/gen writes are benign races. */
+    if (g_consol_held) consol_release_now();
+
+    volatile uint8_t *dcb  = page + MC_OFF_SIO_DCB;
+    volatile uint8_t *data = page + MC_OFF_SIO_DATA;
+    uint8_t  ddevic = dcb[0], dunit = dcb[1], cmd = dcb[2], dstats = dcb[3];
+    uint16_t dbuf = (uint16_t)(dcb[4] | (dcb[5] << 8));
+    uint16_t dbyt = (uint16_t)(dcb[8] | (dcb[9] << 8));
+    uint16_t daux = (uint16_t)(dcb[10] | (dcb[11] << 8));
+    uint8_t  st = 0x01, flags = 0;
+
+    /* SIO bus id = DDEVIC + DUNIT-1: disks are DDEVIC $31 with DUNIT the drive
+     * number (D1: = $31/unit1, D2: = $31/unit2 ...). Some callers instead bump
+     * DDEVIC; handle both by summing the offsets. */
+    int drive = -1;
+    if (ddevic >= 0x31 && ddevic <= 0x38)
+        drive = (int)(ddevic - 0x31) + (dunit ? (int)dunit - 1 : 0);
+    if (drive < 0 || drive > 7 || !g_drv[drive].img) {
+        page[MC_OFF_SIO_FLAGS] = MC_SIO_NOTMINE;    /* the real bus's business */
+        page[MC_OFF_STATUS]    = 0x01;
+        return;
+    }
+    xl_drive *d = &g_drv[drive];
+
+    uint8_t  out[256];
+    uint32_t outlen = 0;
+
+    st = xl_disk_op(d, cmd, daux, out, &outlen);
 
     if (outlen) {
         uint32_t l = (dbyt && dbyt < outlen) ? dbyt : outlen;
@@ -886,6 +965,17 @@ int xl_boot(const char *path, int drive)
     g_drv[drive - 1].len   = sz;
     g_drv[drive - 1].secsz = secsz;
     g_drv[drive - 1].kind  = is_atx ? IMG_ATX : IMG_ATR;
+    /* Claim this ID on the serial bus too, so a fast loader that bypasses SIOV
+     * finds a drive there.  Both front ends stay live: BallBlazer boots its
+     * first 17 sectors THROUGH the OS (and so through the SIOV stub) and only
+     * then switches to the bus, so disabling one would break it. */
+    xl_sio_bus_claim((uint8_t)(1u << (drive - 1)));
+    { static int bus_task_started;
+      if (!bus_task_started) {
+          bus_task_started = 1;
+          xTaskCreate(xl_sio_bus_task, "siobus", 512, NULL,
+                      configMAX_PRIORITIES - 2, NULL);
+      } }
     g_drv[drive - 1].fdc   = 0xFF;
     if (is_atx && atx_parse(&g_drv[drive - 1]) != 0) {
         klog("[xl] ATX parse failed\r\n");
