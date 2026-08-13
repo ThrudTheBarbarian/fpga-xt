@@ -1078,10 +1078,22 @@ module fpga_xt_top (
     wire [7:0] drv_req_dev, drv_req_cmd, drv_req_aux1, drv_req_aux2;
     wire [8:0] drv_rsp_len, drv_rsp_idx;
 
+    // /COMMAND comes from the PIA inside antic_top, which is clocked on
+    // clk_bus (= clk_sys).  The drive lives in clk_sally, so this is a genuine
+    // clock crossing and needs a synchroniser -- I wired it raw first and the
+    // drive latched /COMMAND asserted and never saw the release, leaving busy
+    // stuck (HW 2026-08-13, SIO_DSTAT=$02 with req_pending clear).  A slow
+    // level like this needs nothing more than 2 flops, but it does need them.
+    (* ASYNC_REG = "TRUE" *) reg sio_cmd_n_s1 = 1'b1, sio_cmd_n_s2 = 1'b1;
+    always_ff @(posedge clk_sally) begin
+        sio_cmd_n_s1 <= sio_cmd_n;
+        sio_cmd_n_s2 <= sio_cmd_n_s1;
+    end
+
     xt_sio_drive u_sio_drive (
         .clk               (clk_sally),
         .rst               (rst_sally),
-        .cmd_n             (sio_cmd_n),
+        .cmd_n             (sio_cmd_n_s2),
         .serout_byte       (pk_serout_byte),
         .serout_strobe     (pk_serout_strobe),
         .shift_tick        (pk_ser_shift_tick),
