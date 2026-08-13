@@ -562,6 +562,10 @@ module fpga_xt_top (
     wire [7:0]  drv_ser_in_byte;
     wire        drv_ser_in_pulse;
     wire        pk_ser_shift_tick;
+    wire [7:0]  drv_rsp_byte;
+    wire [31:0] sio_req_word, sio_dstat_word, sio_rsp_word;
+    wire        sio_rsp_we, sio_req_irq;
+    wire [7:0]  sio_own;
 
     // Keyboard inject (boot blocker #5): the PS writes an
     // Atari KBCODE byte via the GP0 blitter-register bridge ($D4CF); that
@@ -1069,7 +1073,10 @@ module fpga_xt_top (
     // live path (§13.7).  The A9 claims IDs through a GP0 register when the
     // service side lands, and the same register is how a REAL peripheral on the
     // DIN port keeps an ID for itself.
-    wire [7:0] drv_own_dev = 8'h00;
+    wire [7:0] drv_own_dev;
+    wire       drv_req_valid, drv_busy_w, drv_rsp_valid, drv_rsp_ok;
+    wire [7:0] drv_req_dev, drv_req_cmd, drv_req_aux1, drv_req_aux2;
+    wire [8:0] drv_rsp_len, drv_rsp_idx;
 
     xt_sio_drive u_sio_drive (
         .clk               (clk_sally),
@@ -1081,16 +1088,35 @@ module fpga_xt_top (
         .ser_in_byte       (drv_ser_in_byte),
         .ser_in_byte_pulse (drv_ser_in_pulse),
         .own_dev           (drv_own_dev),
-        // Service side: the A9 does the disk work.  Tied inert with own_dev = 0
-        // -- no frame is ever accepted, so no request is ever raised.
-        .req_valid         (),
-        .req_dev           (), .req_cmd (), .req_aux1 (), .req_aux2 (),
-        .rsp_valid         (1'b0),
-        .rsp_ok            (1'b1),
-        .rsp_len           (9'd0),
-        .rsp_idx           (),
-        .rsp_byte          (8'h00),
-        .busy              ()
+        // Service side: the A9 does the disk work, across xt_sio_cdc below.
+        .req_valid         (drv_req_valid),
+        .req_dev           (drv_req_dev), .req_cmd  (drv_req_cmd),
+        .req_aux1          (drv_req_aux1), .req_aux2 (drv_req_aux2),
+        .rsp_valid         (drv_rsp_valid),
+        .rsp_ok            (drv_rsp_ok),
+        .rsp_len           (drv_rsp_len),
+        .rsp_idx           (drv_rsp_idx),
+        .rsp_byte          (drv_rsp_byte),
+        .busy              (drv_busy_w)
+    );
+
+    xt_sio_cdc u_sio_cdc (
+        .clk_cpu        (clk_sally),   .rst_cpu (rst_sally),
+        .req_valid      (drv_req_valid),
+        .req_dev        (drv_req_dev), .req_cmd (drv_req_cmd),
+        .req_aux1       (drv_req_aux1), .req_aux2 (drv_req_aux2),
+        .drv_busy       (drv_busy_w),
+        .rsp_valid      (drv_rsp_valid),
+        .rsp_ok         (drv_rsp_ok),
+        .rsp_len        (drv_rsp_len),
+        .own_dev        (drv_own_dev),
+        .clk            (clk_sys),     .rst (rst_sys),
+        .sio_req_word   (sio_req_word),
+        .sio_dstat_word (sio_dstat_word),
+        .sio_rsp_word   (sio_rsp_word),
+        .sio_rsp_we     (sio_rsp_we),
+        .sio_own        (sio_own),
+        .sio_req_irq    (sio_req_irq)
     );
 
     // ---- Fidelity-core register inject (commit) -------------------------------
@@ -2595,9 +2621,11 @@ module fpga_xt_top (
             .cpu_idx_rdata (sio_idx_rdata), .cpu_dat_rdata (sio_dat_rdata),
             // Virtual-drive payload reader.  Held off until the service side
             // lands: with drv_sel low, port A behaves exactly as before.
-            .drv_sel       (1'b0),
-            .drv_addr      (9'd0),
-            .drv_rdata     (),
+            // Payload reader: the drive walks the reply while it paces bytes.
+            // MC_OFF_SIO_DATA is $C0, so rsp_idx is offset by that.
+            .drv_sel       (drv_busy_w),
+            .drv_addr      (9'h0C0 + drv_rsp_idx),
+            .drv_rdata     (drv_rsp_byte),
             .exec_we    (math_exec_we),
             .done       (math_done),      .busy     (math_busy),
             .chunk_ready(math_chunk_ready)
@@ -4141,6 +4169,11 @@ module fpga_xt_top (
         .sio_we          (sio_we),
         .sio_rd          (sio_rd),
         .sio_rdata       (sio_rdata),
+        .sio_own            (sio_own),
+        .sio_req_word       (sio_req_word),
+        .sio_dstat_word     (sio_dstat_word),
+        .sio_rsp_word       (sio_rsp_word),
+        .sio_rsp_we         (sio_rsp_we),
         .rw_tune         (rw_tune),          // ANTIC-rewrite cycle tune (0xCTRL+0x28)
         // ---- 6502 debugger control/status (0x8xx) ----
         .dbg_halt_tog    (gdbg_halt_tog),

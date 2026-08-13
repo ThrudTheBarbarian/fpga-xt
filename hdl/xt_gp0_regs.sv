@@ -201,6 +201,14 @@ module xt_gp0_regs (
     output reg         sio_rd,             // 1-cycle strobe on a SIO_DAT read (auto-increment)
     input  wire [31:0] sio_rdata,          // SIO_DAT readback
 
+    // Virtual SIO drive (docs/OS/sio-bridge.md §13).  These cross to clk_sally
+    // in fpga_xt_top; here they are plain register legs.
+    output reg  [7:0]  sio_own,            // SIO_OWN: ownership table, reset 0 = all unclaimed
+    input  wire [31:0] sio_req_word,       // SIO_REQ:  {aux2,aux1,cmd,dev}
+    input  wire [31:0] sio_dstat_word,     // SIO_DSTAT: {.., busy, req_pending}
+    output reg  [31:0] sio_rsp_word,       // SIO_RSP:  {len[24:16], ok[0]}
+    output reg         sio_rsp_we,         // 1-cycle strobe on a SIO_RSP write
+
     // ---- DEBUG block (in-fabric 6502 debugger, xt6502_debug @ clk_sally) ------
     // Control OUT (clk_sys): command toggles flip on each write; levels are values.
     output reg         dbg_halt_tog,
@@ -343,6 +351,9 @@ module xt_gp0_regs (
             math_done_we   <= 1'b0;
             sio_ptr        <= 9'd0;
             sio_ptr_we     <= 1'b0;
+            sio_own        <= 8'h00;       // every device ID unclaimed = safe
+            sio_rsp_word   <= 32'd0;
+            sio_rsp_we     <= 1'b0;
             sio_wdata      <= 32'd0;
             sio_we         <= 1'b0;
             dbg_halt_tog   <= 1'b0;
@@ -373,6 +384,7 @@ module xt_gp0_regs (
             math_done_we  <= 1'b0;
             sio_ptr_we    <= 1'b0;
             sio_we        <= 1'b0;
+            sio_rsp_we    <= 1'b0;
 
             unique case (wstate)
                 WST_IDLE: begin
@@ -483,6 +495,9 @@ module xt_gp0_regs (
                                                    sio_ptr_we <= 1'b1; end
                                     SIO_DAT: begin sio_wdata  <= w_data;
                                                    sio_we     <= 1'b1; end
+                                    SIO_OWN:       sio_own    <= w_data[7:0];
+                                    SIO_RSP: begin sio_rsp_word <= w_data;
+                                                   sio_rsp_we   <= 1'b1; end
                                     default: ;
                                 endcase
                             end
@@ -607,6 +622,12 @@ module xt_gp0_regs (
                                 if (ar_off == SIO_DAT) begin
                                     s_axi_rdata <= sio_rdata;
                                     sio_rd      <= 1'b1;
+                                end else if (ar_off == SIO_REQ) begin
+                                    s_axi_rdata <= sio_req_word;
+                                end else if (ar_off == SIO_DSTAT) begin
+                                    s_axi_rdata <= sio_dstat_word;
+                                end else if (ar_off == SIO_OWN) begin
+                                    s_axi_rdata <= {24'd0, sio_own};
                                 end
                             BLK_TRNG:
                                 // read-to-consume, same shape as MATH_EVT: the
