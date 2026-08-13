@@ -147,7 +147,14 @@ module xt_sio_drive #(
     // PIA that is wrong -- must not leave the drive BUSY for ever.  Seen on HW
     // (2026-08-13): busy stuck, req_pending clear, and because port A followed
     // busy it starved the SIOV stub too.  Bound the command phase.
-    logic [15:0] cmd_wd;
+    // WIDTH MATTERS.  A command frame is not quick: the host asserts /COMMAND,
+    // waits ~750 us, then clocks 5 bytes at ~520 us each at 19200 baud -- about
+    // 4 ms end to end, and slower still if a guest picks a lower rate.  The
+    // first cut used 16 bits = 655 us at 100 MHz clk_sally, so the drive gave up
+    // BEFORE the first byte was even written: hardware showed 95 frames seen and
+    // ZERO bytes captured (2026-08-13).  24 bits is 167 ms -- comfortably longer
+    // than any frame, still short enough to recover from a wedged guest.
+    logic [23:0] cmd_wd;
     logic [7:0] dcsum;                 // checksum of the data frame we send
 
     wire [7:0] dev_in  = frame[0];
@@ -185,14 +192,14 @@ module xt_sio_drive #(
             // must not find us still replying to the previous frame.
             if (cmd_assert) begin
                 st <= S_CMD; fidx <= 3'd0; busy <= 1'b1; pace_run <= 1'b0;
-                cmd_wd <= 16'd0; dbg_frames <= dbg_frames + 8'd1;
+                cmd_wd <= 24'd0; dbg_frames <= dbg_frames + 8'd1;
             end else case (st)
 
             S_IDLE: begin busy <= 1'b0; reading <= 1'b0; end
 
             S_CMD: begin
-                cmd_wd <= cmd_wd + 16'd1;
-                if (cmd_wd == 16'hFFFF) st <= S_IDLE;    // give up, stay silent
+                cmd_wd <= cmd_wd + 24'd1;
+                if (cmd_wd == 24'hFFFFFF) st <= S_IDLE;  // give up, stay silent
                 if (serout_strobe && fidx < 3'd5) begin
                     frame[fidx] <= serout_byte;
                     fidx        <= fidx + 3'd1;
