@@ -226,10 +226,27 @@ static int dbg_poke(cpu6502 *r, uint16_t addr, uint8_t val)
 }
 
 /* ---- mount table ---------------------------------------------------------- */
+/* One ATX sector RECORD.  A logical sector can have SEVERAL of these -- that is
+ * the whole point of the format (see the atx_* block below). */
 typedef struct {
-    uint8_t  *img;          /* whole ATR file, kernel memory (NULL = empty) */
+    uint32_t off;           /* file offset of the payload (0 = no data field) */
+    uint16_t pos;           /* angular position, ATX units (26042 per revolution) */
+    uint16_t wkoff;         /* first weak byte within the sector, 0xFFFF = none */
+    uint8_t  trk, num;      /* track 0.., sector id 1..18 */
+    uint8_t  status;        /* raw ATX status byte */
+    uint8_t  pad;
+} atx_sec;
+
+typedef enum { IMG_ATR = 0, IMG_ATX } xl_imgkind;
+
+typedef struct {
+    uint8_t  *img;          /* whole image file, kernel memory (NULL = empty) */
     uint32_t  len;
-    uint16_t  secsz;        /* 128 / 256 from the ATR header */
+    uint16_t  secsz;        /* 128 / 256 */
+    xl_imgkind kind;
+    atx_sec  *atx;          /* ATX: sector map (NULL for ATR) */
+    uint32_t  natx;
+    uint8_t   fdc;          /* last FDC status byte, $FF = clean (STATUS cmd) */
 } xl_drive;
 static xl_drive g_drv[8];
 
@@ -246,11 +263,192 @@ static uint32_t atr_sector(const xl_drive *d, uint32_t sec, uint32_t *off)
     return l;
 }
 
+/* ============================ ATX (AT8X) ==================================
+ * An ATR is a flat bag of sectors; an ATX is a description of a DISC.  It
+ * records, per track, which sectors are actually THERE, where each one sits
+ * ANGULARLY, whether its data field is intact, and whether some of its bytes
+ * read back differently every time.  All four of those are copy protection,
+ * and a loader that only understands "sector N -> 128 bytes" defeats none of
+ * them -- it returns success where the real disc returns failure, and the
+ * game's protection check concludes it has been copied.
+ *
+ * WHAT WE CAN AND CANNOT HONOUR.  The paravirtual SIO hands the 6502 a status
+ * byte and a payload per request, which is exactly the channel the FDC-level
+ * protections use, so:
+ *   - a MISSING sector (no record on the track)      -> SIO timeout
+ *   - a bad/missing data field                       -> device error + CRC in FDC status
+ *   - a DELETED-data address mark                    -> data, flagged in FDC status
+ *   - WEAK BITS (extended record)                    -> those bytes randomised per read
+ *   - DUPLICATE sectors at different angular positions -> whichever one the head
+ *     reaches next, from a real rotation model (below)
+ * What we cannot reproduce is a protection that TIMES the transfer itself: our
+ * reply completes when the A9 gets to it, not after a rotational latency.  Any
+ * check that measures how long a read took will still be fooled.  Fixing that
+ * means delaying the doorbell, which is a follow-up.
+ *
+ * ROTATION.  A 1050 spins at 288 RPM = 208333 us/rev, and ATX positions are in
+ * units of 8 us, so a revolution is 26042 units.  We take the head's angular
+ * position from the A9 global timer (free-running at PERIPHCLK = 333 MHz) and,
+ * where a logical sector has several copies, return the one the head would
+ * reach FIRST.  Two reads a few milliseconds apart therefore land on different
+ * copies -- which is what the protection is looking for.
+ * ==========================================================================*/
+#define ATX_UNITS_PER_REV  26042u        /* 208333 us / 8 us */
+#define ATX_US_PER_REV     208333u
+#define ATX_SPT            18u           /* logical sectors per track, SD */
+
+/* ATX sector-status bits.  Only the three we can act on are named; ANY other
+ * non-zero bit is treated as "this sector is bad", which fails safe: a
+ * protection expecting an error gets one, rather than a false success. */
+#define ATXS_DELETED   0x04u             /* deleted-data address mark */
+#define ATXS_MISSING   0x08u             /* missing/bad data field */
+#define ATXS_EXTENDED  0x40u             /* extended record follows (weak bits) */
+#define ATXS_KNOWN     (ATXS_DELETED | ATXS_MISSING | ATXS_EXTENDED)
+
+static uint32_t a9_us(void)
+{
+    return (*(volatile uint32_t *)0xF8F00200u) / 333u;   /* PERIPHCLK = 333 MHz */
+}
+
+static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24); }
+static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0]|(p[1]<<8)); }
+
+/* Walk the track records and build the sector map.  Returns 0 on success. */
+static int atx_parse(xl_drive *d)
+{
+    const uint8_t *b = d->img;
+    if (d->len < 48 || b[0]!='A'||b[1]!='T'||b[2]!='8'||b[3]!='X') return -1;
+    uint32_t off = rd32(b + 0x1C);                 /* first track record */
+    if (!off || off >= d->len) return -1;
+
+    /* Pass 1: count records so the map is one allocation. */
+    uint32_t n = 0, p = off;
+    while (p + 32 <= d->len) {
+        uint32_t tsize = rd32(b + p);
+        uint16_t ttype = rd16(b + p + 4);
+        if (tsize < 32 || p + tsize > d->len || ttype != 0) break;
+        n += rd16(b + p + 10);
+        p += tsize;
+    }
+    if (!n) return -1;
+    d->atx = frtos_alloc(n * sizeof(atx_sec), 8, NULL);
+    if (!d->atx) return -12;
+
+    /* Pass 2: fill it. */
+    uint32_t k = 0; p = off;
+    while (p + 32 <= d->len && k < n) {
+        uint32_t tsize   = rd32(b + p);
+        uint16_t ttype   = rd16(b + p + 4);
+        if (tsize < 32 || p + tsize > d->len || ttype != 0) break;
+        uint8_t  trk     = b[p + 8];
+        uint16_t scount  = rd16(b + p + 10);
+        uint32_t hdrsize = rd32(b + p + 20);
+        uint32_t slist   = p + (hdrsize ? hdrsize : 32);
+        uint32_t rec     = slist + 8;              /* 8-byte sector-list header */
+        for (uint16_t i = 0; i < scount && k < n; i++, rec += 8) {
+            if (rec + 8 > d->len) break;
+            atx_sec *e = &d->atx[k++];
+            e->trk    = trk;
+            e->num    = b[rec];
+            e->status = b[rec + 1];
+            e->pos    = rd16(b + rec + 2);
+            /* startData is relative to the TRACK RECORD, not the file.  Read it
+             * as file-relative and sector 1 lands inside the sector list itself
+             * and decodes as an all-zero boot sector (verified against
+             * BallBlazer.atx: track-relative gives flags=00 nsec=2 load=$3C00
+             * init=$E477, whose first instruction is LDA $D301 / ORA #$02 —
+             * a protected loader turning BASIC off). */
+            uint32_t sd = rd32(b + rec + 4);
+            e->off    = sd ? p + sd : 0;
+            e->wkoff  = 0xFFFF;
+            e->pad    = 0;
+            if (e->off >= d->len) e->off = 0;      /* defensive: no data field */
+        }
+        /* Extended records (weak-bit descriptors) sit after the sector list:
+         * 8 bytes each { u8 size, u8 type, u8 sector, u8 pad, u16 data, u16 } —
+         * type 0x10 = weak bits, `data` = first weak byte offset. */
+        uint32_t ext = rec;
+        while (ext + 8 <= p + tsize && ext + 8 <= d->len) {
+            uint8_t  etype = b[ext + 1];
+            uint8_t  esec  = b[ext + 2];
+            uint16_t edata = rd16(b + ext + 4);
+            if (b[ext] == 0) break;
+            if (etype == 0x10)
+                for (uint32_t j = 0; j < k; j++)
+                    if (d->atx[j].trk == trk && d->atx[j].num == esec)
+                        d->atx[j].wkoff = edata;
+            ext += 8;
+        }
+        p += tsize;
+    }
+    d->natx = k;
+    return 0;
+}
+
+/* Read logical sector `sec` (1-based).  Fills out/olen and the FDC status byte.
+ * Returns the SIO status to hand back. */
+static uint8_t atx_read(xl_drive *d, uint32_t sec, uint8_t *out, uint32_t *olen)
+{
+    *olen = 0; d->fdc = 0xFF;
+    if (sec < 1) return 0x90;
+    uint32_t trk = (sec - 1) / ATX_SPT, num = (sec - 1) % ATX_SPT + 1;
+
+    /* Collect the copies of this logical sector. */
+    const atx_sec *cand[8]; uint32_t nc = 0;
+    for (uint32_t i = 0; i < d->natx && nc < 8; i++)
+        if (d->atx[i].trk == trk && d->atx[i].num == num) cand[nc++] = &d->atx[i];
+
+    if (!nc) {                                     /* the sector is NOT on the disc */
+        d->fdc &= (uint8_t)~0x10u;                 /* record not found */
+        return 0x8A;                               /* SIO timeout, like a real drive */
+    }
+
+    const atx_sec *e = cand[0];
+    if (nc > 1) {                                  /* pick by where the head is NOW */
+        uint32_t head = (a9_us() % ATX_US_PER_REV) / 8u;
+        uint32_t best = 0xFFFFFFFFu;
+        for (uint32_t i = 0; i < nc; i++) {
+            uint32_t d2 = (cand[i]->pos + ATX_UNITS_PER_REV - head) % ATX_UNITS_PER_REV;
+            if (d2 < best) { best = d2; e = cand[i]; }
+        }
+    }
+
+    uint32_t len = d->secsz ? d->secsz : 128;
+    if (sec <= 3) len = 128;                       /* the classic boot-sector quirk */
+    if (!e->off || e->off + len > d->len) {        /* record with no data field */
+        d->fdc &= (uint8_t)~0x08u;                 /* CRC error */
+        return 0x90;
+    }
+    memcpy(out, d->img + e->off, len);
+    *olen = len;
+
+    if (e->status & ATXS_EXTENDED) {               /* weak bits: fresh garbage per read */
+        uint32_t w = e->wkoff;
+        if (w < len) {
+            uint32_t r = a9_us() * 1103515245u + 12345u;
+            for (uint32_t i = w; i < len; i++) { r = r * 1103515245u + 12345u; out[i] = (uint8_t)(r >> 16); }
+        }
+    }
+    if (e->status & ATXS_DELETED) d->fdc &= (uint8_t)~0x20u;   /* deleted-data mark */
+    if (e->status & ATXS_MISSING) {                            /* bad data field */
+        d->fdc &= (uint8_t)~0x08u;
+        return 0x90;
+    }
+    if (e->status & ~ATXS_KNOWN) {                 /* unknown flag -> fail safe */
+        d->fdc &= (uint8_t)~0x08u;
+        return 0x90;
+    }
+    return 0x01;
+}
+
 static void xl_unmount_all(void)
 {
     for (int i = 0; i < 8; i++) {
         if (g_drv[i].img) frtos_free(g_drv[i].img, NULL);
+        if (g_drv[i].atx) frtos_free(g_drv[i].atx, NULL);
         g_drv[i].img = NULL; g_drv[i].len = 0; g_drv[i].secsz = 0;
+        g_drv[i].atx = NULL; g_drv[i].natx = 0;
+        g_drv[i].kind = IMG_ATR; g_drv[i].fdc = 0xFF;
     }
 }
 
@@ -289,11 +487,19 @@ void xl_sio_service(volatile uint8_t *page)
     switch (cmd) {
     case 0x53: {                                    /* STATUS: 4 bytes */
         out[0] = (uint8_t)(d->secsz == 256 ? 0x20 : 0x00);   /* bit5 = DD */
-        out[1] = 0xFF; out[2] = 0xE0; out[3] = 0x00;
+        /* byte 1 is the FDC status, active-LOW ($FF = clean).  For an ATX the
+         * last read leaves its verdict here, which is where a protection check
+         * looks to confirm the sector really was bad. */
+        out[1] = (d->kind == IMG_ATX) ? d->fdc : 0xFF;
+        out[2] = 0xE0; out[3] = 0x00;
         outlen = 4;
         break;
     }
     case 0x52: {                                    /* READ sector DAUX */
+        if (d->kind == IMG_ATX) {
+            st = atx_read(d, daux, out, &outlen);
+            break;
+        }
         uint32_t off, l = atr_sector(d, daux, &off);
         if (!l) { st = 0x90; break; }               /* off the medium */
         memcpy(out, d->img + off, l);
@@ -658,12 +864,14 @@ int xl_boot(const char *path, int drive)
         if (got == sz) break;
     }
     if (f.close) f.close(&f);
-    if (got != sz || !(buf[0] == 0x96 && buf[1] == 0x02)) {   /* ATR magic $0296 */
+    int is_atr = (got == sz) && buf[0] == 0x96 && buf[1] == 0x02;              /* $0296 */
+    int is_atx = (got == sz) && buf[0]=='A'&&buf[1]=='T'&&buf[2]=='8'&&buf[3]=='X';
+    if (!is_atr && !is_atx) {
         frtos_free(buf, NULL);
-        klog("[xl] not an ATR (v1 boots ATRs only)\r\n");
+        klog("[xl] not an ATR or ATX image\r\n");
         return -22;
     }
-    uint16_t secsz = (uint16_t)(buf[4] | (buf[5] << 8));
+    uint16_t secsz = is_atr ? (uint16_t)(buf[4] | (buf[5] << 8)) : 128;
     if (secsz != 128 && secsz != 256) { frtos_free(buf, NULL); return -22; }
 
     GP0_SALLYRST = sel | 1u; __asm__ volatile("dsb");   /* the realm sleeps (core preserved) */
@@ -677,12 +885,21 @@ int xl_boot(const char *path, int drive)
     g_drv[drive - 1].img   = buf;
     g_drv[drive - 1].len   = sz;
     g_drv[drive - 1].secsz = secsz;
+    g_drv[drive - 1].kind  = is_atx ? IMG_ATX : IMG_ATR;
+    g_drv[drive - 1].fdc   = 0xFF;
+    if (is_atx && atx_parse(&g_drv[drive - 1]) != 0) {
+        klog("[xl] ATX parse failed\r\n");
+        xl_unmount_all();
+        GP0_SALLYRST = sel;
+        return -22;
+    }
     consol_hold_option();                           /* OPTION across coldstart -> BASIC OFF; auto-released */
     GP0_SALLYRST = sel; __asm__ volatile("dsb");    /* coldstart; the OS boots Dn: on the selected core */
 
     klog("[xl] booted "); klog(path);
     klog(" as D"); klog_u((unsigned)drive);
-    klog(secsz == 256 ? ": (DD)\r\n" : ": (SD)\r\n");
+    if (is_atx) { klog(": (ATX, "); klog_u((unsigned)g_drv[drive-1].natx); klog(" sectors)\r\n"); }
+    else        klog(secsz == 256 ? ": (DD)\r\n" : ": (SD)\r\n");
     return 0;
 }
 
