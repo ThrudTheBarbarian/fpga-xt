@@ -48,6 +48,7 @@ module tb_xt_sio_mbox;
 
     // 6502 side
     logic        cpu_idx_we = 0, cpu_dat_we = 0, cpu_dat_re = 0, exec_we = 0;
+    logic        drv_sel = 0;  logic [8:0] drv_addr = 0;  wire [7:0] drv_rdata;
     logic [7:0]  cpu_reg_wdata = 0, cpu_idx_rdata, cpu_dat_rdata;
     logic        done, busy, chunk_ready;
 
@@ -61,6 +62,7 @@ module tb_xt_sio_mbox;
         .cpu_idx_we(cpu_idx_we), .cpu_dat_we(cpu_dat_we), .cpu_dat_re(cpu_dat_re),
         .cpu_reg_wdata(cpu_reg_wdata),
         .cpu_idx_rdata(cpu_idx_rdata), .cpu_dat_rdata(cpu_dat_rdata),
+        .drv_sel(drv_sel), .drv_addr(drv_addr), .drv_rdata(drv_rdata),
         .exec_we(exec_we), .done(done), .busy(busy), .chunk_ready(chunk_ready)
     );
 
@@ -310,6 +312,29 @@ module tb_xt_sio_mbox;
         cpu_get(b); ck("byte $FF", b === 8'hDD);
         cpu_get(b); ck("byte $100 (carried)", b === 8'h11);
         cpu_get(b); ck("byte $101", b === 8'h22);
+
+        // ---- T11: the drive's read port shares port A without disturbing it --
+        // The virtual drive reads the reply payload while it paces bytes onto
+        // the serial bus.  It shares port A with the $D5CD/$D5CE register port,
+        // so two things must hold: it reads the byte it ASKED for, and it does
+        // not move the register index underneath the 6502.
+        $display("T11: drive read port — correct byte, register index untouched");
+        cpu_setidx('h040);                    // park it on DCB[0], written in T2
+        @(negedge clk_cpu);
+        drv_sel = 1'b1; drv_addr = 9'h0C0;    // payload base
+        repeat (4) @(negedge clk_cpu);
+        ck("drive reads payload[0]", drv_rdata === 8'hEF);
+        drv_addr = 9'h0C3;
+        repeat (4) @(negedge clk_cpu);
+        ck("drive reads payload[3]", drv_rdata === 8'hDE);
+        drv_addr = 9'h100;                    // above $FF — the 9th bit works here too
+        repeat (4) @(negedge clk_cpu);
+        ck("drive reads across $FF", drv_rdata === 8'h11);
+        @(negedge clk_cpu); drv_sel = 1'b0;
+        repeat (4) @(negedge clk_cpu);
+        ck("register index survived the drive's reads", cpu_idx_rdata === 8'h40);
+        cpu_get(b);
+        ck("register port still reads its own byte", b === 8'h31);
 
         // ---- result ---------------------------------------------------------
         $display("");

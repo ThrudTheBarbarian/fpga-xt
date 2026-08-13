@@ -117,6 +117,17 @@ module xt_sio_mbox #(
     input  wire [7:0]               cpu_reg_wdata,
     output wire [7:0]               cpu_idx_rdata,
     output wire [7:0]               cpu_dat_rdata,
+
+    // ---- virtual SIO drive: a second reader on port A --------------------
+    // The drive (hdl/xt_sio_drive.sv) needs the reply payload while it paces
+    // bytes onto the bus.  It shares port A with the $D5CD/$D5CE register port
+    // rather than forcing a third BRAM port, which is safe because the two are
+    // never in use at once: a guest being served BY the drive is talking to the
+    // serial bus, not to $D5CD.  drv_sel arbitrates, and the drive wins --
+    // it is the one with a real-time deadline (docs/OS/sio-bridge.md §13).
+    input  wire                     drv_sel,      // 1 = port A serves the drive
+    input  wire [MBOX_LOG2-1:0]     drv_addr,
+    output wire [7:0]               drv_rdata,
     input  wire                     exec_we,      // $D5C7 write: the doorbell
     output wire                     done,         // $D5C7.0
     output wire                     busy,         // $D5C7.1
@@ -146,9 +157,13 @@ module xt_sio_mbox #(
     // existing mathcop.h layout (DCB $40, payload $C0) unchanged.
     logic [MBOX_LOG2-1:0] idx_q;
 
-    wire [WORD_AW-1:0] a_word = idx_q[MBOX_LOG2-1:2];
-    wire [1:0]         a_boff = idx_q[1:0];
-    wire [3:0]         a_be   = cpu_dat_we ? (4'd1 << a_boff) : 4'd0;
+    // Port-A address: the drive when it is selected, else the register index.
+    // Writes are register-port only -- the drive never writes the mailbox, it
+    // only reads the payload the A9 put there.
+    wire [MBOX_LOG2-1:0] a_addr = drv_sel ? drv_addr : idx_q;
+    wire [WORD_AW-1:0] a_word = a_addr[MBOX_LOG2-1:2];
+    wire [1:0]         a_boff = a_addr[1:0];
+    wire [3:0]         a_be   = (cpu_dat_we && !drv_sel) ? (4'd1 << a_boff) : 4'd0;
 
     always_ff @(posedge clk_cpu or posedge rst_cpu) begin
         if (rst_cpu)                      idx_q <= '0;
@@ -174,6 +189,9 @@ module xt_sio_mbox #(
     end
     assign cpu_dat_rdata = a_rd_q[a_boff_q*8 +: 8];
     assign cpu_idx_rdata = idx_q[7:0];
+    // Same registered lane; the drive holds drv_addr steady for far longer than
+    // the two clks it takes to settle, so it reads the byte it asked for.
+    assign drv_rdata     = a_rd_q[a_boff_q*8 +: 8];
 
     // ---- port B: the A9 -------------------------------------------------
     logic [WORD_AW-1:0] ptr_q;

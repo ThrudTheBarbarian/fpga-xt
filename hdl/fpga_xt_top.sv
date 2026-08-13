@@ -2593,6 +2593,11 @@ module fpga_xt_top (
             .cpu_idx_we    (sio_idx_we),  .cpu_dat_we (sio_dat_we),
             .cpu_dat_re    (sio_dat_re),  .cpu_reg_wdata (sio_reg_wval),
             .cpu_idx_rdata (sio_idx_rdata), .cpu_dat_rdata (sio_dat_rdata),
+            // Virtual-drive payload reader.  Held off until the service side
+            // lands: with drv_sel low, port A behaves exactly as before.
+            .drv_sel       (1'b0),
+            .drv_addr      (9'd0),
+            .drv_rdata     (),
             .exec_we    (math_exec_we),
             .done       (math_done),      .busy     (math_busy),
             .chunk_ready(math_chunk_ready)
