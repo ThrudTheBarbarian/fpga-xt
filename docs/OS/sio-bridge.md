@@ -483,7 +483,40 @@ A virtual drive exists for the lifetime of one launched title:
 Nothing persists between sessions.  That also means a crashed guest cannot leave
 an ID claimed.
 
-### 13.9 What this buys beyond compatibility
+### 13.9 Implementation note — most of this already exists
+
+Surveying the RTL before building it (2026-08-13) turned up that the virtual
+drive needs far less new logic than "emulate a 1050 at the serial level"
+suggests.  Three of the four pieces are already there:
+
+| Need | State | Where |
+|------|-------|-------|
+| Capture the guest's command frame | **exists, byte level** | `serout_byte` + `serout_strobe` in `pokey_serial`/`pokey_regs` — the guest writes the 5 frame bytes to `$D20D` and each raises a strobe |
+| Deliver reply bytes to the guest | **exists, byte level** | `ser_in_byte` + `ser_in_byte_pulse` into `pokey_regs` (`serin_q`, and it latches IRQST bit 5 when IRQEN[5] is set) — the same port the companion bridge uses for real transport |
+| Know when /COMMAND is asserted | **latched, not exported** | `pbctl_q[3]` in `hdl/pia_regs.sv`.  §11 calls CB2 "stubbed and inert", which is true of the PAD and of any consumer — but the register bit itself is stored, so the responder can read it without the pad work |
+| Frame engine + drive logic | **to build** | §13.2 |
+
+**No bit-level receiver is required.**  §2's "we own both ends" short-circuit
+applies here exactly as it does to the companion: the drive works at BYTE level
+and the bit rate is emulated by *pacing* the `ser_in_byte_pulse` cadence, which
+§2 already anticipates ("only pace the SERIN IRQ cadence if a timing-sensitive
+loader needs authentic gaps").  `pokey_serial` keeps the guest's own SKSTAT and
+IRQ semantics honest on the transmit side, which is what ACID `pokey_serclock` /
+`pokey_sertiming` check, and that is already passing.
+
+So the RTL to write is a **thin frame engine**, very close in shape to
+`hdl/xt_sio_mbox.sv`: latch the 5-byte command frame while /COMMAND is low,
+raise an event to the A9, accept a response byte stream back, and pace it out.
+
+And the **drive logic does not need writing at all** — `xl_sio_service()` in
+`loader/test/freertos/xl_boot.c` already decodes a request into a sector lookup,
+applies the ATX status/weak-bit/rotation rules and returns data plus a status
+byte.  It needs feeding from a command frame instead of a DCB, which is a
+different 5 bytes in the same order (device, command, aux1, aux2 — the DCB
+carries the same fields).  That reuse is also the argument for doing it this
+way: one implementation of "be a disk", per §13.7.
+
+### 13.10 What this buys beyond compatibility
 
 `pokey_serdirect` and `pokey_skstat` are currently `na` in the ACID sweep for
 exactly one reason — "no serial bus device" (`tools/acid-sweep.sh`).  A virtual
