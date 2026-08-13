@@ -577,7 +577,29 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   **accepted=12**, with `busy` set and `req_pending` clear — i.e. the full
   round trip completes.  ATR loading is unaffected (ElektraGlide and Despatch
   Rider both verified with D1: claimed).
-  **Open — and the diagnosis has MOVED.**  Reading the counters as
+  **Two more layers landed, and the guest now gets its data.**
+  (a) The ACK turnaround was paced in FRAME TIMES, which scale with the bit
+  rate; a real drive's turnaround is a fixed physical time.  Pacing it as an
+  absolute ~1 ms plus an `IRQEN[5]` gate made `irqen5_at_ack` read 1 — the guest
+  IS listening when we ACK.  (b) The reply then stalled after exactly one byte
+  per frame, because `pace_done` was gated on the guest's `shift_tick` and a
+  guest STOPS that clock while it reprograms its POKEY timers between sending
+  the command and receiving the answer.  A real drive has its own baud
+  generator: the pacing now tracks the tick when it runs and falls back to an
+  absolute ~520 µs period when it does not.  `tb_xt_sio_drive` T5 had asserted
+  the WRONG model (that a stopped clock means silence) and hid this.
+  **Where it stands (2026-08-13).**  BallBlazer's loader runs off the end of its
+  wait loop into game code, and the bus log shows real traffic: `dev=31 cmd=52`
+  reads of D1: sectors returning `st=01 len=0080` with a clean FDC.  The screen
+  says LOAD ERROR.  **The signature to chase: every sector is requested 6-10
+  times** — the guest is RETRYING, so it is receiving our reply and rejecting
+  it.  That is the data frame, not the framing and not the ACK.  Check, in
+  order: the data checksum as POKEY computes it; whether the guest's timeout
+  expires before the last of 131 bytes lands; and whether BallBlazer's loader
+  reprograms POKEY to a rate the pacing should be tracking but is not.
+  Instrument the reply side — a "reply abandoned before the last byte" counter
+  answers all three at once.
+  (Historical, for the shape of the earlier diagnosis.)  Reading the counters as
   "frames are truncated" was wrong.  Latching /COMMAND against transient PBCTL
   mode changes (24d5e5cd) was built on that reading and changed nothing
   measurable: 96/224/12 before, 94/214/10 after.  The better reading of the same
