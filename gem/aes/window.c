@@ -158,7 +158,9 @@ static const char* tbvariant(char*buf,size_t n,const char*base,int active){
 // glyph: a downward chevron (WTG_CHEVRON, a "view" popup) or a diagonal
 // double-headed arrow (WTG_EXPAND, a "fit"/expand action).
 static void draw_titlebtn(int bx,int by,int glyph,int active){
-    const char *base = glyph==WTG_CHEVRON ? "view" : glyph==WTG_EXPAND ? "fit" : NULL;
+    const char *base = glyph==WTG_CHEVRON ? "view" : glyph==WTG_EXPAND ? "fit" :
+                       glyph==WTG_ZOOMIN ? "zoomin" : glyph==WTG_ZOOMOUT ? "zoomout" :
+                       glyph==WTG_FULLSCR ? "fullscreen" : NULL;
     char nb[32]; const char *name = base ? tbvariant(nb,sizeof nb,base,active) : NULL;
     const theme_slice *s = name ? theme_find(aes_theme(),name) : NULL;
     if(s){ theme_blit(H(),aes_theme(),s, bx+(WTB_W-s->sw)/2, by+(WTB_W-s->sh)/2, s->sw, s->sh); return; }
@@ -176,6 +178,16 @@ static void draw_titlebtn(int bx,int by,int glyph,int active){
         int16_t d[4]={(int16_t)(cx-4),(int16_t)(cy+4),(int16_t)(cx+4),(int16_t)(cy-4)}; v_pline(H(),2,d);
         int16_t h1[6]={(int16_t)(cx+4),(int16_t)cy,(int16_t)(cx+4),(int16_t)(cy-4),(int16_t)cx,(int16_t)(cy-4)}; v_pline(H(),3,h1);
         int16_t h2[6]={(int16_t)(cx-4),(int16_t)cy,(int16_t)(cx-4),(int16_t)(cy+4),(int16_t)cx,(int16_t)(cy+4)}; v_pline(H(),3,h2);
+    } else if(glyph==WTG_ZOOMIN || glyph==WTG_ZOOMOUT){   // - and + : the zoom pair
+        int16_t hb[4]={(int16_t)(cx-4),(int16_t)cy,(int16_t)(cx+4),(int16_t)cy}; v_pline(H(),2,hb);
+        if(glyph==WTG_ZOOMIN){
+            int16_t vb[4]={(int16_t)cx,(int16_t)(cy-4),(int16_t)cx,(int16_t)(cy+4)}; v_pline(H(),2,vb);
+        }
+    } else if(glyph==WTG_FULLSCR){                        // four corners pushing outward
+        int16_t tl[6]={(int16_t)(cx-1),(int16_t)(cy-5),(int16_t)(cx-5),(int16_t)(cy-5),(int16_t)(cx-5),(int16_t)(cy-1)}; v_pline(H(),3,tl);
+        int16_t tr[6]={(int16_t)(cx+1),(int16_t)(cy-5),(int16_t)(cx+5),(int16_t)(cy-5),(int16_t)(cx+5),(int16_t)(cy-1)}; v_pline(H(),3,tr);
+        int16_t bl[6]={(int16_t)(cx-1),(int16_t)(cy+5),(int16_t)(cx-5),(int16_t)(cy+5),(int16_t)(cx-5),(int16_t)(cy+1)}; v_pline(H(),3,bl);
+        int16_t br[6]={(int16_t)(cx+1),(int16_t)(cy+5),(int16_t)(cx+5),(int16_t)(cy+5),(int16_t)(cx+5),(int16_t)(cy+1)}; v_pline(H(),3,br);
     }
 }
 
@@ -1424,17 +1436,18 @@ void wind_pin_top(int hd,int px){
 // gemd places the plane over the work area and keeps it there through every move/resize/raise/
 // close, no per-geometry sync from this side. plane_id=0 unbinds. On the SDL host there are no
 // HW planes and the content callback IS the picture: no-op.
-void wind_plane_bind(int hd,int plane_id,int scale){
+void wind_plane_bind(int hd,int plane_id,int scale,int src_w,int src_h){
 #ifdef GEM_XTOS
     if(g_mode==AES_CLIENT && hd>=1 && hd<MAXW && g_w[hd].used){
         gem_msg m; memset(&m,0,sizeof m);
         m.w[0]=GEM_WIND_PLANE; m.w[1]=(int16_t)hd;
         m.w[2]=(int16_t)plane_id; m.w[3]=(int16_t)scale;
+        m.w[4]=(int16_t)src_w;    m.w[5]=(int16_t)src_h;
         gem_send(g_gemfd,&m);
         return;
     }
 #endif
-    (void)hd; (void)plane_id; (void)scale;
+    (void)hd; (void)plane_id; (void)scale; (void)src_w; (void)src_h;
 }
 // Who paints a resize (aes.h: THE RESIZE DISCIPLINE). Client-side model only — no wire message.
 void wind_resize_mode(int hd,int mode){

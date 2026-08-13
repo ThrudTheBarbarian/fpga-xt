@@ -95,13 +95,23 @@ static int desk_sel(void) { for (int i = 1; i <= n_icons; i++) if (desk[i].ob_st
  * The desktop asks with wind_plane_bind (M6, the WIND_PLANE message) — "show plane
  * AES_PLANE_XL through this window" — and gemd does the placing, because only gemd knows
  * the window's SCREEN rect (a client may not ask, §5). */
-#define XL_SCALE 2                      // 320x192 XL writeback -> a 640x384 work area
+// The XL plane's SOURCE geometry, in its own pixels.  gemd is told these with the
+// bind so it can centre the picture and letterbox the rest (aes.h wind_plane_bind);
+// they are also what the window sizes itself to in windowed mode.
+#define XL_SRC_W 320
+#define XL_SRC_H (g_xl_ovs ? 240 : 192)
+#define XL_SCALE_MAX 5                  // XLCTL's SCALE field is 3 bits, 1..5
+static int g_xl_scale = 2;              // integer pixel zoom; 320x192 -> a 640x384 work area
 static int g_xlwin;
 // XL overscan capture (Settings menu): 0 = the standard 40x24 playfield
 // (default), 1 = the full displayable region (320x240, scanlines 8..247).
 // Rides bit 3 of the plane-bind scale word down to XLCTL; the window is
 // resized to match so the plane rect never scans past the surface.
 static int g_xl_ovs = 0;                     // window handle that owns the XL plane (0 = none)
+static int g_fswin;                     // full-screen window (0 = not full-screen)
+static int g_fs_scale = 1;              // the zoom that fits the screen in full-screen
+static int g_fs_exit;                   // the exit button is currently revealed
+static int g_fspx, g_fspy, g_fspw, g_fsph;   // the picture's box on screen (the rest is letterbox)
 static int g_active;                    // focused window (WM_TOPPED); wind_top() ignores plane windows
 static void xl_sync(void);              // bind the XL plane to g_xlwin (M6 WIND_PLANE); see below
 
@@ -283,11 +293,110 @@ static int g_ex = 380, g_ey = 130;
 // above (the Route-A alpha hole). m68k windows stay placeholders (no core hosted yet).
 // (XL_SCALE / g_xlwin are declared up by the drag-overlay hooks.)
 static void xl_sync(void) {
-    if (g_xlwin) wind_plane_bind(g_xlwin, AES_PLANE_XL,
-                                 XL_SCALE | (g_xl_ovs ? 8 : 0));
+    int hd = g_fswin ? g_fswin : g_xlwin;
+    if (hd) wind_plane_bind(hd, AES_PLANE_XL,
+                            (g_fswin ? g_fs_scale : g_xl_scale) | (g_xl_ovs ? 8 : 0),
+                            XL_SRC_W, XL_SRC_H);
 }
 static void xl_unbind(int win) {
-    if (win == g_xlwin) { wind_plane_bind(win, 0, 0); g_xlwin = 0; }
+    if (win == g_fswin) { wind_plane_bind(win, 0, 0, 0, 0); g_fswin = 0; }
+    if (win == g_xlwin) { wind_plane_bind(win, 0, 0, 0, 0); g_xlwin = 0; }
+}
+
+// ---- zoom and full-screen: the emulator window's own chrome ------------------
+// Three title buttons (-, +, full-screen).  They are AES chrome, so the press
+// arrives as WM_TBUTTON carrying an INDEX and nothing else (§11) — the desktop
+// never hit-tests a titlebar rect and is never told where the buttons are.
+enum { XLTB_ZOOMOUT = 0, XLTB_ZOOMIN = 1, XLTB_FULLSCR = 2 };
+
+// Resize the windowed emulator to the current zoom.  "wind_open again resizes in
+// place" is the AES idiom; the plane follows via gemd's plane-sync hook.
+static void xl_resize_to_zoom(void) {
+    if (!g_xlwin) return;
+    int px, py, pw0, ph0, bx, by, bw, bh;
+    wind_get(g_xlwin, WF_CURRXYWH, &px, &py, &pw0, &ph0);
+    wind_calc(WC_BORDER, W_NAME|W_CLOSER|W_MOVER, 0, 0,
+              XL_SRC_W*g_xl_scale, XL_SRC_H*g_xl_scale, &bx, &by, &bw, &bh);
+    wind_open(g_xlwin, px, py, bw, bh);
+    xl_sync();
+}
+
+// The largest integer zoom whose picture still fits the screen.  Full-screen uses
+// it; windowed zoom-in is capped by it too, since a window bigger than the screen
+// helps nobody.
+static int xl_zoom_fit(void) {
+    int z = XL_SCALE_MAX;
+    while (z > 1 && (XL_SRC_W*z > PW || XL_SRC_H*z > PH)) z--;
+    return z;
+}
+
+static void fs_content(int hd, int wx, int wy, int ww, int wh, void *ud);   // fwd
+
+// ENTER full-screen.  A SEPARATE borderless window (kind 0 = no titlebar, no
+// border) covering the whole screen, with the plane rebound to it: the emulator's
+// own window keeps its size and its place underneath and comes back untouched on
+// exit.  The picture cannot fill 1920x1080 at an integer zoom, so gemd centres it
+// and the surrounding letterbox/pillarbox is OURS — we paint it black.
+static void xl_fullscreen_enter(void) {
+    if (g_fswin || !g_xlwin) return;
+    g_fs_scale = xl_zoom_fit();
+    // The WHOLE screen at 0,0 -- over the menu bar too, or it is not full screen.
+    // It also makes the window's local coordinates the screen's, so the picture box
+    // and the exit button need no translation between the MU_M1 rectangle wait
+    // (screen), the content callback (surface) and the click (window-local).
+    g_fswin = wind_create(0, 0, 0, PW, PH);
+    if (!g_fswin) return;
+    g_fs_exit = 0;
+    g_fspw = XL_SRC_W*g_fs_scale; g_fsph = XL_SRC_H*g_fs_scale;
+    g_fspx = (PW - g_fspw)/2; g_fspy = (PH - g_fsph)/2;
+    wind_content(g_fswin, fs_content, NULL);
+    wind_plane_bind(g_xlwin, 0, 0, 0, 0);        // the plane is one window's at a time
+    wind_open(g_fswin, 0, 0, PW, PH);
+    wind_raise(g_fswin);
+    xl_sync();                                   // ... now it is the full-screen window's
+}
+
+static void xl_fullscreen_exit(void) {
+    if (!g_fswin) return;
+    int w = g_fswin;
+    wind_plane_bind(w, 0, 0, 0, 0);
+    g_fswin = 0; g_fs_exit = 0;
+    wind_close(w); wind_delete(w);
+    xl_sync();                                   // back to the emulator window
+}
+
+// The full-screen window's content: black everywhere, and — only once the pointer
+// has left the picture — an "exit full screen" pill floating in the letterbox.
+// Drawn as CONTENT in our own work area, hit-tested in our own coordinates, which
+// is what §11 says anything beyond the standard chrome must be.
+#define FS_BTN_W 190
+#define FS_BTN_H 34
+static void fs_btn_rect(int *x, int *y, int *w, int *h) {
+    *w = FS_BTN_W; *h = FS_BTN_H;
+    *x = (PW - FS_BTN_W)/2;
+    // In the bottom letterbox band if there is one, else just inside the bottom edge.
+    int below = PH - (g_fspy + g_fsph);
+    *y = (below >= FS_BTN_H + 16) ? g_fspy + g_fsph + (below - FS_BTN_H)/2
+                                  : PH - FS_BTN_H - 16;
+}
+static void fs_content(int hd, int wx, int wy, int ww, int wh, void *ud) {
+    (void)hd; (void)ud;
+    vsf_color(HV, 1); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);
+    int16_t r[4] = { (int16_t)wx, (int16_t)wy, (int16_t)(wx+ww-1), (int16_t)(wy+wh-1) };
+    vr_recfl(HV, r);                                   // the letterbox: black, and only black
+    if (!g_fs_exit) return;
+    int bx, by, bw, bh; fs_btn_rect(&bx, &by, &bw, &bh);
+    v_setrgb(HV, 251, 108, 118, 134); v_setrgb(HV, 252, 70, 78, 92);
+    vsf_color(HV, 252);
+    int16_t o[4] = { (int16_t)bx, (int16_t)by, (int16_t)(bx+bw-1), (int16_t)(by+bh-1) };
+    vr_recfl(HV, o);
+    vsf_color(HV, 251);
+    int16_t i[4] = { (int16_t)(bx+1), (int16_t)(by+1), (int16_t)(bx+bw-2), (int16_t)(by+bh-2) };
+    vr_recfl(HV, i);
+    vst_color(HV, 0); vst_height(HV, 15, 0,0,0,0);
+    vst_alignment(HV, VDI_TA_CENTER, VDI_TA_HALF, 0,0);
+    v_gtext(HV, bx+bw/2, by+bh/2, "Exit full screen");
+    vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
 }
 
 static emuwin *emu_of_window(int win) {
@@ -318,11 +427,12 @@ static void open_emulator(int type, const char *media, const char *boot) {
     emuwin *e = &EMU[s]; memset(e, 0, sizeof *e); e->used = 1;
     snprintf(e->name, sizeof e->name, "%s", emu_machine(type));
     if (boot) snprintf(e->boot, sizeof e->boot, "%s", boot);
-    // work area = the emulation plane, EXACTLY: the XL writeback is 320x192, so
-    // at XL_SCALE=2 the plane covers 640x384 — a larger work area would scan
-    // DDR garbage beyond the buffer into the window.
-    int pw = (type == ICT_EMU_8BIT) ? 320*XL_SCALE : 640;
-    int ph = (type == ICT_EMU_8BIT) ? (g_xl_ovs ? 240 : 192)*XL_SCALE : 400;
+    // Work area = the emulation plane at the current zoom.  gemd centres the plane
+    // inside whatever the work area turns out to be, so a mismatch letterboxes in
+    // black rather than scanning DDR past the writeback buffer into the window —
+    // which is exactly what full-screen mode relies on.
+    int pw = (type == ICT_EMU_8BIT) ? XL_SRC_W*g_xl_scale : 640;
+    int ph = (type == ICT_EMU_8BIT) ? XL_SRC_H*g_xl_scale : 400;
     int bx, by, bw, bh;
     wind_calc(WC_BORDER, W_NAME|W_CLOSER|W_MOVER, g_ex, g_ey, pw, ph, &bx, &by, &bw, &bh);
     e->win = wind_create(W_NAME|W_CLOSER|W_MOVER, bx, by, bw, bh);
@@ -331,6 +441,10 @@ static void open_emulator(int type, const char *media, const char *boot) {
     if (media) snprintf(title, sizeof title, "%s \xE2\x80\x94 %s", e->name, media);
     else       snprintf(title, sizeof title, "%s", e->name);
     wind_set_name(e->win, title); wind_content(e->win, emu_draw, e);
+    if (type == ICT_EMU_8BIT) {                       // zoom out / zoom in / full screen
+        int glyphs[3] = { WTG_ZOOMOUT, WTG_ZOOMIN, WTG_FULLSCR };
+        wind_titlebtns(e->win, glyphs, 3);
+    }
     wind_open(e->win, bx, by, bw, bh);
     g_ex += 34; g_ey += 30; if (g_ey > PH-320) { g_ex = 380; g_ey = 130; }
     if (type == ICT_EMU_8BIT && !g_xlwin) {   // frame the live 6502 plane here
@@ -2314,10 +2428,16 @@ static void menu_sync(void) {
 // follows the composite via gemd's plane-sync hook.
 static void xl_overscan_toggle(void) {
     g_xl_ovs = !g_xl_ovs;
+    if (g_fswin) {                                 // the source got taller/shorter: re-letterbox
+        g_fs_scale = xl_zoom_fit();
+        g_fspw = XL_SRC_W*g_fs_scale; g_fsph = XL_SRC_H*g_fs_scale;
+        g_fspx = (PW - g_fspw)/2;     g_fspy = (PH - g_fsph)/2;
+        xl_sync(); wind_redraw_win(g_fswin);
+    }
     if (g_xlwin) {
         int px, py, pw0, ph0, bx, by, bw, bh;
         wind_get(g_xlwin, WF_CURRXYWH, &px, &py, &pw0, &ph0);
-        int nw = 320*XL_SCALE, nh = (g_xl_ovs ? 240 : 192)*XL_SCALE;
+        int nw = XL_SRC_W*g_xl_scale, nh = XL_SRC_H*g_xl_scale;
         wind_calc(WC_BORDER, W_NAME|W_CLOSER|W_MOVER, 0, 0, nw, nh,
                   &bx, &by, &bw, &bh);
         wind_open(g_xlwin, px, py, bw, bh);
@@ -2332,7 +2452,8 @@ static void close_win(int win) {                             // mirror the WM_CL
     emuwin *e = emu_of_window(win);
     if (e) {
         e->used = 0;
-        if (win == g_xlwin) sys_xl_boot(NULL, 0);   // eject the medium, cold-boot to BASIC
+        if (win == g_xlwin) { xl_fullscreen_exit();   // else a black screen outlives the picture
+                              sys_xl_boot(NULL, 0); } // eject the medium, cold-boot to BASIC
     }
     xl_unbind(win);
     wind_close(win);
@@ -2568,8 +2689,24 @@ void _app_entry(int argc, char **argv) {
     for (;;) {                                       // interactive loop
         int mx, my, mb, ks, key, nc; int16_t msg[8];
         int pend = net_pending();                    // net I/O in flight: tick to pump it
-        int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|(pend?MU_TIMER:0), 2,1,1, 0,0,0,0,0, 0,0,0,0,0, msg, pend?40:0, 0,
+        /* FULL-SCREEN REVEAL.  The exit button appears when the pointer leaves the
+         * picture and disappears when it goes back in — one MU_M1 rectangle wait
+         * over the picture's box, flag 1 (leave) while the button is hidden and
+         * flag 0 (enter) while it is shown.  This is the classic GEM idiom and it
+         * costs nothing while the pointer stays put: no polling, no timer. */
+        int m1f = 0, m1x = 0, m1y = 0, m1w = 0, m1h = 0, m1on = 0;
+        if (g_fswin) {
+            m1on = MU_M1; m1f = g_fs_exit ? 0 : 1;
+            m1x = g_fspx; m1y = g_fspy; m1w = g_fspw; m1h = g_fsph;
+        }
+        int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|m1on|(pend?MU_TIMER:0), 2,1,1,
+                           m1f,m1x,m1y,m1w,m1h, 0,0,0,0,0, msg, pend?40:0, 0,
                            &mx, &my, &mb, &ks, &key, &nc);
+        if (r & MU_M1) {                             // crossed the edge of the picture
+            g_fs_exit = !g_fs_exit;
+            int bx, by, bw, bh; fs_btn_rect(&bx, &by, &bw, &bh);
+            wind_redraw_rect(g_fswin, bx, by, bw, bh);
+        }
         if (r & MU_QUIT) break;                      // gemd is gone: EOF on the channel
         net_pump();                                  // drain any arrived reply lines
         if (r & MU_KEYBD) {
@@ -2594,7 +2731,8 @@ void _app_entry(int argc, char **argv) {
             browser *b = br_of_window(msg[3]);       // close cancels any in-flight request
             if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }
             emuwin *e = emu_of_window(msg[3]);
-            if (e) { e->used = 0; if (msg[3] == g_xlwin) sys_xl_boot(NULL, 0); }  // eject + cold boot
+            if (e) { e->used = 0;
+                     if (msg[3] == g_xlwin) { xl_fullscreen_exit(); sys_xl_boot(NULL, 0); } }
             xl_unbind(msg[3]);
             wind_close(msg[3]);   // gemd drops the window and recomposites the rect it vacated
         }
@@ -2604,6 +2742,16 @@ void _app_entry(int argc, char **argv) {
              * and we were never told where the button is. */
             browser *b = br_of_window(msg[3]);
             if (b) br_tbutton(b, msg[4]);
+            else if (msg[3] == g_xlwin) {
+                if (msg[4] == XLTB_ZOOMOUT) {
+                    if (g_xl_scale > 1) { g_xl_scale--; xl_resize_to_zoom(); }
+                } else if (msg[4] == XLTB_ZOOMIN) {
+                    int fit = xl_zoom_fit();          // a window past the screen edge helps nobody
+                    if (g_xl_scale < fit) { g_xl_scale++; xl_resize_to_zoom(); }
+                } else if (msg[4] == XLTB_FULLSCR) {
+                    xl_fullscreen_enter();
+                }
+            }
         }
         if ((r & MU_MESAG) && msg[0] == WM_VSLID) {
             /* The view scrolled (gemd's bar, our pixels: the AES shifted the whole surface and
@@ -2657,7 +2805,12 @@ void _app_entry(int argc, char **argv) {
              * an option and must not be: a client has no z-order and no geometry. */
             int wh = aes_event_win();
             browser *b = (wh && wh != deskwin) ? br_of_window(wh) : NULL;
-            if (b)                  br_click(b, mx, my);
+            if (g_fswin && wh == g_fswin) {
+                int bx, by, bw, bh; fs_btn_rect(&bx, &by, &bw, &bh);
+                if (g_fs_exit && mx >= bx && mx < bx+bw && my >= by && my < by+bh)
+                    xl_fullscreen_exit();
+            }
+            else if (b)             br_click(b, mx, my);
             else if (wh == deskwin) desk_click(mx, my);
         }
         (void)mb; (void)ks;

@@ -580,7 +580,8 @@ int  wind_handle_wheel(int mx, int my, int delta);
 // as a pair.  Each carries a vector glyph (WTG_*).  Declarative: a list of glyph
 // ids in, and a press comes back as WM_TBUTTON(msg[4] = index) — the app never
 // learns (and must never need) a screen rect.
-enum { WTG_NONE = 0, WTG_CHEVRON = 1, WTG_EXPAND = 2 };   // title-button glyphs
+enum { WTG_NONE = 0, WTG_CHEVRON = 1, WTG_EXPAND = 2,
+       WTG_ZOOMOUT = 3, WTG_ZOOMIN = 4, WTG_FULLSCR = 5 };   // title-button glyphs
 #define WIND_MAXTB 3
 #define WIND_MAXSEG 16   // WT_PATH: most path components the AES will lay out as crumbs
 // DEPRECATED sugar over wind_set(handle, WF_TITLEBTNS, hi, lo, n, 0) — implemented
@@ -609,7 +610,16 @@ void wind_pin_top(int handle, int px);
 // it tracking the window through move/resize/z/close. Ordinary windows above occlude it per
 // pixel (the Route-A alpha hole). On the SDL host there are no HW planes: no-op, the content
 // callback is the picture.
-void wind_plane_bind(int handle, int plane_id, int scale);
+// src_w/src_h are the plane's SOURCE size in its own pixels (320x192 for the XL
+// playfield, 320x240 with overscan).  gemd needs them because the plane's screen
+// box is src*scale and the work area is not obliged to match: given the source
+// size it CENTRES the box in the work area and leaves the rest of the window to
+// the app, which is what makes a letterboxed full-screen mode possible at all.
+// Without them a work area larger than src*scale scanned DDR past the end of the
+// writeback buffer into the window, so the app had to size itself to the plane
+// exactly -- the numbers were duplicated on both sides of the wire and only one
+// of them was ever right.  Pass 0,0 to keep the old fill-the-work-area behaviour.
+void wind_plane_bind(int handle, int plane_id, int scale, int src_w, int src_h);
 // Plane ids = the kernel's SYS_plane_window namespace (XT_PLANE_* in xtsys.h), aliased here so
 // a portable client needs no kernel header.
 #define AES_PLANE_XL 1

@@ -543,6 +543,41 @@ static void xl_sio_bus_poll(void)
 
     if (outlen) sio_mbox_write(MC_OFF_SIO_DATA, out, outlen);
 
+    /* TRANSACTION LOG (first 64).  The one instrument that ends the guessing:
+     * what the guest ASKED for and what we ANSWERED, in order.  Everything about
+     * this bug lives in that pairing -- a wrong sector number, a status a real
+     * drive would not give, a length the loader did not expect. */
+    { static int nlog;
+      if (nlog < 64) { nlog++;
+        char lb[96];
+        /* Built by hand: the kernel's printf has no %X, and the first cut of this
+         * log came back as "cmd=02X" -- a broken instrument reads exactly like a
+         * broken system, which is the one thing an instrument must never do. */
+        /* A macro that expands to "a, b" and is USED as `lb[n++] = HX2(v)` loses
+         * the second nibble: assignment binds tighter than the comma operator, so
+         * it reads (lb[n++] = high), low -- and the low nibble is evaluated and
+         * thrown away.  Every field printed at half width and still looked like a
+         * plausible number.  A function, not a macro. */
+        static const char hx[] = "0123456789ABCDEF";
+        int n = 0;
+        #define PUT2(v) do { lb[n++] = hx[((v)>>4)&15]; lb[n++] = hx[(v)&15]; } while (0)
+        const char *t = "[sio] dev=";
+        while (*t) lb[n++] = *t++;
+        PUT2(dev);
+        t = " cmd="; while (*t) lb[n++] = *t++;
+        PUT2(cmd);
+        t = " aux="; while (*t) lb[n++] = *t++;
+        PUT2(daux >> 8); PUT2(daux & 0xFF);
+        t = " st="; while (*t) lb[n++] = *t++;
+        PUT2(st);
+        t = " len="; while (*t) lb[n++] = *t++;
+        PUT2(outlen >> 8); PUT2(outlen & 0xFF);
+        t = " fdc="; while (*t) lb[n++] = *t++;
+        { uint8_t f = drive >= 0 ? g_drv[drive].fdc : 0xFF; PUT2(f); }
+        lb[n++] = '\r'; lb[n++] = '\n'; lb[n] = 0;
+        #undef PUT2
+        klog(lb); } }
+
     /* Writing SIO_RSP releases the drive to pace the reply and clears
      * req_pending.  ok=1 -> COMPLETE, ok=0 -> ERROR; a NAKed or absent device
      * answers with ERROR and no payload, which is what a real drive does. */

@@ -681,6 +681,7 @@ static void do_wind_set(gclient *c, int ci, const gem_msg *m)
 #define GEMD_NPLANES 4                    /* ids 1..3; the kernel refuses ones that don't exist */
 static struct {
     int hd, scale;                        /* the bind (hd 0 = free) */
+    int src_w, src_h;                     /* the plane's own pixels (0 = fill the work area) */
     int sx, sy, sw, sh, sscale, sen;      /* last state SENT to the kernel: a composite that
                                            * moved nothing costs one comparison, not a syscall */
 } g_pl[GEMD_NPLANES];
@@ -701,7 +702,23 @@ static void gemd_plane_sync(void)                 /* the aes_set_plane_sync hook
         int ox, oy, ww, wh;
         wind_work_origin(g_pl[p].hd, &ox, &oy);
         wind_work_size(g_pl[p].hd, &ww, &wh);
-        plane_send(p, ox, oy, ww, wh, g_pl[p].scale, ww > 0 && wh > 0);
+        /* CENTRE the plane's own box in the work area rather than assuming the two
+         * match.  The box is src*scale; the work area is whatever the window is.
+         * When they are equal (the ordinary emulator window) this is the identity,
+         * and when the window is LARGER -- full-screen, where the picture cannot
+         * fill 1920x1080 at an integer zoom -- the difference is letterbox, and the
+         * app owns those pixels (it paints them black).  Before this the plane was
+         * stretched to the work area with no source bound, so the compositor read
+         * DDR past the end of the writeback buffer straight into the window. */
+        int pw = ww, ph = wh, px = ox, py = oy;
+        int sc = g_pl[p].scale & 7; if (sc < 1) sc = 1;
+        if (g_pl[p].src_w > 0 && g_pl[p].src_h > 0) {
+            pw = g_pl[p].src_w * sc; ph = g_pl[p].src_h * sc;
+            if (pw > ww) pw = ww;                 /* never spill outside the window */
+            if (ph > wh) ph = wh;
+            px = ox + (ww - pw) / 2; py = oy + (wh - ph) / 2;
+        }
+        plane_send(p, px, py, pw, ph, g_pl[p].scale, pw > 0 && ph > 0);
     }
 }
 
@@ -717,6 +734,7 @@ static void plane_unbind(int p)
 static void do_wind_plane(gclient *c, int ci, const gem_msg *m)
 {
     int hd = m->w[1], p = m->w[2], scale = m->w[3];
+    int src_w = m->w[4], src_h = m->w[5];
     if (wind_client_of(hd) != ci) return;                    /* not this client's window: ignore */
     if (p == 0) {                                            /* unbind, then composite the work
                                                               * area back to ordinary content */
@@ -732,6 +750,7 @@ static void do_wind_plane(gclient *c, int ci, const gem_msg *m)
         wind_error(c, 4); return;
     }
     g_pl[p].hd = hd; g_pl[p].scale = scale;
+    g_pl[p].src_w = src_w; g_pl[p].src_h = src_h;
     wind_plane_link(hd, p);
     gemd_log("wh=%d shows plane %d (scale %d, pid %d)", hd, p, scale, c->pid);
     wind_redraw_win(hd);       /* punch the hole; the plane-sync hook then places the plane */
