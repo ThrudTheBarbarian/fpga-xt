@@ -34,10 +34,20 @@ MIO** for firmware programming and runtime control.
 
 ## 2. The pivotal fact: our POKEY does not serialize
 
-The emulated POKEY is **register-level only**. SEROUT/SERIN ($D20D) are byte
-registers — there is **no bit shifter and no baud-rate generator**. The serial
-IRQ semantics are correct though: IRQST bits 3 (out-complete), 4 (out-ready),
-5 (in-ready) latch and fire properly (`hdl/pokey_regs.sv:240-251`).
+> **Amended 2026-08-13.** The "no bit shifter" half of this is no longer true:
+> `hdl/pokey_serial.sv` models POKEY's OWN shift timing (start bit, 8 data bits
+> LSB first, stop bit, shift clock selected from SKCTL[6:5], double-buffered
+> SEROUT) and is instantiated at `hdl/pokey.sv:213`, with `sim/tb_pokey_serial.sv`
+> behind it. ACID `pokey_serclock` and `pokey_sertiming` PASS on hardware. What
+> follows still holds for the **transport** — the FPGA↔STM32 link is byte-level
+> and carries no UART — but POKEY can now be clocked authentically when something
+> needs it, which §13 does.
+
+The emulated POKEY was **register-level only** when this was written. SEROUT/SERIN
+($D20D) are byte registers; the *timing* now exists alongside them (see the note
+above). The serial IRQ semantics were correct from the start: IRQST bits 3
+(out-complete), 4 (out-ready), 5 (in-ready) latch and fire properly
+(`hdl/pokey_regs.sv:240-251`).
 
 Therefore we **short-circuit serialization** — we own both ends, so no UART
 sits between the FPGA and the STM32:
@@ -283,7 +293,9 @@ the escape hatch for a *4th* serial role, not a way down to two.
 
 | Piece | State | Where |
 |-------|-------|-------|
-| POKEY serial data (SEROUT/SERIN) + serial IRQs (IRQST 3/4/5) | **Built** | `hdl/pokey_regs.sv` (register-level; no bit-shifter — by design, §2) |
+| POKEY serial data (SEROUT/SERIN) + serial IRQs (IRQST 3/4/5) | **Built** | `hdl/pokey_regs.sv` |
+| POKEY serial **shift timing** (framing, baud from the timers) | **Built** | `hdl/pokey_serial.sv`, instantiated `hdl/pokey.sv:213`; `sim/tb_pokey_serial.sv`. ACID `pokey_serclock` + `pokey_sertiming` pass. Supersedes the "no bit-shifter" claim in §2 |
+| **Virtual drive** (answers command frames on the bus) | **Absent** | §13 — the piece a fast loader needs |
 | Byte-level FPGA↔companion link (the SIO data path) | **Built, byte-level** | `hdl/peri_bridge.sv` + `hdl/peri_link.sv` (SPI). Validates the "no UART, byte-level" bet — currently targets the **RP2354**; re-point at the STM32F411. |
 | PIA registers + XL PORTB banking ($D300–$D303) | **Built** | `hdl/pia_regs.sv` |
 | PIA **CA1/CA2/CB1/CB2** = PROCEED/MOTOR/INTERRUPT/COMMAND | **Stubbed** — PACTL/PBCTL bits stored but inert | `hdl/pia_regs.sv` — the work in §10 |
@@ -317,6 +329,137 @@ hundreds of overflows per tach pulse. A 250 ms edge-count window is ample for
 (TRACESWO) is spent on USART1_RX, so the developer console rides ring buffers in
 target RAM that the debug probe reads and writes while the CPU runs. The same
 REPL is also served on USART2, which is the Zynq's channel.
+
+## 13. Virtual drives — serving disk images ON the serial bus
+
+### 13.1 Why register-level SIOV interception is not enough
+
+Today a disk image is served by **patching SIOV** (`loader/test/freertos/xl_boot.c`
++ `tools/xl_sio_stub.s`): the OS's SIO entry point is redirected to a stub that
+hands the DCB to the A9 and gets a sector back.  That works for every title that
+loads through the OS — Despatch Rider and ElektraGlide both do — and it is fast,
+because nothing is serialized.
+
+It cannot work for a **fast loader**, and fast loaders are common on protected
+disks.  BallBlazer is the worked example (traced 2026-08-13): it boots sectors
+1-17 through the OS, then installs its own loader which
+
+- programs POKEY channels 3/4 as the bit-rate generator (`$D200-$D207`),
+- asserts /COMMAND through **PIA PBCTL `$D303`**,
+- clocks the command frame out of **SEROUT `$D20D`**,
+- sets **SKCTL `$D20F`** and enables the serial IRQ via **IRQEN `$D20E`**,
+- then waits at `$BC4C` for its serial handler to count down and set `$CA`.
+
+It never calls SIOV again, so the stub never sees it, no drive answers, and it
+lands in its error loop at `$BCC7` (`LDA $D20A / AND #$F6 / STA $D01A` — the
+rainbow stripes) with "LOAD ERROR" at `$BCDE`.  **No amount of disk-image work
+reaches this**; the answer is a device that answers on the bus.
+
+### 13.2 Shape: a third transport into a mux that already exists
+
+`pokey_serial.sv`'s header already states the intended structure — *"the SPI
+bridge stays the transport for real SIO, and antic_top MUXES the two rather than
+merging them"*.  The virtual drive is a **third input to that mux**, not a
+re-architecture:
+
+```
+              ┌─ pokey_serial ─── authentic shift timing (built)
+POKEY $D20D ──┼─ peri_bridge ──── the PHYSICAL port, via the companion (built)
+              └─ virtual drive ── a disk image answering as a slave  (§13, to build)
+```
+
+The guest is always bus master (§3), so the virtual drive is purely a **slave**:
+watch /COMMAND, decode the 5-byte command frame (device, command, aux1, aux2,
+checksum), reply ACK/NAK, then COMPLETE plus the data frame — at whatever bit
+rate the guest programmed.  A fast loader raises that rate itself, which is the
+entire point of one, so authentic timing is not the same as slow.
+
+### 13.3 Coexistence — the ownership table
+
+A real peripheral may be plugged into the DIN port.  Two devices answering the
+same ID is a bus collision, so ownership must be decided BEFORE the first ACK
+window, not discovered afterwards.  Keep a per-ID table, `$31`-`$34`
+(D1:-D4:), each entry one of:
+
+| State | Meaning | Who answers |
+|-------|---------|-------------|
+| `PHYSICAL` | a real device claimed this ID | nobody — pass through to the companion |
+| `VIRTUAL`  | an image is mounted here | the virtual drive |
+| `UNCLAIMED`| nothing known | nobody (bus silence, guest times out) |
+
+Populate it at session start.  Until the companion can drive the physical port
+every ID resolves `UNCLAIMED -> VIRTUAL`, but **build the table now** so the rule
+is not retrofitted.  Two ways to fill it once the port is live:
+
+1. **Probe** — send STATUS to each ID and see who ACKs.  One-off cost, needs the
+   companion as bus master, unambiguous.
+2. **Passive back-off** — if an ACK appears that we did not send, mark that ID
+   `PHYSICAL` for the rest of the session and never answer it again.
+
+Prefer (1); keep (2) as a safety net, because it also catches a device hot-plugged
+mid-session.
+
+### 13.4 Four drives, and per-drive rotation phase
+
+Four simultaneous drives is a real requirement, not a round number: **Alternate
+Reality uses up to four disks at once**.  The mount table already has eight
+entries (`g_drv[]` in `xl_boot.c`), so what is needed is
+
+- demux on the command frame's **device byte**, `$31`-`$34`, and
+- an **independent rotation phase per drive**.  One global angular clock is
+  wrong: a title swapping between four disks is reading four platters that were
+  never in sync.
+
+Four mounted double-density images is ~520 KB of kernel memory — not a concern.
+
+### 13.5 Timing, and where the rotation model plugs in
+
+ATX support (`xl_boot.c`, 2026-08-13) already carries a 288 RPM model: 208333 us
+per revolution, ATX angular positions in 8 us units, head angle taken from the A9
+global timer.  It currently only decides **which** duplicate sector to return.
+
+On the serial bus it gains a second and more important consumer: it must decide
+**when** the data frame starts.  Rotational latency is exactly what a timing
+protection measures, and a reply that arrives instantly is as much a tell as a
+reply with the wrong bytes.  The same applies to the inter-byte gap — pace SERIN
+at the programmed bit rate rather than as fast as the A9 can push.
+
+### 13.6 Policy: authentic by default, fast by exception
+
+Serving everything on the bus gives **one** implementation of "be a disk"
+instead of two that can disagree, and that is the main argument for doing it.
+The cost is honest: standard OS SIO is 19200 baud ~= 1.6 KB/s, so a 90 KB disk
+takes ~60 s where the SIOV shortcut takes ~2 s.
+
+So: **serial-level is the default** (correct for every title), and the SIOV
+shortcut survives as an **opt-in per-title "fast load"** setting.  Per-title
+settings already have a home — the SQLite registry `desk_launch` consults — and
+this is one of the things the planned **right-click context menu on an ATR/ATX**
+should expose, alongside drive assignment (which of D1:-D4:) and write-protect.
+Double-click keeps meaning "just run it".
+
+Do NOT remove the SIOV stub until the virtual drive is proven on Despatch Rider,
+ElektraGlide and BallBlazer; keep both and flip the default afterwards.
+
+### 13.7 Session lifecycle
+
+A virtual drive exists for the lifetime of one launched title:
+
+1. `desk_launch` mounts the image(s) and claims the IDs in the ownership table;
+2. the guest runs, owning the bus as master;
+3. on emulator-window close, `SYS_xl_boot(NULL, 0)` already ejects — extend that
+   to release the **whole ownership table**, not one drive, so a subsequent
+   session re-probes from clean and a real device that appeared meanwhile is
+   seen.
+
+Nothing persists between sessions.  That also means a crashed guest cannot leave
+an ID claimed.
+
+### 13.8 What this buys beyond compatibility
+
+`pokey_serdirect` and `pokey_skstat` are currently `na` in the ACID sweep for
+exactly one reason — "no serial bus device" (`tools/acid-sweep.sh`).  A virtual
+drive is that device, so both should become real, scored tests.
 
 ### Open hardware item: BOOT1
 

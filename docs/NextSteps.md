@@ -591,6 +591,14 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   That is where SIO TIMING has to be modelled properly, and it is the same
   capability `pokey_serdirect` / `pokey_skstat` are parked on — currently `na`
   in the ACID sweep for exactly this reason ("no serial bus device").
+  **Designed: `docs/OS/sio-bridge.md` §13** — the virtual drive as a third
+  transport into the mux `pokey_serial.sv` already anticipates, a per-ID
+  ownership table (`PHYSICAL`/`VIRTUAL`/`UNCLAIMED`) so a real peripheral on the
+  DIN port and a mounted image can never both answer, four drives with
+  INDEPENDENT rotation phase (Alternate Reality uses four at once), and
+  authentic-by-default with the SIOV shortcut kept as an opt-in per-title "fast
+  load".  Note §13 also corrects §2/§11: `pokey_serial.sv` IS built and
+  instantiated, so the serial shift timing is not missing — only the responder.
 - **Launch an 8-bit app from the desktop** — the A9 reads the file, looks up its
   prefs (a namespace in the single SQLite registry), serves it as a **virtual disk**
   (ATR direct; XEX wrapped in a synthesized boot disk; cart via the cart window) and
