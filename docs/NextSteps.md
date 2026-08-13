@@ -544,30 +544,31 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 
 ## App launch (desktop → XL realm)
 
-- **The paravirtual SIO mailbox is a PORT now, not a window** (`$D5CD` index /
-  `$D5CE` data, `hdl/xt_sio_mbox.sv`).  It used to be reached through the
-  `$D5C6.0` aperture over `$4000-$5FFF` — the guest's own RAM — held mapped
-  across the doorbell AND the whole milliseconds-long A9 round-trip, so any
-  interrupt in that window ran with `$4000-$5FFF` replaced by the 512 B mailbox
-  aliased 16×.  Two defects came out of it, both now addressed:
-  `sally_mem`'s RAM write is gated on `!math_mapped` so an aperture write can no
-  longer shadow into the RAM underneath (it used to burn the 12-byte DCB at
-  `$4040-$404B` plus `$5A` at `$4005` into the running game on EVERY sector;
-  regression `tb_sally_math_overlay` T5), and the stub no longer maps anything.
-  Mailbox offsets are unchanged, so the A9 service code did not move.
-  **Open: does this actually fix `ElektraGlide.atr`?**  It derails into the
-  mapped region and dies executing the DCB's `$52` (DCOMND) as a KIL, which
-  parks the fidelity core in `ST_JAM` (RUN, icnt frozen, unhaltable) — but the
-  RTI frame on its stack has D set, which neither the stub nor the OS ever sets,
-  so the PC was ALREADY off the rails upstream of the aperture.  Removing the
-  window may only move where it dies.  Verify on HW; if it still wedges, the
-  next question is what diverts the PC into `$4000-$5FFF` in the first place.
-- **Deferred, and it would simplify the stub further:** the A9 cannot write
-  SALLY `$0000-$0FFF` (the ROM-loader window maps GP0 `$1000-$FFFF` 1:1, and
-  `$0000-$0FFF` belongs to `xt_gp0_regs`), which is the only reason the stub
-  copies payloads at all — everything at `$1000+` is already delivered straight
-  to BRAM.  A poke path in `xt_gp0_regs` driving the existing `rom_we`/`rom_addr`
-  port would make `MC_SIO_DELIVERED` unconditional and delete the copy loop.
+- **RESOLVED — ElektraGlide boots and runs.**  Three defects, in the order they
+  were peeled off.  (1) `sally_mem`'s RAM write was not gated on the math/SIO
+  aperture, so an aperture write shadowed into the guest RAM underneath — the
+  stub burned its 12-byte DCB at `$4040-$404B` plus `$5A` at `$4005` into the
+  running game on EVERY sector (regression `tb_sally_math_overlay` T5).  (2) The
+  mailbox was reached through the `$D5C6.0` aperture over `$4000-$5FFF` — the
+  guest's own RAM — held mapped across the whole A9 round-trip, so any interrupt
+  in that window ran with the guest's memory replaced; it is a **register port**
+  now (`$D5CD` index / `$D5CE` data, `hdl/xt_sio_mbox.sv`), which also took
+  clk_sally from +0.570 to +0.907.  (3) The actual killer: `xl_boot.c` delivered
+  sectors through the **ROM window while the 6502 was running**.  `sally_mem`
+  shares one BRAM port between the CPU read and the ROM-load write
+  (`mem_addr_w = rom_we ? rom_addr : addr`, and `bram_dout_q <= mem[mem_addr_w]`),
+  so a `rom_we` in the same clk as a CPU read handed the CPU the byte at the
+  ROM-window address — a corrupted opcode fetch.  That window is only safe with
+  SALLYRST asserted.  Despatch Rider delivered 3 sectors that way and survived on
+  odds; ElektraGlide streamed ~340 and could not.  Payloads now always come back
+  through the mailbox.  Soak: icnt linear 5.4M->41.9M over 80 s, title screen
+  renders, 3/3 cold boots identical, DR unaffected.
+- **Still worth doing, no longer urgent:** the A9 cannot write SALLY
+  `$0000-$0FFF` (the ROM-loader window maps GP0 `$1000-$FFFF` 1:1 and
+  `$0000-$0FFF` belongs to `xt_gp0_regs`).  That is now moot for SIO — everything
+  goes through the mailbox — but a poke path in `xt_gp0_regs` driving the
+  existing `rom_we`/`rom_addr` port would still be useful for A9-side debug.
+  **It must never be used against a running 6502** for the reason above.
 - **Launch an 8-bit app from the desktop** — the A9 reads the file, looks up its
   prefs (a namespace in the single SQLite registry), serves it as a **virtual disk**
   (ATR direct; XEX wrapped in a synthesized boot disk; cart via the cart window) and

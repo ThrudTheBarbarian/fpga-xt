@@ -719,6 +719,16 @@ module sally_mem #(
     // $4000: the corrupted entries fed wild indices back into the game and it
     // derailed into the scribble itself ($4040: 31 01 52 -> AND ($01),Y then $52
     // = KIL), which parks the fidelity core in ST_JAM — an unhaltable wedge.
+    // ROM-LOAD PORT HAZARD, recorded here because this is where it bites.
+    // mem_addr_w below is `rom_we ? rom_addr : addr`, and the CPU's read latch
+    // is `bram_dout_q <= mem[mem_addr_w]`.  So a rom_we in the same clk as a
+    // CPU read hands the CPU the byte at the ROM-WINDOW address instead of its
+    // own -- a corrupted opcode fetch.  That is acceptable ONLY because the
+    // port exists to bulk-load the OS image with SALLYRST asserted.  Anything
+    // that pulses rom_we against a RUNNING 6502 will randomly derail it: the
+    // paravirtual SIO used to deliver sectors this way and ElektraGlide died
+    // ~985k instructions into its load, every run, in a different place
+    // (xl_boot.c, 2026-08-13).  Deliver through the mailbox, not this port.
     wire        cpu_w      = rdy && !rw && !stack_op && !rom_override && !selftest_en
                           && !math_mapped;
     wire        mem_we     = cpu_w || rom_we;
