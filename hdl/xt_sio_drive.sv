@@ -94,7 +94,15 @@ module xt_sio_drive #(
     // port A is shared with the 6502's $D5CD/$D5CE register port, and holding
     // that for a whole transaction starves the SIOV stub -- which matters
     // because both front ends stay live (§13.7).  Narrow is safer.
-    output logic       reading
+    output logic       reading,
+    // ---- instrumentation ------------------------------------------------
+    // Deducing why no frame arrives is guesswork without these.  Cheap, and
+    // they answer the only three questions that matter: is /COMMAND framing at
+    // all, are the frame bytes arriving, and are we REJECTING them (wrong
+    // device / bad checksum) rather than never seeing them.
+    output logic [7:0] dbg_frames,      // /COMMAND assertions seen
+    output logic [7:0] dbg_bytes,       // SEROUT bytes captured in S_CMD
+    output logic [7:0] dbg_accepted     // frames that passed device+checksum
 );
 
     // ---- end-around-carry checksum ---------------------------------------
@@ -162,6 +170,7 @@ module xt_sio_drive #(
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             st <= S_IDLE; fidx <= 3'd0; req_valid <= 1'b0; reading <= 1'b0;
+            dbg_frames <= 8'd0; dbg_bytes <= 8'd0; dbg_accepted <= 8'd0;
             ser_in_byte <= 8'h00; ser_in_byte_pulse <= 1'b0;
             rsp_idx <= 9'd0; dcsum <= 8'h00; busy <= 1'b0;
             tick_cnt <= 10'd0; pace_run <= 1'b0;
@@ -176,7 +185,7 @@ module xt_sio_drive #(
             // must not find us still replying to the previous frame.
             if (cmd_assert) begin
                 st <= S_CMD; fidx <= 3'd0; busy <= 1'b1; pace_run <= 1'b0;
-                cmd_wd <= 16'd0;
+                cmd_wd <= 16'd0; dbg_frames <= dbg_frames + 8'd1;
             end else case (st)
 
             S_IDLE: begin busy <= 1'b0; reading <= 1'b0; end
@@ -187,6 +196,7 @@ module xt_sio_drive #(
                 if (serout_strobe && fidx < 3'd5) begin
                     frame[fidx] <= serout_byte;
                     fidx        <= fidx + 3'd1;
+                    dbg_bytes   <= dbg_bytes + 8'd1;
                 end
                 if (cmd_release) st <= S_CHECK;
             end
@@ -198,7 +208,8 @@ module xt_sio_drive #(
                 if (fidx == 3'd5 && dev_ok && csum_ok) begin
                     req_dev <= frame[0]; req_cmd  <= frame[1];
                     req_aux1 <= frame[2]; req_aux2 <= frame[3];
-                    req_valid <= 1'b1;
+                    req_valid    <= 1'b1;
+                    dbg_accepted <= dbg_accepted + 8'd1;
                     pace(ACK_FRAMES);
                     st <= S_ACKWAIT;
                 end else begin

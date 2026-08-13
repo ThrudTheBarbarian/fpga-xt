@@ -38,6 +38,9 @@ module xt_sio_cdc (
     input  wire [7:0]  req_aux1,
     input  wire [7:0]  req_aux2,
     input  wire        drv_busy,
+    input  wire [7:0]  dbg_frames,
+    input  wire [7:0]  dbg_bytes,
+    input  wire [7:0]  dbg_accepted,
     output wire        rsp_valid,        // LEVEL to xt_sio_drive
     output wire        rsp_ok,
     output wire [8:0]  rsp_len,
@@ -110,7 +113,15 @@ module xt_sio_cdc (
     wire req_pending = (req_s2 != rsp_tgl);
 
     assign sio_req_word   = req_word_q;              // stable while pending
-    assign sio_dstat_word = {30'd0, busy_s2, req_pending};
+    // Counters are free-running and only ever READ by the A9 for diagnosis, so
+    // they cross without a handshake: a torn byte costs one confusing sample,
+    // never correctness.  Called out because everything else here is toggled.
+    (* ASYNC_REG = "TRUE" *) logic [23:0] dbg_s1, dbg_s2;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin dbg_s1 <= 24'd0; dbg_s2 <= 24'd0; end
+        else     begin dbg_s1 <= {dbg_accepted, dbg_bytes, dbg_frames}; dbg_s2 <= dbg_s1; end
+    end
+    assign sio_dstat_word = {dbg_s2, 6'd0, busy_s2, req_pending};
     assign sio_req_irq    = req_pending;
 
     // ---- quasi-static: the ownership table ------------------------------
