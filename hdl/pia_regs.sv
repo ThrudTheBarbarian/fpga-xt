@@ -87,6 +87,12 @@ module pia_regs (
     output wire [7:0]  joy_porta_oe,
     output wire [7:0]  joy_portb_out,
     output wire [7:0]  joy_portb_oe,
+    // /COMMAND — PIA CB2 in set/clear output mode.  The OS asserts the SIO
+    // command line by writing PBCTL bit 3 (docs/OS/sio-bridge.md §5), and the
+    // virtual drive frames on it (§13.9).  The PAD is still absent (§11); this
+    // is purely the latched register bit, which costs nothing to expose.
+    // Active LOW, and only meaningful in output mode (PBCTL[5:4] == 2'b11).
+    output wire        sio_command_n,
 
     // PORTB output latch — drives bank_translator's PORTB[3:2] /
     // PORTB[4] regardless of PBCTL[2] (130XE banking semantics).
@@ -122,6 +128,7 @@ module pia_regs (
     assign joy_porta_oe  = pactl_q[2] ? porta_ddr_q : 8'h00;
     assign joy_portb_out = portb_out_latch_q;
     assign joy_portb_oe  = pbctl_q[2] ? portb_ddr_q : 8'h00;
+    assign sio_command_n = (pbctl_q[5:4] == 2'b11) ? pbctl_q[3] : 1'b1;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin

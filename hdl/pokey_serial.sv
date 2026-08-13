@@ -52,6 +52,13 @@ module pokey_serial (
     output logic       ser_out_complete,    // LEVEL: shifter idle    (bit 3)
     output wire        ser_out_bit,         // serial data out
 
+    // ---- shift clock, exported ------------------------------------------
+    // The virtual SIO drive (docs/OS/sio-bridge.md §13) paces its replies off
+    // THIS tick rather than a constant, so it automatically tracks whatever
+    // rate the guest programmed -- including the high-speed rates a US-Doubler
+    // negotiates (§13.6).  A frame is 20 ticks: two per bit, ten bits.
+    output wire        shift_tick_o,
+
     // ---- debug taps ------------------------------------------------------
     output logic [3:0] dbg_bitcnt,
     output logic       dbg_holding_valid
@@ -65,6 +72,8 @@ module pokey_serial (
                     : (smode == 2'b11) ? timer2_pulse
                     : (smode == 2'b01 || smode == 2'b10) ? timer4_pulse
                     :                    ext_clk_tick;
+
+    assign shift_tick_o = shift_tick;
 
     logic [7:0] holding_q;
     logic       holding_valid_q;
