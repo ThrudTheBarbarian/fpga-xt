@@ -128,6 +128,9 @@ void aes_init(int vdi_handle, const theme *th);
 // it is bound to the app's own backing store, and the app has no other workstation to reach for
 // (it has no screen). Locally it is whatever the app passed to aes_init. Same callback, both.
 int aes_handle(void);
+// A workstation valid for text MEASUREMENT even outside a render pass (where
+// aes_handle() is 0 for a gemd client).  See aes/object.c.
+int aes_measure_handle(void);
 
 // One library, two modes (RESPONSIBILITIES.md §5). The mode is decided in appl_init(), NOT
 // here: aes_init merely binds a workstation and every app calls it (gemd included), so it

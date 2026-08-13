@@ -507,7 +507,11 @@ int form_do_dialog(OBJECT *t, int start) {
 }
 
 // ---- form_alert ---------------------------------------------------------
-static int atext_w(const char *s){ int16_t e[8]; vst_height(aes_handle(),14,0,0,0,0); vqt_extent(aes_handle(),s,e); return e[2]-e[0]; }
+// Measure through aes_measure_handle(), NOT aes_handle(): form_alert lays the
+// dialog out BEFORE its window exists, so for a gemd client aes_handle() is
+// still 0 here and vqt_extent would silently return a zero extent.
+static int atext_w(const char *s){ int16_t e[8]; int h = aes_measure_handle();
+    vst_height(h,14,0,0,0,0); vqt_extent(h,s,e); return e[2]-e[0]; }
 
 int form_alert(int defbtn, const char *s) {
     char line[5][80], btn[3][24]; int icon=0, nl=0, nb=0;

@@ -4,6 +4,7 @@
 
 #include "aes/aes_internal.h"
 #include "font.h"
+#include "gfx.h"     // gfx_surface_alloc — the 1x1 measurement workstation
 #include <string.h>
 
 static int g_vh;
@@ -25,6 +26,34 @@ void aes_init(int vh, const theme *th) {
 }
 int          aes_handle(void) { return g_vh; }
 const theme *aes_theme(void)  { return g_th; }
+
+// A workstation that is ALWAYS valid, for MEASURING text outside a render pass.
+//
+// g_vh is only bound to a real workstation while client_render() has a window's
+// vh selected; it restores the previous handle on the way out, and for a gemd
+// CLIENT that previous handle is the 0 the app passed to aes_init(0, &TH) ("the
+// AES binds our workstation at wind_open").  So any code that measures text
+// BEFORE its window exists — form_alert laying out a dialog is the whole of it —
+// runs with handle 0, vdi_ws_of(0) fails, and vqt_extent returns a ZERO extent
+// without complaining.  Every string then measures 0 wide and the dialog
+// collapses to icon + padding: a 105x126 alert with its message clipped to the
+// first two characters (HW 2026-08-13, "Can't boot BallBlazer.atx").
+//
+// Text metrics don't depend on the destination surface, so a 1x1 scratch
+// workstation measures identically to the real one.  It has no text_face of its
+// own, so it falls back to g_default_face — the face the app set with
+// vdi_set_face() — which is exactly what the render pass would have used.
+static gfx_surface *g_measure_surf;
+static int          g_measure_vh;
+int aes_measure_handle(void) {
+    if (g_vh) return g_vh;                  // inside a render pass: use the real one
+    if (!g_measure_vh) {
+        if (!g_measure_surf) g_measure_surf = gfx_surface_alloc(1, 1);
+        if (!g_measure_surf) return 0;      // out of memory: caller gets the old zero-extent
+        g_measure_vh = v_opnvwk(g_measure_surf);
+    }
+    return g_measure_vh;
+}
 
 // G_CICON label style: 1 = over a dark backdrop (desktop/wallpaper) -> white text
 // + shadow, selection = white-on-black; 0 = over a light window -> black text,

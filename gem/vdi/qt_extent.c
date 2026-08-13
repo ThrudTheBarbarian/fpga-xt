@@ -9,8 +9,14 @@
 #include <math.h>
 
 void op_qt_extent(vdi_pb *pb) {
-    vdi_ws *w = vdi_ws_of(pb->contrl[6]); if (!w) return;
+    // Clear FIRST, then validate: bailing on a bad handle before zeroing left
+    // ptsout holding whatever the previous VDI call put there, so a caller that
+    // measured through an unbound workstation got STALE GARBAGE rather than a
+    // defined answer — and silently, since there is no return code.  Measured
+    // -1919 for a string 190 px wide (host, 2026-08-13).  A zero extent is still
+    // wrong, but it is wrong the same way every time, which is debuggable.
     for (int i = 0; i < 8; i++) pb->ptsout[i] = 0;
+    vdi_ws *w = vdi_ws_of(pb->contrl[6]); if (!w) return;
     font *f = vdi_ws_font(w); if (!f) return;
 
     int n = pb->contrl[3]; if (n < 0) n = 0; if (n > 127) n = 127;

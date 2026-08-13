@@ -118,7 +118,14 @@ static void set_sep_pen(const theme *th) {
 
 #define EACH_CHILD(t,p,c) for(int c=(t)[p].ob_head;c>=0;c=(c==(t)[p].ob_tail?-1:(t)[c].ob_next))
 
-static int text_w(const char *s) { int16_t e[8]; vst_height(H(),14,0,0,0,0); vqt_extent(H(),s,e); return e[2]-e[0]; }
+// aes_measure_handle(), NOT H(): the menu bar is LAID OUT (title x-positions)
+// outside any render pass, where aes_handle() is 0 for a gemd client.  This
+// used to "work" only because vqt_extent left ptsout holding the PREVIOUS
+// call's extent, which for sequential title measurement is close enough to
+// look right; once that stale-data path was fixed the titles all measured 0
+// and stacked on top of each other ("DeskObjeShoWindSettings", HW 2026-08-13).
+static int text_w(const char *s) { int16_t e[8]; int h = aes_measure_handle();
+    vst_height(h,14,0,0,0,0); vqt_extent(h,s,e); return e[2]-e[0]; }
 
 // Bar-dropdown item encoding (see aes.h MENU_SEP / MENU_CHECK / MENU_DISABLE):
 // a leading "-" marks a separator (a non-selectable divider); a leading \x01

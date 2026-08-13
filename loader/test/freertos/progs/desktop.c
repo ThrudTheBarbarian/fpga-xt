@@ -404,14 +404,14 @@ static void desk_launch_full(const char *name, const char *full, int media_type)
             if (emu == ICT_EMU_8BIT && !strcmp(meth, "disk") && full) {
                 long rc = sys_xl_boot(full, 1);
                 if (rc != 0) {
-                    char m[80]; snprintf(m, sizeof m, "[1][Can't boot %s (%ld)][OK]", name, rc);
+                    char m[96]; snprintf(m, sizeof m, "[1][Can't boot %.48s (%ld)][OK]", name, rc);
                     form_alert(1, m);
                     return;
                 }
             } else if (emu == ICT_EMU_8BIT && strcmp(meth, "cart") && full) {
                 long rc = sys_xexload(full, 0);
                 if (rc != 0) {
-                    char m[80]; snprintf(m, sizeof m, "[1][Can't run %s (%ld)][OK]", name, rc);
+                    char m[96]; snprintf(m, sizeof m, "[1][Can't run %.48s (%ld)][OK]", name, rc);
                     form_alert(1, m);
                     return;
                 }
@@ -437,11 +437,11 @@ static void desk_launch_full(const char *name, const char *full, int media_type)
     }
     if (emu == ICT_EMU_8BIT && is_disk && full) {
         long rc = sys_xl_boot(full, 1);
-        if (rc != 0) { char m[80]; snprintf(m, sizeof m, "[1][Can't boot %s (%ld)][OK]", name, rc);
+        if (rc != 0) { char m[96]; snprintf(m, sizeof m, "[1][Can't boot %.48s (%ld)][OK]", name, rc);
                        form_alert(1, m); return; }
     } else if (emu == ICT_EMU_8BIT && is_exec && full) {
         long rc = sys_xexload(full, 0);
-        if (rc != 0) { char m[80]; snprintf(m, sizeof m, "[1][Can't run %s (%ld)][OK]", name, rc);
+        if (rc != 0) { char m[96]; snprintf(m, sizeof m, "[1][Can't run %.48s (%ld)][OK]", name, rc);
                        form_alert(1, m); return; }
     }
     open_emulator(emu, name, boot);
