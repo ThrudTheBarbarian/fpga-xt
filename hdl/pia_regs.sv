@@ -128,7 +128,23 @@ module pia_regs (
     assign joy_porta_oe  = pactl_q[2] ? porta_ddr_q : 8'h00;
     assign joy_portb_out = portb_out_latch_q;
     assign joy_portb_oe  = pbctl_q[2] ? portb_ddr_q : 8'h00;
-    assign sio_command_n = (pbctl_q[5:4] == 2'b11) ? pbctl_q[3] : 1'b1;
+    // /COMMAND must HOLD its level across a transient mode change, not snap
+    // high.  Deriving it combinationally as
+    //     (pbctl_q[5:4] == 2'b11) ? pbctl_q[3] : 1'b1
+    // means any PBCTL write that momentarily leaves set/reset output mode --
+    // a DDR-access reconfigure, for instance -- glitches /COMMAND high and
+    // back, which the virtual drive reads as release-then-assert and restarts
+    // its frame mid-flight.  Measured on HW (2026-08-13): 96 frames seen but
+    // only 12 complete, ~2 bytes captured in each of the rest.
+    // So latch the level, and only update it while CB2 really IS a set/reset
+    // output.  A 2-FF sync downstream fixes metastability; it cannot fix a
+    // glitch that is genuinely present on the signal.
+    logic cmd_level_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)                        cmd_level_q <= 1'b1;   // idle high
+        else if (pbctl_q[5:4] == 2'b11) cmd_level_q <= pbctl_q[3];
+    end
+    assign sio_command_n = cmd_level_q;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
