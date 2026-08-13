@@ -569,6 +569,28 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   goes through the mailbox — but a poke path in `xt_gp0_regs` driving the
   existing `rom_we`/`rom_addr` port would still be useful for A9-side debug.
   **It must never be used against a running 6502** for the reason above.
+- **BallBlazer.atx needs a VIRTUAL DRIVE ON THE SERIAL BUS, not a better disk
+  image.**  ATX support landed (`xl_boot.c`: sector map, missing/CRC/deleted
+  sectors, weak bits, and a 288 RPM rotation model for duplicate sectors) and
+  the image mounts and serves correctly — BallBlazer reads sectors 1-8 and
+  10-17, correctly skipping the 9 that is genuinely absent (9 and 18 are absent
+  from every one of its 23 populated tracks).  It then stops at its own LOAD
+  ERROR, and the reason is not the disk at all: **it is a fast loader that
+  bypasses SIOV and drives the bus itself.**  The loaded code programs POKEY
+  channels 3/4 as the bit-rate generator (`$D200-$D207`), asserts /COMMAND
+  through PIA PBCTL (`$D303`), clocks the frame out of SEROUT (`$D20D`), sets
+  SKCTL (`$D20F`) and enables the serial IRQ (`$D20E`) — then waits at `$BC4C`
+  for its interrupt handler to count `$D2` down to zero and set `$CA`.  No drive
+  answers, so `$CA` never becomes 1 and it lands in its error loop at `$BCC7`
+  (`LDA $D20A / AND #$F6 / STA $D01A` — the rainbow stripes on screen, with the
+  "LOAD ERROR" screen codes at `$BCDE`).
+  Our paravirtual SIO hooks SIOV, so it serves the OS boot loader and nothing
+  else.  Making this class of title work means emulating a 1050 at the SERIAL
+  level: watch /COMMAND, decode the 5-byte command frame, and reply with
+  ACK/COMPLETE plus the data frame at the loader's own (non-standard) bit rate.
+  That is where SIO TIMING has to be modelled properly, and it is the same
+  capability `pokey_serdirect` / `pokey_skstat` are parked on — currently `na`
+  in the ACID sweep for exactly this reason ("no serial bus device").
 - **Launch an 8-bit app from the desktop** — the A9 reads the file, looks up its
   prefs (a namespace in the single SQLite registry), serves it as a **virtual disk**
   (ATR direct; XEX wrapped in a synthesized boot disk; cart via the cart window) and
