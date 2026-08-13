@@ -108,6 +108,7 @@ static int g_xlwin;
 // Rides bit 3 of the plane-bind scale word down to XLCTL; the window is
 // resized to match so the plane rect never scans past the surface.
 static int g_xl_ovs = 0;                     // window handle that owns the XL plane (0 = none)
+static OBJECT *g_menubar;               // (tentative: defined again with the menu code below)
 static int g_fswin;                     // full-screen window (0 = not full-screen)
 static int g_fs_scale = 1;              // the zoom that fits the screen in full-screen
 static int g_fs_exit;                   // the exit button is currently revealed
@@ -351,8 +352,12 @@ static void xl_fullscreen_enter(void) {
     g_fspx = (PW - g_fspw)/2; g_fspy = (PH - g_fsph)/2;
     wind_content(g_fswin, fs_content, NULL);
     wind_plane_bind(g_xlwin, 0, 0, 0, 0);        // the plane is one window's at a time
-    wind_open(g_fswin, 0, 0, PW, PH);
-    wind_raise(g_fswin);
+    menu_bar(g_menubar, 0);                      // gemd composites the strip ABOVE every window
+                                                 // (§10), so a full-screen window that leaves it
+                                                 // up is not full screen -- it has a menu bar
+                                                 // across the top of the picture.
+    wind_open(g_fswin, 0, 0, PW, PH);            // opening it focuses it (gemd), which is what
+                                                 // routes MOTION here and makes the reveal work
     xl_sync();                                   // ... now it is the full-screen window's
 }
 
@@ -362,6 +367,7 @@ static void xl_fullscreen_exit(void) {
     wind_plane_bind(w, 0, 0, 0, 0);
     g_fswin = 0; g_fs_exit = 0;
     wind_close(w); wind_delete(w);
+    menu_bar(g_menubar, 1);                      // the strip comes back with the desktop
     xl_sync();                                   // back to the emulator window
 }
 

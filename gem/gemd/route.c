@@ -103,6 +103,19 @@ static void set_focus(int hd)
 
 void gemd_forget_window(int hd) { if (g_focus == hd) g_focus = 0; }
 
+/* A window that OPENS takes the focus, the same way a clicked one does.
+ * Focus-follows-click alone left a freshly opened window unfocused until it was
+ * clicked, and MOTION only ever goes to the focused window — so a window that
+ * wanted hover (an emulator's full-screen surround revealing its exit button)
+ * simply never heard the pointer, and keys went to whatever was focused before.
+ * The desktop already worked around the keyboard half of this by hand.
+ * W_BOTTOM is exempt: the desktop must not steal the focus by existing. */
+void gemd_focus_window(int hd)
+{
+    if (hd >= 1 && (wind_kind_of(hd) & W_BOTTOM)) return;
+    set_focus(hd);
+}
+
 /* Screen -> window-local. The client draws its content at 0,0 and is told where the pointer is
  * IN THAT SAME SPACE, so it hit-tests its own widgets with the coordinates it drew them at. */
 static void to_local(int hd, int sx, int sy, int *lx, int *ly)

@@ -721,6 +721,7 @@ int  wind_plane_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].plane_
 void wind_plane_link(int hd,int plane_id){ if(hd>=1&&hd<MAXW&&g_w[hd].used) g_w[hd].plane_id=plane_id; }
 uint32_t wind_gen_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf_gen:0; }
 int  wind_client_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].client:-1; }
+int  wind_kind_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].kind:0; }
 // The BOTTOM window's client (the desktop under gemd) — the menu owner of last resort (§10):
 // classic GEM shows the desktop's menu whenever no app window is active.
 int  wind_bottom_client(void){ return g_nz>0 ? g_w[g_z[0]].client : -1; }

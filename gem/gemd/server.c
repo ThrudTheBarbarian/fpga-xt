@@ -127,6 +127,7 @@ static void prof_dump(void) {}
  * wind_redraw_area paints it whenever a damage rect reaches the band — the same path that
  * painted the local-mode bar. */
 int gemd_focus_client(void);                 /* route.c: the focused window's client, or -1 */
+void gemd_focus_window(int hd);              /* route.c: give this window the focus */
 static void menu_strip_redraw(void)
 {
     int sh = aes_top_reserve(); if (sh <= 0) return;
@@ -424,6 +425,8 @@ static void do_wind_open(gclient *c, int ci, const gem_msg *m)
     rd.w[0] = GEM_MSG_REDRAW; rd.w[1] = (int16_t)hd;
     rd.w[2] = 0; rd.w[3] = 0; rd.w[4] = (int16_t)ww; rd.w[5] = (int16_t)wh;
     reply(c, &rd);
+
+    gemd_focus_window(hd);      /* a window that opens takes the focus (route.c) */
 
     gemd_log("wind_open wh=%d pid=%d work %dx%d -> surf %d gen %u cap %dx%d (stride %d)",
              hd, c->pid, ww, wh, s.id, s.gen, s.cap_w, s.cap_h, s.cap_w);
