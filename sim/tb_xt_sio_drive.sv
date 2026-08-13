@@ -50,8 +50,13 @@ module tb_xt_sio_drive;
         .dbg_irqen5_at_ack()
     );
 
-    // free-running shift clock — stands in for POKEY's divider
-    always begin #200 shift_tick = 1; #10 shift_tick = 0; end
+    // free-running shift clock — stands in for POKEY's divider.  fast_tick runs
+    // it 4x quicker, which is how T6 checks the drive TRACKS the guest's rate.
+    logic fast_tick = 0;
+    always begin
+        if (fast_tick) begin #50 shift_tick = 1; #10 shift_tick = 0; end
+        else           begin #200 shift_tick = 1; #10 shift_tick = 0; end
+    end
 
     // capture everything the drive emits
     logic [7:0] got [0:519];
@@ -156,6 +161,38 @@ module tb_xt_sio_drive;
         wait (ngot >= 7);                                // ACK+COMP+4+csum
         ck("full reply delivered on the fallback clock", ngot >= 7);
         release shift_tick;
+
+        // ---- T6: the fallback period is MEASURED, not assumed ------------
+        // The reason T5 must not simply pass: a CONSTANT fallback is correct at
+        // 19200 baud and wrong at every other rate, and a guest running faster
+        // (a US-Doubler, or a game's own fast loader) then times out and retries
+        // every sector -- the reply arrives and is rejected.  So run the shift
+        // clock 4x fast, stop it mid-reply as before, and require the rest of the
+        // reply to land in FAR less time than the 19200 default would take.
+        $display("T6: a 4x-fast guest is tracked, not paced at a fixed rate");
+        fast_tick = 1;                                   // 50ns instead of 200ns
+        ngot = 0; rsp_valid = 0; rsp_len = 9'd4;
+        repeat (400) @(posedge clk);                     // let the period be measured
+        send_frame(8'h31, 8'h52, 8'h03, 8'h00, 1'b0);
+        wait (req_valid == 1);
+        rsp_valid = 1;
+        force shift_tick = 1'b0;                         // stop it: the fallback takes over
+        begin
+            int unsigned t0, dt;
+            t0 = $time / 1000;                           // us
+            wait (ngot >= 7);
+            dt = ($time / 1000) - t0;
+            // The elapsed time is the FIXED ~1 ms ACK turnaround (deliberately
+            // absolute -- a real drive's turnaround does not scale with the bit
+            // rate) plus the paced reply.  Only the second part is under test, so
+            // the bound has to sit above the turnaround: 7 bytes at the SLOW
+            // default (2600 clk/tick) would add ~4.4 ms and blow through it,
+            // while the measured fast rate adds under 10 us.
+            ck("fast reply completes well inside the slow-default time", dt < 1500);
+            $display("     (7 bytes took %0d us)", dt);
+        end
+        release shift_tick;
+        fast_tick = 0;
 
         $display("");
         if (errors == 0) $display("tb_xt_sio_drive: PASS (%0d checks)", checks);

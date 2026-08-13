@@ -154,12 +154,32 @@ module xt_sio_drive #(
     // (2026-08-13).  A real drive has its OWN baud generator and does not care
     // what the host's divisor is doing, so fall back to an absolute period.
     localparam int unsigned TICKS_PER_FRAME = 20;
-    localparam int unsigned FALLBACK_CLK    = 52_000;   // ~520 us at 100 MHz
+    // The fallback period is MEASURED, not assumed.  A constant 19200-baud
+    // fallback is wrong the moment the guest runs faster -- a US-Doubler rate
+    // (sio-bridge.md §13.6), or a game's own fast loader -- and the guest then
+    // times out and RETRIES every sector, which is what the reply arriving and
+    // being rejected looks like from the outside.  The guest transmits its
+    // command frame at its own rate, so the ticks ARE flowing right up to the
+    // moment it stops them; latch the interval between them and use that.
+    localparam int unsigned TICK_MAX = 200_000;         // 2 ms: slower than any real rate
+    logic [17:0] tick_gap, tick_period;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            tick_gap <= 18'd0; tick_period <= 18'(2_600);   // 19200 baud until measured
+        end else if (shift_tick) begin
+            if (tick_gap != 18'd0 && tick_gap < 18'(TICK_MAX)) tick_period <= tick_gap;
+            tick_gap <= 18'd0;
+        end else if (tick_gap != 18'(TICK_MAX)) begin
+            tick_gap <= tick_gap + 18'd1;
+        end
+    end
+
+    localparam int unsigned TICK_SLACK = 4;             // let the real tick win when it runs
     logic [9:0]  tick_cnt;
-    logic [16:0] fallback_cnt;
+    logic [31:0] fallback_cnt;
     logic        pace_run;
     wire         pace_done = pace_run &&
-                             ((tick_cnt == 10'd0) || (fallback_cnt == 17'd0));
+                             ((tick_cnt == 10'd0) || (fallback_cnt == 32'd0));
 
     // ---- the state machine ------------------------------------------------
     typedef enum logic [3:0] {
@@ -194,7 +214,11 @@ module xt_sio_drive #(
 
     task automatic pace(input int unsigned frames);
         tick_cnt     <= 10'(frames * TICKS_PER_FRAME);
-        fallback_cnt <= 17'(FALLBACK_CLK);
+        // The same number of tick intervals, in measured clocks, plus a little
+        // slack so a RUNNING tick always reaches zero first and the fallback only
+        // ever covers a tick that has actually stopped.
+        fallback_cnt <= (32'(frames) * 32'(TICKS_PER_FRAME) + 32'(TICK_SLACK))
+                        * 32'(tick_period);
         pace_run     <= 1'b1;
     endtask
 
@@ -218,8 +242,8 @@ module xt_sio_drive #(
             req_valid         <= 1'b0;
             if (pace_run && shift_tick && tick_cnt != 10'd0)
                 tick_cnt <= tick_cnt - 10'd1;
-            if (pace_run && fallback_cnt != 17'd0)
-                fallback_cnt <= fallback_cnt - 17'd1;
+            if (pace_run && fallback_cnt != 32'd0)
+                fallback_cnt <= fallback_cnt - 32'd1;
 
             // /COMMAND asserting ALWAYS restarts framing, whatever we were
             // doing.  A guest that gives up mid-transaction and re-commands
