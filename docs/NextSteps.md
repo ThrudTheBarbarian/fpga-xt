@@ -569,7 +569,31 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   goes through the mailbox — but a poke path in `xt_gp0_regs` driving the
   existing `rom_we`/`rom_addr` port would still be useful for A9-side debug.
   **It must never be used against a running 6502** for the reason above.
-- **Emulator window chrome: buttons and full-screen LANDED; two gaps left.**
+- **Emulator window chrome: COMPLETE, verified end-to-end on hardware.**
+  Open the 6502 window -> zoom in (2x -> 3x) -> zoom out (-> 1x) -> full screen
+  -> pointer into the letterbox reveals "Exit full screen" -> click it -> back to
+  the desktop with the menu bar restored and the windows behind intact.
+  Three fixes were needed underneath, each the same shape: something assumed the
+  plane and the window were the same rect, or that a client-side call reached the
+  server.
+    1. gemd placed the plane by STRETCHING it to the work area.  It now takes the
+       plane's SOURCE size with the bind and centres the box.
+    2. The alpha hole was still punched over the WHOLE work area, and `draw_content`
+       returned before blitting the backing store -- so everything the app drew
+       around the picture was not merely covered, it was never composited.  The
+       hole now follows the PICTURE (`wind_plane_box`) and the surround is the
+       app's pixels, which is what makes a letterbox black rather than transparent.
+    3. `menu_bar(tree, 0)` only cleared the client's own pointer; gemd went on
+       compositing the reserved band above every window.  GEM_MENU_BAR now carries
+       a show flag, and hiding UNRESERVES the band so a window can own y=0.
+       Re-reserving it moves every window's work area, so the show path repaints.
+  Plus: a window that opens takes the focus, without which motion never reached
+  the full-screen window at all.
+  **A process trap worth remembering:** `make build/desktop.so` does NOT refresh
+  `build/sdstage/OS/bin/desktop`.  Two rounds of "pushed" delivered a stale binary
+  and the fixes looked like they had failed.  Run `make sdstage` before pushing.
+
+- **(superseded) Emulator window chrome: buttons and full-screen LANDED; two gaps left.**
   The 6502 window carries three title buttons (zoom out, zoom in, full screen)
   through the existing `WM_TBUTTON` path, so the desktop never hit-tests a
   titlebar rect (§11).  Verified on hardware: the buttons draw, and the
@@ -584,18 +608,6 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   only to the focused window, and focus followed clicks alone, so a
   programmatically opened window never heard the pointer; the desktop had already
   hand-worked-around the keyboard half of this.
-  **Open:**
-  1. **The menu bar still composites ABOVE the full-screen window.**
-     `menu_bar(g_menubar, 0)` does not take the strip down — gemd owns that
-     composite (§10), so hiding it needs a server-side path, not a client call.
-  2. **The letterbox exit-button reveal is UNCONFIRMED.**  It is armed as an
-     `MU_M1` leave-rect over the picture box, which should now work given
-     focus-on-open, but it has not been observed firing on hardware.
-  3. The zoom -/+ buttons have not been exercised on hardware yet.
-  **A process trap worth remembering:** `make build/desktop.so` does NOT refresh
-  `build/sdstage/OS/bin/desktop`.  Two rounds of "pushed" delivered a 20-minute-
-  old binary and the fixes looked like they had failed.  Run `make sdstage`
-  before pushing anything by hand.
 
 - **Virtual SIO drive: BUILT and answering; BallBlazer not yet loading.**
   The whole path is live on hardware — `xt_sio_drive` decodes and checksums the

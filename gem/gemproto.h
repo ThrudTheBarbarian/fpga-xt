@@ -37,6 +37,11 @@
 #define GEM_WIND_OPEN     6         /* w[1]=wh w[2..5]=x,y,w,h -> WIND_SURF + MSG_REDRAW */
 #define GEM_WIND_CLOSE    7         /* w[1]=wh */
 #define GEM_WIND_DELETE   8         /* w[1]=wh */
+/* w[1] = show: 1 (or absent, so old senders keep working) asks for the strip and
+ * reserves the top band; 0 takes the band away entirely -- not merely blanked, but
+ * UNRESERVED, so a window can own y=0.  That is what full screen needs: gemd
+ * composites the strip ABOVE every window (§10), so a client that only dropped its
+ * own menu pointer still had a menu bar across the top of its full-screen picture. */
 #define GEM_MENU_BAR     10         /* the app has a menu (§10): gemd allocates its own strip-sized
                                      * surface ONCE, grants it, replies MSG_MENU_SURF. Idempotent. */
 #define GEM_MENU_DAMAGE  11         /* w[2]=x w[4]=w — strip pixels changed; gemd recomposites the band */

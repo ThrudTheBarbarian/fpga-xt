@@ -26,6 +26,9 @@ int      wind_surface_of(int hd);
 uint32_t wind_gen_of(int hd);
 int      wind_client_of(int hd);
 int      wind_kind_of(int hd);          /* W_* flags, 0 if the handle is not a live window */
+void     wind_plane_box(int hd,int x,int y,int w,int h);  /* M6: the plane's SCREEN box — the
+                                         * alpha hole is punched HERE, not over the whole work
+                                         * area, so a smaller picture letterboxes in app pixels */
 int      wind_drag_sizing(void);   // 1 while a sizer drag is live (server mode) — gemd's
                                    // surface policy allocates ONCE (generous) during it and
                                    // shrink-fits on release, instead of per quantum crossing

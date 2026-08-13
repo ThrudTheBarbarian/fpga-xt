@@ -203,19 +203,33 @@ static void strip_redraw_all(void){                  /* the whole bar into the s
 void menu_bar(OBJECT *tree, int show) {
 #ifdef GEM_XTOS
     if (is_client()) {
-        if (!show) { g_menu = NULL; return; }
+        if (!show) {
+            /* TELL THE SERVER.  Dropping g_menu only stops US drawing; gemd goes on
+             * compositing the reserved band over every window, so a full-screen
+             * window kept a menu bar across the top of its picture. */
+            g_menu = NULL;
+            gem_msg m; memset(&m,0,sizeof m);
+            m.w[0]=GEM_MENU_BAR; m.w[1]=0;
+            gem_send(wind_gem_fd(), &m);
+            return;
+        }
         g_menu = tree;
         T0 = 2; ACTIVE = g_menu[1].ob_next; DD0 = g_menu[ACTIVE].ob_head;
         g_n = 0; EACH_CHILD(g_menu,1,c) g_n++;
         if (!g_strip.px) {                       /* ONCE (§10): ask, map, open a vh, forever */
             gem_msg m; memset(&m,0,sizeof m);
-            m.w[0]=GEM_MENU_BAR;
+            m.w[0]=GEM_MENU_BAR; m.w[1]=1;
             gem_send(wind_gem_fd(), &m);
             if (gem_await(wind_gem_fd(), GEM_MSG_MENU_SURF, &m)!=0) { g_menu=NULL; return; }
             uint32_t *px = gem_surf_map((int)m.u[0]);
             if (!px) { g_menu=NULL; return; }
             g_strip.px=px; g_strip.w=m.w[2]; g_strip.h=m.w[3]; g_strip.stride=m.w[4];
             g_strip_vh = v_opnvwk(&g_strip);
+        }
+        else {                                   /* already mapped: just re-reserve the band */
+            gem_msg m; memset(&m,0,sizeof m);
+            m.w[0]=GEM_MENU_BAR; m.w[1]=1;
+            gem_send(wind_gem_fd(), &m);
         }
         strip_redraw_all();                      /* the server reserves the band; we just draw */
         return;

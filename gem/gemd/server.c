@@ -148,8 +148,26 @@ static void menu_strip_redraw(void)
         }
     }
 }
-static void do_menu_bar(gclient *c, int ci)
+static void do_menu_bar(gclient *c, int ci, const gem_msg *m)
 {
+    /* w[1] = 0 means TAKE THE BAND AWAY -- unreserve it, so a window can own y=0.
+     * Blanking it would not do: full screen wants the picture at the top of the
+     * screen, not a grey strip above it.  Old senders leave w[1] at 0 only if they
+     * never set it, so treat "no menu surface yet" as the show case and require an
+     * explicit hide from a client that already has one. */
+    if (m && m->w[1] == 0 && c->menu.id >= 0) {
+        aes_reserve_top(0);
+        wind_redraw();                       /* the band's pixels belong to windows now */
+        (void)ci; return;
+    }
+    /* SHOW: reserve the band again -- which moves every window's work area, so the
+     * whole screen owes a repaint.  Without it the windows that shifted came back
+     * with half their content missing (a browser lost its icons after a full-screen
+     * session), which reads as a corrupted app and is really just an unrepainted
+     * layout change. */
+    int was = aes_top_reserve();
+    aes_reserve_top(AES_MENUBAR_H);
+    if (was != AES_MENUBAR_H) wind_redraw();
     int sh = aes_top_reserve(); if (sh <= 0) sh = AES_MENUBAR_H;
     if (c->menu.id < 0) {                    /* once per client (§10): idempotent re-ask */
         if (gemd_surf_create(&c->menu, g_plane.w, sh, g_plane.w, g_plane.h) != 0) return;
@@ -721,6 +739,7 @@ static void gemd_plane_sync(void)                 /* the aes_set_plane_sync hook
             if (ph > wh) ph = wh;
             px = ox + (ww - pw) / 2; py = oy + (wh - ph) / 2;
         }
+        wind_plane_box(g_pl[p].hd, px, py, pw, ph);   /* the hole follows the PICTURE */
         plane_send(p, px, py, pw, ph, g_pl[p].scale, pw > 0 && ph > 0);
     }
 }
@@ -728,6 +747,7 @@ static void gemd_plane_sync(void)                 /* the aes_set_plane_sync hook
 static void plane_unbind(int p)
 {
     if (!g_pl[p].hd) return;
+    wind_plane_box(g_pl[p].hd, 0, 0, 0, 0);
     wind_plane_link(g_pl[p].hd, 0);
     g_pl[p].hd = 0;
     plane_send(p, 0, 0, 0, 0, 1, 0);              /* park it off-screen; the kernel restores the
@@ -810,7 +830,7 @@ static void client_readable(int ci)
         c->inlen = 0;
         c->last_recv = gemd_us();               /* §9: any message = the pipe is draining */
         switch (m.w[0]) {
-        case GEM_MENU_BAR:    do_menu_bar(c, ci);        break;
+        case GEM_MENU_BAR:    do_menu_bar(c, ci, &m);     break;
         case GEM_MENU_DAMAGE: {
             extern int gemd_menu_client(void);
             int sh = aes_top_reserve();

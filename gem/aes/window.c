@@ -76,6 +76,8 @@ typedef struct {
     int rsz_mode;                              // WIND_RESIZE_FULL/APP (aes.h): who paints a resize
                                                // (a status bar): the scroll blit stops above it
     int maxed, sx,sy,sw,sh;                    // maximise toggle: flag + the pre-maximise rect
+    int plane_bx, plane_by, plane_bw, plane_bh; // SERVER (M6): the plane's SCREEN box (0 w/h =
+                                               // the whole work area, the old fill behaviour)
     int plane_id;                              // SERVER (M6): HW compositor plane shown through
                                                // this window's work area (0 = none). The work
                                                // area composites as an ALPHA=0 HOLE — the desktop
@@ -620,7 +622,12 @@ static void draw_one(int hd, int active){
 static void draw_content(int hd){
     awin*W=&g_w[hd];
     int wx,wy,ww,wh; app_work(W,&wx,&wy,&ww,&wh);
-    if(g_mode==AES_SERVER && W->plane_id>0){
+    // A plane-bound window still has CONTENT: the surround.  Falling straight to the
+    // hole skipped the backing-store blit entirely, so anything the app drew outside
+    // the picture -- a letterbox, an exit button sitting in it -- was never composited
+    // at all.  Draw the content normally, then punch the hole over the PICTURE only.
+    int hole = (g_mode==AES_SERVER && W->plane_id>0);
+    if(hole && W->plane_bw<=0){
         // A PLANE-BOUND WINDOW'S CONTENT IS A HOLE (M6, Route A). The desktop plane is on top
         // with alpha enabled while any HW plane is active (SYS_plane_window flips CMPCFG), so
         // alpha=0 here reveals the plane below — and everything this loop composites ON TOP of
@@ -683,11 +690,28 @@ static void draw_content(int hd){
                     g_compose_blit(W->surf_id, dx0,dy0, dx0-wx, dy0-wy, dx1-dx0, dy1-dy0)!=0)
                 gfx_blit(d, dx0,dy0, &W->surf, dx0-wx, dy0-wy, dx1-dx0, dy1-dy0);
         }
-    } else if(W->draw){
+    } else if(W->draw && !hole){
         // LOCAL: the app's content callback, in this same process. In CLIENT mode the same
         // callback runs — but against our own surface, and gemd never sees it (client_paint).
         int16_t clip[4]={(int16_t)wx,(int16_t)wy,(int16_t)(wx+ww-1),(int16_t)(wy+wh-1)};
         vs_clip(H(),1,clip); W->draw(hd,wx,wy,ww,wh,W->ud); vs_clip(H(),0,clip);
+    }
+    // THE HOLE, over the PICTURE and nothing else — after the content, so the app's
+    // surround survives and only the picture's own rect goes transparent.  Same
+    // by-hand damage clip as the blit above: gfx_fill_rect is a backend fill and
+    // does not see the VDI clip.
+    if(hole && W->plane_bw>0 && W->plane_bh>0){
+        gfx_surface *d = vdi_screen_target();
+        int dx0=W->plane_bx, dy0=W->plane_by;
+        int dx1=dx0+W->plane_bw, dy1=dy0+W->plane_bh;
+        if(dx0<wx) dx0=wx;  if(dy0<wy) dy0=wy;          // never outside the work area
+        if(dx1>wx+ww) dx1=wx+ww;  if(dy1>wy+wh) dy1=wy+wh;
+        if(g_dmg_on){
+            if(dx0<g_dmg[0]) dx0=g_dmg[0];  if(dy0<g_dmg[1]) dy0=g_dmg[1];
+            if(dx1>g_dmg[2]) dx1=g_dmg[2];  if(dy1>g_dmg[3]) dy1=g_dmg[3];
+        }
+        if(d && dx1>dx0 && dy1>dy0)
+            gfx_fill_rect(d, dx0,dy0, dx1-dx0, dy1-dy0, 0x00000000u);
     }
 }
 
@@ -719,6 +743,14 @@ int  wind_surface_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf
 // placement policy); the window layer only needs to know so draw_content paints the hole.
 int  wind_plane_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].plane_id:0; }
 void wind_plane_link(int hd,int plane_id){ if(hd>=1&&hd<MAXW&&g_w[hd].used) g_w[hd].plane_id=plane_id; }
+// Where the plane's picture actually LANDS on screen.  The hole must match the
+// picture and not the window: a plane smaller than the work area (an integer zoom
+// that cannot fill a full-screen window) leaves a surround, and those pixels are
+// the APP'S -- that is what makes a letterbox black instead of transparent.
+void wind_plane_box(int hd,int x,int y,int w,int h){
+    if(hd<1||hd>=MAXW||!g_w[hd].used) return;
+    g_w[hd].plane_bx=x; g_w[hd].plane_by=y; g_w[hd].plane_bw=w; g_w[hd].plane_bh=h;
+}
 uint32_t wind_gen_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf_gen:0; }
 int  wind_client_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].client:-1; }
 int  wind_kind_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].kind:0; }
