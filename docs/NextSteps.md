@@ -569,7 +569,27 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   goes through the mailbox — but a poke path in `xt_gp0_regs` driving the
   existing `rom_we`/`rom_addr` port would still be useful for A9-side debug.
   **It must never be used against a running 6502** for the reason above.
-- **BallBlazer.atx needs a VIRTUAL DRIVE ON THE SERIAL BUS, not a better disk
+- **Virtual SIO drive: BUILT and answering; BallBlazer not yet loading.**
+  The whole path is live on hardware — `xt_sio_drive` decodes and checksums the
+  command frame, `xt_sio_cdc` crosses to the A9, `xl_sio_bus_poll` runs the same
+  `xl_disk_op` the SIOV stub uses, and the drive paces the reply at the guest's
+  own rate.  Instrumentation in `SIO_DSTAT[31:8]` reads frames=96, bytes=224,
+  **accepted=12**, with `busy` set and `req_pending` clear — i.e. the full
+  round trip completes.  ATR loading is unaffected (ElektraGlide and Despatch
+  Rider both verified with D1: claimed).
+  **Open:** only 12 of 96 frames are accepted — ~2.3 bytes captured per frame,
+  so most arrive INCOMPLETE, and BallBlazer still sits in its wait loop at
+  `$BC4C`.  Next: find why the frame is cut short (does /COMMAND release before
+  the 5th byte is written? are we missing bytes the guest sends after release?),
+  and check what the guest makes of the replies it does get.
+  Three bugs were found and fixed getting this far, all worth remembering:
+  a missing CDC synchroniser on `/COMMAND` (antic_top is clk_sys, the drive is
+  clk_sally) which stuck `busy` on; `drv_sel` following `busy` so a stuck drive
+  starved the SIOV stub's mailbox port; and a command watchdog SHORTER than a
+  command frame (655 µs vs ~4 ms) which aborted every legitimate frame.
+  **Strip the diagnostic counters when done** — they cost clk_sys margin
+  (+0.001 ns on the instrumented build, +0.266 without).
+- **(superseded) BallBlazer.atx needs a VIRTUAL DRIVE ON THE SERIAL BUS, not a better disk
   image.**  ATX support landed (`xl_boot.c`: sector map, missing/CRC/deleted
   sectors, weak bits, and a 288 RPM rotation model for duplicate sectors) and
   the image mounts and serves correctly — BallBlazer reads sectors 1-8 and
