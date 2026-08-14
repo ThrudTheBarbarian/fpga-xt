@@ -702,6 +702,28 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   state comparison instead of full-trace diffing until that is sorted.
 
   ############################################################################
+  **THE SIM REPRODUCTION IS A NEAR-DROP-IN (2026-08-14).** The right harness
+  already exists and targets the LIVE module: **sim/tb_antic_timing.sv** (267
+  lines, `make -C sim antic_timing`). Do NOT use sim/tb_nmi.sv -- it instantiates
+  `nmi_gen`, not antic_timing, so it cannot reproduce this.
+  Existing cases: T3 = VBI NMIST bit 6 with NMIEN=$40; T4 = DL machine
+  `70 70 70 F0 F0 41` giving DLI NMIST at lines 39 and 47 (the ACID antic_nmist
+  anchor); T5 = vscroldli bracket. NOTE **$F0 IS DLI-FLAGGED** (bit 7 set on a
+  blank line) -- that is how T4 produces its DLIs.
+
+  ADD A NEW CASE MIRRORING OUR REAL DISPLAY LIST, which contains NO $8x/$Fx bytes:
+        70 60 4F <lo> <hi>  then ~190x 0F  then 41 <lo> <hi>     (JVB to start)
+        i.e. blank8, blank7, modeF+LMS, a run of modeF, JVB
+  ASSERT, with NMIEN=$40: **NMIST bit 7 is NEVER set, and exactly ONE /NMI pulse
+  occurs per frame.** If the RTL asserts bit 7 ~4x per frame, that is the
+  reproduction of the hardware measurement ($C01D DLI dispatch x1608 vs $C020 VBI
+  path x785).
+  Then fix in antic_timing.sv -- look at what ARMS `nmi_arm_q` (:557 VBI, :575
+  DLI) and what SETS the NMIST DLI bit (`nmist_hi` / `nmist_hold_q` around :405)
+  when no DLI is requested. The fix MUST explain ~4 per frame, not one. Keep
+  ACID800 green (55/8na/0fail; antic_nmist + the DLI cluster are the guard), and
+  also re-run `make -C sim antic_dli_cdc`.
+
   **DLI DISPATCH VERIFIED FROM OUR OWN ROM (2026-08-14, final).** Altirra's $C018
   is attract-mode code -- its OS build differs (NMI vector $C18E) -- so its
   disassembly says NOTHING about ours. Always cross-check sim/atari_xl_rom.mem:
