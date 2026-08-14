@@ -702,8 +702,50 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   state comparison instead of full-trace diffing until that is sorted.
 
   ############################################################################
-  **RETRACTION (2026-08-14, LAST TICK OF THE NIGHT): THE "SPURIOUS NMI" ROOT
-  CAUSE IS NOT ESTABLISHED.** Two gaps, both found by running the confirmation
+  **ROOT CAUSE REINSTATED ON FIRMER GROUND (2026-08-14, final): WE TAKE ~5
+  SPURIOUS NMIs PER FRAME WITH NO DLI REQUESTED ANYWHERE.**
+
+  The retraction below was right to demand our OWN display list. Here it is.
+  Our trace writes DLISTL=$7C / DLISTH=$3C, so OUR DLIST = $3C7C. Parsing memory
+  there gives a COMPLETE, SELF-CONSISTENT display list:
+        198 entries, ~225 scanlines, terminator **$3D45 JVB -> $3C7C**
+        (blank8, blank7, modeF LMS $208B, then a long run of modeF)
+        **DLI-flagged entries: 0**
+  A correct JVB pointing exactly back at its own head after 198 valid entries is
+  not something garbage bytes produce, so these really are our display-list bytes.
+
+  THIS CLOSES BOTH GAPS THAT FORCED THE RETRACTION:
+    1. It no longer leans on Altirra's list -- this is OUR list at OUR DLIST.
+    2. **NMIEN NO LONGER MATTERS.** NMIEN only GATES DLIs; the DISPLAY LIST
+       REQUESTS them. With zero DLI bits anywhere, no DLI NMI should be raised
+       whatever NMIEN holds -- so the uncovered t~6-20 s window cannot hide a
+       contradicting write. The argument is now independent of NMIEN entirely.
+
+  And yet: $C018 (every NMI) : $BC78 (game VBI) = 2393 : 414 = **5.78 NMIs per
+  VBI**. One VBI per frame, no DLI requested anywhere => ~4.8 NMIs per frame with
+  NO LEGITIMATE SOURCE. That is the bug, and it is ours.
+
+  FULL CHAIN: spurious NMIs -> a VBI lands inside a handler (all 31 dropped VBIs
+  interrupted $BED0/$BEEC/$BEF5/$BECD/$BEAF/$BF90/$BEF3/$C02C, every one with
+  I=1) -> the game's gate `$bc78 tsx / lda $0104,X / and #$04 / beq $BC85` takes
+  the short path `$bc80 dec $81 / jmp XITVBV` -> the `INC $C2` tick at $3E00 is
+  dropped (ours 92.5% full path; Altirra 100%, $9D -60 / $81 -0 over 60 frames)
+  -> $C2 needs 255 ticks -> `$30cc cmp $C2 / bne $30CC` drags (99,656 iterations,
+  Z never set) -> the scene scheduler and its `bit RANDOM` select at $30D0-$30E5
+  never run -> the man's scene never plays. THAT IS SIMON'S SYMPTOM.
+
+  **NEXT: REPRODUCE IN SIM, THEN FIX.** Target, now very clean: a display list
+  with NO DLI bits must produce EXACTLY ONE NMI PER FRAME. If the RTL produces
+  ~6, that is the reproduction -- and it needs no NMIEN games and no DLI-flagged
+  lines. Live module is antic_timing.sv (fpga_xt_top.sv:1229 selects tm_nmi_n;
+  antic_nmi.sv is LEGACY -- do not edit). Suspect what ARMS nmi_arm_q at :557/:575
+  when no DLI is requested. Harnesses: tb_nmi, tb_antic_display, tb_antic_modes,
+  tb_antic_beam. ACID800 (55/8na/0fail, antic_nmist + the DLI cluster) is the
+  regression guard. Any fix needs a bitstream (~8 min).
+  ############################################################################
+
+  **SUPERSEDED RETRACTION (kept for the reasoning; its demand for our own display
+  list has now been satisfied):** Two gaps, both found by running the confirmation
   step rather than trusting the conclusion:
 
   1. **WE ARE ON A DIFFERENT DISPLAY LIST.** Our trace writes DLISTL=$7C /
