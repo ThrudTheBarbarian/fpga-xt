@@ -701,6 +701,21 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
+  **NMIEN IS NOT WRITTEN DURING THE INTRO (2026-08-14).** Decoding every absolute
+  store in the intro capture against Altirra (memories match, so operands are
+  valid) finds NO writes to $D40E at all. The only ANTIC-control writes are one
+  $D400 (DMACTL) = **$3E**, which MATCHES Altirra's DMACTL=$3e exactly, and heavy
+  $D40A (WSYNC) traffic, which is normal raster work. So NMIEN is established
+  BEFORE this window and its value cannot be read from this trace.
+
+  CONSEQUENCE: "are we taking DLIs the reference is not?" is STILL OPEN and must
+  not be asserted. To settle it, capture a trace spanning the LOAD and the
+  handoff into the intro (the NMIEN write will be in there -- the game does
+  `sei / lda #$00 / sta NMIEN` at $bc9f, so it manipulates NMIEN itself), or
+  find the last $D40E write before the intro begins. Remember the two machines
+  may simply be in DIFFERENT SCENES with legitimately different NMIEN -- that
+  alone has produced several false leads today.
+
   **THE SHARPEST OPEN QUESTION: ARE WE TAKING DLIs THAT THE REFERENCE IS NOT?**
   Altirra in this scene reports **NMIEN=$40** -- bit 7 CLEAR, i.e. DLIs DISABLED,
   only the VBI NMI enabled (IRQEN=$20, DMACTL=$3e, DLIST=$ba00). That alone would
