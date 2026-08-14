@@ -725,6 +725,37 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE COMPARISON, AND IT INVERTS THE PICTURE (2026-08-14).** Altirra's $BC
+  peeked every frame for 300 frames at the intro scene:
+        **$00 x300 (100%) -- ONE distinct value. $FF fraction: 0.0% (OURS: 19.2%)**
+  On Altirra $BC is ALWAYS $00, so `$BCED BEQ $BCF2` is ALWAYS taken, the ticker
+  at $3DE0 is NEVER called, and **$C2 NEVER INCREMENTS** -- yet its intro plays
+  perfectly (PC=$3aee, in the sprite plotter, animating).
+
+  **THEREFORE $C2 IS NOT THE INTRO'S PACING MECHANISM ON THE REFERENCE AT ALL.**
+  If Altirra ever executed `$30cc cmp $C2 / bne $30CC` it would spin FOREVER,
+  because nothing would ever advance $C2. It does not spin -- **IT NEVER ENTERS
+  THAT WAIT.**
+
+  So the framing flips: the $30CC wait is NOT "running too slowly" on our machine,
+  **it is a CODE PATH ALTIRRA NEVER TAKES.** Making $C2 tick faster would be
+  fixing the wrong thing. The real question is WHY OUR MACHINE ENTERS THE WAIT AT
+  ALL, and $BC is the concrete state divergence: **$00 on Altirra, $FD/$FF on
+  ours**.
+
+  NEXT:
+   1. Find WHO WRITES $BC on our side and what value/why (`6502 watch 0x00BC w`
+      inside the intro -- it HALTS, so read the PC with bare `6502`, then
+      `6502 watch off` and `6502 go`). We already know `$30ea dec $BC` and
+      `$3e12 dec $BC` decrement it; find the RELOAD.
+   2. Work out what decides whether $30CC is reached at all -- walk backwards from
+      $30CC in bbt.bin (predecessor histogram) to the branch that leads in, and
+      compare that branch's input against Altirra at the same scene.
+   3. Treat $BC=$00 vs $FD as the PRIMARY divergence now; everything else tonight
+      (DLIs, drive timing, display list, fifth player) was downstream or a detour.
+  ############################################################################
+
+  ############################################################################
   **THE DECISION VARIABLE IS ZERO-PAGE $BC (2026-08-14) — the bug is now one
   byte.** Recovered from OUR OWN trace (opcodes A6 / F0 / 4C at $BCEB/$BCED/$BCEF)
   and confirmed against Altirra, whose bytes MATCH (`A6 BC F0 03 4C E0 3D`), so
