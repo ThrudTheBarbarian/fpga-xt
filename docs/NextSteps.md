@@ -725,6 +725,35 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **DECODE FLAW IS REAL BUT DOES NOT EXPLAIN IT — READ-PATH HYPOTHESIS
+  STRENGTHENED (2026-08-14).** Comparing OUR trace opcodes against Altirra byte
+  by byte at every store site in the window:
+        $3D4A/$3D4C/$3D4E  85 = 85   MATCH        $3803/$3808/$3822  85 = 85  MATCH
+        $BD59/$BD5E/$BD65/$BD6A  8D = 8D  MATCH
+        **$C026  ours=8D (STA abs)   altirra=86 (STX zp)   MISMATCH**
+  Only $C026 differs, and it is in the OS ROM where the builds are KNOWN to differ
+  (our vectors $C018/$C02C vs Altirra's $C18E/$C1A2). So operands decoded there
+  were indeed garbage -- the concern was justified.
+  **BUT IT IS NOT THE WRITER.** Our own ROM image (sim/atari_xl_rom.mem) gives
+  $C018.. = `2C 0F D4 10 03 6C 00 02 D8 48 8A 48 98 48 8D 0F`, so $C026 = 8D with
+  operand starting $0F -> **`STA $D40F`** (NMIRES, the NMI handler clearing
+  NMIST). Not $BC.
+
+  So EVERY store in the transition window is now accounted for with OUR-side
+  opcodes, and NONE writes $BC -- while $BC demonstrably reads $00 before and $FF
+  after (idx 1,905,889 -> 1,915,203, confirmed across both read sites).
+  **THAT PUSHES THE WEIGHT ONTO THE READ-PATH HYPOTHESIS: `LDX $BC` returning a
+  value no store produced.** If true this is OUR MEMORY SYSTEM, far more serious
+  than the intro, and it would undermine the $BC histogram and phase timeline
+  (both built on reads).
+  **NEXT, AND DECIDE IT ON HARDWARE:** arm `6502 watch 0x00BC w` to halt inside
+  the window (~18-22 s after xlboot; confirm the armed PC is $3xxx), then read the
+  halt PC. **If the watchpoint DOES fire, a store exists that the trace analysis
+  missed -- find out why. If it does NOT fire while $BC still changes value, the
+  read path is confirmed broken and that becomes the headline bug.**
+  ############################################################################
+
+  ############################################################################
   **THE TRANSITION IS CONFIRMED, AND THE LIKELY FLAW IS AN UNVERIFIED OPERAND
   DECODE (2026-08-14).** All $BC reads across BOTH read sites ($BCEB `LDX $BC`
   and $30EF `LDA $BC`, 1024 reads total) bracket the change cleanly:
