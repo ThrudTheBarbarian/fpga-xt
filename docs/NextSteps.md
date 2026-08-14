@@ -725,6 +725,34 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **CORRECTION: ALTIRRA'S $BC IS *NOT* PERMANENTLY $00 (2026-08-14).** A proper
+  1400-frame sweep from COLD RESET (the earlier "$00 for 300/300 frames" was a
+  single-moment sample, not a sweep -- the same scoping error yet again):
+        $82: 20 distinct -- $00 x977, $78 x283, $0F x83, $FF x21 ... **$FD: NEVER**
+        $83:  4 distinct -- $00 x769, $A0 x398, $FF x227, $EA x6
+        **$BC:  3 distinct -- $00 x997, $88 x397, $81 x6**
+  **So $BC is NON-ZERO for ~400 of 1400 frames on Altirra.** Every claim resting
+  on "Altirra's $BC is $00 permanently, so `$BCED BEQ` is always taken and it
+  never reaches $3DE0" is **UNDERMINED and must be re-derived.**
+
+  **WHAT SURVIVES, AND IT IS SHARPER:**
+   * **Altirra NEVER sets $82 = $FD** in 1400 frames, so it genuinely never runs
+     the $3091-$309B init sequence. That part stands.
+   * **$BC=$88 coincides EXACTLY with $BD=$B0 for the same 397 frames** -- both
+     STATIC. Ours actively COUNTS DOWN ($BD stepping $F0 -> $00, 241 distinct).
+   * **So the real contrast is STATIC vs COUNTING, not zero vs non-zero.** Altirra
+     holds a fixed pair; we run an envelope. Re-frame the whole comparison around
+     that.
+
+  **NEXT:** work out what makes Altirra's pair STATIC. If $BC is non-zero there,
+  `$BCED BEQ` falls through and it SHOULD reach $3DE0 and decrement $BD -- yet
+  $BD does not move. Either (a) it does not actually reach $3DE0 (verify with
+  bp_set, not by inference from $BC), or (b) the decrement path is gated further
+  in ($3DE1 `bne $3E0F`, which depends on X after `inx`). **Check (a) directly
+  before theorising** -- inference from a zero-page value has now misled twice.
+  ############################################################################
+
+  ############################################################################
   **$309B IS A DELIBERATE ONE-TIME INIT, NOT A STRAY INSTRUCTION (2026-08-14).**
   Region cross-checked first: our executed opcodes $3088-$30A8 match Altirra
   byte-for-byte EXCEPT $308A, where ours reads $00 -- that is the INTERRUPT-ENTRY
