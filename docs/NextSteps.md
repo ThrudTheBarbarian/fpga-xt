@@ -725,6 +725,21 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   VBI**. One VBI per frame, no DLI requested anywhere => ~4.8 NMIs per frame with
   NO LEGITIMATE SOURCE. That is the bug, and it is ours.
 
+  **THE OS DISPATCH CONFIRMS THEY ARE CLASSIFIED AS DLIs.** In the intro capture
+  the OS NMI handler splits cleanly:
+        $C018 x2393  (NMI entry)   $C01B x2393
+        $C01D x1608  <- one branch
+        $C020..$C029 x785 <- the other branch      (1608 + 785 = 2393)
+  The VBI-side count 785 is ~2x the 383 $BC78 calls, consistent with XITVBV being
+  reached twice per VBI (immediate VVBLKI + deferred VVBLKD, which also explains
+  the earlier 1:2 $BC78:XITVBV puzzle). That leaves **1608 NMIs, ~4.2 per frame,
+  taking the OTHER branch.**
+  The XL OS handler chooses that branch by reading **NMIST ($D40F)**, so our ANTIC
+  is not merely raising extra NMIs -- it is ASSERTING THE DLI STATUS BIT while the
+  display list contains ZERO DLI-flagged entries. (Which branch is DLI vs VBI was
+  inferred from the counts, not disassembled -- confirm with alt.disasm($C018,16)
+  before relying on it.)
+
   FULL CHAIN: spurious NMIs -> a VBI lands inside a handler (all 31 dropped VBIs
   interrupted $BED0/$BEEC/$BEF5/$BECD/$BEAF/$BF90/$BEF3/$C02C, every one with
   I=1) -> the game's gate `$bc78 tsx / lda $0104,X / and #$04 / beq $BC85` takes
