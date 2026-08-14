@@ -725,6 +725,41 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **ANSWERED: $BC IS A SOUND-ENVELOPE VALUE (2026-08-14).** Disassembling the gate
+  (region $3DE0-$3E6A is one of the six VERIFIED byte-identical blocks):
+        $3e43 tay
+        $3e44 bcs $3E48        $3e46 dec $C1
+        $3e48 stx AUDF1 ($D200)   $3e4b sty AUDF3 ($D204)
+        $3e4e ldx $BF   $3e50 ldy $C1
+        $3e52 stx AUDF2 ($D202)   $3e55 sty AUDF4 ($D206)
+        **$3e58 dec $BD          ; envelope counter**
+        **$3e5a lda $BD / $3e5c cmp #$0F / $3e5e bcs $3E6A**
+        **$3e60 sta $BC          ; $BC = $BD, i.e. $00..$0E**
+        $3e62 ora #$A0 / $3e64 sta AUDC2 ($D203) / $3e67 sta AUDC1? / $3e6a rts
+  **This whole routine is the SOUND ENGINE** -- it writes AUDF1-AUDF4 and AUDC.
+  $BD is an envelope counter decremented every call; once it drops below $0F it
+  is used as the VOLUME nibble (ORA #$A0 -> AUDC2) **and copied into $BC**.
+
+  **SO THE INTRO'S SCENE PACING IS GATED BY AUDIO ENVELOPE STATE.** $C2 only ticks
+  when $BC==$FF, and $BC is only ever written from a decaying sound envelope
+  ($00..$0E). That explains why the pacing is erratic and varies between boots.
+  NOTE THE TENSION: $BC is written here with $00..$0E, yet the VBI gate needs $FF
+  -- so the $FF seen in phase 2 must come from elsewhere (the `dec $BC` sites
+  wrapping $00 -> $FF is the obvious candidate: $309B/$30EA decrement $BC, and
+  decrementing $00 yields $FF).
+
+  **THAT IS PROBABLY THE WHOLE STORY:** $BC reaches $FF only by a `dec` wrapping
+  from $00, i.e. only in a narrow window after the sound engine happens to leave
+  $BC at $00. Everything downstream (C2, the $30CC wait, scene scheduling) is
+  hostage to that coincidence.
+  **NEXT: compare the SOUND ENGINE's behaviour against Altirra** -- AUDF/AUDC
+  writes and the $BD envelope rate at the same scene. If our audio timing differs
+  (POKEY divider/IRQ rate), the envelope decays at the wrong rate and everything
+  above follows. Altirra state seen earlier: AUDCTL=$28, AUDF1=$02, AUDF3=$28,
+  IRQEN=$20, SKCTL=$13.
+  ############################################################################
+
+  ############################################################################
   **THE DELAYING BRANCH IS $3E5E (2026-08-14) — the reload is gated by a
   threshold compare.** Executed-PC counts for $3E00..$3E70 (bbt.bin / entry.bin):
         $3E58  C6 DEC zp     227 / 241
