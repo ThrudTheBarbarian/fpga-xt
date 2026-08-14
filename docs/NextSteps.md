@@ -725,6 +725,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **$BC WRITE CAUGHT — it is the scheduler's `dec $BC` (2026-08-14).**
+  `6502 watch 0x00BC w` armed inside the intro (armed at PC=$BEC3,
+  icnt=14,035,200) halted 6 s later at:
+        **PC=$30EC  A=$00 X=$A0 Y=$27  icnt=15,440,759   wp_seen=1 wp_hit=1**
+  $30EC is the instruction immediately AFTER **`$30EA dec $BC`**, so the write is
+  that decrement in the scene scheduler. Guest verified running afterwards.
+
+  **BUT THIS DOES NOT EXPLAIN THE DISTRIBUTION, AND THAT IS THE POINT.** $30EA
+  only executes when the wait CLEARS (once per ~12 s), yet $BC reads **$FD on 81%
+  of VBIs**. One decrement per scene cannot hold a value there. **SOMETHING ELSE
+  IS KEEPING $BC AT $FD, AND THE RELOAD IS STILL UNIDENTIFIED.**
+  Candidates to check next, in order:
+    * `$3e12 dec $BC` in the sound routine (reached from the VBI) -- count it in
+      bbt.bin/entry.bin; if it runs per-VBI it would dominate the distribution.
+    * A reload (`lda #$xx / sta $BC`) somewhere not yet traced -- re-arm the watch
+      REPEATEDLY (each hit halts, so one hit per boot) and collect several halt
+      PCs, not just the first. The first hit is only the first writer, NOT the
+      only one.
+    * $BC may be a shared/aliased byte written by an indexed store (the ~52k
+      `STA (zp),Y` blind spot).
+  METHOD NOTE: a single watch hit answers "who wrote it FIRST after arming", not
+  "who writes it". To characterise a hot variable, arm/halt/read/resume several
+  times across a run and histogram the PCs.
+  ############################################################################
+
+  ############################################################################
   **t=24-36 s CAPTURE (2026-08-14): the wait CLEARS, but only ONCE in ~12 s.**
   entry.bin, 4,958,176 entries, page $3000 dominant (2,775,811):
         $30CC `cmp $C2`   53,953        **$30D0 `inc $D6`   1**
