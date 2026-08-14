@@ -678,6 +678,29 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   even contain the $3xxx engine" would need new RTL or a 6502 stub that copies
   memory into the SIO mailbox — do not start that on an unverified hypothesis.
 
+  **CORRECTION + BIG RESULT (2026-08-14, later): the two machines AGREE THROUGH
+  THE LOAD.** The "zero $3xxx execution" result above is true only of the INTRO
+  window. Captured at t=2..6 s instead (the load/protection phase, 2,097,152
+  entries, DROPS=0) our machine runs $3xxx HEAVILY: 1,598,953 samples in page
+  $3000, code in three regions $3C4C-3C77, $3D86-3E90, $3EA1-3F37. ~61% of the
+  window is SPIN LOOPS waiting on the drive -- $3D9E `LDA zp` / $3DA0 `BPL` alone
+  is 481,899 samples, plus $3D86/$3D88 and $3DF2/$3DF4 -- which is CORRECT now
+  that rotational latency makes the guest wait.
+
+  Cold-resetting Altirra to catch its load phase and comparing: Altirra's own PC
+  sits at **$3d88 and $3da0 -- THE SAME TWO SPIN LOOPS** -- and its memory matches
+  our executed opcodes **18/18** across $3C40-$3D3F. So both machines run an
+  IDENTICAL loader and are in lockstep through the load. The divergence is
+  therefore AFTER the load, not inside it: $3xxx is later OVERLAID, on Altirra
+  with the sprite engine ($3AB0 plotter, `lda $3950,X`, nibble masks) that sets
+  PRIOR=$54 and animates the four missiles as one figure. On ours that overlay
+  never runs. FIND WHERE THE OVERLAY IS LOADED/JUMPED TO -- that is the target.
+
+  TOOL NOTE: alt has no `_command`, so TRACEFILE cannot be driven from the Python
+  SDK that way, and tools/altirra_trace.py TIMED OUT at 500 s draining history
+  (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
+  state comparison instead of full-trace diffing until that is sorted.
+
   **BETTER NEXT MOVE — diff at the PROTECTION READ, not in the intro.** By the
   intro the two machines have long since parted, so diffing there only re-measures
   the gap. Sector 130 is read at roughly transaction 34 of 302, about 11% into a
