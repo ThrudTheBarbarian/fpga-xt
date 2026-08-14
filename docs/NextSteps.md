@@ -725,6 +725,33 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE TRANSITION IS CONFIRMED, AND THE LIKELY FLAW IS AN UNVERIFIED OPERAND
+  DECODE (2026-08-14).** All $BC reads across BOTH read sites ($BCEB `LDX $BC`
+  and $30EF `LDA $BC`, 1024 reads total) bracket the change cleanly:
+        idx 1,900,194 $00   idx 1,905,889 $00   idx 1,915,203 $FF   idx 1,921,305 $FF
+  So the change really does happen inside the window that the exhaustive
+  memory-write scan says contains no write to $BC.
+
+  **BUT THE OPERANDS IN THAT SCAN WERE PEEKED FROM ALTIRRA, AND NOT ALL OF THOSE
+  PC REGIONS WERE EVER VERIFIED TO MATCH OURS.** Verified regions were the six
+  intro blocks (192/192) -- which cover $37FC-$3854, hence the $38xx stores -- and
+  $BCxx. **NOT verified: $3D4A/$3D4C/$3D4E, $BD59-$BD6A, $C026.** If Altirra's
+  bytes differ at any of those, the operand read is WRONG and a store that really
+  targets $BC would appear to target something else. That is the cross-machine
+  trap one level deeper: it was applied to DECODING, not just to reading state.
+
+  **NEXT: RE-DECODE THE GAP WITHOUT ALTIRRA.** For each store site in the window,
+  recover the operand from OUR OWN trace instead: the operand bytes are not in the
+  trace, BUT the instruction LENGTH is implied by the PC delta (next_pc - pc), and
+  for a 3-byte store the target can often be pinned by correlating with the value
+  that later appears in $BC. Failing that, use `6502 watch 0x00BC w` armed to halt
+  exactly in this window (sleep tuned so the arm lands before idx ~1.9 M) and read
+  the halt PC -- that names the writer with NO cross-machine assumption at all.
+  **RULE: never decode an operand from another machine's memory unless that exact
+  region has been proven byte-identical.**
+  ############################################################################
+
+  ############################################################################
   **EXHAUSTIVE SCAN: NOTHING IN THE GAP WRITES $BC (2026-08-14).** Opcode set
   built MECHANICALLY this time -- every 6502 instruction that writes memory, in
   every addressing mode: STA/STX/STY (zp, zp,X/Y, abs, abs,X/Y, (zp,X), (zp),Y)
