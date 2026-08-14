@@ -197,10 +197,12 @@ struct xt_sigframe {
 #define XT_SHM_CONTIG  (1u << 0) /* physically contiguous + PL-visible (plv_alloc): the
                                   * blitter/compositor are DMA engines with NO MMU and read
                                   * physical addresses, so anything the PL touches must be
-                                  * contiguous. NOT YET IMPLEMENTED — the kernel REJECTS it
-                                  * (see XT_SHM_SUPPORTED) rather than quietly handing back a
-                                  * scattered pool object, which the PL would then read as
-                                  * garbage. A loud -1 beats silent corruption. */
+                                  * contiguous.  IMPLEMENTED (vm.c vm_shm_create -> plv_alloc:
+                                  * one run of 1 MB sections, VA-mapped and scrubbed); it is in
+                                  * XT_SHM_SUPPORTED.  plv is a BUDGET, so the call still returns
+                                  * -1 when it is exhausted — a loud -1 beats silent corruption.
+                                  * The PHYSICAL address stays kernel-side on purpose: callers
+                                  * pass the shm id and the kernel resolves id -> phys itself. */
 
 /* The bits this kernel actually honours.  vm_shm_create() fails any request carrying a bit
  * outside this mask.  That is deliberate: it is what lets the flag word grow without a new
