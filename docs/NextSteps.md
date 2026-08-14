@@ -725,6 +725,31 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **NO IRQ ANOMALY IN THE INTRO — the sound engine is VBI-driven (2026-08-14).**
+  Duration-free rates per VBI ($BC78):
+        bbt.bin (PURE intro, 99.3% page $3000): VBI 281, **NMI 1.00/VBI**,
+              **IRQ 0.00/VBI (ZERO POKEY timer IRQs)**, envelope dec 0.81/VBI
+        entry.bin (mixed/game):                  VBI 541, NMI 3.60, IRQ 8.06,
+              envelope 0.45
+  **Zero timer IRQs in the intro is CORRECT**, not a fault: Altirra's IRQEN=$20 is
+  serial-input only, with all three timer-IRQ enable bits CLEAR. So the sound
+  engine is NOT IRQ-driven during the intro -- it is called from the VBI path at
+  ~0.81 per frame (the shortfall being VBIs that take another branch).
+  This also CONFIRMS INDEPENDENTLY that the intro has **no DLIs** (NMI exactly
+  1.00 per VBI), matching the direct NMIST measurement (0/281).
+
+  **SO THE AUDIO INTERRUPT PATH IS EXONERATED for the intro** -- the envelope
+  advances about once per frame, as designed. The remaining question is not the
+  RATE of the envelope but its VALUE: $BD must fall below $0F for $BC to be
+  written at all, and $BC must then be decremented from $00 to $FF for `inc $C2`
+  to run. NEXT: measure $BD's distribution the same way $BC was measured (it is
+  loaded into A at $3E5A, and A at retire is in every trace record) and compare
+  against Altirra at the same scene. If our $BD rarely dips below $0F, find what
+  RELOADS $BD -- that is one level further up the same chain and is where the
+  divergence must now live.
+  ############################################################################
+
+  ############################################################################
   **ANSWERED: $BC IS A SOUND-ENVELOPE VALUE (2026-08-14).** Disassembling the gate
   (region $3DE0-$3E6A is one of the six VERIFIED byte-identical blocks):
         $3e43 tay
