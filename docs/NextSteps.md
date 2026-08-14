@@ -725,6 +725,35 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **EXHAUSTIVE SCAN: NOTHING IN THE GAP WRITES $BC (2026-08-14).** Opcode set
+  built MECHANICALLY this time -- every 6502 instruction that writes memory, in
+  every addressing mode: STA/STX/STY (zp, zp,X/Y, abs, abs,X/Y, (zp,X), (zp),Y)
+  PLUS the read-modify-writes INC/DEC/ASL/LSR/ROL/ROR in all their memory forms.
+  Over idx 1,905,889..1,915,204 the writes go to:
+        $94 $93 $95 $8F $90 $8D $8E $92 $C6 $C7 $C8 $9D $B4 and POKEY $D200-$D203
+  **NOT ONE targets $BC.**
+
+  So either (a) the gap boundaries are wrong, or (b) **THE VALUE CHANGE IS NOT
+  CAUSED BY A CPU STORE** -- which would mean `LDX $BC` READ BACK $FF where memory
+  holds $00, i.e. a READ-PATH bug on our side. That is a materially different
+  hypothesis from anything chased so far and would sit in OUR memory system, not
+  in the game.
+
+  **NEXT, IN ORDER:**
+   1. **Re-derive the boundaries carefully.** The timeline compressed CONSECUTIVE
+      EQUAL events, so "read $00 x281" spans idx 2,888..1,905,889 -- confirm the
+      last-$00 index by walking events, not by re-scanning with a separate loop,
+      and confirm no $BC read sits between it and 1,915,203.
+   2. **Test the read-path hypothesis directly:** does a zero-page read ever
+      return a value that no store produced? Compare $BC's read values against
+      the last value actually stored to it across a whole capture. If reads
+      disagree with the last write, that is OUR bug and a big one.
+   3. Only then consider exotic causes (stack/DMA aliasing).
+  Note this also re-opens whether "$BC" is even the right variable -- if the read
+  path is suspect, the X histogram at $BCEB inherits that doubt.
+  ############################################################################
+
+  ############################################################################
   **AND NO INDEXED STORE EITHER — THE MODE I MISSED IS `STA abs` TO A ZERO-PAGE
   ADDRESS (2026-08-14).** Re-scanning the same 9,314-instruction gap for $9D
   (STA abs,X), $99 (STA abs,Y), $91 (STA (zp),Y) and $81 (STA (zp,X)) gives
