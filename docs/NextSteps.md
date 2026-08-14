@@ -725,6 +725,34 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE $BC WRITERS, AND AN UNRESOLVED TENSION (2026-08-14).** memsearch finds
+  THREE `sta $BC` sites -- **$3E60, $5139, $BF9B** -- and **NO `lda #$FF / sta $BC`
+  (A9 FF 85 BC) anywhere**. Three `dec $BC`: $309B, $30EA, $3E12.
+  Which of them actually RUN (counts from our traces):
+        $3E60  1 (bbt) / 15 (entry) / 15 (multi)      <- the ONLY writer that runs
+        $5139  0 / 0 / 0        $BF9B  0 / 0 / 0
+        $309B  0 / 0 / 1        $30EA  1 / 1 / 0      $3E12  1 / 1 / 0
+  And the VALUES $3E60 writes (A at retire) are a **DESCENDING SEQUENCE**:
+        **$0E, $0D, $0C, $0B, $0A, $09, ...**  (one of each)
+  So $BC is a COUNTDOWN loaded around $0E and stepped down -- **it is never
+  reloaded to $FF at all**.
+
+  **UNRESOLVED TENSION -- DO NOT PAPER OVER IT.** The X histogram at $BCEB showed
+  $BC = $FD x226 / $FF x54 / $FE x1, but $3E60 writes $0E-and-below. Those two
+  observations CANNOT both describe the same moment, so they must come from
+  DIFFERENT PHASES of the intro. Resolve before building anything on either:
+   1. Timestamp both within ONE capture -- walk a single trace in order and record
+      ($BC-observed-at-$BCEB, index) alongside (value-written-at-$3E60, index) to
+      see how $BC evolves over the window rather than as two aggregates.
+   2. Note `$BCED BEQ $BCF2` SKIPS the ticker when $BC==$00, so a countdown that
+      reaches 0 stops ticking -- consistent with the stall, but only if $BC is in
+      the low range at that time.
+   3. The $FD/$FF values may belong to the pre-countdown phase, or to a different
+      variable aliasing $BC (the ~52k `STA (zp),Y` blind spot).
+  This is the sharpest open thread; everything else about the intro is measured.
+  ############################################################################
+
+  ############################################################################
   **THE MECHANISM, EXACT (2026-08-14): $BC DECAYS $FF -> $FE -> $FD AND IS NEVER
   RELOADED.** Counting the decrementers in bbt.bin and entry.bin:
         `$3E12 dec $BC`   **1**        `$30EA dec $BC`   **1**   (both windows)
