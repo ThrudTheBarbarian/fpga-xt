@@ -701,6 +701,37 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
+  **THE VBI GATE, AND A MEASURED DIVERGENCE (2026-08-14).** The game's VBI
+  handler starts by inspecting the INTERRUPTED code's I flag:
+        $bc78 tsx / $bc79 lda $0104,X / $bc7c and #$04
+        $bc7e beq $BC85        ; I CLEAR -> FULL work (this path reaches the $C2 ticker)
+        $bc80 dec $81 / $bc82 jmp XITVBV   ; I SET -> SHORT path, no tick
+        $bc85 dec $9D ...                  ; full path
+  So $81 counts short-path VBIs and $9D counts full-path ones, which makes the
+  ratio measurable on BOTH machines with no tracing at all.
+
+        ALTIRRA : $9D -60, $81 -0 over 60 frames -> 100% full path, EXACTLY one
+                  game-VBI per frame (60 in 60).
+        OURS    : $BC85 383, $BC80 31            ->  92.5% full path.
+
+  Altirra NEVER takes the short path; we take it 31 times. Each one is a DROPPED
+  $C2 TICK, and $C2 must reach $FF for the intro to advance past $30CC. So our
+  VBI is repeatedly catching code with INTERRUPTS DISABLED, which the reference
+  never does.
+
+  Second, duration-independent oddity: $BC78 runs 414 times against 816 XITVBV
+  ($E462) entries -- a 1:2 ratio -- while Altirra's game VBI is 1:1 with frames.
+  Worth understanding before drawing conclusions: XITVBV may legitimately be
+  reached by both the immediate (VVBLKI) and deferred (VVBLKD) paths, so confirm
+  what the second entry is rather than assuming the game handler is being skipped.
+
+  NEXT: find WHERE our 6502 sits with I set when the VBI arrives -- the trace has
+  P at retire, so histogram the PC at interrupt-entry records (IR==$00, SP-=3)
+  and see which code was interrupted with I set. Suspects: a long SEI critical
+  section, our SIO/mailbox stub, or a DLI handler overrunning. 7.5% of VBIs is
+  small but the wait needs 255 consecutive successful ticks, so a steady 7.5%
+  loss stretches a ~4.25 s wait toward ~20 s, which is what Simon sees.
+
   **INTERRUPT CADENCE IS HEALTHY — the "4x slow VBI" idea is WRONG.** Measured
   from the same trace (5,178,368 entries):
         $E462 XITVBV ............ 816     $C28A/$C28F (VBI exit path) ... 816
