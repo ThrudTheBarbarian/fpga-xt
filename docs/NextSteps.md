@@ -725,6 +725,33 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE FILL'S TARGET, DERIVED (2026-08-14): $3C00-$3CFF, OVER THE DISPLAY-LIST
+  HEAD.** No extra capture needed -- the watchpoint gave both halves: the write
+  landed on **$3C7E** with **Y=$7E**, so the base is $3C7E - $7E = **$3C00**. The
+  256-byte fill at $5FAB therefore covers **$3C00-$3CFF with $00**, and OUR
+  DISPLAY LIST STARTS AT $3C7C -- so its head ($3C7C blank8, $3C7D blank7,
+  $3C7E modeF+LMS) sits INSIDE the filled range.
+
+  So the intro BLOCK-FILLS OVER THE LIVE DISPLAY LIST and then rebuilds it. That
+  is a strong candidate for the sim/hardware split: a testbench with a STATIC
+  DLI-free list cannot show what ANTIC fetches while the list is being
+  overwritten mid-frame. Whether that yields a spurious DLI depends on what ANTIC
+  reads DURING the rewrite window and on how our DL fetch handles a control byte
+  changing under it.
+
+  SCALE OF THE BLIND SPOT (why inference kept failing): indexed-store executions
+  per capture window are enormous -- multi.bin STA abs,Y 19,430 / abs,X 158,054 /
+  (zp),Y 51,987; hand.bin 13,739 / 107,220 / 61,255. None of these targets are
+  recoverable from the trace alone.
+
+  NEXT: (a) test in SIM whether rewriting DL bytes mid-frame can produce an NMIST
+  DLI -- extend tb_antic_timing T10 to overwrite the list DURING the frame and
+  re-check the assertions; that is cheap, needs no board, and directly probes the
+  new hypothesis. (b) Still worth building the mailbox read path to snapshot the
+  list before/during/after a fill.
+  ############################################################################
+
+  ############################################################################
   **THE WRITER IS A 256-BYTE BLOCK FILL (2026-08-14).** Altirra CANNOT disassemble
   it -- its memory at $5FAE-$5FBF is all $00/BRK, so it does not have that code
   (cross-machine trap again; the echo caught it). Rebuilt from OUR OWN traces
