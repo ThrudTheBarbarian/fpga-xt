@@ -701,6 +701,46 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
+  **RETRACTION (2026-08-14, latest): the two machines run IDENTICAL CODE.** The
+  "structurally different intro implementations" claim below is WRONG and is
+  withdrawn. Peeking Altirra at OUR OWN executed PCs gives a 192/192 opcode match
+  across all six of our intro regions ($30CC-30F1 16/16, $3307-33A1 67/67,
+  $33D3-33E7 5/5, $37D3-37D9 4/4, $37FC-3854 42/42, $3DE0-3E6A 58/58). The
+  earlier signature search failed only because we do not EXECUTE $3043/$3AB0 --
+  absence of execution, not difference of code. This is SAME CODE, DIFFERENT
+  PATH: a control-flow divergence inside a byte-identical intro.
+
+  That also unlocks a capability: because the memories agree, `alt.disasm(addr)`
+  at OUR addresses is a readable disassembly of OUR execution path.
+
+  **OUR PATH, DISASSEMBLED — the intro is a SCENE SCHEDULER driven by POKEY
+  RANDOM.** At $30CC:
+        $30cc cmp $C2 / bne $30CC        ; wait for the frame counter
+        $30d0 inc $D6
+        $30d2 lda $3A58 / eor $D6
+        $30d7 beq $30DA / $30d9 rts      ; only every $5A frames does it proceed
+        $30da lda #$00
+        $30dc bit RANDOM ($D20A)         ; <-- picks the scene
+        $30df bpl $30E3 / $30e1 lda #$06
+        $30e3 sta $9C                    ; $9C = 0 or 6
+        $30e5 jsr $37D3 / $30ec jsr $3307
+  and $9C later indexes a table (`$332d lda $32E3,X`). So WHICH SCENE PLAYS is
+  chosen from bit 7 of POKEY's RANDOM register. A stuck or biased RANDOM would
+  select the same scene forever -- which is exactly the repeating
+  {smooth anim}{abrupt switch} Simon sees, the man's scene never appearing, and
+  the goalposts showing on one build but not another (timing shifts the sample).
+
+  MEASURED SO FAR: Altirra has SKCTL=$13 (poly counters RUNNING) and RANDOM
+  genuinely varies ($FD,$1E,$73,$0F,$E0,$1E). On OUR side, bit 7 of RANDOM is
+  readable WITHOUT any memory-read tool: `bit $D20A` sets N from bit 7, and the
+  trace records P at retire -- find records with IR=$2C and next_pc=$30DF and
+  read bit 7 of P. In the t=31-35 s window that fires only ONCE (N=0, so $9C=0),
+  because the scheduler gates it to ~once per $5A frames. NOT ENOUGH SAMPLES.
+  NEXT: capture several intro windows and collect the N distribution; if ours is
+  always one value while Altirra's alternates, that is the bug. Note
+  pokey_audio.sv:199 forces RANDOM to $FF when the poly counters are held in
+  reset (SKCTL[1:0]==00) -- check OUR SKCTL in the intro.
+
   **PHASE CORRECTION + THE STRUCTURAL RESULT (2026-08-14, latest).** The t=45 s
   capture was NOT the intro -- it was the GAME (the intro ends and the game
   starts, as Simon observed). The TRUE intro window is t~31-35 s. Captured there
