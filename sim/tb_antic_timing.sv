@@ -316,6 +316,42 @@ module tb_antic_timing;
                 $display("  ok  T10: DLI-free list -> one VBI NMI, no DLI (NOT reproduced here)");
         end
 
+        // ---------------- T11: REWRITE THE DL MID-FRAME ------------------
+        // BallBlazer's intro block-fills $3C00-$3CFF with $00 (routine at $5FAB,
+        // 256x STA abs,Y; base derived from the hardware watchpoint: the write
+        // landed on $3C7E with Y=$7E). OUR DISPLAY LIST STARTS AT $3C7C, so its
+        // head is INSIDE the filled range -- the game overwrites the live list
+        // and rebuilds it. T10 only proves a STATIC DLI-free list is clean; this
+        // asks what ANTIC does when the list changes UNDER it mid-frame, which
+        // is the one thing that could reconcile a clean sim with hardware's
+        // 1608 DLI dispatches.
+        begin
+            for (int i = 0; i < 65536; i++) mem[i] = 8'h00;
+            mem['h3C7C]='h70; mem['h3C7D]='h60;
+            mem['h3C7E]='h4F; mem['h3C7F]='h8B; mem['h3C80]='h20;
+            for (int i = 0; i < 190; i++) mem['h3C81 + i] = 8'h0F;
+            mem['h3C81+190]='h41; mem['h3C82+190]='h7C; mem['h3C83+190]='h3C;
+            wr(4'h2, 8'h7C); wr(4'h3, 8'h3C);
+            wr(4'h0, 8'h22);
+            wr(4'hE, 8'h40);                     // NMIEN = VBI only
+
+            run_to(9'd10, 7'd0);
+            mon_en = 1'b1; 
+            // mid-display: blow the whole $3C00 page away, exactly as the fill does
+            run_to(9'd80, 7'd40);
+            for (int i = 0; i < 256; i++) mem['h3C00 + i] = 8'h00;
+            run_to(9'd9,  7'd0);                 // finish the frame
+            mon_en = 1'b0;
+
+            $display("  T11: DL zeroed mid-frame -> /NMI pulses=%0d  NMIST-DLI assertions=%0d",
+                     mon_nmi, mon_dli);
+            if (mon_dli != 0) begin
+                $display("FAIL T11: NMIST DLI asserted %0d times after a mid-frame DL rewrite -- REPRODUCED", mon_dli);
+                nfail++;
+            end else
+                $display("  ok  T11: mid-frame DL rewrite raises no DLI (hypothesis NOT confirmed)");
+        end
+
         if (nfail == 0) $display("*** ANTIC_TIMING OK ***");
         else            $display("*** ANTIC_TIMING FAIL *** %0d failure(s)", nfail);
         $finish;

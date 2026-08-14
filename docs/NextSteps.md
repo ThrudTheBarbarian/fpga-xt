@@ -725,6 +725,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **T11 REFUTES THE MID-FRAME-REWRITE HYPOTHESIS TOO (2026-08-14).** Added to
+  sim/tb_antic_timing.sv (committed): build the real list, run into the display
+  region, then zero the WHOLE $3C00 page mid-frame exactly as the game's fill
+  does, and finish the frame.
+        T11: DL zeroed mid-frame -> /NMI pulses=2   NMIST-DLI assertions=0
+  **ZERO DLI assertions.** (The "2" is an artifact -- T11's run_to sequence spans
+  a frame boundary so it sees two VBIs; NOT a finding.) Rewriting the display
+  list under ANTIC does not produce a spurious DLI in the model.
+
+  **THREE RTL-SIDE HYPOTHESES NOW ELIMINATED IN SIM:** static DLI-free list (T10),
+  CDC latency (antic_dli_cdc NOT-REPRODUCED), and mid-frame DL rewrite (T11).
+  Hardware still dispatches 1608 DLIs. The model and the machine disagree and no
+  amount of further modelling is closing it.
+
+  **THEREFORE: STOP MODELLING, START OBSERVING.** The next investment must be
+  something that reports what the HARDWARE is doing at the moment a DLI fires:
+    * the mailbox read path (6502 stub -> SIO mailbox, kernel reads it) to
+      snapshot the live DL and zero page without halting; and/or
+    * an RTL debug counter/latch capturing WHY each NMI was raised (which arm
+      fired, the line, the control byte fetched) -- a few registers in
+      antic_timing.sv read back through GP0, which is far cheaper to interpret
+      than another inference chain.
+  Note tb_antic_timing now has T10 + T11 as permanent regression tests either way.
+  ############################################################################
+
+  ############################################################################
   **THE FILL'S TARGET, DERIVED (2026-08-14): $3C00-$3CFF, OVER THE DISPLAY-LIST
   HEAD.** No extra capture needed -- the watchpoint gave both halves: the write
   landed on **$3C7E** with **Y=$7E**, so the base is $3C7E - $7E = **$3C00**. The
