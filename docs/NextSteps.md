@@ -725,6 +725,34 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **ALL THREE $BC WRITERS CAUGHT IN ONE BOOT — THE MECHANISM IS COMPLETE
+  (2026-08-14).** Five arm/hit/resume cycles in a single run (arm, 4 s, read halt
+  PC, `watch off`, `go`, repeat) gave three distinct writers IN SEQUENCE:
+        PC=$309D  icnt=14,170,324            <- after **$309B `dec $BC`**
+        PC=$30EC  icnt=15,724,216  X=$A0     <- after **$30EA `dec $BC`**
+        PC=$3E62  icnt=16,670,955  **A=$0E** <- after **$3E60 `sta $BC`** (the reload)
+  Cycles 4-5 got no hit and the guest had moved to $81C9/$5ACD (game code), i.e.
+  the intro had ended.
+
+  **THIS MATCHES THE PHASE TIMELINE EXACTLY:**
+        $BC=$FF -> dec ($309B) -> $FE -> dec ($30EA) -> $FD -> **LONG GAP** ->
+        $3E60 writes $0E -> countdown $0E..$00 (one step per VBI)
+  So "phase 3, stuck at $FD for 226 reads" is precisely **THE GAP BETWEEN THE
+  SECOND DECREMENT AND THE $3E60 RELOAD**, during which $BC != $FF so `inc $C2`
+  never runs and the $30CC wait stalls. **All three writers fire; none was
+  missing.** (The earlier "nothing writes $BC" was an artifact of analysing a
+  single capture in which $309B happened not to run.)
+
+  **THE REMAINING QUESTION IS NARROW: WHY IS THE $3E60 RELOAD LATE?**
+  $3E60 sits in the sound routine ($3E00-$3E6A). Between the second `dec` and the
+  reload, ~1 M instructions elapse (icnt 15.7 M -> 16.7 M ~= 2 s). Find what gates
+  reaching $3E60: walk from $3E00 to $3E60 in a capture and identify the branch
+  that delays it, and compare that branch's input against Altirra. NOTE Altirra
+  holds $BC=$00 permanently and never runs this path, so compare CODE and
+  CONDITIONS, not values.
+  ############################################################################
+
+  ############################################################################
   **WATCHPOINT FIRED — THERE *IS* A STORE. READ-PATH HYPOTHESIS DROPPED
   (2026-08-14).** `6502 watch 0x00BC w` armed at PC=$3B21 (icnt=9,073,734) halted
   at:
