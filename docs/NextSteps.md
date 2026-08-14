@@ -701,7 +701,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
-  **THE VBI GATE, AND A MEASURED DIVERGENCE (2026-08-14).** The game's VBI
+  **THE MECHANISM, NAMED (2026-08-14): our VBI lands INSIDE A DLI HANDLER.**
+  Walking back from each dropped VBI to the instruction it interrupted:
+        $BED0 x11   $BEEC x11   $BEF5 x2   $C02C x2   $BECD x2
+        $BF90 x1    $BEAF x1    $BEF3 x1        -- all 31 with I=1
+  That range is an INTERRUPT HANDLER, so the VBI is arriving while a DLI handler
+  is still executing; the handler's I flag then sends the VBI down the short path
+  and the $C2 tick is lost. Altirra NEVER does this (0 short paths in 60 frames).
+
+  Context for a number that looks alarming but is not: 62.6% of trace records
+  have I set, top pages $4Cxx/$99xx/$5Axx/$5Dxx/$BExx. With 6213 interrupt
+  entries (~457 Hz, ~7.6 DLIs/frame) and long raster handlers, that is simply
+  time spent INSIDE handlers -- roughly 500 instructions per handler accounts for
+  it exactly. It is NOT a stuck I flag or a CPU bug.
+
+  NEXT — this is now an ANTIC/DLI TIMING question, our side of the fence:
+  (a) count Altirra's DLIs per frame in the SAME scene and compare with our ~7.6;
+      if we generate EXTRA or LATE DLIs, one lands on top of VBLANK;
+  (b) check whether our VBI NMI is raised at the right scanline relative to the
+      last DLI (see [[acid800_dli_cluster]], [[dli_coincidence_bug]],
+      [[acid800_dli_staleness_fix]], [[antic_timing_machine]]);
+  (c) note the game DISABLES NMIEN in one VBI path ($bc9f sei / lda #$00 /
+      sta NMIEN), so NMIEN handling around that window is worth checking too.
+  If ours emits a DLI at or after the VBLANK boundary that the reference does
+  not, that is the bug, and it is RTL -- requiring a bitstream, so SIM IT FIRST.
+
+  **THE VBI GATE, AND THE MEASURED DIVERGENCE (2026-08-14).** The game's VBI
   handler starts by inspecting the INTERRUPTED code's I flag:
         $bc78 tsx / $bc79 lda $0104,X / $bc7c and #$04
         $bc7e beq $BC85        ; I CLEAR -> FULL work (this path reaches the $C2 ticker)
