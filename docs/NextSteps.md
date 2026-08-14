@@ -725,6 +725,38 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE DECISION VARIABLE IS ZERO-PAGE $BC (2026-08-14) — the bug is now one
+  byte.** Recovered from OUR OWN trace (opcodes A6 / F0 / 4C at $BCEB/$BCED/$BCEF)
+  and confirmed against Altirra, whose bytes MATCH (`A6 BC F0 03 4C E0 3D`), so
+  $BCxx does agree between the machines:
+        $BCEB  A6 BC     **LDX $BC**       ; the decision variable
+        $BCED  F0 03     BEQ $BCF2         ; $BC == 0 -> SKIP the ticker entirely
+        $BCEF  4C E0 3D  JMP $3DE0         ; else fall into `inx / bne $3E0F`
+        $BCF2  C6 B4     DEC $B4
+  So the rule is: **$BC == $00 -> no ticker at all; $BC == $FF -> X wraps and
+  `inc $C2` runs; any other value -> no tick.** Ours reads **$FD x226 / $FF x54**
+  (A is constant $0D throughout). Altirra's $BC currently reads $00, but it is in
+  a different scene so that is NOT yet a comparison.
+
+  $BC IS GAME STATE WE HAVE ALREADY SEEN BEING DECREMENTED: `$30ea dec $BC` in
+  the intro scheduler ($30e8 dec $9B / $30ea dec $BC / $30ec jsr $3307) and
+  `$3e12 dec $BC` in the sound routine. So $C2's tick rate is governed by how $BC
+  CYCLES, and $BC must pass through $FF for a tick.
+
+  NEXT, AND THIS SHOULD FINISH IT:
+   1. Histogram $BC over time on OUR side -- it is not directly readable, but the
+      LDX at $BCEB puts it in X, so the X histogram at $BCEB IS $BC's
+      distribution: $FD 81%, $FF 19%. Find WHO RELOADS $BC (who writes $FD?) --
+      watch 0x00BC for WRITE during the intro (remember: the watch HALTS; read the
+      halt PC, then `6502 watch off` and `6502 go`).
+   2. Measure the SAME distribution on ALTIRRA at the same scene (peek $BC each
+      frame for ~300 frames and histogram). If Altirra's $BC passes through $FF
+      far more often, that gap IS the bug.
+   3. Whatever writes $BC is the divergence. If it derives from a hardware
+      register we emulate, that is our bug.
+  ############################################################################
+
+  ############################################################################
   **X IS NOT A COUNTER -- IT IS A TWO-VALUE DECISION (2026-08-14).** Histogramming
   X at the gate in bbt.bin (the pure intro), taken from the record where the `inx`
   at $3DE0 retires (X there is AFTER the increment):
