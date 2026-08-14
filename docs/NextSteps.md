@@ -702,6 +702,17 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   state comparison instead of full-trace diffing until that is sorted.
 
   ############################################################################
+  **DLI DISPATCH VERIFIED FROM OUR OWN ROM (2026-08-14, final).** Altirra's $C018
+  is attract-mode code -- its OS build differs (NMI vector $C18E) -- so its
+  disassembly says NOTHING about ours. Always cross-check sim/atari_xl_rom.mem:
+        $C018  2C 0F D4   BIT $D40F     ; NMIST, N = bit 7 = DLI status
+        $C01B  10 03      BPL $C020     ; NOT a DLI -> VBI path
+        $C01D  6C 00 02   JMP ($0200)   ; VDSLST -- the DLI vector
+  So **$C01D x1608 IS the DLI dispatch** and $C020 x785 is the VBI path. Our
+  ANTIC asserts NMIST bit 7 about **4.2 times per frame** while our display list
+  ($3C7C, 198 entries, JVB back to itself) carries ZERO DLI-flagged entries. The
+  earlier count-based inference is now verified from bytes.
+
   **ROOT CAUSE REINSTATED ON FIRMER GROUND (2026-08-14, final): WE TAKE ~5
   SPURIOUS NMIs PER FRAME WITH NO DLI REQUESTED ANYWHERE.**
 
