@@ -631,6 +631,36 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   if Altirra positions a player where we park one, the divergence is upstream of
   the renderer and the code path that decides it is the target.
 
+  **THE DIVERGENCE, MEASURED (2026-08-14). Altirra uses the FIFTH PLAYER; we
+  never enable it.** Read directly from Altirra's own state via the bridge's
+  `pmg()` (no trace decoding, no operand guessing), sampled over 6 SECONDS to
+  rule out phase mismatch -- it is steady, not a transient frame:
+
+      Altirra: prior=$54 CONSTANT   -> bit4 = FIFTH PLAYER, bits7:6=01 = GTIA mode 9
+               hposm = [$76,$74,$72,$70] held for 5 s, then MOVES AS A GROUP to
+                       [$82,$80,$7e,$7c]  (four missiles, 2 apart, animated as ONE figure)
+               hposp = $30/$50 -> $28/$48 -> $90/$b0 -> $08/$28 -> $f0/$10,
+                       and at one point all four at $70/$78/$80/$88
+               grafp = [$ff,$ff,$00,$00] (solid shapes on screen)
+
+      OURS:    prior NEVER WRITTEN in the window; all four hposm = $00;
+               all sizep/sizem = $00; GRAFP0-3 and GRAFM all written $00;
+               hposp = $F9/$00/$FC/$FC (all parked offscreen), sustained ~22 frames
+
+  So the missing figure is almost certainly drawn as the FIFTH PLAYER (the four
+  missiles combined, coloured COLPF3, enabled by PRIOR bit 4), and on our machine
+  that object is never positioned and PRIOR is never set. The renderer is not
+  suppressing it -- the game never asks for it. NOTE the fifth player IS
+  implemented in the live RTL (gtia_priority.sv `pm5 = prior[4]`), so this is not
+  a missing feature; it is that our 6502 never runs the code that turns it on.
+
+  NEXT: find the code that writes PRIOR/HPOSM on Altirra and determine whether our
+  machine ever reaches it. Altirra PCs seen in that window: $3ab7 $3ad6 $3ae5
+  $3b0c $3b12 $30c6 $31f4 $3296 $bf9f -- our hardware trace's hot pages were
+  $5000/$4000/$8000/$B000/$A000 with NOTHING in $3xxx, which is the same $3xxx
+  region the earlier "$37AE code Altirra never has" puzzle sat in. That $3xxx
+  region is where this should be chased next.
+
   **INSTRUMENT NOTE — this nearly produced a false finding twice.** The first
   decode reported "zero writes to $D000-$D01F" with an empty --summary. That was
   a DEAD CHANNEL, not a result: Altirra was running WITHOUT THE DISK (bind()
