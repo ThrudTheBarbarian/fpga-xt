@@ -725,6 +725,43 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **P/M REGISTERS CAPTURED: THE MISSING MAN IS NOT A RENDER BUG (2026-08-15).**
+  `trace_writes.py multi.bin --range D000 D01F` + `--range 0400 07FF`, against
+  the phase-matched `alt_late.bin`. Both machines: **PMBASE=$00, DMACTL=$3E,
+  GRACTL=$03**, so player shapes come from **P/M DMA out of $0400-$07FF**
+  (P0 $0400, P1 $0500, P2 $0600, P3 $0700) and **GRAFP0-3/GRAFM get ZERO direct
+  writes** on our side -- correct, DMA supplies them.
+        register        ours                      Altirra
+        HPOSP0          50 writes, $F0 / $30      **$F0**
+        HPOSP1          50 writes, $10 / $50      **$10**
+        HPOSP2/3        3 writes (init only)      $00 / $00
+        COLPM0-3        ~203 writes EACH          --
+        GRAFP (DMA)     --                        **$FF,$FF,$00,$00**
+        shape bytes     P0 136 non-zero           **writes NOTHING in-window**
+                        **P1 0 non-zero (32 clears from $3548)**
+                        **P2 0 non-zero (32 clears from $354E)**
+                        P3 24 non-zero
+  **Our HPOSP0/HPOSP1 values MATCH Altirra exactly ($F0/$10)**, and our render
+  path visibly draws P0 and P3. The difference is the SHAPE MEMORY: Altirra holds
+  live shapes in BOTH P0 and P1 and never touches P/M RAM in the window (set up
+  earlier, left alone), while **we write it 264 times, repeatedly CLEARING P1 and
+  P2**. All four players are recoloured ~203x while only two ever move.
+  **CONCLUSION: the game never writes the missing object's shape in our run -- it
+  keeps tearing it down. This is NOT a bug in the live render path; it is
+  downstream of the scene-sequencing fault ($97 -> $A1 -> $BC).** It also matches
+  the reported symptom exactly: objects animate smoothly, vanish abruptly, and a
+  different set animates.
+  **STALE MEMORY CORRECTED:** `ballblazer_players_frozen` says "HPOSP never
+  updates, P0 stuck at $30". **P0 and P1 DO update** (50 writes each). Do not
+  cite that note.
+  **TOOL BLIND SPOT — STATE IT WHENEVER QUOTING THESE NUMBERS:** trace_writes.py
+  decodes STA abs/abs,X/abs,Y/zp/zp,X but **NOT `STA (zp),Y` ($91) or ($81)**,
+  and the block-fill routine uses (zp),Y **16,929 times**. So "P1/P2 never
+  filled" means "no direct or indexed store filled them in this window". The
+  ours-vs-Altirra comparison stays valid because BOTH sides share the blind spot.
+  ############################################################################
+
+  ############################################################################
   **PHASE-MATCHED ALTIRRA TRACE: THE DIVERGENCE IS $97 (2026-08-15).**
   Captured `alt_late.bin` via `alt._send_command('TRACEFILE <path>')` (the raw
   bridge verb; the Python client has no wrapper) after cold reset + 600 frames:
