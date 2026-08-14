@@ -702,8 +702,50 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   state comparison instead of full-trace diffing until that is sorted.
 
   ############################################################################
-  **ROOT CAUSE (2026-08-14): OUR ANTIC RAISES DLI NMIs WHILE NMIEN BIT 7 IS
-  CLEAR.** Measured, not inferred:
+  **RETRACTION (2026-08-14, LAST TICK OF THE NIGHT): THE "SPURIOUS NMI" ROOT
+  CAUSE IS NOT ESTABLISHED.** Two gaps, both found by running the confirmation
+  step rather than trusting the conclusion:
+
+  1. **WE ARE ON A DIFFERENT DISPLAY LIST.** Our trace writes DLISTL=$7C /
+     DLISTH=$3C, so OUR DLIST = **$3C7C**. Altirra's is **$ba00**. The finding
+     "Altirra's display list has 170 entries and ZERO DLI-flagged lines"
+     therefore says NOTHING about ours -- our list at $3C7C may legitimately be
+     full of DLI bits, in which case ~5 DLIs/frame is CORRECT behaviour and there
+     is no bug here at all. The comparison is VOID until both machines are on the
+     same list at the same scene.
+  2. **NMIEN=$40 IS NOT ESTABLISHED FOR THE INTRO.** The captures cover t~2-6 s,
+     t~20-32 s and t~26-38 s. The window **t~6-20 s is NEVER CAPTURED**, and a
+     write to NMIEN there (e.g. $C0, enabling DLIs) would be invisible to every
+     search run so far. "NMIEN is only written during the load" is really "no
+     NMIEN write appears in the windows I captured".
+
+  WHAT SURVIVES AND IS STILL SOLID (all duration-free or directly measured):
+    * The wait is real: `$30cc cmp $C2 / bne $30CC`, 99,656 iterations, Z NEVER
+      set, and $30D0-$30E5 (scene scheduler + `bit RANDOM` scene select) never
+      execute. This IS Simon's "vehicle stops and waits where the man should be".
+    * $C2's only writer is `INC $C2` at $3E00, called from the game's VBI, and it
+      needs 255 ticks.
+    * The VBI drops its work when it interrupts code with I set, and ALL 31
+      dropped VBIs interrupted handler code with I=1.
+    * OURS 92.5% full-path vs ALTIRRA 100% ($9D -60, $81 -0 over 60 frames).
+    * $C018:$BC78 = 5.78 NMIs per VBI on ours.
+  What is NOT established is WHY we take ~5 NMIs per VBI -- legitimate DLIs from
+  our own display list, or spurious ones. That is the whole remaining question.
+
+  **NEXT SESSION, IN THIS ORDER:**
+   1. Capture the UNCOVERED WINDOW t~6-20 s and search it for NMIEN ($D40E) and
+      DLIST ($D402/$D403) writes, absolute AND indexed.
+   2. Determine what OUR display list at $3C7C actually contains. There is no
+      guest-RAM read path, but Altirra's memory matched ours 192/192 in the intro
+      code regions -- peek $3C7C there and check whether it parses as a display
+      list with DLI bits. If it does, ~5 DLIs/frame is CORRECT and the NMI angle
+      collapses; the real question becomes why the VBI collides with them here and
+      not on the reference (handler LENGTH, or DLI placement near VBLANK).
+   3. Only then consider RTL.
+  ############################################################################
+
+  **SUPERSEDED (kept for the measurements, NOT the conclusion): "our ANTIC raises
+  DLI NMIs while NMIEN bit 7 is clear".** Measured, not inferred:
     * NMIEN is written ONLY during the load: values $00, $00, $40. Nothing writes
       it in the handoff (t~20-32 s) or intro (t~26-38 s) windows. The search
       covered absolute AND INDEXED stores (abs,X / abs,Y) with targets computed
