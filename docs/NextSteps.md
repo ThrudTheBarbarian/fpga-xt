@@ -710,7 +710,30 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
       from X/Y at retire, so an indexed `sta $D400,X` could not have been missed.
     * NMIEN=$40 => bit 7 CLEAR => DLIs DISABLED => only the VBI NMI should fire,
       i.e. **60 Hz**. Altirra reports the same NMIEN=$40 for this scene.
-    * OUR MEASURED NMI RATE ($C018, our real NMI vector from
+    * **STATE IT RATE-FREE.** The trace has NO timestamps, and a measured icnt
+      rate (4,737,018 instructions in 10 s = ~474k/s) was sampled during the GAME,
+      where cycles-per-instruction differ from the intro -- so any duration
+      derived from it is soft, and two rate claims have already been retracted
+      today. Use a RATIO instead, which needs no clock:
+          $C018 (EVERY NMI) : $BC78 (the game's VBI handler) = 2393 : 414 = **5.78**
+      With DLIs disabled that ratio MUST be 1.0 -- every NMI would be a VBI.
+      Measuring 5.78 means ~78% of our NMIs are NOT VBIs: they are DLIs firing
+      with NMIEN bit 7 CLEAR. This holds whatever the capture duration was.
+    * (Superseded, do not quote: an "NMI rate of ~140-176 Hz" derived from an
+      assumed 13.6 s window. The ratio above is the defensible form.)
+
+  **WHERE THE GATE LIVES.** hdl/antic_nmi.sv:84 has `dli_fire = at_nmi &&
+  dli_armed && nmien[7]`, but that module is NOT necessarily the live path --
+  [[antic_timing_machine]] has been DEFAULT since build 68, and hdl/antic_timing.sv
+  does its own gating at :620-631 (`nmi_en_early <= (line == VBI_LINE) ?
+  nmien_q[6] : nmien_q[7]`, with the fire conditioned on `nmi_arm_q &&
+  nmi_en_early`). That gating LOOKS correct and is pinned by four ACID
+  antic_nmist asserts, so the bug is more likely in what ARMS `nmi_arm_q` for a
+  DLI line than in the enable term itself. CONFIRM WHICH MODULE IS SYNTHESIZED
+  before editing either -- reading dead code has already cost a wrong conclusion
+  today ([[compositor_sv_is_dead_code]]).
+
+  * OUR MEASURED NMI RATE ($C018, our real NMI vector from
       sim/atari_xl_rom.mem) is **~140-176 Hz** across two independent captures.
       That is ~80-116 EXTRA NMIs per second -- DLIs that must not be firing.
 
