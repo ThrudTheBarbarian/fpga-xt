@@ -661,6 +661,30 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   region the earlier "$37AE code Altirra never has" puzzle sat in. That $3xxx
   region is where this should be chased next.
 
+  **CONFIRMED AT FULL SCALE (2026-08-14):** a complete 3 s capture written to SD
+  root (NOT /tmp, which silently truncates at 1 MB) gave 1,308,432 instructions,
+  DROPS=0, no truncation. Our machine executes **ZERO instructions in $3xxx**.
+  Samples by page: $5000=358785 $4000=262387 $8000=222573 $B000=133742
+  $A000=130838 $7000=67824 $6000=71543 $9000=54615 $C000=5914 $E000=211.
+
+  And it is NOT the same routine relocated: the trace records the opcode at every
+  PC, so a partial disassembly can be rebuilt from the trace itself with no
+  memory-read tool. Altirra's $3AB0 sprite plotter (84 A5 85 A5 85 4A A9 90 A9 85
+  A6 BD ...) matches NOWHERE in our 5314 executed PCs. The two machines are
+  running STRUCTURALLY DIFFERENT CODE, not the same code at a different address.
+
+  Note there is NO guest-RAM read aperture: XT_DBG_STRM_RADDR/RDLO/RDHI address
+  the TRACE RING, not memory (xt_gp0_pkg.sv:105-107). Answering "does our RAM
+  even contain the $3xxx engine" would need new RTL or a 6502 stub that copies
+  memory into the SIO mailbox — do not start that on an unverified hypothesis.
+
+  **BETTER NEXT MOVE — diff at the PROTECTION READ, not in the intro.** By the
+  intro the two machines have long since parted, so diffing there only re-measures
+  the gap. Sector 130 is read at roughly transaction 34 of 302, about 11% into a
+  ~34 s load, i.e. ~3-4 s in. Capture our trace across t=2..6 s and compare with
+  Altirra at the SAME CODE LANDMARK to see what each does with the CRC error.
+  The ring holds ~2 M entries (~4.4 s), so a whole load needs ~8 captures.
+
   **INSTRUMENT NOTE — this nearly produced a false finding twice.** The first
   decode reported "zero writes to $D000-$D01F" with an empty --summary. That was
   a DEAD CHANNEL, not a result: Altirra was running WITHOUT THE DISK (bind()
