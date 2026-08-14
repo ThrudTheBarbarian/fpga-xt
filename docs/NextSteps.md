@@ -701,6 +701,28 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
+  **HANDLERS IDENTIFIED FROM OUR OWN ROM (2026-08-14).** No guest-RAM read needed
+  -- the OS image we upload is in the repo. `sim/atari_xl_rom.mem` (16384 bytes,
+  base $C000) gives OUR vectors:
+        $FFFA NMI   -> $C018
+        $FFFC RESET -> $C2AA
+        $FFFE IRQ   -> $C02C
+  (Altirra's are $C18E/$C1A2 -- a DIFFERENT OS build, which is why its vectors
+  could not identify ours.) Mapping the interrupt counts from the intro capture:
+        $C018 = NMI : 2393 entries  ~176 Hz
+        $C02C = IRQ : 3820 entries  ~281 Hz   (POKEY timers -- the game's sound)
+  With DLIs disabled the NMI rate should be 60 Hz (VBI only). Ours is ~176 Hz,
+  i.e. roughly **1.9 EXTRA NMIs per frame** -- we ARE taking DLIs. Altirra runs
+  this scene with NMIEN=$40 (DLIs OFF).
+
+  THAT IS THE SHAPE OF THE BUG: extra DLI NMIs -> a VBI lands inside a DLI
+  handler -> the I-flag gate sends it down the short path -> $C2 tick dropped ->
+  the $30CC wait drags -> the scene scheduler never runs -> no man.
+  ONE MEASUREMENT STILL MISSING: OUR NMIEN value. If it is $40 while we still
+  take ~2 DLIs/frame, our ANTIC is raising DLI NMIs with bit 7 CLEAR and that is
+  an RTL bug. If it is $C0, the game enabled DLIs and the extra NMIs are correct
+  -- in which case the difference is scene alignment, not hardware.
+
   **NMIEN IS NOT WRITTEN DURING THE INTRO (2026-08-14).** Decoding every absolute
   store in the intro capture against Altirra (memories match, so operands are
   valid) finds NO writes to $D40E at all. The only ANTIC-control writes are one
