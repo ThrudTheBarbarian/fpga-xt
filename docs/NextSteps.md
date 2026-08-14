@@ -725,6 +725,22 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **WATCH RE-RUN, ARMED AFTER THE LOAD (2026-08-14): $3C7E IS NOT WRITTEN.**
+        armed at icnt=18,021,668 (PC=$4C7E) -> 20 s later icnt=27,285,464 (PC=$5D36)
+        wp_seen=0  wp_hit=0      and the core stayed RUNNING (no halt)
+  So that display-list control byte is STATIC once the load is done -- the list
+  is not being rewritten, and the earlier hit really was just the loader.
+
+  **SCOPE CAVEAT, STATED HONESTLY:** PC=$4C7E/$5D36 are GAME pages, and t=38-58 s
+  is the GAME window, not the intro. This proves $3C7E is static THEN, not during
+  the intro. The windows overlap awkwardly -- the load takes ~34 s while the intro
+  runs ~26-38 s -- and run-to-run timing VARIES (Simon saw the goalposts on one
+  build and not another). To test the INTRO specifically, arm at ~t=27-30 s and
+  accept that a late-finishing load may still trigger it; distinguish the two by
+  the halt PC ($CBxx/$Bxxx = loader/stub, $3xxx = game).
+  ############################################################################
+
+  ############################################################################
   **RETRACTION + TOOL CAVEAT (2026-08-14): THE WATCHPOINT IS A BREAKPOINT, AND
   THE $3C7E WRITE WAS THE LOADER, NOT THE GAME.**
   `6502 watch` does NOT passively monitor -- XT_DBG_WPCFG is documented as
