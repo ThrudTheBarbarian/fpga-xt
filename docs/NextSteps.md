@@ -701,7 +701,27 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
-  **THE $C2 WRITER, AND A RATE PROBLEM (2026-08-14).** alt.memsearch finds the
+  **INTERRUPT CADENCE IS HEALTHY — the "4x slow VBI" idea is WRONG.** Measured
+  from the same trace (5,178,368 entries):
+        $E462 XITVBV ............ 816     $C28A/$C28F (VBI exit path) ... 816
+        $BC9C (VBI tail) ........ 383
+        $3E00 `inc $C2` ......... 174
+        RTI / interrupt entries . 6213
+  816 XITVBV at 60 Hz means the capture was ~13.6 s (NOT the 12 s assumed), so
+  the VBI runs at ~60 Hz and is CORRECT, and DLIs run ~457 Hz (~7.6 per frame),
+  which is normal for this title. An earlier inference of "VBI is 14.5 Hz, 4x too
+  slow" used the wrong denominator AND the wrong counter and is WITHDRAWN.
+
+  What is actually true is narrower: the ticker's CALL is conditional, so $C2
+  advances only ~174 times in ~13.6 s (~12.8 Hz) while the VBI fires ~816 times.
+  $C2 needs 255 ticks to reach $FF, hence a ~20 s wait at $30CC. NEXT: find why
+  the path $BC8E -> $3DE0 -> $3DFE is taken on only ~174 of 383 $BC9C passes, and
+  what Altirra's ratio is IN THE SAME SCENE. Note Altirra's $C2 is STATIC across
+  60 consecutive frames (zero increments) while ours ticks 174 times, so ours
+  calls it MORE, not less -- the two are in different scenes and that comparison
+  cannot settle anything until they are aligned on a CODE LANDMARK.
+
+  **THE $C2 WRITER (2026-08-14).** alt.memsearch finds the
   ONLY writer of $C2: `INC $C2` at **$3E00**, inside a SOUND-UPDATE routine:
         $3dfc cmp #$FF
         $3dfe bcs $3E02          ; skip the INC if A >= $FF
