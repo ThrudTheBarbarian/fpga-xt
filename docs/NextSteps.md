@@ -725,6 +725,29 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE WAIT IS ENTERED BEFORE t=31 s AND NEVER LEFT (2026-08-14).** In bbt.bin
+  (t=31-35 s, the pure intro):
+        $30CC `cmp $C2`   158,820      $30CE loops back
+        **$30CA `lda #$FF`      0**
+        **$30C8 / $30C6 / $30C4 / $30C1   0**
+  We NEVER execute the code LEADING INTO the wait -- the capture opened while the
+  machine was ALREADY SPINNING. So the entry happened BEFORE t=31 s and we never
+  escape within the window. The predecessors are not absent, they are OUTSIDE THE
+  CAPTURE. (Another window-scoping lesson: a zero count can mean "did not happen"
+  OR "happened outside the window" -- distinguish them before concluding.)
+
+  **NEXT: CAPTURE t~26-31 s** (three back-to-back `dtrace 4` from sleep 24 or 26)
+  and look for $30C1/$30C4/$30C6/$30C8/$30CA. That window contains the ENTRY into
+  the wait. Recover the branch that leads in and the register/flag state at that
+  moment, then compare the same decision point against Altirra -- which NEVER
+  enters this wait at all ($BC=$00 for 300/300 frames there, so $C2 never
+  increments and the wait would be infinite).
+  Note $30C6 `cmp $CA / bne $30C6` is a SECOND wait just before it (on $CA), so
+  the entry sequence to recover is: whatever calls $30C1 `jsr $33F2` -> $30C4
+  `lda #$01` -> the $CA wait -> $30CA `lda #$FF` -> the $C2 wait.
+  ############################################################################
+
+  ############################################################################
   **THE COMPARISON, AND IT INVERTS THE PICTURE (2026-08-14).** Altirra's $BC
   peeked every frame for 300 frames at the intro scene:
         **$00 x300 (100%) -- ONE distinct value. $FF fraction: 0.0% (OURS: 19.2%)**
