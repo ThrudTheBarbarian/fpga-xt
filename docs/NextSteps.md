@@ -725,6 +725,27 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE GAME NEVER INSTALLS A DLI HANDLER (2026-08-14) — independent evidence
+  that our DLIs are unwanted, needing NO display-list read.**
+  Decoding every absolute store in all three capture windows:
+        VVBLKI ($0222/$0223) <- $BC78   written once (the game's VBI handler)
+        VDSLST ($0200/$0201) <- NEVER WRITTEN, in any window
+  Altirra's VDSLST reads $C055, the OS ROM default stub. So the game installs a
+  VBI handler and NO DLI handler: it does not intend DLIs to fire at all. Our
+  1608 `JMP ($0200)` dispatches are therefore landing in the OS default stub --
+  harmless in themselves, but EVERY ONE sets I and can collide with the VBI,
+  which is precisely the mechanism that starves the $C2 ticker.
+
+  This corroborates "the DLIs are spurious" WITHOUT depending on any
+  display-list byte, sidestepping the cross-machine-memory trap entirely. It is
+  the strongest evidence in the chain, because it rests only on OUR stores.
+
+  Note it does NOT identify the source -- sim still refutes both the timing
+  machine (T10) and the CDC path. The guest-RAM read path below remains the
+  right next investment.
+  ############################################################################
+
+  ############################################################################
   **BOTH SIM PATHS ARE CLEAN — STOP INFERRING, BUILD THE READ PATH (2026-08-14).**
         make -C sim antic_timing   -> T10: /NMI=1, NMIST-DLI=0, ANTIC_TIMING OK
         make -C sim antic_dli_cdc  -> *** NOT-REPRODUCED (CDC-latency refuted) ***
