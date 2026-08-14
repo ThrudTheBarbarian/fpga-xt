@@ -616,6 +616,30 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   real drive's ~130 ms) then also changed nothing visible. Do not spend more
   time on drive timing for this bug.
 
+  **P/M CAPTURE, 2026-08-14 (validated channel).** Traced on hardware with
+  `6502 dtrace` 45 s in (a trace at 6 s catches only the loader), decoded with
+  tools/trace_writes.py against a CORRECTLY BOOTED Altirra. In the captured
+  window EVERY player and missile is PARKED OFFSCREEN WITH ZERO GRAPHICS:
+  HPOSP0=$F9, HPOSP1=$00, HPOSP2=$FC, HPOSP3=$FC, all HPOSM=$00, all SIZE=$00,
+  and GRAFP0-3 + GRAFM all written $00 (constant, ~22 times each). COLPF0/COLPF1
+  take 1995 writes each (DLI colour work), so the display list IS running.
+
+  Reading: the game is CLEARING P/M and parking everything; the man is never
+  POSITIONED. So he is not being suppressed by our renderer -- the game never
+  places him. That points UPSTREAM (script/protection path), not at GTIA.
+  NEXT: capture the same window from Altirra and diff the P/M register writes;
+  if Altirra positions a player where we park one, the divergence is upstream of
+  the renderer and the code path that decides it is the target.
+
+  **INSTRUMENT NOTE — this nearly produced a false finding twice.** The first
+  decode reported "zero writes to $D000-$D01F" with an empty --summary. That was
+  a DEAD CHANNEL, not a result: Altirra was running WITHOUT THE DISK (bind()
+  failed 48 on a stale port, so a previously-running instance was answering) and
+  sat in a 2-instruction spin at $5109/$516d for 210 s of emulated time with
+  operand resolution frozen at 9/107. With the disk actually mounted it resolves
+  92/107 after 900 frames. ALWAYS validate the operand channel in the SAME run
+  (peek a known-live address; note alt.regs() returns UPPERCASE 'PC').
+
   **THE ONE DURABLE UNEXPLAINED FACT:** both machines have IDENTICAL
   PMBASE=$2c / DMACTL=$3d / GRACTL=$03, yet our machine executes code at $37AE
   every frame while Altirra has $00 across $3700-$37FF at EVERY sample in 1800
