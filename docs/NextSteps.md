@@ -725,6 +725,28 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE ENTRY POINT IS $3BA6 (2026-08-14).** Predecessor histogram across two
+  independent captures:
+        **$3BA6 -> $308A**   (once in entry.bin, once in multi.bin)
+        $308A is `JSR $37D3`; $37D9 -> $308D is its RTS returning
+        $308F -> $3091 -> the init -> **$309B dec $BC**
+  ($C28F -> $308A also appears once: that is the RTI from the OS NMI handler
+  landing mid-sequence, NOT a caller.)
+  So the entire chain is entered from **$3BA6**, as a ONE-TIME transition. Note
+  `$30A0 JSR $3BEB` sits in the same routine, so $3Bxx is part of this subsystem.
+
+  **THE FINAL QUESTION: what leads to $3BA6, and does ALTIRRA ever execute it?**
+   1. Predecessor-histogram $3BA6 (and $3B90-$3BA6) in our traces to get its
+      caller and the branch condition.
+   2. `alt.bp_set(0x3BA6)` from cold reset — if Altirra never arrives, walk back
+      to the last common address and find the diverging branch.
+   3. Identify that branch's INPUT. **If it derives from a hardware register we
+      emulate, that is the bug.** If it derives from loaded data or a protection
+      result, the divergence is upstream in the load/protection path -- which
+      would connect back to Simon's original semi-crack theory.
+  ############################################################################
+
+  ############################################################################
   **IT ALL RESOLVES: ALTIRRA'S $BC NEVER EQUALS $FF (2026-08-14).** The
   cold-reset sweep already contains the answer -- **$BC takes exactly three values
   there: $00 (x997), $88 (x397), $81 (x6). NEVER $FF.**
