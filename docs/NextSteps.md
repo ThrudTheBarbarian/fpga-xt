@@ -725,6 +725,54 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION #6 — THE $97/$BC DIVERGENCE IS NOT REAL (2026-08-15).**
+  A 3000-frame TRACEFILE capture (`alt_vlong.bin`, **19,186,675 records, 0
+  lost**) shows Altirra doing EVERYTHING we do:
+        reach: 3083 x1, 309B x1, 30EA x1, 3E12 x1, **3E00 x255**, BCEF x413
+        $BC at $BCEB (n=3000): **$00 x2587, $FF x256, $FD x156, $FE x1**
+        $97 at $3053 (n=3):    **$FE x2**, $00 x1     <- Altirra ALSO has $FE
+        $A1 at $3069 (n=2):    $03, $04
+  So "Altirra holds $97=$00 and $BC=$00 in 420/420 and never executes
+  $3083/$309B/$3E00" was a **SAMPLE-SIZE ARTIFACT**: alt_late.bin's 420 samples
+  all landed in the quiet phase. The trap list already said CHECK SAMPLE COUNT
+  BEFORE CONCLUDING -- written one turn before it was violated.
+  **What survives is quantitative, not binary:** Altirra sits at $BC==$00 for
+  **86%** of ticks (2587/3000); ours is 100% (hw_anim), 53% (entry), 27%
+  (multi), **0%** (bbt). A RATIO difference over short, varying captures --
+  much weaker than reported. **Prefer ratios over rates** (also already on the
+  trap list).
+  **DO NOT re-derive a "$97 divergence" from a short capture.** Any future claim
+  here needs >=1000 samples per side.
+
+  **THE P/M FINDING SURVIVES, AND SURVIVES HARDER.** Re-run against the same
+  19.2M-record trace: Altirra still writes **ZERO** into $0400-$07FF, versus our
+  264 writes including the repeated P1/P2 clears. More samples moved it AWAY from
+  zero-difference, which is the opposite of a sample-size artifact.
+
+  **TOP REMAINING HYPOTHESIS: POKEY RANDOM ($D20A).** $3000-$303E seeds the whole
+  intro from RANDOM (4 reads into $A4-$A9 plus `$3032 bit RANDOM / bpl`), which is
+  a register WE EMULATE -- so a difference here is OUR bug, and it would explain
+  the run-to-run non-determinism, the varying $BC ratios, and why GAMEPLAY (not
+  random-seeded) is perfect.
+  **hdl/pokey_audio.sv SELF-DOCUMENTS THE WEAK POINT:** RANDOM = lfsr17_q[16:9],
+  and the 17-bit poly's comment says it is *"fit to ONE constraint (unlike the
+  9-bit, which was pinned by three), chosen because it is the only exact fit that
+  is also structurally identical to the verified 9-bit form"* -- one ACID800
+  pokey_noise read expecting $08. The 9-bit form was pinned by three simultaneous
+  reads; the 17-bit was not.
+  **NOTE the reciprocal argument is sound as far as it goes:** taps (5,0)
+  right-shifting realises the reciprocal of x^17+x^12+1, and the reciprocal of a
+  primitive polynomial IS primitive, so the PERIOD is still 131071. A wrong
+  realisation would therefore still look "random" -- it would differ in PHASE and
+  ORDERING, not in period or uniformity. **So a period/uniformity test alone
+  CANNOT settle this**; the test must compare the SEQUENCE against Altirra from a
+  known SKCTL-release point.
+  **NEXT:** dump RANDOM every phi2 tick from the SKCTL release in sim, and get
+  the matching sequence out of Altirra (successive reads at known cycle offsets);
+  compare ordering, not just distribution.
+  ############################################################################
+
+  ############################################################################
   **P/M REGISTERS CAPTURED: THE MISSING MAN IS NOT A RENDER BUG (2026-08-15).**
   `trace_writes.py multi.bin --range D000 D01F` + `--range 0400 07FF`, against
   the phase-matched `alt_late.bin`. Both machines: **PMBASE=$00, DMACTL=$3E,
