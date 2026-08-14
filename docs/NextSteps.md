@@ -725,6 +725,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **$3BA6 IS AN RTS — THE CALLER IS AT $3087 (2026-08-14).** Our executed opcodes
+  $3B88-$3BAC:
+        $3B8B 85 x11   $3B8D A2 x11
+        $3B8F A9 x1056  $3B91 A4 x1056  **$3B93 91 (STA (zp),Y) x16929**
+        $3B95 88 x16974  $3B96 10 x16922  $3B98 18 x1058  $3B99 A5 x1058
+        $3B9B 69 x1057  $3B9D 85 x1058  $3B9F 90 x1058  $3BA1 E6 x166
+        $3BA3 CA x1056  $3BA4 D0 x1059  **$3BA6 60 (RTS) x11**
+  So $3BA6 is an **RTS**, and "$3BA6 -> $308A" is the routine RETURNING. The call
+  therefore came from **$3087 JSR** (three bytes before $308A), and $3087..$309B
+  is ONE LINEAR INIT SEQUENCE, not a branch target.
+  The routine itself is a **BLOCK FILL** (`LDA # / LDY zp / STA (zp),Y / DEY /
+  BPL`) with **16,929 `STA (zp),Y` executions**, run 11 times -- which also
+  accounts for a large share of the `STA (zp),Y` blind spot that defeated the
+  earlier writer searches.
+
+  **SO THE QUESTION MOVES UP ONE MORE LEVEL: what reaches $3087?**
+   1. Predecessor-histogram **$3087** (and $3070-$3087) in our traces.
+   2. `alt.bp_set(0x3087)` from cold reset — does Altirra arrive? If not, keep
+      walking back to the last common address.
+   3. Because this is a LINEAR init (not a conditional), the divergence is
+      whatever CALLS or JUMPS into this block — likely a scene/state dispatcher.
+      **If its input is a protection result or loaded data, that connects to
+      Simon's semi-crack theory; if it is a hardware register, it is our bug.**
+  ############################################################################
+
+  ############################################################################
   **THE ENTRY POINT IS $3BA6 (2026-08-14).** Predecessor histogram across two
   independent captures:
         **$3BA6 -> $308A**   (once in entry.bin, once in multi.bin)
