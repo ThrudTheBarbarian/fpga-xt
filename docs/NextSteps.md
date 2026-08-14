@@ -725,6 +725,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE MECHANISM, EXACT (2026-08-14): $BC DECAYS $FF -> $FE -> $FD AND IS NEVER
+  RELOADED.** Counting the decrementers in bbt.bin and entry.bin:
+        `$3E12 dec $BC`   **1**        `$30EA dec $BC`   **1**   (both windows)
+        $3E0F / $3E10 / $3E35   227 / 241   (the `bne $3E35` is ALWAYS taken)
+        $30EC `jsr $3307` 455 / 483    $30EF `lda $BC` 454 / 483
+  $BC is decremented only TWICE in a whole window yet READ constantly -- and that
+  reconciles the X histogram at $BCEB EXACTLY:
+        **$FF x54  ->  $FE x1  ->  $FD x226**
+  So $BC STARTS AT $FF, is decremented twice, and then SITS AT $FD.
+
+  While $BC == $FF the ticker ran (54 reads, 53 `inc $C2` -- matches). Once $BC
+  reached $FD, **$C2 STOPPED ADVANCING ENTIRELY**, because only $BC==$FF wraps X
+  at `$3DE0 inx / bne $3E0F`. **This is NOT a counter cycling too slowly -- it is
+  a value that should be RELOADED to $FF and never is.** The wait then only clears
+  by some other route, roughly once per 12 s, which is the ~10x slowdown.
+
+  **THE QUESTION IS NOW EXACTLY ONE THING: WHAT SHOULD RELOAD $BC TO $FF, AND WHY
+  DOES IT NOT RUN ON OURS?** Note `$3e12 dec $BC` is followed by `$3e14 lda #$F9`,
+  so the reload is NOT there. Altirra holds $BC=$00 permanently and never uses
+  this path, so it cannot be compared directly -- instead find the CODE that
+  writes $FF to $BC (search our traces for `lda #$FF` / `sta $BC` pairs, or
+  memsearch Altirra for `A9 FF 85 BC` since $BCxx/intro code matched) and then
+  determine why it does not execute here.
+  ############################################################################
+
+  ############################################################################
   **$BC WRITE CAUGHT — it is the scheduler's `dec $BC` (2026-08-14).**
   `6502 watch 0x00BC w` armed inside the intro (armed at PC=$BEC3,
   icnt=14,035,200) halted 6 s later at:
