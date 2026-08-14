@@ -302,13 +302,25 @@ static uint32_t atr_sector(const xl_drive *d, uint32_t sec, uint32_t *off)
 #define ATX_US_PER_REV     208333u
 #define ATX_SPT            18u           /* logical sectors per track, SD */
 
-/* ATX sector-status bits.  Only the three we can act on are named; ANY other
- * non-zero bit is treated as "this sector is bad", which fails safe: a
- * protection expecting an error gets one, rather than a false success. */
-#define ATXS_DELETED   0x04u             /* deleted-data address mark */
-#define ATXS_MISSING   0x08u             /* missing/bad data field */
+/* ATX sector-status bits.  These are ACTIVE HIGH, and the FDC status byte the
+ * guest reads back is simply their INVERSE -- the reference implementation does
+ * exactly `mFDCStatus = ~atxStatus | 0xC0` (Altirra, ATDiskImage::LoadATX), and
+ * the bit positions below are its, not a guess:
+ *
+ *     0x04 long   0x08 CRC error   0x10 record-not-found   0x20 deleted
+ *
+ * An earlier reading of this had 0x04 as "deleted" and 0x08 as "missing", which
+ * is two bits wrong in each case.  It survived because BallBlazer.atx's only
+ * flagged sectors carry 0x08, and inverting 0x08 lands on the CRC bit whichever
+ * name you give it -- the right FDC status reached the guest for the wrong
+ * reason.  A disc using 0x04, 0x10 or 0x20 would have been served nonsense. */
+#define ATXS_LONG      0x04u             /* sector longer than the default size */
+#define ATXS_CRC       0x08u             /* data field present but CRC is bad */
+#define ATXS_MISSING   0x10u             /* record not found: NO data field */
+#define ATXS_DELETED   0x20u             /* deleted-data address mark */
 #define ATXS_EXTENDED  0x40u             /* extended record follows (weak bits) */
-#define ATXS_KNOWN     (ATXS_DELETED | ATXS_MISSING | ATXS_EXTENDED)
+#define ATXS_KNOWN     (ATXS_LONG | ATXS_CRC | ATXS_MISSING | ATXS_DELETED | \
+                        ATXS_EXTENDED)
 
 static uint32_t a9_us(void)
 {
@@ -369,20 +381,26 @@ static int atx_parse(xl_drive *d)
             e->pad    = 0;
             if (e->off >= d->len) e->off = 0;      /* defensive: no data field */
         }
-        /* Extended records (weak-bit descriptors) sit after the sector list:
-         * 8 bytes each { u8 size, u8 type, u8 sector, u8 pad, u16 data, u16 } —
-         * type 0x10 = weak bits, `data` = first weak byte offset. */
+        /* What follows the sector list is a CHUNK CHAIN, and a chunk header is
+         * { u32 size, u8 type, u8 num, u16 data } -- so the type is at +4, not
+         * at +1.  Reading it at +1 (an earlier guess at the layout) picked up
+         * the top byte of the size field, so a weak-bit chunk was never
+         * recognised and wkoff stayed unset: every weak sector read back as
+         * ordinary stable data, which is a silent failure of exactly the
+         * protection the format exists to carry.  Types: 0x00 sector data,
+         * 0x01 sector list, 0x10 weak bits, 0x11 extended sector header. */
         uint32_t ext = rec;
         while (ext + 8 <= p + tsize && ext + 8 <= d->len) {
-            uint8_t  etype = b[ext + 1];
-            uint8_t  esec  = b[ext + 2];
-            uint16_t edata = rd16(b + ext + 4);
-            if (b[ext] == 0) break;
+            uint32_t csize = rd32(b + ext);
+            uint8_t  etype = b[ext + 4];
+            uint8_t  esec  = b[ext + 5];
+            uint16_t edata = rd16(b + ext + 6);
+            if (csize == 0) break;                 /* zero size terminates */
             if (etype == 0x10)
                 for (uint32_t j = 0; j < k; j++)
                     if (d->atx[j].trk == trk && d->atx[j].num == esec)
                         d->atx[j].wkoff = edata;
-            ext += 8;
+            ext += (csize >= 8) ? csize : 8;
         }
         p += tsize;
     }
@@ -418,27 +436,39 @@ static uint8_t atx_read(xl_drive *d, uint32_t sec, uint8_t *out, uint32_t *olen)
         }
     }
 
+    /* The FDC status the guest reads IS the inverse of the ATX status byte, so
+     * derive it rather than clearing bits one at a time and hoping the set is
+     * complete.  Bits 6/7 are forced high: the reference does the same and notes
+     * bit 7's purpose is unknown. */
+    d->fdc = (uint8_t)(~e->status | 0xC0u);
+
     uint32_t len = d->secsz ? d->secsz : 128;
     if (sec <= 3) len = 128;                       /* the classic boot-sector quirk */
-    if (!e->off || e->off + len > d->len) {        /* record with no data field */
+
+    /* Record-not-found: the header is on the track but there is no data field,
+     * so there is nothing to hand back.  Distinct from "no record at all"
+     * above, which is a bus timeout because the drive never answers. */
+    if (e->status & ATXS_MISSING) return 0x90;
+
+    if (!e->off || e->off + len > d->len) {        /* truncated/absent data field */
         d->fdc &= (uint8_t)~0x08u;                 /* CRC error */
         return 0x90;
     }
     memcpy(out, d->img + e->off, len);
     *olen = len;
 
-    if (e->status & ATXS_EXTENDED) {               /* weak bits: fresh garbage per read */
+    /* Weak bits are located by the weak-bits CHUNK, so the chunk is what gates
+     * them -- not the 0x40 status bit, which an image need not also set. */
+    {                                              /* weak bits: fresh garbage per read */
         uint32_t w = e->wkoff;
-        if (w < len) {
+        if (w != 0xFFFFu && w < len) {
             uint32_t r = a9_us() * 1103515245u + 12345u;
             for (uint32_t i = w; i < len; i++) { r = r * 1103515245u + 12345u; out[i] = (uint8_t)(r >> 16); }
         }
     }
-    if (e->status & ATXS_DELETED) d->fdc &= (uint8_t)~0x20u;   /* deleted-data mark */
-    if (e->status & ATXS_MISSING) {                            /* bad data field */
-        d->fdc &= (uint8_t)~0x08u;
-        return 0x90;
-    }
+    /* A deleted-data mark still returns the data; only the FDC status says so,
+     * and that is already carried by the inversion above. */
+    if (e->status & ATXS_CRC) return 0x90;         /* data returned, but bad */
     if (e->status & ~ATXS_KNOWN) {                 /* unknown flag -> fail safe */
         d->fdc &= (uint8_t)~0x08u;
         return 0x90;
