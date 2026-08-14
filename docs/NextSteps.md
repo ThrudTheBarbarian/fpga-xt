@@ -725,6 +725,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **t=24-36 s CAPTURE (2026-08-14): the wait CLEARS, but only ONCE in ~12 s.**
+  entry.bin, 4,958,176 entries, page $3000 dominant (2,775,811):
+        $30CC `cmp $C2`   53,953        **$30D0 `inc $D6`   1**
+        $30C1 / $30C4 / $30C6 / $30C8 / $30CA   **still 0**
+        **$30DC `bit RANDOM`   1**
+  So the wait is NOT permanent -- it cleared ONCE in ~12 s, and the scene selector
+  ran once. That matches Simon's "{smooth anim}{abrupt switch} repeating": scenes
+  DO advance, roughly every ~10-20 s instead of every ~1.5 s.
+
+  The entry sequence ($30C1 `jsr $33F2` -> $30C4 -> the $CA wait -> $30CA) is
+  STILL outside the window even at t=24 s, and after the wait clears control goes
+  to the **$30EC loop** ($30ec jsr $3307 / $30ef lda $BC / $30f1 bne $30EC), NOT
+  back through $30CA -- which is why the entry never reappears once passed.
+
+  SO THE ENTRY HAPPENS ONCE, EARLY (before t~24 s, during or just after the load).
+  To capture it, trace from BOOT across the load->intro handoff (sleep 14, 18, 20
+  with three `dtrace 4` each) and search for $30C1/$30CA. Alternatively set
+  `6502 watch 0x00CA w` or a breakpoint-style watch near the transition to halt
+  exactly there and read the state.
+  KEY REFRAME FOR THE MORNING: the intro is not frozen, it is running ~10x too
+  SLOW because $C2 gates each scene and $C2 only advances when $BC passes $FF
+  ($BC = $FD 81% of the time on ours; Altirra holds $BC=$00 and never uses this
+  path at all).
+  ############################################################################
+
+  ############################################################################
   **THE WAIT IS ENTERED BEFORE t=31 s AND NEVER LEFT (2026-08-14).** In bbt.bin
   (t=31-35 s, the pure intro):
         $30CC `cmp $C2`   158,820      $30CE loops back
