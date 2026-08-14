@@ -725,6 +725,31 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION + TOOL CAVEAT (2026-08-14): THE WATCHPOINT IS A BREAKPOINT, AND
+  THE $3C7E WRITE WAS THE LOADER, NOT THE GAME.**
+  `6502 watch` does NOT passively monitor -- XT_DBG_WPCFG is documented as
+  "**break** on WRITE/READ" and it HALTS THE 6502. After the hit, `6502` reports:
+        6502 HALTED (bkpt)  PC=$CBE0  A=$3C X=$00 Y=$7E SP=$0FD  icnt=45936
+  **icnt=45936** -- only ~46k instructions in, i.e. during the LOAD, not the
+  intro. So the watchpoint fired almost immediately and the "30 s of intro" that
+  followed was 30 s of a STOPPED CPU. And $CBE0 is in OUR SIOV STUB region, with
+  A=$3C / Y=$7E composing $3C7E: that write was **the loader storing sector data
+  into RAM** -- the display list being loaded from disk in the first place.
+  It is NOT evidence that the game rewrites control bytes at runtime, and the
+  previous entry's conclusion is WITHDRAWN.
+
+  ALSO NOTE: DBG_WPC / DBG_WAXYS / DBG_WPSH are **INJECTION** registers (write
+  PC/regs then DBG_COMMIT to resume a halted core), NOT capture registers. The
+  watchpoint yields only wp_seen/wp_hit plus wherever the core halted.
+  **USING IT COSTS YOU THE RUN**, so to survey runtime writes either
+    * set the watch AFTER the load completes (t > ~34 s) so a load-time store
+      cannot trigger it, read the halted PC, then `6502 go` to resume; or
+    * build the mailbox read path and snapshot the DL at two times instead.
+  **ALWAYS `6502 go` afterwards -- a halted guest left behind is a dead board.**
+  (Verified resumed: PC=$3D87, icnt advancing.)
+  ############################################################################
+
+  ############################################################################
   **WATCHPOINT RESULT (2026-08-14): THE DL CONTROL BYTE $3C7E *IS* WRITTEN DURING
   THE INTRO.** `6502 watch 0x3C7E w` armed 3 s after boot, then `6502 diag` after
   30 s: **wp_seen=1 wp_hit=1**.
