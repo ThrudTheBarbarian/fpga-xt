@@ -252,6 +252,7 @@ typedef struct {
     atx_sec  *atx;          /* ATX: sector map (NULL for ATR) */
     uint32_t  natx;
     uint8_t   fdc;          /* last FDC status byte, $FF = clean (STATUS cmd) */
+    uint32_t  rot_us;       /* ATX: wait until the last sector read came round */
 } xl_drive;
 static xl_drive g_drv[8];
 
@@ -426,15 +427,19 @@ static uint8_t atx_read(xl_drive *d, uint32_t sec, uint8_t *out, uint32_t *olen)
         return 0x8A;                               /* SIO timeout, like a real drive */
     }
 
+    /* Where the head is NOW, in ATX units.  This does two jobs: it picks between
+     * duplicate copies of a sector, and it gives the ROTATIONAL LATENCY -- how
+     * long until the chosen sector actually comes round under the head.  A real
+     * drive pays that on EVERY read, not just where there is a choice, so it is
+     * computed unconditionally rather than only when nc > 1. */
+    uint32_t head = (a9_us() % ATX_US_PER_REV) / 8u;
     const atx_sec *e = cand[0];
-    if (nc > 1) {                                  /* pick by where the head is NOW */
-        uint32_t head = (a9_us() % ATX_US_PER_REV) / 8u;
-        uint32_t best = 0xFFFFFFFFu;
-        for (uint32_t i = 0; i < nc; i++) {
-            uint32_t d2 = (cand[i]->pos + ATX_UNITS_PER_REV - head) % ATX_UNITS_PER_REV;
-            if (d2 < best) { best = d2; e = cand[i]; }
-        }
+    uint32_t best = (cand[0]->pos + ATX_UNITS_PER_REV - head) % ATX_UNITS_PER_REV;
+    for (uint32_t i = 1; i < nc; i++) {
+        uint32_t d2 = (cand[i]->pos + ATX_UNITS_PER_REV - head) % ATX_UNITS_PER_REV;
+        if (d2 < best) { best = d2; e = cand[i]; }
     }
+    d->rot_us = best * 8u;                         /* ATX positions are 8 us apart */
 
     /* The FDC status the guest reads IS the inverse of the ATX status byte, so
      * derive it rather than clearing bits one at a time and hoping the set is
@@ -559,6 +564,28 @@ static void sio_mbox_write(uint32_t off, const uint8_t *src, uint32_t n);  /* fw
  * answer-immediately behaviour. */
 uint32_t g_sio_delay_us = 0;
 
+/* ROTATIONAL PACING on the serial bus.  Non-zero = hold the reply until the
+ * sector would actually have reached the head.
+ *
+ * This is the path BallBlazer uses and the SIOV model never touched: a fast
+ * loader drives the bus itself, so g_siov_baud/g_siov_latency_us -- calibrated
+ * against the reference and confirmed accurate -- were calibrating a code path
+ * this title never enters.  The fabric already paces the BYTES at the rate the
+ * guest programmed; what was still missing is the wait BEFORE the first byte,
+ * which on a 1050 averages half a revolution (~104 ms) and here comes from the
+ * sector's own recorded angular position.
+ *
+ * ON by default, unlike the SIOV model, because it is scoped by FORMAT rather
+ * than by title: it applies only to ATX, and only ATX records the angular
+ * position it needs.  An ATX exists because the disc was protected -- that is
+ * what the format is for -- so those are exactly the titles whose loaders time
+ * the drive.  Everything shipped as an ATR (ElektraGlide, Despatch Rider) is
+ * untouched and stays as fast as it is today, so this costs nothing where
+ * authentic load times were the wrong trade.  `xlboot -a` still forces it on
+ * alongside the SIOV model; this default is what makes it reach titles launched
+ * from the desktop, which never run xlboot at all. */
+uint32_t g_sio_rot = 1;
+
 /* Paravirtual SIOV service model (see the note in xl_sio_service).
  *
  * DEFAULT IS FAST (baud 0 = model off), because authentic timing means
@@ -606,9 +633,18 @@ static void xl_sio_bus_poll(void)
      * WHICH duplicate sector, never WHEN the frame starts).  g_sio_delay_us is a
      * knob so the hypothesis can be MEASURED rather than argued: 0 = today's
      * behaviour. */
-    if (g_sio_delay_us) {
-        uint32_t t0 = a9_us();
-        while ((uint32_t)(a9_us() - t0) < g_sio_delay_us) { /* spin: shorter than a tick */ }
+    uint32_t wait_us = g_sio_delay_us;
+    if (g_sio_rot && drive >= 0 && g_drv[drive].kind == IMG_ATX)
+        wait_us += g_drv[drive].rot_us;
+    if (wait_us) {
+        /* Up to a full revolution (208 ms), so sleep the whole milliseconds
+         * rather than burning them: this task holds the guest either way, and
+         * spinning that long would starve everything at or below its priority.
+         * The sub-millisecond remainder is finer than a tick, so it spins. */
+        uint32_t ms = wait_us / 1000u;
+        if (ms) vTaskDelay(pdMS_TO_TICKS(ms));
+        uint32_t t0 = a9_us(), rem = wait_us % 1000u;
+        while ((uint32_t)(a9_us() - t0) < rem) { /* spin: shorter than a tick */ }
     }
 
     if (outlen) sio_mbox_write(MC_OFF_SIO_DATA, out, outlen);

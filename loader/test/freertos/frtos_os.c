@@ -3387,9 +3387,14 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return xl_reset((int)a0);
     }
     case SYS_sio_timing: {                                  /* (baud, latency_us) -> 0 */
-        extern uint32_t g_siov_baud, g_siov_latency_us;
+        extern uint32_t g_siov_baud, g_siov_latency_us, g_sio_rot;
         g_siov_baud       = (uint32_t)a0;
         g_siov_latency_us = (uint32_t)a1;
+        /* "Authentic" has to mean authentic on BOTH front ends.  Titles that
+         * load through the OS are paced by the SIOV model above; a fast loader
+         * never calls SIOV, so it needs the serial-bus drive's rotational
+         * pacing or it is not paced at all. */
+        g_sio_rot         = (uint32_t)(a0 != 0);
         return 0;
     }
 
