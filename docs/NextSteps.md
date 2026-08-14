@@ -701,6 +701,28 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
+  **SECOND RETRACTION — "we never execute $3043/$3AB0" IS ALSO FALSE.** A better
+  capture (three back-to-back `dtrace 4` windows in ONE boot, t=26..38 s,
+  5,178,368 entries) shows our machine DOES execute Altirra's intro routines:
+  $3xxx regions run include $3043-30CE, $327F-32E2 (the $3282/$32C3 chain) and
+  $3A5C-3BA6 (the $3AB0 sprite plotter). The earlier "zero" came from the t=45 s
+  trace, which is the GAME. That is the THIRD window-scoping error today; treat
+  ANY "we never run X" claim as unproven until it is measured across the whole
+  intro, not one 4 s slice.
+
+  **WHAT SURVIVED, AND IT IS SHARP:** in that same run
+        PC $30CC executed 99,656 times
+        PC $30DC executed 0 times      <-- the `bit RANDOM` scene-select
+        PC $30D0/$30E3/$30E5 executed 0 times
+        PC $30EC executed (region $30EC-30F3), $3307 executed 25,668 times
+  So we SPIN at `$30cc cmp $C2 / $30ce bne $30CC` and NEVER fall through to
+  $30D0-$30E5. The scene-selection block is not being reached at all in this run;
+  the `jsr $3307` display loop at $30EC is entered from elsewhere. The question
+  is now WHY `cmp $C2` never matches -- $C2 is the frame counter the scheduler
+  waits on, and $D6/$3A58 gate the selection. Chase $C2: who writes it, and does
+  our value ever reach the compared value? Compare against Altirra, which does
+  reach $30DC (its $9C selection works and its RANDOM varies, SKCTL=$13).
+
   **RETRACTION (2026-08-14, latest): the two machines run IDENTICAL CODE.** The
   "structurally different intro implementations" claim below is WRONG and is
   withdrawn. Peeking Altirra at OUR OWN executed PCs gives a 192/192 opcode match
