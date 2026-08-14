@@ -725,6 +725,39 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE $BC TIMELINE — THE TENSION IS RESOLVED, AND PHASE 3 IS THE BUG
+  (2026-08-14).** Walking entry.bin IN EXECUTION ORDER (556 events) instead of
+  aggregating:
+        idx     2,888   read  $00  x281   <- PHASE 1: ticker SKIPPED ($BCED BEQ)
+        idx 1,915,203   read  $FF  x19    <- PHASE 2: ticker RUNS ($FF wraps X)
+        idx 2,029,246   read  $FE  x1
+        idx 2,033,462   read  $FD  x226   <- **PHASE 3: STUCK, 226 reads, NO WRITES**
+        idx 2,978,845   WRITE $0E ... $00 <- PHASE 4: normal countdown, one step
+                                             per ~4,180 instructions (= per VBI)
+  Both earlier "contradictory" histograms were real -- they were DIFFERENT PHASES.
+  Aggregating hid the structure; the timeline shows it immediately.
+
+  **PHASE 4 PROVES THE MACHINERY WORKS**: $BC counts $0E -> $00 one step per frame,
+  written by $3E60. **PHASE 3 IS THE FAULT**: $BC reaches $FD by two decrements
+  from $FF ($30EA and $3E12, once each) and then **NOTHING WRITES IT for 226
+  reads** -- the reload that should follow never comes, so `inc $C2` never runs and
+  the $30CC wait stalls.
+
+  **AND PHASE 1 IS THE REFERENCE'S STEADY STATE**: $BC = $00 for 281 reads is
+  exactly what Altirra holds PERMANENTLY (300/300 frames). So Altirra stays in
+  phase 1 forever, while WE PROGRESS INTO $FF -> $FD AND GET STUCK.
+
+  **NEXT — TWO CONCRETE QUESTIONS:**
+   1. What moves us OUT of phase 1 into phase 2 ($BC $00 -> $FF) around
+      idx ~1.9 M, when Altirra never leaves phase 1? Find the writer of $FF
+      (none of $3E60/$5139/$BF9B wrote it in this window -- so it is an untraced
+      store, possibly the `STA (zp),Y` blind spot, or an aliasing write).
+   2. In phase 3, what SHOULD have written $BC and did not? Compare against a
+      capture that reaches phase 4 promptly.
+  This timeline is the single most useful artifact from the night; start here.
+  ############################################################################
+
+  ############################################################################
   **THE $BC WRITERS, AND AN UNRESOLVED TENSION (2026-08-14).** memsearch finds
   THREE `sta $BC` sites -- **$3E60, $5139, $BF9B** -- and **NO `lda #$FF / sta $BC`
   (A9 FF 85 BC) anywhere**. Three `dec $BC`: $309B, $30EA, $3E12.
