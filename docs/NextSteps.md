@@ -725,6 +725,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **WATCHPOINT RESULT (2026-08-14): THE DL CONTROL BYTE $3C7E *IS* WRITTEN DURING
+  THE INTRO.** `6502 watch 0x3C7E w` armed 3 s after boot, then `6502 diag` after
+  30 s: **wp_seen=1 wp_hit=1**.
+
+  This CUTS AGAINST the "our display list is DLI-free" reading. The control bytes
+  ARE modified at runtime -- by the `STA (zp),Y` stores that absolute-store
+  decoding cannot see -- so a STATIC snapshot of the list proves nothing about
+  what ANTIC fetches frame to frame. The game may well be writing DLI bits into
+  control bytes as it animates, which would make our ~1608 DLIs LEGITIMATE and
+  move the question back to why the VBI collides with them here but not on the
+  reference (handler LENGTH, or DLI placement relative to VBLANK). It would also
+  reconcile the sim (clean on a static DLI-free list) with the hardware.
+
+  **INSTRUMENT TRAP, CAUGHT:** `6502 watch 3C7E w` silently set the watch to
+  **$0003** -- parse_num stops at the 'C', reading "3C7E" as decimal 3. A
+  "no writes" result from that would have been meaningless. **ALWAYS pass hex as
+  `0x3C7E` or `\$3C7E`** (both verified working).
+
+  NEXT: get the WRITING PC. DBG_WPC / DBG_WAXYS / DBG_WPSH capture PC and
+  registers at the hit, but `6502 diag` does not print them -- check `6502 status`
+  or add a one-line readout to dbg6502.c (kernel-only rebuild, no bitstream).
+  Then watch several control bytes across the modeF run and the $BA00 segment,
+  and read back the VALUE written to see whether bit 7 is being set.
+  ############################################################################
+
+  ############################################################################
   **TOOL ALREADY EXISTS: A NON-HALTING WATCHPOINT (2026-08-14).** Before building
   a guest-RAM read path, note `6502 watch <addr> [r|w|rw]` (dbg6502.c:522) sets
   DBG_WP + DBG_WPCFG (bit0 enable, bit1 on_write, bit2 on_read) and does NOT halt
