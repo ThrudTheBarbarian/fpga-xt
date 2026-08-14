@@ -725,6 +725,45 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION #7 — "ALTIRRA NEVER WRITES P/M SHAPE MEMORY" IS WRONG, AND
+  trace_writes.py HAS A SILENT-FAILURE MODE (2026-08-15).**
+  Altirra executes the clear/upload routine **2688 times** ($3542, $3548, $354E,
+  $3554) against our 32 -- and scaled for capture length the RATES MATCH
+  (2688/32 = 84x; $3500 is 336/4 = 84x; alt_vlong is ~84x longer in game-time).
+  Disassembly gives the ground truth -- it is a **P/M SHAPE UPLOADER**, and its
+  stores are ABSOLUTE-INDEXED, identical on both machines:
+        $353A lda ($FE),Y / $353C sta $0300,X   (missiles)
+        $3540 lda ($FE),Y / $3542 sta $0400,X   (P0)
+        $3546 lda ($FE),Y / $3548 sta $0500,X   (P1)
+        $354C lda ($FE),Y / $354E sta $0600,X   (P2)
+        $3552 lda ($FE),Y / $3554 sta $0700,X   (P3)
+  So the "we uniquely clear P1/P2 while Altirra leaves them alone" conclusion is
+  DEAD, and so is the inference that PMBASE is $98 on Altirra (that came from the
+  same broken run; `alt.antic()` reporting PMBASE=$00 was ALSO a single-moment
+  gameplay peek -- do not use it for the intro either).
+
+  **THE TOOL HAZARD — READ BEFORE QUOTING ANY trace_writes.py NUMBER.**
+  `trace_writes.py` resolves each store site's operand with `alt.peek(pc+1,n)`
+  inside a `try/except` that **`continue`s silently on failure**. A site whose
+  peek fails is DROPPED, so the tool can report **"0 writes" when it means "0
+  operands resolved"**. With 411 distinct store sites against a busy bridge this
+  is easy to hit, and it is exactly what produced both the false "Altirra writes
+  nothing into $0400-$07FF" and the phantom "$353A -> $9Exx" (impossible: $353A
+  is `lda ($FE),Y`, a LOAD, which is not even in the tool's STORES table).
+  **FIX THE TOOL FIRST:** count and REPORT peek failures, and fail loudly rather
+  than returning an empty result. Until then treat every zero result as UNPROVEN.
+
+  **NET EFFECT ON THE INVESTIGATION.** Both pillars of the last several hours are
+  now retracted: the $97/$BC gate (sample-size artifact, #6) and the P/M
+  shape-memory difference (tool artifact, #7). **NO CONFIRMED DIVERGENCE between
+  the machines currently stands.** What remains solid is the downstream MECHANISM
+  (only $BC==$FF wraps X at $3DE1 to reach $3E00 `inc $C2`; at $FD the ticker
+  runs while $C2 stalls, giving the ~12 s spin at $30CC) and the fact that the
+  intro is SEEDED FROM POKEY RANDOM. Rebuild from measurements, not from the
+  retracted chain.
+  ############################################################################
+
+  ############################################################################
   **RETRACTION #6 — THE $97/$BC DIVERGENCE IS NOT REAL (2026-08-15).**
   A 3000-frame TRACEFILE capture (`alt_vlong.bin`, **19,186,675 records, 0
   lost**) shows Altirra doing EVERYTHING we do:
