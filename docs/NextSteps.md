@@ -725,6 +725,37 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION #11 — THE DLI STORY DOES NOT APPLY TO THE INTRO (2026-08-14).**
+  NMIST bit 7 measured DIRECTLY (not inferred from branch counts): `BIT $D40F` at
+  $C018 sets N from bit 7, and the trace records P at retire, so scan for IR=$2C
+  with next_pc=$C01B and read bit 7 of P.
+        multi.bin (mixed/game)  2393 NMIs   1608 DLI-bit set  (67.2%)
+        hand.bin  (handoff)     1910 NMIs   1078 DLI-bit set  (56.4%)
+        **bbt.bin (TRUE INTRO, t=31-35 s, page $3000 dominated)
+                                 281 NMIs      0 DLI-bit set  (0.0%)**
+  **IN THE INTRO PROPER THERE ARE NO DLIs AT ALL.** All 281 NMIs are VBIs, which
+  is correct behaviour. The DLIs are a GAME-PHASE phenomenon; multi.bin carried
+  them because its page profile ($4000-$B000) is largely GAME, not intro.
+
+  So the entire spurious-DLI chain DOES NOT EXPLAIN THE INTRO STALL, and the
+  "1608 DLIs" figure must never again be quoted as an intro fact. Same root cause
+  as most of today's retractions: attributing a measurement to the wrong window.
+  The 31 dropped VBIs (92.5% vs Altirra's 100%) were ALSO counted in multi.bin
+  and are therefore ALSO suspect as an intro claim -- RE-MEASURE $BC80/$BC85 in
+  bbt.bin (pure intro) before building anything on them.
+
+  WHAT REMAINS SOLID FOR THE INTRO (measured in bbt.bin, the pure-intro capture):
+    * `$30cc cmp $C2 / bne $30CC` spins 99,656 times, Z NEVER set.
+    * $30D0-$30E5 (scene scheduler + `bit RANDOM` scene select) NEVER execute.
+    * $C2's only writer is `INC $C2` at $3E00, called from the VBI, needing 255
+      ticks to reach $FF.
+  So the intro stall is real and the mechanism (a starved $C2) still stands --
+  but WHY the ticker is starved is once again OPEN, because it is not DLIs.
+  NEXT: re-measure the VBI short/full split ($BC80 vs $BC85) and the $C2 tick rate
+  IN bbt.bin ONLY, and compare against Altirra at the same scene.
+  ############################################################################
+
+  ############################################################################
   **T11 REFUTES THE MID-FRAME-REWRITE HYPOTHESIS TOO (2026-08-14).** Added to
   sim/tb_antic_timing.sv (committed): build the real list, run into the display
   region, then zero the WHOLE $3C00 page mid-frame exactly as the game's fill
