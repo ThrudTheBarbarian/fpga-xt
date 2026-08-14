@@ -303,6 +303,13 @@ static uint32_t atr_sector(const xl_drive *d, uint32_t sec, uint32_t *off)
 #define ATX_US_PER_REV     208333u
 #define ATX_SPT            18u           /* logical sectors per track, SD */
 
+/* A real drive does NOT fail fast on a bad sector: its firmware re-reads it
+ * before giving up, and each attempt costs a whole revolution.  We were
+ * reporting the error after the rotational latency alone -- about 10x too
+ * early.  That lands on exactly the reads a protection cares about, because a
+ * deliberately-bad sector is the one thing it asks for. */
+#define ATX_ERR_RETRIES    4u            /* re-reads before the drive reports it */
+
 /* ATX sector-status bits.  These are ACTIVE HIGH, and the FDC status byte the
  * guest reads back is simply their INVERSE -- the reference implementation does
  * exactly `mFDCStatus = ~atxStatus | 0xC0` (Altirra, ATDiskImage::LoadATX), and
@@ -453,7 +460,10 @@ static uint8_t atx_read(xl_drive *d, uint32_t sec, uint8_t *out, uint32_t *olen)
     /* Record-not-found: the header is on the track but there is no data field,
      * so there is nothing to hand back.  Distinct from "no record at all"
      * above, which is a bus timeout because the drive never answers. */
-    if (e->status & ATXS_MISSING) return 0x90;
+    if (e->status & ATXS_MISSING) {
+        d->rot_us += ATX_ERR_RETRIES * ATX_US_PER_REV;
+        return 0x90;
+    }
 
     if (!e->off || e->off + len > d->len) {        /* truncated/absent data field */
         d->fdc &= (uint8_t)~0x08u;                 /* CRC error */
@@ -473,7 +483,10 @@ static uint8_t atx_read(xl_drive *d, uint32_t sec, uint8_t *out, uint32_t *olen)
     }
     /* A deleted-data mark still returns the data; only the FDC status says so,
      * and that is already carried by the inversion above. */
-    if (e->status & ATXS_CRC) return 0x90;         /* data returned, but bad */
+    if (e->status & ATXS_CRC) {                    /* data returned, but bad */
+        d->rot_us += ATX_ERR_RETRIES * ATX_US_PER_REV;
+        return 0x90;
+    }
     if (e->status & ~ATXS_KNOWN) {                 /* unknown flag -> fail safe */
         d->fdc &= (uint8_t)~0x08u;
         return 0x90;
