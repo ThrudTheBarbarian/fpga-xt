@@ -725,6 +725,30 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **X IS NOT A COUNTER -- IT IS A TWO-VALUE DECISION (2026-08-14).** Histogramming
+  X at the gate in bbt.bin (the pure intro), taken from the record where the `inx`
+  at $3DE0 retires (X there is AFTER the increment):
+        X=$FE  x226  (81%)  -> no tick
+        **X=$00  x54   (19%)  -> WRAPS, `inc $C2` runs**
+        X=$FF  x1
+        only THREE distinct values in 281 samples
+  So X BEFORE the `inx` is **$FD (226x) or $FF (54x)**. It is NOT a free-running
+  counter -- it is SET FRESH each VBI to one of two values, where **$FF means
+  "tick" and $FD means "do not"**.
+
+  And the caller is unambiguous: **$BCEF enters $3DE0 all 281 times** (`jsr $BCEB`
+  at $BC99 -> $BCEB..$BCEF -> falls into $3DE0).
+
+  **THEREFORE THE DIVERGENCE IS IN THE ROUTINE AT $BCEB, WHICH CHOOSES $FF vs
+  $FD, AND WE CHOOSE $FD 81% OF THE TIME.** That is the whole bug reduced to one
+  decision. NEXT: recover $BCEB..$BCEF from OUR OWN trace (per-PC opcode map --
+  Altirra's memory is NOT reliable for $BCxx) and find WHAT IT TESTS. Then read
+  that input on both machines at the same scene. Whatever it reads is the real
+  divergence; everything upstream (DLIs, drive timing, the display list) was a
+  detour.
+  ############################################################################
+
+  ############################################################################
   **THE GATE, FOUND EXACTLY (2026-08-14).** Counting the VBI chain in bbt.bin
   (the pure intro) shows the chain is UNIFORM -- every VBI walks all of it:
         $BC78 281  $BC85 281  $BC87 281  $BC8B 281  $BC8E 281
