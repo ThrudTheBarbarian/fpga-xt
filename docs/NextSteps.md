@@ -725,6 +725,35 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **DECISIVE, AND IT INVERTS THE ASSUMPTION: ALTIRRA'S ENVELOPE IS NOT RUNNING
+  AT ALL (2026-08-14).** Peeking Altirra's $BD every frame for 300 frames at the
+  intro scene (PC=$37df):
+        **distinct values = 1, all $00. Changes: 0. -> 0.00 steps/frame
+         (OURS: ~0.81 steps/frame). Below $0F: 100% (ours 0.4%).**
+  Five seconds with ZERO movement, against a note length of ~4 s -- so this is not
+  "between notes", the envelope is genuinely IDLE there.
+
+  **SO THE DIVERGENCE RUNS THE OPPOSITE WAY FROM THE WORKING ASSUMPTION: WE ARE
+  DOING EXTRA WORK, NOT TOO LITTLE.** Our machine runs a sound envelope during the
+  intro that Altirra does not. Because ours is active, `$3E60 sta $BC` fires,
+  which engages the ENTIRE $BC -> $C2 -> $30CC chain -- a path Altirra never
+  enters at all (exactly consistent with its $BC being $00 for 300/300 frames).
+
+  **THE TARGET IS NOW: WHY IS OUR SOUND ENGINE PLAYING A NOTE HERE AT ALL?**
+   1. Find what STARTS the envelope -- who writes $BD with $F0? Search our traces
+      for a store of $F0 to $BD (and note $3E14 `lda #$F9` / $3E16 `sta zp` nearby,
+      which looks like a sibling initialiser). A `6502 watch 0x00BD w` armed early
+      will name it directly.
+   2. Then ask why that trigger fires on ours and not on Altirra -- is it a
+      keyboard/console read, a collision, a POKEY status read, or a timer? If it
+      derives from a hardware register we emulate, THAT is our bug.
+   3. Sanity-check the premise both ways: is it OURS that is wrong (spurious note)
+      or ALTIRRA that is silent (e.g. its music never started because it took a
+      different branch earlier)? Simon can settle it instantly by ear -- **does the
+      intro have music on the real thing?** Worth asking him in the morning.
+  ############################################################################
+
+  ############################################################################
   **$BD IS A 240-STEP NOTE ENVELOPE — THE INTRO IS MUSIC-PACED (2026-08-14).**
   Histogramming A at `$3E5A lda $BD`:
         bbt.bin:   227 samples, **227 DISTINCT values**, running $F0, $EF, $EE,
