@@ -569,6 +569,54 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   goes through the mailbox — but a poke path in `xt_gp0_regs` driving the
   existing `rom_we`/`rom_addr` port would still be useful for A9-side debug.
   **It must never be used against a running 6502** for the reason above.
+- **BallBlazer intro: OPEN. Root cause NOT found. Read this before resuming.**
+  The game PLAYS PERFECTLY; only the intro misbehaves, deterministically: two
+  objects on screen where there should be one, a vehicle that stalls instead of
+  sweeping, a ball that never crosses, and a persistent 4 px bar at the left edge.
+
+  **VERIFIED CORRECT — do not re-test** (each by a minimal repro validated
+  against Altirra first): HPOSP writes in VBLANK (`pmsweep.xex`) and MID-LINE
+  (`hpmid.xex`, x=32 top / x=224 below, identical to the reference); players
+  parked at HPOS $00/$08 invisible on both (`hp0.xex`); P/M-to-P/M collision
+  (`tools/pcoll2.xex` decodes P2PL = $08 = player 3, using a needle validated
+  against a known constant in the same run); GTIA mode 9 basic rendering; P/M
+  DMA and its addressing (PMBASE=$2C single-line -> region $2800, missiles
+  $2B00); 6502 RAM cleared at boot; disk DATA (gameplay is flawless); ACID800
+  55 pass / 8 na / **0 fail**.
+
+  **FIXED ALONG THE WAY (real, but NOT this bug):** the paravirtual SIOV service
+  answered a sector in 775 instructions where a real drive takes ~62,000 — 80x
+  too fast. Now derived from link rate + rotational latency, off by default,
+  per-title via `xlboot -a` (SYS_sio_timing). The user confirmed it changed
+  nothing visually.
+
+  **THE ONE DURABLE UNEXPLAINED FACT:** both machines have IDENTICAL
+  PMBASE=$2c / DMACTL=$3d / GRACTL=$03, yet our machine executes code at $37AE
+  every frame while Altirra has $00 across $3700-$37FF at EVERY sample in 1800
+  frames. The hardware config matches; the CODE PATH differs. What selects it is
+  unknown. (The missile-strip write at $3B18 is an ordinary read-modify-write
+  sprite plotter through a zero-page pointer and is probably legitimate — the
+  ball is plausibly drawn with missiles.)
+
+  **TOOLING BUILT (the durable win):** `6502 dtrace <secs>` streams a gap-free
+  instruction trace to DDR over HP0 WITHOUT halting the core (the old tracer
+  halted it, which tore the disk load and produced a convincing FALSE story);
+  Altirra gained a matching `TRACEFILE` command; `tools/trace_diff.py` diffs the
+  two with interrupt-skew tolerance and an allowed-divergence resync past the
+  patched SIOV vector. It matched 214,237 instructions before finding a real
+  split.
+
+  **MEASUREMENT TRAPS THAT COST HOURS — read before measuring anything:**
+  PHASE MISMATCH (comparing the two machines at the same wall-clock second or
+  frame number produced at least three false leads; anchor on a CODE LANDMARK);
+  unvalidated readout channels (a PCOLR-colour readout returned black whatever
+  the value and produced a false "collisions are broken" finding — use POSITION,
+  and validate the channel in the SAME run); absent stimulus (a
+  player-vs-playfield test returned $00 on both only because the screen had no
+  ink); metrics that conflate objects (a "centroid" of vehicle+ball+background
+  appeared to show a fix that was not there); and coarse sampling (every 4th
+  frame made a smooth sweep look like 16-CC jumps).
+
 - **Emulator window chrome: COMPLETE, verified end-to-end on hardware.**
   Open the 6502 window -> zoom in (2x -> 3x) -> zoom out (-> 1x) -> full screen
   -> pointer into the letterbox reveals "Exit full screen" -> click it -> back to
