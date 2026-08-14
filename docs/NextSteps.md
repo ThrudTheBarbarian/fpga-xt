@@ -725,6 +725,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **WATCHPOINT FIRED — THERE *IS* A STORE. READ-PATH HYPOTHESIS DROPPED
+  (2026-08-14).** `6502 watch 0x00BC w` armed at PC=$3B21 (icnt=9,073,734) halted
+  at:
+        **PC=$309D  A=$00 X=$00 Y=$FF  icnt=14,170,324   wp_seen=1 wp_hit=1**
+  $309D is the instruction AFTER **`$309B dec $BC`** -- one of the three known
+  `dec $BC` sites. **So a real CPU store writes $BC, and OUR MEMORY SYSTEM IS NOT
+  IMPLICATED.** Drop the read-path theory. Guest verified running afterwards
+  (PC=$30C9, icnt 14,384,369).
+
+  **WHY THE TRACE ANALYSIS MISSED IT:** $309B executed **ZERO** times in
+  entry.bin (counted directly) yet fires in this run. That is the SAME run-to-run
+  timing sensitivity Simon saw with the goalposts appearing on one build and not
+  another. **I was analysing a capture in which that writer never ran**, so the
+  $00 -> $FF transition in entry.bin has a different explanation from the one the
+  watchpoint just caught -- or my window identification was wrong for that file.
+
+  **LESSON (the deepest one tonight): DO NOT GENERALISE FROM A SINGLE CAPTURE OF A
+  NON-DETERMINISTIC RUN.** Every "exhaustive" scan I did was exhaustive only over
+  ONE recording of a system whose behaviour varies between boots. Confirm any
+  "nothing does X" claim across SEVERAL captures, or on live hardware.
+  NEXT: re-run the watchpoint two or three more times to see whether $309B is the
+  consistent writer, and count $309B/$30EA/$3E12 across several fresh captures to
+  characterise which decrementer actually dominates.
+  ############################################################################
+
+  ############################################################################
   **DECODE FLAW IS REAL BUT DOES NOT EXPLAIN IT — READ-PATH HYPOTHESIS
   STRENGTHENED (2026-08-14).** Comparing OUR trace opcodes against Altirra byte
   by byte at every store site in the window:
