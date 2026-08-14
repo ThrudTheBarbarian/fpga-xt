@@ -725,6 +725,25 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **TOOL ALREADY EXISTS: A NON-HALTING WATCHPOINT (2026-08-14).** Before building
+  a guest-RAM read path, note `6502 watch <addr> [r|w|rw]` (dbg6502.c:522) sets
+  DBG_WP + DBG_WPCFG (bit0 enable, bit1 on_write, bit2 on_read) and does NOT halt
+  the core; `6502 watch off` disables. `6502 diag` reports `wp_seen` and
+  `wp_hit`, and DBG_WPC / DBG_WAXYS / DBG_WPSH capture the PC and registers AT
+  THE HIT. So the PC behind an otherwise-unresolvable `STA (zp),Y` CAN be
+  identified -- one address at a time, with no new tooling and no bitstream.
+
+  USE IT to answer the open question directly: watch a DL control byte for WRITE
+  and see whether anything modifies it. Candidates in priority order: a byte in
+  the animated modeF run (e.g. $3C90), the mode/LMS byte $3C7E, and bytes in the
+  $BA00 segment. If a write lands with bit 7 set, the DLIs are the GAME'S doing
+  and legitimate; if nothing ever writes a control byte, they are ours.
+  This is much cheaper than option A below and should be tried FIRST -- though a
+  single-address watch is a needle in a haystack, so still build the read path if
+  a few targeted watches come up empty.
+  ############################################################################
+
+  ############################################################################
   **THE GAME NEVER INSTALLS A DLI HANDLER (2026-08-14) — independent evidence
   that our DLIs are unwanted, needing NO display-list read.**
   Decoding every absolute store in all three capture windows:
