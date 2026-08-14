@@ -701,6 +701,33 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
+  **THE SHARPEST OPEN QUESTION: ARE WE TAKING DLIs THAT THE REFERENCE IS NOT?**
+  Altirra in this scene reports **NMIEN=$40** -- bit 7 CLEAR, i.e. DLIs DISABLED,
+  only the VBI NMI enabled (IRQEN=$20, DMACTL=$3e, DLIST=$ba00). That alone would
+  explain why Altirra NEVER has a VBI land inside a DLI handler: it has no DLIs
+  to land in.
+
+  Our side takes 6213 interrupt entries in the same capture, through exactly two
+  handlers: **$C02C x3820** and **$C018 x2393** (~281 Hz and ~176 Hz). Against
+  ~816 VBIs that is ~5400 interrupts the reference would not be taking IF its
+  NMIEN state also applies to us.
+
+  MEASUREMENT GAP, DO NOT SKIP: Altirra's vectors are $FFFA=$C18E (NMI) and
+  $FFFE=$C1A2 (IRQ), which do NOT match our $C02C/$C018 -- our OS image is a
+  different build, so our handlers CANNOT be identified from Altirra's vectors.
+  Before claiming "we take spurious DLIs":
+    1. Determine OUR NMIEN during the intro -- find stores to $D40E ($D40E writes
+       are decodable since the memories match) and read the value from the trace.
+       The game itself writes NMIEN ($bc9f sei / lda #$00 / sta NMIEN), so it is
+       game-controlled and may legitimately differ by scene.
+    2. Work out which of $C02C/$C018 is NMI and which is IRQ IN OUR OS image
+       (peek our own ROM is impossible -- no guest-RAM read -- so infer from the
+       trace: the NMI handler will be the one whose rate tracks 60 Hz x (1+DLIs),
+       and POKEY timer IRQs will track AUDF/AUDCTL).
+    3. Only then compare like with like, ALIGNED ON A SCENE.
+  If our ANTIC raises DLI NMIs while NMIEN bit 7 is clear, that is an RTL bug and
+  the direct cause of the dropped $C2 ticks. SIMULATE FIRST (tb_nmi, tb_antic_*).
+
   **THE MECHANISM, NAMED (2026-08-14): our VBI lands INSIDE A DLI HANDLER.**
   Walking back from each dropped VBI to the instruction it interrupted:
         $BED0 x11   $BEEC x11   $BEF5 x2   $C02C x2   $BECD x2
