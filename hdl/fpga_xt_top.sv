@@ -1631,7 +1631,7 @@ module fpga_xt_top (
     wire [63:0] fdbg_tr_data;
     xt_trace_axi #(.FIFO_AW(9), .BURST(16)) u_trace_axi (
         .clk_cpu   (clk_sally),
-        .rst_cpu   (sally_rst),
+        .rst_cpu   (rst_sally),
         .tr_valid  (fdbg_tr_valid),
         .tr_data   (fdbg_tr_data),
         .clk_sys   (clk_sys),
