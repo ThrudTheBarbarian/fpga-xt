@@ -46,10 +46,20 @@ def bridge():
     return AltirraBridge.from_token_file(toks[-1])
 
 
-def load(path):
+def load(path, altirra=False):
+    """Decode a trace with the loader that MATCHES ITS PRODUCER.
+
+    The two formats share a layout but not their semantics: ours pairs an
+    instruction's opcode with the PC of the NEXT instruction, so load_hw shifts
+    by one to recover (addr, op); Altirra's TRACEFILE already stores the
+    instruction's own address.  Using load_hw on an Altirra trace misaligns
+    every pair, turning arbitrary opcodes into phantom stores at wrong
+    addresses -- it once invented a store at a `lda ($FE),Y` and reported zero
+    P/M writes for a trace containing thousands of them.
+    """
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from trace_diff import load_hw
-    return load_hw(path)
+    from trace_diff import load_hw, load_alt_bin
+    return load_alt_bin(path) if altirra else load_hw(path)
 
 
 def main():
@@ -59,9 +69,12 @@ def main():
     ap.add_argument('--range', nargs=2, metavar=('LO', 'HI'))
     ap.add_argument('--summary', action='store_true')
     ap.add_argument('--limit', type=int, default=40)
+    ap.add_argument('--altirra', action='store_true',
+                    help="the trace came from Altirra's TRACEFILE, not from "
+                         "fpga-xt (different record semantics -- see load())")
     a = ap.parse_args()
 
-    T = load(a.trace)
+    T = load(a.trace, a.altirra)
     # Distinct PCs that execute a store — that is all we need operands for.
     sites = {}
     for r in T:
@@ -71,15 +84,32 @@ def main():
           file=sys.stderr)
 
     # Fetch the operand bytes for those PCs from Altirra (the code is static).
+    #
+    # A site whose peek fails has NO operand, so its writes are invisible to
+    # everything below.  Swallowing that silently makes the tool report "0
+    # writes" when it means "0 operands resolved" -- which once produced a
+    # confident (and wrong) "Altirra never writes P/M shape memory".  Count the
+    # failures and say so loudly; an all-or-nothing failure is a hard error.
     operands = {}
+    failed = []
     with bridge() as alt:
         for pc, op in sites.items():
             n = STORES[op][1]
             try:
                 b = alt.peek(pc + 1, n)
-            except Exception:
+            except Exception as e:
+                failed.append((pc, e))
                 continue
             operands[pc] = b[0] if n == 1 else (b[0] | (b[1] << 8))
+    if failed:
+        print('WARNING: %d of %d store sites had no operand (peek failed) and '
+              'are INVISIBLE below -- e.g. $%04X: %s'
+              % (len(failed), len(sites), failed[0][0], failed[0][1]),
+              file=sys.stderr)
+        if not operands:
+            sys.exit('trace_writes: EVERY operand peek failed -- results would '
+                     'be empty for tooling reasons, not because there are no '
+                     'writes. Is AltirraSDL still up and idle?')
 
     def target(pc, op, rec):
         base = operands.get(pc)
