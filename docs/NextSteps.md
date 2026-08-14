@@ -725,6 +725,40 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE LOOP CLOSES — ROOT CAUSE CANDIDATE IS `$309B dec $BC` WRAPPING $00 -> $FF
+  (2026-08-14).** Predecessor analysis shows the sound engine is reached ONLY from
+  inside the VBI, and the whole path is gated by $BC:
+        $BCEF -> $3DE0   (281 / 260)      $3DE1 -> $3E0F  (227 / 241)
+        $3E10 -> $3E35   (226 / 240)      $3E41 -> $3E43  (227 / 241)
+  `$BCEF JMP $3DE0` is reached ONLY when **`$BCED BEQ $BCF2` FALLS THROUGH**, i.e.
+  when **$BC != $00**.
+
+  **ON ALTIRRA $BC = $00 PERMANENTLY -> the BEQ is ALWAYS taken -> it NEVER
+  reaches $3DE0 -> its $BD never counts down.** That single gate explains the
+  entire observed difference, including the cold-reset sweep (3 distinct $BD
+  values in 1400 frames).
+
+  **THE PATH IS SELF-SUSTAINING ONCE STARTED:** $BC != $00 -> run the sound engine
+  -> `$3E60 sta $BC` keeps writing $BC -> stays non-zero. So the real question is
+  the BOOTSTRAP: **what first made $BC non-zero on our machine?**
+  **AND THE WATCHPOINT ALREADY ANSWERED IT: `$309B dec $BC` executed while $BC was
+  $00, wrapping it to $FF** (halt at PC=$309D, A=$00 X=$00 Y=$FF, icnt
+  14,170,324). `dec` of $00 yields $FF -- exactly the phase-2 value observed.
+
+  **SO THE ROOT-CAUSE CANDIDATE IS: OUR MACHINE EXECUTES `$309B dec $BC` WHEN THE
+  REFERENCE DOES NOT** (or does not with $BC==$00). Everything downstream --
+  sound engine running, $BC cycling, $C2 ticking slowly, the $30CC wait, scene
+  pacing, the man never appearing -- follows from that one instruction.
+  **NEXT:**
+   1. Find what calls/branches to $309B: predecessor histogram around $3090-$30A0
+      in our traces, and what condition leads there.
+   2. Check whether Altirra ever executes $309B (bp_set at $309B, or watch $BC).
+   3. Identify the input to that branch -- if it derives from a hardware register
+      we emulate, THAT is the bug. This is the first candidate all night that
+      explains every downstream observation from a single divergence.
+  ############################################################################
+
+  ############################################################################
   **REINSTATED ON PROPER EVIDENCE: OUR ENVELOPE COUNTS DOWN, ALTIRRA'S DOES NOT
   (2026-08-14).** Sweeping Altirra from COLD RESET for **1400 frames (~23 s,
   covering the whole load AND intro)**, polling $BD every frame:
