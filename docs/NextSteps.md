@@ -725,6 +725,36 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE DELAYING BRANCH IS $3E5E (2026-08-14) — the reload is gated by a
+  threshold compare.** Executed-PC counts for $3E00..$3E70 (bbt.bin / entry.bin):
+        $3E58  C6 DEC zp     227 / 241
+        $3E5A  A5 LDA zp     227 / 241
+        $3E5C  C9 CMP #imm   227 / 241
+        **$3E5E  B0 BCS -> $3E6A RTS   taken 226 / 226 times**
+        **$3E60  85 STA $BC    1 /  15**   <- reached ONLY when BCS falls through
+        $3E6A  60 RTS        227 / 241
+  So the $BC reload fires only when a zero-page counter -- decremented at $3E58 --
+  drops BELOW the immediate compared at $3E5C. `$3E5E BCS` skips it otherwise.
+  (Also note $3E46 `DEC` runs 113 times, about half of 227: a second conditional
+  decrement worth understanding.)
+
+  **THIS IS THE LAST LINK.** $BC is reloaded rarely -> $BC sits at $FD -> `inc $C2`
+  never runs -> the $30CC wait stalls -> scenes advance ~10x too slowly -> the
+  man's scene never plays.
+  **RUN-TO-RUN VARIATION IS VISIBLE HERE TOO:** the reload fired 1/227 in one
+  capture and 15/241 in another -- the same non-determinism Simon sees on screen.
+
+  **NEXT (small and well-defined):**
+   1. Peek the OPERANDS of $3E58 / $3E5A / $3E5C -- WHICH zero-page counter and
+      WHAT threshold. $3DE0-$3E6A is one of the six VERIFIED-identical regions
+      (192/192), so peeking Altirra is legitimate here; still cross-check the
+      opcode against our trace first ($3E58=C6, $3E5A=A5, $3E5C=C9).
+   2. Then find who ELSE writes that counter, and compare its behaviour against
+      Altirra AT THE SAME SCENE. If the counter advances more slowly on ours, that
+      is the divergence -- and it will be one level further up the same chain.
+  ############################################################################
+
+  ############################################################################
   **ALL THREE $BC WRITERS CAUGHT IN ONE BOOT — THE MECHANISM IS COMPLETE
   (2026-08-14).** Five arm/hit/resume cycles in a single run (arm, 4 s, read halt
   PC, `watch off`, `go`, repeat) gave three distinct writers IN SEQUENCE:
