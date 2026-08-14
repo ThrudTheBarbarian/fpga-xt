@@ -103,6 +103,24 @@ module tb_antic_timing;
         end
     endtask
 
+    // ---- T10 monitor: count /NMI pulses and NMIST-DLI assertions -------
+    // Enabled only for T10 so the earlier cases are untouched.
+    int   mon_nmi, mon_dli;
+    logic mon_en, mon_prev_nmi, mon_prev_dli;
+    always @(posedge clk) begin
+        if (rst) begin
+            mon_nmi <= 0; mon_dli <= 0;
+            mon_prev_nmi <= 1'b1; mon_prev_dli <= 1'b0;
+        end else begin
+            if (mon_en) begin
+                if (mon_prev_nmi && !nmi_n_w)  mon_nmi <= mon_nmi + 1;
+                if (!mon_prev_dli && nmist_w[7]) mon_dli <= mon_dli + 1;
+            end
+            mon_prev_nmi <= nmi_n_w;
+            mon_prev_dli <= nmist_w[7];
+        end
+    end
+
     initial begin
         // nmist probe DL at $2C00
         for (int i = 0; i < 65536; i++) mem[i] = 8'h00;
@@ -254,6 +272,49 @@ module tb_antic_timing;
             $display("FAIL T9: display stopped with DL DMA off (stuck byte lost)");
             nfail++;
         end else $display("  ok  T9: DL DMA off -> control byte stays stuck, display continues");
+
+        // ---------------- T10: a DLI-FREE display list must raise NO DLI --
+        // BallBlazer's intro list, read off the hardware (DLIST=$3C7C):
+        // blank8 / blank7 / modeF+LMS $208B / ~190x modeF / JVB back to the
+        // head -- 198 entries with NOT ONE DLI bit anywhere. On hardware the
+        // OS nevertheless takes its DLI dispatch ($C01D = JMP (VDSLST)) 1608
+        // times against 785 VBI-path entries, i.e. ~4.2 spurious DLIs/frame.
+        // NMIEN cannot explain that: NMIEN only GATES a DLI, the LIST REQUESTS
+        // it, so a list with no $8x/$Fx control byte must produce none whatever
+        // NMIEN holds.  Correct behaviour = exactly one VBI NMI per frame and
+        // NMIST bit 7 never set.
+        begin
+            for (int i = 0; i < 65536; i++) mem[i] = 8'h00;
+            mem['h3C7C]='h70;                    // blank 8
+            mem['h3C7D]='h60;                    // blank 7
+            mem['h3C7E]='h4F;                    // mode F + LMS
+            mem['h3C7F]='h8B; mem['h3C80]='h20;  //   -> $208B
+            for (int i = 0; i < 190; i++) mem['h3C81 + i] = 8'h0F;   // mode F
+            mem['h3C81+190]='h41;                // JVB
+            mem['h3C82+190]='h7C; mem['h3C83+190]='h3C;              //   -> $3C7C
+            wr(4'h2, 8'h7C); wr(4'h3, 8'h3C);    // DLIST = $3C7C
+            wr(4'h0, 8'h22);                     // DMACTL: normal playfield + DL DMA
+            wr(4'hE, 8'h40);                     // NMIEN = VBI only (as measured on HW)
+
+            run_to(9'd10, 7'd0);                 // let the new list take effect
+            mon_en = 1'b1;
+            run_to(9'd9,  7'd0);                 // one full frame (wraps through VBI)
+            mon_en = 1'b0;
+
+            $display("  T10: over one frame -> /NMI pulses=%0d  NMIST-DLI assertions=%0d",
+                     mon_nmi, mon_dli);
+            if (mon_dli != 0) begin
+                $display("FAIL T10: NMIST DLI bit asserted %0d times with a DLI-FREE list (HW shows ~4/frame -- REPRODUCED)", mon_dli);
+                nfail++;
+            end
+            if (mon_nmi != 1) begin
+                $display("FAIL T10: %0d /NMI pulses in a frame, expected exactly 1 (VBI)",
+                         mon_nmi);
+                nfail++;
+            end
+            if (mon_dli == 0 && mon_nmi == 1)
+                $display("  ok  T10: DLI-free list -> one VBI NMI, no DLI (NOT reproduced here)");
+        end
 
         if (nfail == 0) $display("*** ANTIC_TIMING OK ***");
         else            $display("*** ANTIC_TIMING FAIL *** %0d failure(s)", nfail);

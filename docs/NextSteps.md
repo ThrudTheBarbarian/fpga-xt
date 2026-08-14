@@ -724,6 +724,46 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   ACID800 green (55/8na/0fail; antic_nmist + the DLI cluster are the guard), and
   also re-run `make -C sim antic_dli_cdc`.
 
+  ############################################################################
+  **SIM DOES NOT REPRODUCE IT — antic_timing.sv IS CLEAN (2026-08-14).** A new
+  case **T10** was added to sim/tb_antic_timing.sv (committed): it builds
+  BallBlazer's list byte-for-byte (`70 60 4F 8B 20`, 190x `0F`, `41 7C 3C` JVB
+  to $3C7C), sets DLIST=$3C7C, DMACTL=$22, NMIEN=$40, and counts /NMI pulses and
+  NMIST bit-7 assertions across a full frame with a cycle-accurate monitor.
+  RESULT:
+        T10: over one frame -> /NMI pulses=1   NMIST-DLI assertions=0
+        *** ANTIC_TIMING OK ***
+  Exactly ONE VBI NMI, and the DLI bit NEVER asserted. **The module behaves
+  correctly under the modelled conditions, so do NOT "fix" antic_timing.sv.**
+
+  **AND A FLAW IN MY OWN EVIDENCE, OWNED:** the display-list bytes at $3C7C were
+  read out of **ALTIRRA's** memory, and Altirra is on a DIFFERENT list ($ba00).
+  That is exactly the catalogued trap of reading another machine's memory as if
+  it were ours. The clean parse (198 entries, JVB back to its own head) is
+  suggestive but is NOT proof about OUR RAM. So "our display list has zero DLI
+  bits" is UNPROVEN, and with it the whole "spurious DLI" reading.
+
+  WHAT IS STILL HARD FACT (measured on OUR hardware, from OUR ROM):
+    * $C018 x2393 = $C01D x1608 (JMP (VDSLST) — the DLI dispatch) + $C020 x785.
+      Our ROM bytes decode this unambiguously: BIT $D40F / BPL $C020 / JMP ($0200).
+      So our NMIST really is reporting DLIs ~4x per VBI-path entry.
+    * 31 VBIs took the short path (I set) vs Altirra's ZERO in 60 frames.
+    * The $30CC wait, the $C2 ticker, and the never-executed scene scheduler.
+
+  **NEXT — RESOLVE THE CONTRADICTION.** Sim says a DLI-free list raises no DLI;
+  hardware says DLIs are being dispatched. Therefore ONE of these is true and it
+  must be decided by measurement, not argument:
+    (a) OUR display list is NOT DLI-free (most likely — the $3C7C bytes were
+        Altirra's). READ OUR OWN LIST: no guest-RAM path exists, so infer it from
+        the trace instead — the DL is fetched by ANTIC, not the CPU, so look for
+        the game WRITING it (stores into $3C7C..$3D45) during the load/handoff
+        windows and reconstruct the bytes from the store values.
+    (b) The bug is in INTEGRATION rather than antic_timing in isolation — what
+        feeds it on hardware (CDC of register writes, DMACTL/DLIST timing,
+        `make -C sim antic_dli_cdc` covers one such path and is worth running).
+    (c) Something else sets NMIST bit 7.
+  ############################################################################
+
   **DLI DISPATCH VERIFIED FROM OUR OWN ROM (2026-08-14, final).** Altirra's $C018
   is attract-mode code -- its OS build differs (NMI vector $C18E) -- so its
   disassembly says NOTHING about ours. Always cross-check sim/atari_xl_rom.mem:
