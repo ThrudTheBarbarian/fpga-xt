@@ -722,7 +722,30 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
     * (Superseded, do not quote: an "NMI rate of ~140-176 Hz" derived from an
       assumed 13.6 s window. The ratio above is the defensible form.)
 
-  **WHERE THE GATE LIVES.** hdl/antic_nmi.sv:84 has `dli_fire = at_nmi &&
+  **LIVE MODULE CONFIRMED + A CONCRETE CANDIDATE (2026-08-14).** fpga_xt_top.sv
+  :1229 multiplexes three NMI sources: `rw_auth ? rw_nmi_n : tm_auth ? tm_nmi_n
+  : nmi_n_sync`. The TIMING MACHINE is default, so **antic_timing.sv drives the
+  live NMI** (tm_nmi_n, instantiated at fpga_xt_top.sv:950). antic_nmi.sv -- the
+  one with the clean `dli_fire = at_nmi && dli_armed && nmien[7]` -- sits inside
+  antic_gtia -> antic_scanline and is the LEGACY path. Do not "fix" it.
+
+  In antic_timing.sv the arm points are :557 (VBI) and :575 (DLI), both commented
+  "condition only -- NMIEN gates at pulse time", and the gate is :620:
+        nmi_en_early <= (line == VBI_LINE) ? nmien_q[6] : nmien_q[7];
+  **HYPOTHESIS TO TEST IN SIM (not yet proven):** the NMIEN bit is chosen from the
+  LIVE LINE COMPARE, not from `nmi_arm_vbi_q` which records WHICH KIND of arm it
+  was. The comment says that is deliberate (nmi_arm_vbi_q is written on the same
+  tick and would read stale). But it means a DLI armed on the line that is being
+  evaluated as VBI_LINE gets gated by **nmien[6]** -- the VBI enable -- instead of
+  nmien[7]. With NMIEN=$40 that is 1 instead of 0, so the DLI FIRES. Compare
+  [[dli_coincidence_bug]].
+  CAVEAT THAT MUST BE RESOLVED: that path can only misfire around ONE line per
+  frame, yet we measure ~5 extra NMIs per frame ($C018:$BC78 = 5.78). So either
+  there is a second mechanism, or the arm persists across lines, or the ratio has
+  another explanation. DO NOT EDIT RTL until sim reproduces ~5 spurious DLIs per
+  frame with NMIEN=$40 -- matching the measurement, not merely producing one.
+
+  **WHERE THE LEGACY GATE LIVES.** hdl/antic_nmi.sv:84 has `dli_fire = at_nmi &&
   dli_armed && nmien[7]`, but that module is NOT necessarily the live path --
   [[antic_timing_machine]] has been DEFAULT since build 68, and hdl/antic_timing.sv
   does its own gating at :620-631 (`nmi_en_early <= (line == VBI_LINE) ?
