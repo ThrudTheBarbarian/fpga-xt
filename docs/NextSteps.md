@@ -725,6 +725,27 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE WRITER IS A 256-BYTE BLOCK FILL (2026-08-14).** Altirra CANNOT disassemble
+  it -- its memory at $5FAE-$5FBF is all $00/BRK, so it does not have that code
+  (cross-machine trap again; the echo caught it). Rebuilt from OUR OWN traces
+  instead, via the per-PC opcode map:
+        $5F91 LDX#   $5F93 TYA    $5F94 CMP zp  $5F96 STA zp  $5F98 BEQ
+        $5F9C CPX abs $5F9F STX abs $5FA2 BEQ   $5FA6 RTS      (x402 / x270 / x211)
+        $5FA7 LDY# x1   $5FA9 LDA# x1   **$5FAB STA abs,Y x256**
+  $5FAB is a one-shot 256-BYTE BLOCK FILL with a constant -- consistent with the
+  A=$00 write we caught landing in the display-list area. The halt PC $5FBE sits
+  just past it, so there is probably a SECOND fill loop there that these
+  particular capture windows did not include.
+
+  IMPLICATION: the intro periodically BLOCK-FILLS a 256-byte region that overlaps
+  the display list. If a fill ever writes a byte with bit 7 set, or if a fill
+  races ANTIC mid-frame, that is a plausible route to DLIs the static list never
+  requests. NEXT: capture a window that CONTAINS $5FBE (vary the sleep: the fill
+  is one-shot and rare, so try several offsets), recover its opcodes the same way,
+  and determine the fill's TARGET BASE (the `abs` operand) and VALUE.
+  ############################################################################
+
+  ############################################################################
   **THE INTRO *DOES* REWRITE THE DISPLAY LIST — writer found (2026-08-14).**
   Watch armed INSIDE the intro (at PC=$32D0, icnt=14,092,976), 9 s later:
         HALTED (bkpt)  PC=**$5FBE**  A=$00  X=$40  Y=$7E  icnt=16,789,892
