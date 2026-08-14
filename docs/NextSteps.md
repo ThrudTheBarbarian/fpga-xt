@@ -725,6 +725,39 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **REINSTATED ON PROPER EVIDENCE: OUR ENVELOPE COUNTS DOWN, ALTIRRA'S DOES NOT
+  (2026-08-14).** Sweeping Altirra from COLD RESET for **1400 frames (~23 s,
+  covering the whole load AND intro)**, polling $BD every frame:
+        **distinct values: 3 -> $00 x997, $B0 x397, $3D x6**
+        (first non-zero at frame 0; $B0 held for ~400 frames, then $00)
+  **Altirra's $BD DOES NOT COUNT DOWN.** Ours takes **241 DISTINCT values** in a
+  single 4 s window, stepping monotonically $F0 -> $00.
+
+  **THIS IS NOT PHASE MISMATCH.** A full sweep from cold reset across the entire
+  load and intro shows the reference NEVER runs the countdown, so it cannot be
+  "we caught ours mid-envelope and Altirra after". The previous entry's
+  withdrawal was correct to demand this sweep; the sweep now REINSTATES the
+  divergence on evidence that sampling cannot explain away.
+
+  **SO: `$3E58 dec $BD` RUNS ON OURS AND EFFECTIVELY NOT ON ALTIRRA.** The sound
+  routine containing it ($3E43-$3E6A, writing AUDF1-AUDF4 and AUDC2) is being
+  entered on our machine when the reference does not enter it -- or enters it far
+  less. That extra activity is what drives $BC, which drives $C2, which paces the
+  intro.
+
+  **NEXT: FIND WHO CALLS THE $3E43 ROUTINE AND WHY IT RUNS HERE.**
+   1. In our traces, histogram the PCs that lead INTO $3E43/$3E48 (predecessor
+      analysis) -- that names the caller.
+   2. Then check whether Altirra executes that caller at all (bp_set or a $BD
+      watch equivalent), and what gates it.
+   3. Suspect a hardware-register read feeding the decision (POKEY/PIA/GTIA). If
+      the trigger derives from something we emulate, THAT is our bug.
+   Note Altirra's $B0 -> $00 with only 3 distinct values suggests IT sets $BD
+   directly to a value and clears it, never stepping -- a different code path
+   entirely, not merely a slower one.
+  ############################################################################
+
+  ############################################################################
   **CORRECTION — "WE DO EXTRA WORK" IS PROBABLY PHASE MISMATCH (2026-08-14).**
   Scanning $BD's read sequence for UPWARD jumps (reload points) in entry.bin:
         **UPWARD jumps: 0.** 241 samples, 241 distinct, strictly DESCENDING
