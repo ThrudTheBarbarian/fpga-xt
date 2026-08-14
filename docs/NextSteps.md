@@ -725,6 +725,39 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE REAL INTRO NUMBERS (2026-08-14) — measured in bbt.bin, 99.3% page $3000,
+  i.e. the PURE INTRO. This retracts the dropped-VBI claim and finds the actual
+  gate.**
+                              INTRO (bbt.bin)    multi.bin (game-mixed)
+        $BC78 VBI entry            281                383
+        **$BC80 SHORT (dropped)      0**                 31
+        $BC85 FULL                 281                383
+        **$3E00 `INC $C2`            53**                174
+        $30CC spin             158,820             99,656
+        $30DC `bit RANDOM`           1                  0
+
+  **OUR VBI PATH IS 100% FULL IN THE INTRO — ZERO dropped VBIs, exactly like
+  Altirra.** So "31 dropped VBIs / 92.5% vs Altirra's 100%" is GAME-PHASE data and
+  is RETRACTED as an intro claim. Likewise "$30D0-$30E5 never execute" was
+  multi.bin's story: in the intro `$30DC bit RANDOM` DOES run (once).
+
+  **THE ACTUAL STARVATION:** 281 VBIs but only **53** reach `INC $C2` -- just
+  **19%**. The VBI is not being dropped; the PATH TO THE TICKER is conditional and
+  mostly not taken. At 53 ticks per 281 VBIs, reaching $FF (255 ticks) needs
+  ~1350 VBIs = **~22 seconds**, which matches the long wait Simon sees.
+
+  **THE QUESTION IS NOW SHARP AND NEW: why do only ~19% of VBIs reach $3E00?**
+  The VBI chain is $BC78 -> $BC85 -> ... -> $BC8E `lda $CA / bne $BC95` ->
+  `jsr $BDBA` ... -> $BC95 `lda $D9 / bmi $BC9F` -> $BC99 `jsr $BCEB` -> $BC9C
+  `jmp XITVBV`, with the ticker reached via $BC8E -> $3DE0. Find WHICH branch
+  gates it and what state it tests ($CA, $D9, and the `$3de0 inx / bne $3E0F /
+  lda $C2 / bne $3DFC` entry itself). Then MEASURE THE SAME RATIO ON ALTIRRA at
+  the same scene -- if Altirra reaches the ticker on most VBIs and we reach it on
+  19%, that gap IS the bug, and it is about the state those branches read, not
+  about interrupts at all.
+  ############################################################################
+
+  ############################################################################
   **RETRACTION #11 — THE DLI STORY DOES NOT APPLY TO THE INTRO (2026-08-14).**
   NMIST bit 7 measured DIRECTLY (not inferred from branch counts): `BIT $D40F` at
   $C018 sets N from bit 7, and the trace records P at retire, so scan for IR=$2C
