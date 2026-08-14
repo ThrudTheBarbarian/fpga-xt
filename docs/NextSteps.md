@@ -725,6 +725,29 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **AND NO INDEXED STORE EITHER — THE MODE I MISSED IS `STA abs` TO A ZERO-PAGE
+  ADDRESS (2026-08-14).** Re-scanning the same 9,314-instruction gap for $9D
+  (STA abs,X), $99 (STA abs,Y), $91 (STA (zp),Y) and $81 (STA (zp,X)) gives
+  **ZERO executions**. Combined with the 12 zero-page store sites (none targeting
+  $BC), $BC apparently changed with no store at all -- which is impossible.
+
+  The gap is NOT a trace discontinuity: entry.bin is three concatenated dtrace
+  files of ~1,652,725 entries each, and BOTH indices (1,905,889 and 1,915,203)
+  fall inside file 2, so no capture boundary separates them.
+
+  **THE OMITTED MODE IS PLAIN `STA abs` ($8D) WITH OPERAND $00BC.** An absolute
+  store to a zero-page address is legal and common, and it was in NEITHER of my
+  two scans -- I checked zero-page modes, then indexed modes, and never the
+  obvious one. (I had literally just written "enumerate ALL addressing modes" as
+  a lesson and then failed to apply it. The rule needs to be MECHANICAL: build the
+  candidate opcode set from a table, do not hand-list it.)
+
+  **NEXT — trivial: scan the gap for $8D (and $8E STX abs / $8C STY abs) and keep
+  any whose 16-bit operand == $00BC.** Peek the operand from Altirra; the intro
+  code matched 192/192 so it is valid there. That should name the writer outright.
+  ############################################################################
+
+  ############################################################################
   **THE GAP CONTAINS NO ZERO-PAGE STORE TO $BC (2026-08-14) — so the writer is an
   ABSOLUTE INDEXED store landing in page zero.** The last `$BC==$00` read is at
   idx 1,905,889 and the first `$FF` read at 1,915,203: a gap of only **9,314
