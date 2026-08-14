@@ -725,6 +725,49 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION #8, AND THE HONEST STATE: NO 6502-VISIBLE DIVERGENCE EXISTS
+  (2026-08-15).**
+  The "P1/P2 get only zeros" result came from multi.bin's **32 samples** -- the
+  exact thinness flagged one turn earlier. With bigger captures it dies:
+        non-zero fraction of P/M shape bytes uploaded by $353A
+                        P0    P1    P2    P3
+        Altirra n=2250  18%   31%   67%   72%
+        hw_intro n=512  25%   **41%**  **72%**  71%     <- MATCHES Altirra
+        hand    n=1732  10%   12%   11%   11%     <- different phase
+  Our machine DOES fill P1 and P2 with real shape data, at fractions close to
+  Altirra's. **The missing-man-as-missing-shape-data theory is dead.**
+  (Only multi.bin, hw_intro.bin and hand.bin contain the uploader at all;
+  entry/bbt/bbp/hw_anim/hw_fixed/hw_start/hw_p3-5/bb3 never execute $353A.)
+
+  **THE $BC RATIO DIES THE SAME WAY.** $BC at $BCEB, share reading $00:
+        alt_vlong n=3000 **86%** | hw_intro n=324 **100%** | hand n=562 50%
+        multi n=383 27% | entry n=541 51% | bbt n=281 **0%** | hw_anim n=311 100%
+  **Our own captures span 0%-100% -- a wider spread than the gap to Altirra's
+  86%.** Phase-dependent, not a machine difference. NOT ESTABLISHED.
+
+  **=> EVERYTHING 6502-VISIBLE THAT HAS BEEN MEASURED WITH ADEQUATE SAMPLES
+  MATCHES ALTIRRA:** the $3043 dispatcher and its gates ($97, $A1, $D6), $BC and
+  the ticker, the P/M REGISTERS (HPOSP0/1 values $F0/$10 match EXACTLY; HPOSP2/3
+  parked on both; COLPM0-3 recoloured ~203x on both), the P/M SHAPE DATA, PMBASE,
+  DMACTL, GRACTL, and the code itself (byte-identical). **That is a significant
+  NEGATIVE RESULT, not a failure** -- it says the CPU-visible behaviour is right.
+
+  **WHICH REDIRECTS SUSPICION BACK TO THE RENDER/DISPLAY PATH** -- the opposite of
+  what was concluded earlier tonight from the (now retracted) tool artifact. If
+  the 6502 writes the same data at the same rates and the SCREEN still differs,
+  the difference is in what the chipset DOES with correct data: per-colour-clock
+  P/M evaluation, priority, or WHEN writes land relative to the beam. Note
+  ACID800's P/M cluster PASSES, so it is not a gross P/M fault -- look for
+  TIMING-of-write-vs-beam and mid-line register effects.
+  **CAVEAT THAT MATTERS:** our captures are SHORT (1.3-5.2M records, ~0.2-0.8 s of
+  game time) and taken at SCATTERED moments; Altirra's reference is 19.2M
+  CONTINUOUS. **We have never compared like-for-like over a long continuous
+  window on hardware.** NEXT: take a long continuous board capture (back-to-back
+  dtrace segments across the whole intro) and compare aggregates against
+  alt_vlong.bin before drawing any further conclusion.
+  ############################################################################
+
+  ############################################################################
   **RETRACTION #7 — "ALTIRRA NEVER WRITES P/M SHAPE MEMORY" IS WRONG, AND
   trace_writes.py HAS A SILENT-FAILURE MODE (2026-08-15).**
   Altirra executes the clear/upload routine **2688 times** ($3542, $3548, $354E,
