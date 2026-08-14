@@ -3386,6 +3386,34 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         extern int xl_reset(int);
         return xl_reset((int)a0);
     }
+    case SYS_trace_ring: {                                  /* (shm_id, ena) -> ring bytes */
+        /* Arm the CONTINUOUS 6502 trace (hdl/xt_trace_axi.sv).  The PHYSICAL
+         * address never leaves the kernel: userland hands over an shm id and we
+         * resolve it, the same mediation the blitter and compositor get.  The PL
+         * is a DMA engine with no MMU, so the buffer must be XT_SHM_CONTIG --
+         * vm_shm_phys returns 0 for anything else, which is the check. */
+        volatile uint32_t *DTR_CTRL = (volatile uint32_t *)0x43C00884u;
+        volatile uint32_t *DTR_BASE = (volatile uint32_t *)0x43C00888u;
+        volatile uint32_t *DTR_MASK = (volatile uint32_t *)0x43C0088Cu;
+        if (!a1) { *DTR_CTRL = 0; __asm__ volatile("dsb"); return 0; }
+        uint32_t sz = 0;
+        uint32_t phys = vm_shm_phys((int)a0, &sz);
+        if (!phys || sz < 4096u) return -22;
+        /* The write offset wraps with a MASK, so the ring has to be a power of
+         * two -- round DOWN and report what is actually usable rather than
+         * silently writing past the end of the allocation. */
+        uint32_t p2 = 4096u;
+        while ((p2 << 1) >= p2 && (p2 << 1) <= sz) p2 <<= 1;
+        *DTR_CTRL = 0;                       /* clean rising edge re-arms the ring */
+        __asm__ volatile("dsb");
+        *DTR_BASE = phys;
+        *DTR_MASK = p2 - 1u;
+        __asm__ volatile("dsb");
+        *DTR_CTRL = 1;
+        __asm__ volatile("dsb");
+        return (long)p2;
+    }
+
     case SYS_plane_grab: {                                  /* (plane_id, buf) -> (w<<16)|h */
         const uint32_t XL_W = 320, XL_H = 192;              /* XL_SRC_W x XL_SRC_H (RTL) */
         if ((int)a0 != XT_PLANE_XL) return -22;             /* 6502/XL plane only (m68k later) */

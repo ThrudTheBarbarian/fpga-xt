@@ -51,6 +51,15 @@ static inline long sys_devmem_sz(unsigned long addr, unsigned long val, int writ
 static inline long sys_getpid(void) { return __syscall(SYS_getpid, 0, 0, 0); }
 /* grab the on-screen frame of HW compositor plane `plane` (XT_PLANE_*) into buf
  * (>= 320*192*4 for the XL/6502 plane); returns (w<<16)|h or -errno. See SYS_plane_grab. */
+/* Arm/disarm the CONTINUOUS 6502 trace ring (SYS_trace_ring).  Pass an
+ * XT_SHM_CONTIG shm id and ena=1; the kernel resolves the id to a physical base
+ * itself -- userland never sees or needs the address.  Returns the usable ring
+ * size in bytes (a power of two, rounded DOWN from the allocation), or -errno.
+ * Unlike the older halting ring this never stops the core, so it can observe
+ * things that are timing-coupled to the outside world. */
+static inline long sys_trace_ring(int shm_id, int ena)
+{ return __syscall(SYS_trace_ring, shm_id, ena, 0); }
+
 static inline long sys_plane_grab(int plane, void *buf)
 { return __syscall(SYS_plane_grab, plane, (long)buf, 0); }
 /* drain one pending XTOS system message into msg[8] (int16). 1 = filled, 0 = none.

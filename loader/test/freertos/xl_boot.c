@@ -524,6 +524,11 @@ static uint8_t xl_disk_op(xl_drive *d, uint8_t cmd, uint16_t daux,
  * rotational latency -- which the guest should be seeing anyway (§13.5). */
 static void sio_mbox_write(uint32_t off, const uint8_t *src, uint32_t n);  /* fwd */
 
+/* Extra service latency in microseconds before the drive is released to reply.
+ * Tunable at runtime through the mailbox debug path; 0 restores the old
+ * answer-immediately behaviour. */
+uint32_t g_sio_delay_us = 0;
+
 static void xl_sio_bus_poll(void)
 {
     if (!(SIO_DSTAT_REG & 1u)) return;              /* nothing waiting */
@@ -540,6 +545,20 @@ static void xl_sio_bus_poll(void)
     int drive = (dev >= 0x31 && dev <= 0x38) ? (int)(dev - 0x31) : -1;
     if (drive >= 0 && g_drv[drive].img)
         st = xl_disk_op(&g_drv[drive], cmd, daux, out, &outlen);
+
+    /* SERVICE LATENCY (experiment, 2026-08-14).  A real drive does not answer the
+     * instant the command frame lands: it waits for the sector to come under the
+     * head.  We answer as fast as the A9 can, and BallBlazer's INTRO ANIMATES
+     * WHILE ITS SECTORS STREAM -- so if we deliver in too tight a burst the
+     * guest's SIO ISR starves the VBI animation and objects stop, jump, or vanish
+     * (docs/OS/sio-bridge.md 13.5: the rotation model currently decides only
+     * WHICH duplicate sector, never WHEN the frame starts).  g_sio_delay_us is a
+     * knob so the hypothesis can be MEASURED rather than argued: 0 = today's
+     * behaviour. */
+    if (g_sio_delay_us) {
+        uint32_t t0 = a9_us();
+        while ((uint32_t)(a9_us() - t0) < g_sio_delay_us) { /* spin: shorter than a tick */ }
+    }
 
     if (outlen) sio_mbox_write(MC_OFF_SIO_DATA, out, outlen);
 

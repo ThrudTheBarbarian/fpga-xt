@@ -466,6 +466,16 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * the core HALTS on its result screen instead of soft-resetting
                                 * -- `6502 status` Y then reads 00=pass / 80=fail.
                                 * (docs/OS/app-launch.md.) */
+#define SYS_trace_ring   0x60A /* (shm_id, ena) -> 0/-errno: arm or disarm the CONTINUOUS
+                                * 6502 trace (hdl/xt_trace_axi.sv, GP0 DTR_* at 0x884).
+                                * ena=1 resolves shm_id -> physical base + size and programs
+                                * DTR_BASE/MASK, then sets DTR_CTRL[0]; ena=0 clears it.
+                                * The shm must be XT_SHM_CONTIG -- the PL is a DMA engine with
+                                * no MMU.  The PHYSICAL address never leaves the kernel: the
+                                * caller passes an id, exactly as the blitter and compositor
+                                * are mediated.  Unlike the older STRM_* ring this NEVER halts
+                                * the core, so it is the only trace usable while anything
+                                * timing-coupled (the virtual SIO drive) is live. */
 #define SYS_xl_reset     0x609 /* (basic) -> 0/-errno: cold-reset the fabric 6502 KEEPING
                                 * mounted media — a real power-cycle (`6502 basic` /
                                 * `6502 nobasic`).  Rebuilds + re-uploads the patched OS
