@@ -725,6 +725,33 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **OUR DISPLAY LIST, FROM OUR OWN STORES (2026-08-14).** Decoding absolute
+  stores into $3C00-$3E00 from our traces (no borrowed memory):
+        $3C7A=00 $3C7B=BA   -> the game writes **$BA00** into the DL structure
+        $3C18/$3C19, $3C7F/$3C80, $3CE4/$3CE5  -> LMS OPERANDS rewritten EVERY
+              FRAME ($2090 in one window, $1074 in another) = the artwork
+              scrolling; the CONTROL bytes ($3C7C=70, $3C7D=60, $3C7E=4F) are
+              never rewritten, only the operands.
+  So our list at $3C7C **CHAINS TO $BA00** -- which is precisely the list Altirra
+  reported (DLIST=$ba00, 170 entries, 0 DLI-flagged). The two machines are using
+  the SAME display-list data after all, which restores confidence in the earlier
+  read even though the method was wrong.
+
+  **THE CONTRADICTION IS THEREFORE UNRESOLVED AND SHARPER:** both DL segments
+  look DLI-free, sim says a DLI-free list raises no DLI, yet our NMIST reports
+  DLIs 1608 times. Do NOT resolve this by picking a side. Candidates:
+    * a THIRD DL segment not yet inspected (follow the chain from $BA00 to its
+      own JMP/JVB and check every control byte for bit 7);
+    * the ~52k-61k **STA (zp),Y** stores per window, which are UNRESOLVABLE
+      without a guest-RAM read -- one of them could be writing a DLI bit into a
+      control byte at runtime. This is now the biggest blind spot in the whole
+      investigation and probably justifies building a guest-RAM read path
+      (6502 stub -> SIO mailbox, or a small RTL aperture) rather than more
+      inference;
+    * NMIST bit 7 set by something other than a DL-requested DLI.
+  ############################################################################
+
+  ############################################################################
   **SIM DOES NOT REPRODUCE IT — antic_timing.sv IS CLEAN (2026-08-14).** A new
   case **T10** was added to sim/tb_antic_timing.sv (committed): it builds
   BallBlazer's list byte-for-byte (`70 60 4F 8B 20`, 190x `0F`, `41 7C 3C` JVB
