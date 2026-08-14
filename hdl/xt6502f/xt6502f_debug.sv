@@ -75,7 +75,16 @@ module xt6502f_debug #(
     input  wire [11:0] strm_raddr,       // ring read address (GP0 domain)
     output wire        strm_flush_req,   // ring full + core halted -> drain now
     output wire [12:0] strm_wptr,        // valid entry count (STREAM_DEPTH when full)
-    output wire [63:0] strm_rdata        // ring[strm_raddr]
+    output wire [63:0] strm_rdata,       // ring[strm_raddr]
+
+    // ---- CONTINUOUS tap for xt_trace_axi (never halts the core) ---------
+    // The ring above freezes the CPU when it fills so the A9 can drain it, and
+    // that freeze is fatal to anything timing-coupled outside the core (the
+    // virtual SIO drive keeps clocking bytes at a frozen guest until its load
+    // fails).  This tap is deliberately INDEPENDENT of s_en/s_full: it just
+    // reports every retirement and lets the DDR streamer decide what to keep.
+    output wire        tr_valid,         // 1 cycle per retired instruction
+    output wire [63:0] tr_data           // same packing as strm_rdata
 );
     // sample slots: early ~ cycle entry (pre-commit), late ~ settled (post-commit)
     localparam [7:0] SLOT_EARLY = 8'd3;
@@ -186,6 +195,8 @@ module xt6502f_debug #(
     reg [63:0]    s_trd;
     // packed entry: [15:0]=PC [23:16]=A [31:24]=X [39:32]=Y [47:40]=SP [55:48]=P [63:56]=IR
     wire [63:0] s_sample = {ir_in, p, s, y, x, a, pc};
+    assign tr_valid = sync_rise && !halted;
+    assign tr_data  = s_sample;
     always @(posedge clk) begin
         if (rst) begin
             s_wptr <= {SAW{1'b0}}; s_full <= 1'b0; s_en_d <= 1'b0; s_dd_d <= 1'b0;

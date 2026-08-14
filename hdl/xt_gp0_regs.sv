@@ -234,7 +234,7 @@ module xt_gp0_regs (
     output reg  [15:0] dbg_beampc,        // PC to beam-stamp (no halt)
     input  wire [31:0] dbg_beam2,         // beam at that PC
     // trace ring: control out (levels), status/data in
-    output reg  [1:0]  dbg_trc_ctrl,      // [0]=enable [1]=break_on_full
+    output reg  [1:0]  dbg_dtr_ctrl,      // [0]=enable [1]=break_on_full
     output reg  [11:0] dbg_trc_idx,       // read index
     input  wire [31:0] dbg_trc_wptr,      // [11:0]=wptr [16]=wrapped [17]=broke
     input  wire [15:0] dbg_trc_pc,
@@ -245,6 +245,14 @@ module xt_gp0_regs (
     output reg  [11:0] dbg_strm_raddr,    // ring read address
     input  wire        dbg_strm_flush,    // ring full + core halted
     input  wire [12:0] dbg_strm_wptr,     // valid entry count
+
+    // CONTINUOUS trace -> DDR (xt_trace_axi): never halts the core, so it is
+    // the only trace usable while the virtual SIO drive is live.
+    output reg  [31:0] dbg_dtr_ctrl,      // [0]=enable
+    output reg  [31:0] dbg_dtr_base,      // DDR ring base (128B aligned)
+    output reg  [31:0] dbg_dtr_mask,      // ring size-1, power of two
+    input  wire [31:0] dbg_dtr_wrote,     // bytes written since enable
+    input  wire [31:0] dbg_dtr_drops,     // entries lost to a full FIFO
     input  wire [63:0] dbg_strm_rd,       // ring[raddr]
 
     // ---- ANTIC timebase debug probe (DBG_TB_*, @ antic_top clk_bus) ----------
@@ -369,9 +377,12 @@ module xt_gp0_regs (
             dbg_wpc        <= 16'd0;
             dbg_waxys      <= 32'd0;
             dbg_wpsh       <= 12'd0;
-            dbg_trc_ctrl   <= 2'b00;
+            dbg_dtr_ctrl   <= 2'b00;
             dbg_trc_idx    <= 12'd0;
             dbg_strm_ctrl  <= 2'b00;
+            dbg_dtr_ctrl   <= 32'd0;
+            dbg_dtr_base   <= 32'd0;
+            dbg_dtr_mask   <= 32'd0;
             dbg_strm_raddr <= 12'd0;
             dbg_tb_cfg     <= 29'd0;
         end else begin
@@ -519,9 +530,12 @@ module xt_gp0_regs (
                                     DBG_WPC:    dbg_wpc        <= w_data[15:0];
                                     DBG_WAXYS:  dbg_waxys      <= w_data;
                                     DBG_WPSH:   dbg_wpsh       <= w_data[11:0];
-                                    DBG_TRC_CTRL: dbg_trc_ctrl <= w_data[1:0];
+                                    DBG_TRC_CTRL: dbg_dtr_ctrl <= w_data[1:0];
                                     DBG_TRC_IDX:  dbg_trc_idx  <= w_data[11:0];
                                     DBG_STRM_CTRL:  dbg_strm_ctrl  <= w_data[1:0];
+                                    DBG_DTR_CTRL:   dbg_dtr_ctrl   <= w_data;
+                                    DBG_DTR_BASE:   dbg_dtr_base   <= w_data;
+                                    DBG_DTR_MASK:   dbg_dtr_mask   <= w_data;
                                     DBG_STRM_RADDR: dbg_strm_raddr <= w_data[11:0];
                                     DBG_TB_CFG:     dbg_tb_cfg     <= w_data[28:0];
                                     default: ;
@@ -659,7 +673,7 @@ module xt_gp0_regs (
                                     DBG_ICNT:  s_axi_rdata <= dbg_icnt;
                                     DBG_BEAM:  s_axi_rdata <= dbg_beam;
                                     DBG_BEAM2: s_axi_rdata <= dbg_beam2;
-                                    DBG_TRC_CTRL: s_axi_rdata <= {30'd0, dbg_trc_ctrl};
+                                    DBG_TRC_CTRL: s_axi_rdata <= {30'd0, dbg_dtr_ctrl};
                                     DBG_TRC_WPTR: s_axi_rdata <= dbg_trc_wptr;
                                     DBG_TRC_PC:   s_axi_rdata <= {16'd0, dbg_trc_pc};
                                     DBG_TRC_AXYS: s_axi_rdata <= dbg_trc_axys;
@@ -668,6 +682,8 @@ module xt_gp0_regs (
                                     DBG_STRM_WPTR:  s_axi_rdata <= {19'd0, dbg_strm_wptr};
                                     DBG_STRM_RDLO:  s_axi_rdata <= dbg_strm_rd[31:0];
                                     DBG_STRM_RDHI:  s_axi_rdata <= dbg_strm_rd[63:32];
+                                    DBG_DTR_WROTE:  s_axi_rdata <= dbg_dtr_wrote;
+                                    DBG_DTR_DROPS:  s_axi_rdata <= dbg_dtr_drops;
                                     DBG_TB_CFG:     s_axi_rdata <= {3'd0, dbg_tb_cfg};
                                     DBG_TB_STAT:    s_axi_rdata <= dbg_tb_stat_s;
                                     DBG_TB_CAP:     s_axi_rdata <= {7'd0, dbg_tb_cap_s};

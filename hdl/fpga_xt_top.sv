@@ -428,20 +428,25 @@ module fpga_xt_top (
     wire        hp0_rvalid;
     wire        hp0_rlast;
     wire        hp0_rready;
-    // HP0 write channel — tied (plane_fetch is read-only)
-    wire [31:0] hp0_awaddr = 32'd0;
-    wire [3:0]  hp0_awlen  = 4'd0;
-    wire [2:0]  hp0_awsize = 3'd0;
-    wire [1:0]  hp0_awburst = 2'd0;
-    wire        hp0_awvalid = 1'b0;
+    // HP0 write channel — the 6502 TRACE STREAMER (xt_trace_axi).  plane_fetch
+    // is read-only, so this half of the port was idle; using it keeps the trace
+    // off HP1 (the blitter's) and needs no PS block-design change.  awlen is
+    // 4-bit here because the PS slave is AXI3; the master emits AXI4 8-bit and
+    // the top 4 bits are zero for our fixed 16-beat bursts.
+    wire [31:0] hp0_awaddr;
+    wire [7:0]  trc_awlen_w;
+    wire [3:0]  hp0_awlen = trc_awlen_w[3:0];
+    wire [2:0]  hp0_awsize;
+    wire [1:0]  hp0_awburst;
+    wire        hp0_awvalid;
     wire        hp0_awready;
-    wire [63:0] hp0_wdata = 64'd0;
-    wire [7:0]  hp0_wstrb = 8'd0;
-    wire        hp0_wlast = 1'b0;
-    wire        hp0_wvalid = 1'b0;
+    wire [63:0] hp0_wdata;
+    wire [7:0]  hp0_wstrb;
+    wire        hp0_wlast;
+    wire        hp0_wvalid;
     wire        hp0_wready;
     wire        hp0_bvalid;
-    wire        hp0_bready = 1'b0;
+    wire        hp0_bready;
 
     // HP1 — xt_blitter (AXI4 read/write master → AXI3 slave)
     // awlen/arlen carried as AXI4 8-bit internally; sliced to 4-bit at the
@@ -820,6 +825,9 @@ module fpga_xt_top (
     // muxed: control straight from GP0 (clk_sys, synced inside u_fid_dbg), status
     // straight back (coherent when the ring is full = core frozen).
     wire [1:0]  gdbg_strm_ctrl;    // [0]=strm_en [1]=drain_done
+    // CONTINUOUS trace -> DDR (xt_trace_axi over HP0 writes)
+    wire [31:0] gdbg_dtr_ctrl, gdbg_dtr_base, gdbg_dtr_mask;
+    wire [31:0] gdbg_dtr_wrote, gdbg_dtr_drops;
     wire [11:0] gdbg_strm_raddr;
     wire        sdbg_strm_flush;
     wire [12:0] sdbg_strm_wptr;
@@ -1611,7 +1619,41 @@ module fpga_xt_top (
         .strm_raddr      (gdbg_strm_raddr),
         .strm_flush_req  (sdbg_strm_flush),
         .strm_wptr       (sdbg_strm_wptr),
-        .strm_rdata      (sdbg_strm_rd)
+        .strm_rdata      (sdbg_strm_rd),
+        .tr_valid        (fdbg_tr_valid),
+        .tr_data         (fdbg_tr_data)
+    );
+
+    // ---- 6502 trace -> DDR, continuously and WITHOUT halting the core -----
+    // See hdl/xt_trace_axi.sv for why the older strm_* ring cannot be used for
+    // anything that overlaps a disk load.
+    wire        fdbg_tr_valid;
+    wire [63:0] fdbg_tr_data;
+    xt_trace_axi #(.FIFO_AW(9), .BURST(16)) u_trace_axi (
+        .clk_cpu   (clk_sally),
+        .rst_cpu   (sally_rst),
+        .tr_valid  (fdbg_tr_valid),
+        .tr_data   (fdbg_tr_data),
+        .clk_sys   (clk_sys),
+        .rst_sys   (rst_sys),
+        .en        (gdbg_dtr_ctrl[0]),
+        .ring_base (gdbg_dtr_base),
+        .ring_mask (gdbg_dtr_mask),
+        .wr_bytes  (gdbg_dtr_wrote),
+        .drops     (gdbg_dtr_drops),
+        .m_axi_awaddr (hp0_awaddr),
+        .m_axi_awlen  (trc_awlen_w),
+        .m_axi_awsize (hp0_awsize),
+        .m_axi_awburst(hp0_awburst),
+        .m_axi_awvalid(hp0_awvalid),
+        .m_axi_awready(hp0_awready),
+        .m_axi_wdata  (hp0_wdata),
+        .m_axi_wstrb  (hp0_wstrb),
+        .m_axi_wlast  (hp0_wlast),
+        .m_axi_wvalid (hp0_wvalid),
+        .m_axi_wready (hp0_wready),
+        .m_axi_bvalid (hp0_bvalid),
+        .m_axi_bready (hp0_bready)
     );
 
     // Instruction counter for the fid core (the fid debug module has none):
@@ -4235,6 +4277,11 @@ module fpga_xt_top (
         .dbg_strm_raddr  (gdbg_strm_raddr),
         .dbg_strm_flush  (sdbg_strm_flush),
         .dbg_strm_wptr   (sdbg_strm_wptr),
+        .dbg_dtr_ctrl    (gdbg_dtr_ctrl),    // continuous trace -> DDR (0x884..0x894)
+        .dbg_dtr_base    (gdbg_dtr_base),
+        .dbg_dtr_mask    (gdbg_dtr_mask),
+        .dbg_dtr_wrote   (gdbg_dtr_wrote),
+        .dbg_dtr_drops   (gdbg_dtr_drops),
         .dbg_strm_rd     (sdbg_strm_rd),
         // ANTIC timebase debug probe (DBG_TB_*, 0x878..0x880)
         .dbg_tb_cfg      (antic_dbg_tb_cfg),
