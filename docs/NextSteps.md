@@ -590,6 +590,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   per-title via `xlboot -a` (SYS_sio_timing). The user confirmed it changed
   nothing visually.
 
+  **SHARPEST SYMPTOM (2026-08-14, from watching it):** motion WITHIN a sequence
+  is SMOOTH -- so HPOS writes, P/M DMA and per-frame animation are all fine.
+  What breaks is SEQUENCING: objects vanish mid-scene, a different set of PMGs
+  takes over and animates, scenes jerk into one another, and whole scenes (the
+  man getting out of the vehicle and waving) never play. Combined with the
+  left-edge bars each having THE SAME VERTICAL EXTENT as the object at that
+  height, the leading hypothesis is now:
+
+    a player is painted at x~=0 IN ADDITION to its real HPOS, on every scanline
+    where its shape is non-zero -> the bars; two overlapping there -> the weird
+    colours when a PMG crosses one; and the same spurious image produces
+    SPURIOUS COLLISIONS, which corrupt an attract-mode state machine that is
+    driven by collision registers -> scenes abort early and the script jumps.
+
+  Gameplay surviving fits if the artifact is specific to the intro's display
+  mode (GTIA mode 9) rather than the gameplay mode. TEST THIS IN SIMULATION
+  FIRST -- render a mode-9 frame with a player at a known HPOS and look for
+  pixels at x~=0; no board needed, and the compositor testbenches already exist.
+
+  **TIMING IS EXONERATED, TWICE.** The SIOV model (g_siov_baud) was calibrated to
+  100% of reference and changed nothing because a FAST LOADER NEVER CALLS SIOV
+  (xl_boot.c:514) -- it was pacing a path this title never enters. Rotational
+  latency on the serial-bus path (g_sio_rot, the path it DOES use, ~1 ms -> a
+  real drive's ~130 ms) then also changed nothing visible. Do not spend more
+  time on drive timing for this bug.
+
   **THE ONE DURABLE UNEXPLAINED FACT:** both machines have IDENTICAL
   PMBASE=$2c / DMACTL=$3d / GRACTL=$03, yet our machine executes code at $37AE
   every frame while Altirra has $00 across $3700-$37FF at EVERY sample in 1800
