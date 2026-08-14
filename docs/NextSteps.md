@@ -701,6 +701,34 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
+  **ROOT-CAUSE LOCUS FOUND (2026-08-14): we are STUCK in a wait for $C2 == $FF.**
+  Disassembly of our own path (via alt.disasm; legitimate, memories match):
+        $30c4 lda #$01
+        $30c6 cmp $CA / bne $30C6      ; wait for $CA == $01   (this one PASSES)
+        $30ca lda #$FF
+        $30cc cmp $C2 / bne $30CC      ; wait for $C2 == $FF   <-- WE NEVER LEAVE
+        $30d0 inc $D6 ...              ; scene scheduler + `bit RANDOM` selection
+  Measured from the trace (t=26..38 s, 5,178,368 entries): the CMP at $30CC
+  retired 99,656 times with A=$FF in 99,655 of them and the Z flag NEVER set --
+  $C2 never reaches $FF. $30D0/$30DC/$30E3/$30E5 execute ZERO times, so the scene
+  scheduler and the RANDOM-based scene selection are never reached at all.
+
+  **THIS IS EXACTLY SIMON'S SYMPTOM.** "The vehicle comes to a stop and stays
+  still in the middle, which is when the man is supposed to appear and wave" IS
+  this spin: the code sits at $30CC for the whole window and never advances, so
+  the next scene never starts and the man is never drawn.
+
+  The ONLY entry into the spin besides its own branch is an RTI from **$C28F**
+  (18 times), i.e. the VBI/DLI returning into it. So $C2 is written by an
+  INTERRUPT HANDLER, and the wait is for that handler to signal $FF.
+  NEXT: find who writes $C2 (`sta $C2` = 85 C2; try alt.memsearch, or
+  alt.watch_set on $00C2 and catch the writer on Altirra), then work out why our
+  handler never produces $FF. Suspects in order: (a) a DLI/VBI that never fires
+  or fires at the wrong scanline, (b) a handler that counts something timing-
+  dependent, (c) NMIEN/VCOUNT-related. Altirra samples every 3 frames show
+  $C2=$00 throughout, so the $FF is TRANSIENT there -- sample far more finely or
+  use a watchpoint rather than polling.
+
   **SECOND RETRACTION — "we never execute $3043/$3AB0" IS ALSO FALSE.** A better
   capture (three back-to-back `dtrace 4` windows in ONE boot, t=26..38 s,
   5,178,368 entries) shows our machine DOES execute Altirra's intro routines:
