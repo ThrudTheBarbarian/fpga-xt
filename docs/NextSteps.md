@@ -725,6 +725,59 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **PHASE-MATCHED ALTIRRA TRACE: THE DIVERGENCE IS $97 (2026-08-15).**
+  Captured `alt_late.bin` via `alt._send_command('TRACEFILE <path>')` (the raw
+  bridge verb; the Python client has no wrapper) after cold reset + 600 frames:
+  **2,753,560 records, 0 lost**, covering frames ~652-1072. This is the first
+  Altirra trace that actually executes the $3043 dispatcher, so it is the first
+  legitimate comparison against ours.
+        at $3053 `lda $97`   Altirra **$97=$00**      ours **$97=$FE**
+        -> `bne $3069`        NOT taken               TAKEN
+        $BC at $BCEB          **$00 in 420/420**      $FF / $FD
+        $3083 $309B $30EA $3E00 $3E12   **NEVER**     all executed
+        (both sides DO run $3043 x5, $304F x5, $3053 -- phase-anchored)
+  Altirra's $97=$00 keeps it on the harmless $3057 arm and it **never reaches
+  $3069 at all**. Ours is $FE (= -2), takes the branch, finds **$A1=$02** (bit 0
+  clear, so `lsr`/`bcs $307B` does NOT recover via `inc $97`), and falls into the
+  $3083 init whose `$309B dec $BC` starts the whole cascade.
+  $97=$FE means **`$3061 dec $97` ran twice**, which fires when
+  `lda $3A56 / eor $D6 / beq $3061`, i.e. when **$D6 == $3A56** ($00 at this
+  stage). So the trigger is $D6's trajectory through zero.
+  **NEXT: why does our $D6 hit $00 when Altirra's does not?** $D6 is FR0+2, an OS
+  floating-point scratch byte, and it is `inc`-ed at BOTH $3057 and $306E.
+
+  **REVISED MECHANISM — $FD MATTERS MORE THAN $FF.** `trace_writes.py --range
+  00BC 00BC` shows the ONLY stores to $BC are $3E60 ($0E..$00), $5FAB ($00) and
+  $B2BB ($00) -- **nothing writes $FD**. It arrives by repeated `dec $BC`; the
+  three sites are **$309B, $30EA and $3E12** (the last INSIDE the ticker, so the
+  ticker drives $BC further down each pass). At $3DE1 `inx / bne $3E0F`, only
+  $BC==$FF wraps X to $00 and reaches **$3E00 `inc $C2`**. At $FD it does not --
+  so the ticker runs but **$C2 never advances**, which IS the ~12 s spin at $30CC.
+
+  **THREE RETRACTIONS, ALL CAUGHT BEFORE THEY BECAME HARDWARE HYPOTHESES:**
+   1. "$3BA6 is the entry point" -- it is an **RTS**; the caller is $3087.
+   2. "$3A56-$3A58 differ" -- **NO**; $00 on both until Altirra writes them at
+      frames 658-660. My $AF/$5A came from a gameplay-phase peek.
+   3. "Altirra never runs the $3043 dispatcher / has different code at $30xx" --
+      **NO, a CAPTURE-LENGTH ARTIFACT**: `$3040 jsr $3228` sits at index
+      5,881,373 of alt_intro.bin's 6,044,948, so the trace simply ended before
+      the `jsr` returned to $3043. Disassembly confirms **identical code**, and
+      Altirra walks the same path $3228 -> $316E -> $322D -> $37EA -> $37C4 ->
+      $3B61 -> $3B8B (the block fill).
+  **BREAKPOINT POLLING IS A WEAK INSTRUMENT HERE** -- `$3043` runs only ~3 times
+  per 5M instructions, so a few hundred polled frames miss it and look like
+  "never". Validate any bp channel in-run (bp on $E462 DID halt, proving the
+  channel works) and prefer TRACEFILE.
+
+  **THE INTRO IS SEEDED FROM POKEY RANDOM.** $301E-$303E reads $D20A four times
+  into $A4-$A9 and branches on `$3032 bit RANDOM / bpl`. **That is the source of
+  the run-to-run non-determinism** (goalposts appearing on one build, not
+  another; hand.bin never running $3083 while multi.bin does). Values read look
+  sane on both sides ($39/$01/$7A vs $0A/$5E/$47) but only 3 samples each -- NOT
+  enough to judge RANDOM quality. Worth a dedicated comparison.
+  ############################################################################
+
+  ############################################################################
   **THE SCENE DISPATCHER, DECODED (2026-08-15) — AND ONE RETRACTION.**
   The block at $3043 is a per-frame state machine, read out of Altirra (the code
   is static and identical at these addresses):
