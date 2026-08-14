@@ -529,6 +529,19 @@ static void sio_mbox_write(uint32_t off, const uint8_t *src, uint32_t n);  /* fw
  * answer-immediately behaviour. */
 uint32_t g_sio_delay_us = 0;
 
+/* Paravirtual SIOV service model (see the note in xl_sio_service).  SIOV is the
+ * OS's own routine, which runs the standard link rate; a title that wants more
+ * speed bypasses SIOV and drives the serial bus itself, and that path has its
+ * own pacing.  0 disables the model entirely. */
+uint32_t g_siov_baud       = 19200u;
+/* 27 ms, not the ~60 ms a bare rotational average suggests: the delay itself
+ * costs scheduling time, so the figure is CALIBRATED against the reference
+ * rather than derived in isolation.  At 19200 with a 128-byte sector this puts
+ * a SIOV call at 62,087 6502 instructions against Altirra's ~62,000 -- 100% of
+ * reference.  Re-measure with tools/trace_diff.py if the tick rate or the
+ * service path changes. */
+uint32_t g_siov_latency_us = 27000u;
+
 static void xl_sio_bus_poll(void)
 {
     if (!(SIO_DSTAT_REG & 1u)) return;              /* nothing waiting */
@@ -675,6 +688,34 @@ void xl_sio_service(volatile uint8_t *page)
          * is 9 bits so the stub walks it across $FF->$100 unaided. */
         memcpy((uint8_t *)data, out, l);
     }
+    /* SERVICE TIME.  A real drive does not answer instantly, and this is not a
+     * cosmetic detail: BallBlazer's intro ANIMATES FROM THE VBI WHILE ITS
+     * SECTORS STREAM, so the duration of a SIOV call is how much animation the
+     * game gets per load step.  Measured against Altirra (tools/trace_diff.py,
+     * anchored at $3C06): a real OS SIO call is ~62,000 6502 instructions
+     * (~130 ms) per 128-byte sector, ours was 775 (~1.6 ms) -- about 80x too
+     * fast.  On hardware one sector then spans a tenth of a VBI tick instead of
+     * ~8, so objects barely move between reads: the vehicle never sweeps across,
+     * the ball stops, the man never gets out.  Gameplay streams nothing, which
+     * is exactly why gameplay was unaffected.
+     *
+     * The delay is DERIVED, not a magic number: the SIO frames at the link rate,
+     * plus the rotational latency the head genuinely costs.  Both are runtime
+     * knobs so the model can be swept and so a faster link (US-Doubler,
+     * docs/OS/sio-bridge.md 13.6) shortens the transfer term by itself.
+     * vTaskDelay, not a spin: the guest is blocked on the mailbox either way and
+     * other kernel tasks should keep running. */
+    if (g_siov_baud) {
+        uint32_t frame_bytes = 5u          /* command frame */
+                             + 2u          /* ACK + COMPLETE */
+                             + outlen      /* payload */
+                             + (outlen ? 1u : 0u);   /* data checksum */
+        uint32_t us = (frame_bytes * 10u * 1000000u) / g_siov_baud
+                    + g_siov_latency_us;
+        uint32_t ms = us / 1000u;
+        if (ms) vTaskDelay(pdMS_TO_TICKS(ms));
+    }
+
     page[MC_OFF_SIO_FLAGS] = flags;
     page[MC_OFF_STATUS]    = st;
 

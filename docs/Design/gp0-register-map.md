@@ -148,6 +148,11 @@ in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, dr
 | 0x80 | R | 25 | `XT_DBG_TB_CAP` | `DBG_TB_CAP` | ANTIC timebase probe capture: ring entry selected by DBG_TB_CFG.read_idx = {[24:16]=scanline (0..261), [15:8]=phi2_in_line (machine-cycle 0..113), [7:0]=data (write byte for write modes, ANTIC read byte for read mode, 0 for event modes)} |
 | 0x3C | W | 16 | `XT_DBG_BEAMPC` | `DBG_BEAMPC` | W [15:0]=PC to beam-stamp. When the core reaches this instruction boundary the ANTIC beam is latched into DBG_BEAM2 WITHOUT halting, so an interval can be measured inside ONE run: set this to the first instruction, put the breakpoint on the second, and read DBG_BEAM2 and DBG_BEAM when it stops. Necessary because each xexload lands the test on a different scanline, so beam readings from separate runs cannot be subtracted |
 | 0x40 | R | 32 | `XT_DBG_BEAM2` | `DBG_BEAM2` | R ANTIC beam latched at the DBG_BEAMPC instruction boundary (no halt): [15:0]=scanline, [22:16]=beam X in machine cycles. Same layout as DBG_BEAM |
+| 0x84 | W | 32 | `XT_DBG_DTR_CTRL` | `DBG_DTR_CTRL` | CONTINUOUS trace-to-DDR control: [0]=enable. Unlike STRM_CTRL this NEVER halts the core -- entries stream to a DDR ring over HP0's write channel, so it is the only trace usable while anything timing-coupled (the virtual SIO drive) is live. Rising edge re-arms the ring at TRC_BASE. |
+| 0x88 | W | 32 | `XT_DBG_DTR_BASE` | `DBG_DTR_BASE` | CONTINUOUS trace ring base: DDR byte address, 128-byte aligned (one 16-beat x 8-byte burst). |
+| 0x8C | W | 32 | `XT_DBG_DTR_MASK` | `DBG_DTR_MASK` | CONTINUOUS trace ring mask: size-1, power of two. The write offset wraps with this, so the ring always keeps the most recent tail. |
+| 0x90 | R | 32 | `XT_DBG_DTR_WROTE` | `DBG_DTR_WROTE` | CONTINUOUS trace: bytes written since enable (free-running, wraps at 2^32). |
+| 0x94 | R | 32 | `XT_DBG_DTR_DROPS` | `DBG_DTR_DROPS` | CONTINUOUS trace: entries LOST to a full FIFO. Should read 0; non-zero means the DDR path could not keep up and the trace has a gap. Reported rather than hidden because a silently-incomplete trace is how you 'prove' something false. |
 
 ## 0xA00 — SIO  (`XT_BLK_SIO`)
 

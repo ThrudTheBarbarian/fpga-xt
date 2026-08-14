@@ -451,6 +451,26 @@ times.  So the period is **measured**: the guest transmits its command frame at
 its own rate, the ticks are flowing right up to the moment it stops them, and the
 interval between them is what the fallback uses.
 
+**AND THE PARAVIRTUAL SIOV PATH NEEDS THE SAME TREATMENT — measured.**  The
+§13 drive is not the only server: `xl_sio_service` answers the patched SIOV
+vector, and it was returning a 128-byte sector in **775 6502 instructions
+(~1.6 ms) where a real drive takes ~62,000 (~130 ms)** — about 80x too fast.
+That is not a cosmetic difference.  A title whose intro ANIMATES FROM THE VBI
+WHILE ITS SECTORS STREAM gets its animation time from the duration of the SIO
+call: on real hardware one sector spans ~8 VBI ticks, at 80x it spans a tenth of
+one, and objects barely move between reads.  BallBlazer's intro showed exactly
+that — the vehicle never swept across, the ball stopped, the later stages never
+ran — while GAMEPLAY was flawless, because gameplay streams nothing.
+
+The service time is now derived (SIO frames at the link rate + rotational
+latency) with both terms as runtime knobs, so a faster link shortens the
+transfer term by itself.  The latency term is CALIBRATED (27 ms, not the ~60 ms
+a bare rotational average suggests) because issuing the delay costs scheduling
+time; that lands a call at 62,087 instructions against the reference ~62,000.
+Found by diffing full-length instruction traces of both machines
+(`tools/trace_diff.py`, anchored at $3C06: 214,237 instructions match, then the
+split at $E453).
+
 The ACK turnaround is the exception that proves the rule: it is an **absolute**
 ~1 ms, because the time a drive takes to turn the bus around is physical and does
 not scale with the bit rate.  Pacing it in frame times instead meant the ACK
