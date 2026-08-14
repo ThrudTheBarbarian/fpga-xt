@@ -701,6 +701,46 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
+  ############################################################################
+  **ROOT CAUSE (2026-08-14): OUR ANTIC RAISES DLI NMIs WHILE NMIEN BIT 7 IS
+  CLEAR.** Measured, not inferred:
+    * NMIEN is written ONLY during the load: values $00, $00, $40. Nothing writes
+      it in the handoff (t~20-32 s) or intro (t~26-38 s) windows. The search
+      covered absolute AND INDEXED stores (abs,X / abs,Y) with targets computed
+      from X/Y at retire, so an indexed `sta $D400,X` could not have been missed.
+    * NMIEN=$40 => bit 7 CLEAR => DLIs DISABLED => only the VBI NMI should fire,
+      i.e. **60 Hz**. Altirra reports the same NMIEN=$40 for this scene.
+    * OUR MEASURED NMI RATE ($C018, our real NMI vector from
+      sim/atari_xl_rom.mem) is **~140-176 Hz** across two independent captures.
+      That is ~80-116 EXTRA NMIs per second -- DLIs that must not be firing.
+
+  THE COMPLETE CHAIN, ALL MEASURED:
+      spurious DLI NMIs
+        -> a VBI lands INSIDE a DLI handler (all 31 dropped VBIs interrupted
+           $BED0/$BEEC/$BEF5/$BECD/$BEAF/$BF90/$BEF3/$C02C, every one with I=1)
+        -> the game's VBI gate `tsx / lda $0104,X / and #$04 / beq $BC85` sees
+           I SET and takes the short path `dec $81 / jmp XITVBV`
+        -> the `INC $C2` tick at $3E00 is DROPPED (ours 92.5% full path vs
+           Altirra's 100%: $9D -60 / $81 -0 over 60 frames)
+        -> $C2 climbs at ~12.8 Hz instead of 60 Hz and needs 255 ticks
+        -> the wait at `$30cc cmp $C2 / bne $30CC` stretches from ~4.25 s to ~20 s
+           (99,656 iterations observed, Z never set)
+        -> $30D0-$30E5 never run, so the scene scheduler and its `bit RANDOM`
+           scene selection never execute
+        -> the man's scene never plays. THAT IS SIMON'S SYMPTOM: the vehicle
+           stops in the middle and waits where the man should appear and wave.
+
+  **NEXT: PROVE IT IN SIMULATION BEFORE TOUCHING RTL.** Write/extend a testbench
+  that sets NMIEN=$40 with a display list containing DLI-flagged instructions and
+  asserts that NO DLI NMI is raised (sim/ has tb_nmi, tb_antic_display,
+  tb_antic_modes, tb_antic_beam, tb_wsync; `make -C sim <target>`). Then fix the
+  NMIEN bit-7 gate in the ANTIC NMI path and rebuild the bitstream
+  (vivado/run-valhalla.sh bit, ~8 min). Related: [[acid800_dli_cluster]],
+  [[dli_coincidence_bug]], [[acid800_dli_staleness_fix]], [[antic_timing_machine]].
+  ACID800 passes 55/8na/0fail today, so any fix MUST keep that green -- the DLI
+  tests are the regression guard.
+  ############################################################################
+
   **HANDLERS IDENTIFIED FROM OUR OWN ROM (2026-08-14).** No guest-RAM read needed
   -- the OS image we upload is in the repo. `sim/atari_xl_rom.mem` (16384 bytes,
   base $C000) gives OUR vectors:
