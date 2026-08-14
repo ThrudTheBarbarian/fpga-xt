@@ -725,6 +725,21 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE $00 -> $FF TRANSITION IS NOT AT THE FIRST $FF READ (2026-08-14).**
+  Dumping the 40 instructions before the first `$BC==$FF` read (idx 1,915,203 in
+  entry.bin) shows NO `sta $BC`. At idx 1,915,193 an `LDA zp` already pulls $FF
+  into A, so **$BC was ALREADY $FF before this point** -- the write happened
+  earlier, somewhere in the long gap after phase 1's last $00 read.
+  The path INTO the read is the ordinary VBI chain:
+        $3374 RTS -> $3376 -> $BC8E -> $BC95 -> $BC99 `jsr $BCEB`   (A=$0D throughout)
+  NEXT: binary-search the gap. Find the index of the LAST $00 read, then scan
+  forward for any store whose target could be $BC -- including INDEXED stores
+  (compute base+X/Y at retire) since the plain `sta $BC` sites do not fire here.
+  This is the ~52k `STA (zp),Y` blind spot, so an aliasing indexed write is the
+  most likely culprit and CANNOT be found by opcode-site search alone.
+  ############################################################################
+
+  ############################################################################
   **THE $BC TIMELINE — THE TENSION IS RESOLVED, AND PHASE 3 IS THE BUG
   (2026-08-14).** Walking entry.bin IN EXECUTION ORDER (556 events) instead of
   aggregating:
