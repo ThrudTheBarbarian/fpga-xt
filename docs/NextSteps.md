@@ -725,6 +725,46 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE SCENE DISPATCHER, DECODED (2026-08-15) — AND ONE RETRACTION.**
+  The block at $3043 is a per-frame state machine, read out of Altirra (the code
+  is static and identical at these addresses):
+        $3043 lda #$00 / sta $8F,$90,$99,$91
+        $304D lda #$01 / cmp $CA / bne $307D
+        $3053 lda $97  / bne $3069
+        $3057 inc $D6 / lda $3A56 / eor $D6 / beq $3061 / rts
+        $3061 dec $97 / jsr $BC53 / jmp $307D
+        $3069 lda $A1 / lsr / bcs $307B
+        $306E inc $D6 / lda $3A57 / eor $D6 / bpl $307A(rts)
+        $3077 jmp $3083            <-- THE INIT
+        $307B inc $97
+        $307D jsr $30F6 / $3080 jmp $3043      <-- the loop
+        $3083 lda #$00 / sta $86 / jsr $37C4 / jsr $37D3 / lda #$0C / sta $8E
+        $3091 lda #$FD / sta $82 ... $309B dec $BC
+  Confirmed by predecessor histograms: $3077 -> $3083 (x1), $3055 -> $3069 (x1),
+  $3293 RTS -> $3080, $3051 -> $307D. In hand.bin the $3083 block NEVER RUNS
+  (only $307D/$3080) -- the run-to-run non-determinism is visible inside our own
+  machine.
+
+  **RETRACTED, SAME DAY:** "the $3A56-$3A58 scene table is $00 on our board and
+  $AF/$5A on Altirra". A COLD-RESET SWEEP shows Altirra's $3A57/$3A58 are $00 for
+  at least the first 180 frames too -- the $AF/$5A peek was taken at cycle
+  156,591,563, deep in GAMEPLAY. Trap #1 (sample-at-one-moment) again; the sweep
+  is the only reason it did not become a hardware hypothesis. **The table is NOT
+  a difference.**
+
+  **WHAT THE SWEEP LEAVES INSTEAD — A SHARPER TARGET.** With $3A57 = $00 on both
+  machines the gate `lda $3A57 / eor $D6 / bpl` reduces to **"is $D6 bit 7 set?"**
+  Altirra $D6=$B3 (set), ours $FF (set) -- BOTH fall through to `jmp $3083`. So
+  the divergence is NOT the gate. It is ONE INSTRUCTION LATER:
+        **$309B `dec $BC` -- ours $00 -> $FF (wraps, arms the envelope);
+          Altirra's $88 -> $87 (no wrap, harmless).**
+  Only $FF wraps X at $3DE1. So the whole bug reduces to: **what value does $BC
+  hold when $309B executes, and who puts $88 there on Altirra?**
+  NEXT: (a) `alt.bp_set(0x3083)` -- does Altirra reach the init at all? (b) find
+  the writer of $BC=$88 on Altirra; ours only ever sees $00 there.
+  ############################################################################
+
+  ############################################################################
   **$3BA6 IS AN RTS — THE CALLER IS AT $3087 (2026-08-14).** Our executed opcodes
   $3B88-$3BAC:
         $3B8B 85 x11   $3B8D A2 x11
