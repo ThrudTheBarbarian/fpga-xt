@@ -653,8 +653,11 @@ static void xl_sio_bus_poll(void)
      * what the guest ASKED for and what we ANSWERED, in order.  Everything about
      * this bug lives in that pairing -- a wrong sector number, a status a real
      * drive would not give, a length the loader did not expect. */
+    /* 512, not 64: the intro runs well past the first 64 requests, and the two
+     * other flagged sectors (431, 602) are never reached inside that window --
+     * the log ran out before the interesting part rather than after it. */
     { static int nlog;
-      if (nlog < 64) { nlog++;
+      if (nlog < 512) { nlog++;
         char lb[96];
         /* Built by hand: the kernel's printf has no %X, and the first cut of this
          * log came back as "cmd=02X" -- a broken instrument reads exactly like a
@@ -680,6 +683,12 @@ static void xl_sio_bus_poll(void)
         PUT2(outlen >> 8); PUT2(outlen & 0xFF);
         t = " fdc="; while (*t) lb[n++] = *t++;
         { uint8_t f = drive >= 0 ? g_drv[drive].fdc : 0xFF; PUT2(f); }
+        /* First two payload bytes.  A bad-CRC sector is bad because its data is
+         * UNSTABLE, so a protection can read it twice and require a DIFFERENCE;
+         * we hand back the same stored bytes every time.  Logging them is what
+         * makes that visible instead of assumed. */
+        if (outlen) { t = " d="; while (*t) lb[n++] = *t++;
+                      PUT2(out[0]); PUT2(out[1]); }
         lb[n++] = '\r'; lb[n++] = '\n'; lb[n] = 0;
         #undef PUT2
         klog(lb); } }
