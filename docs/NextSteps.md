@@ -722,6 +722,24 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
     * (Superseded, do not quote: an "NMI rate of ~140-176 Hz" derived from an
       assumed 13.6 s window. The ratio above is the defensible form.)
 
+  **THE DISPLAY LIST REQUESTS NO DLIs AT ALL (2026-08-14).** alt.dlist() for the
+  intro: **170 entries, DLI-flagged: 0**, with NMIEN=$40 and DLIST=$ba00. So on
+  the reference nothing anywhere asks for a DLI, which is why it takes exactly one
+  NMI per frame ($C018:$BC78 = 1.0 equivalent).
+
+  Our ~4.8 EXTRA NMIs per frame therefore have NO legitimate source: this is not
+  "DLIs fire despite nmien[7]" but "NMIs fire with no DLI requested". That is a
+  stronger and simpler statement, and it changes what the sim must reproduce --
+  a display list with NO DLI bits and NMIEN=$40 must produce EXACTLY ONE NMI per
+  frame; if the RTL produces ~6, that is the reproduction.
+
+  MUST CONFIRM FIRST (one measurement, cheap): that OUR DLIST matches $ba00 and
+  our display list likewise has no DLI bits. Look for writes to $D402/$D403
+  (DLISTL/DLISTH) in the captures the same way NMIEN was found (absolute AND
+  indexed, targets computed from X/Y at retire). If our DLIST differs, the two
+  machines are on different display lists and this comparison is void -- the same
+  scene-alignment trap that produced several retractions today.
+
   **LIVE MODULE CONFIRMED + A CONCRETE CANDIDATE (2026-08-14).** fpga_xt_top.sv
   :1229 multiplexes three NMI sources: `rw_auth ? rw_nmi_n : tm_auth ? tm_nmi_n
   : nmi_n_sync`. The TIMING MACHINE is default, so **antic_timing.sv drives the
