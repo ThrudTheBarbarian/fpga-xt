@@ -21,6 +21,11 @@ the sort of detail that produces a confident wrong answer:
 
 Both are normalised to (addr, op, a, x, y, sp, p) before anything is compared.
 
+REGISTERS ARE OFFSET BY ONE between the sides and are NOT compared.  Altirra
+samples the registers BEFORE the instruction it is about to run; fpga-xt samples
+at the retire boundary, i.e. AFTER.  key() therefore uses only (addr, op) --
+control flow -- and the register columns are for reading, not for matching.
+
 RESYNC.  On a mismatch we do not give up and we do not report immediately: we
 look ahead on both sides for a run of MATCH_RUN consecutive identical (addr, op)
 pairs.  If one is found, the intervening entries were an interrupt or a timing
@@ -60,6 +65,27 @@ def load_hw(path, limit=None):
             out.append((prev_pc, rec['IR'], rec['A'], rec['X'], rec['Y'],
                         rec['SP'], rec['P'], rec['IR'] == 0))
         prev_pc = pc
+    return out
+
+
+def load_alt_bin(path, limit=None):
+    """Altirra's TRACEFILE binary -> (addr, op, a, x, y, sp, p, is_irq).
+
+    Same 8-byte layout as the hardware file, but the SEMANTICS differ: Altirra
+    stores the address of the instruction it is about to run together with that
+    instruction's opcode, so no prev-PC shift is needed here."""
+    a = array.array('I')
+    with open(path, 'rb') as f:
+        a.frombytes(f.read())
+    n = len(a) // 2
+    if limit:
+        n = min(n, limit)
+    out = []
+    for i in range(n):
+        lo, hi = a[2 * i], a[2 * i + 1]
+        out.append((lo & 0xFFFF, (hi >> 24) & 0xFF, (lo >> 16) & 0xFF,
+                    (lo >> 24) & 0xFF, hi & 0xFF, (hi >> 8) & 0xFF,
+                    (hi >> 16) & 0xFF, False))
     return out
 
 
@@ -109,7 +135,8 @@ def show(tag, rec):
 
 def do_diff(hw_path, alt_path, start_pc=None):
     A = load_hw(hw_path)
-    B = load_alt(alt_path)
+    B = (load_alt_bin(alt_path) if alt_path.endswith('.bin')
+         else load_alt(alt_path))
     print("fpga-xt: %d instructions   Altirra: %d instructions" % (len(A), len(B)))
 
     # Align the starting point: find the first place a MATCH_RUN window agrees.
@@ -162,7 +189,8 @@ def main():
         for k, r in enumerate(load_hw(sys.argv[2], 40)):
             print("%6d %s" % (k, show("hw  ", r)))
     elif mode == 'alt':
-        for k, r in enumerate(load_alt(sys.argv[2], 40)):
+        ld = load_alt_bin if sys.argv[2].endswith('.bin') else load_alt
+        for k, r in enumerate(ld(sys.argv[2], 40)):
             print("%6d %s" % (k, show("alt ", r)))
     elif mode == 'diff':
         pc = None
