@@ -725,6 +725,35 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **IT ALL RESOLVES: ALTIRRA'S $BC NEVER EQUALS $FF (2026-08-14).** The
+  cold-reset sweep already contains the answer -- **$BC takes exactly three values
+  there: $00 (x997), $88 (x397), $81 (x6). NEVER $FF.**
+  `$3DE1 bne $3E0F` branches on X AFTER `inx`, so **ONLY $BC == $FF wraps X to
+  zero and reaches the $BD countdown.** With $BC never $FF, Altirra NEVER ENTERS
+  THE ENVELOPE PATH -- which is precisely why its $BD sits static at $B0 while
+  ours steps $F0 -> $00.
+  **No hardware difference is required to explain any of it.**
+
+  **THE COMPLETE, SELF-CONSISTENT STORY:**
+        we run `$3091 LDA #$FD / $3093 STA $82 / $3095 spin / $309B DEC $BC`
+        -> $BC $00 -> **$FF** (Altirra never sets $82=$FD, so never runs this)
+        -> `$BCED BEQ` falls through -> `$BCEF JMP $3DE0`
+        -> `inx` wraps ($FF+1=$00) -> falls into the $BD countdown
+        -> envelope runs -> `$3E60 sta $BC` keeps $BC cycling
+        -> `inc $C2` only on the rare $FF -> $C2 needs 255 ticks
+        -> `$30cc cmp $C2 / bne $30CC` spins ~12 s per scene
+        -> scene scheduler + `bit RANDOM` rarely run -> **the man's scene never plays**
+  **THE ROOT QUESTION IS NOW SINGULAR: why do WE reach the $309B init and Altirra
+  does not?** It is guarded by the spin at `$3095/$3097` waiting for **$82** to be
+  counted to zero by something else. Altirra never even sets $82=$FD, so it takes
+  a DIFFERENT BRANCH EARLIER.
+  **NEXT: find what leads to $3091 on ours, and what Altirra does instead at that
+  point.** Predecessor-histogram $3091/$308D in our traces, then check the same
+  address on Altirra with bp_set. That branch -- and whatever input decides it --
+  is the true divergence, and it is upstream of everything measured tonight.
+  ############################################################################
+
+  ############################################################################
   **CORRECTION: ALTIRRA'S $BC IS *NOT* PERMANENTLY $00 (2026-08-14).** A proper
   1400-frame sweep from COLD RESET (the earlier "$00 for 300/300 frames" was a
   single-moment sample, not a sweep -- the same scoping error yet again):
