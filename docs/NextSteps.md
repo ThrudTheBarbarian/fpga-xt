@@ -725,6 +725,31 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE GATE, FOUND EXACTLY (2026-08-14).** Counting the VBI chain in bbt.bin
+  (the pure intro) shows the chain is UNIFORM -- every VBI walks all of it:
+        $BC78 281  $BC85 281  $BC87 281  $BC8B 281  $BC8E 281
+        $BC95 281  $BC99 281  $BC9C 281      ($BC92 and $BC9F: 0)
+  and the shedding happens at the TICKER ENTRY:
+        **$3DE0 `inx`            281**   <- every VBI arrives
+        **$3DE1 `bne $3E0F`  -> $3E0F 227**  <- 81% turned away (X != 0)
+        **$3DE3 `lda $C2`         54**   <- only these fall through (X wrapped to $00)
+        $3DFC 54   $3DFE 54   **$3E00 `inc $C2` 53**
+  227 + 54 = 281. So `$C2` ONLY advances when **X WRAPS TO ZERO** at $3DE0/$3DE1.
+
+  **THE WHOLE STALL REDUCES TO: X IS NOT WRAPPING OFTEN ENOUGH.** Note `inx`
+  alone would wrap once per 256 VBIs, but we see 54 wraps in 281 VBIs (~1 in 5),
+  so **X is a SHARED counter written elsewhere** -- that other writer is the state
+  to chase, and to compare against Altirra.
+
+  NEXT: (a) find what else writes X before $3DE0 -- walk backwards in the trace
+  from each $3DE0 occurrence and histogram the preceding PCs, and recover X's
+  value at $3DE0 from the trace (X is in the record at retire) to see the
+  distribution. (b) Measure the SAME ratio on Altirra at the same scene: if it
+  wraps far more often, the divergence is in whatever feeds X. This is no longer
+  an interrupt question at all -- it is about one 6502 register's value.
+  ############################################################################
+
+  ############################################################################
   **THE REAL INTRO NUMBERS (2026-08-14) — measured in bbt.bin, 99.3% page $3000,
   i.e. the PURE INTRO. This retracts the dropped-VBI claim and finds the actual
   gate.**
