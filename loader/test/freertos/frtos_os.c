@@ -3386,6 +3386,13 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         extern int xl_reset(int);
         return xl_reset((int)a0);
     }
+    case SYS_sio_timing: {                                  /* (baud, latency_us) -> 0 */
+        extern uint32_t g_siov_baud, g_siov_latency_us;
+        g_siov_baud       = (uint32_t)a0;
+        g_siov_latency_us = (uint32_t)a1;
+        return 0;
+    }
+
     case SYS_trace_ring: {                                  /* (shm_id, ena) -> ring bytes */
         /* Arm the CONTINUOUS 6502 trace (hdl/xt_trace_axi.sv).  The PHYSICAL
          * address never leaves the kernel: userland hands over an shm id and we

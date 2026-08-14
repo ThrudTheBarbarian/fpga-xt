@@ -466,6 +466,16 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * the core HALTS on its result screen instead of soft-resetting
                                 * -- `6502 status` Y then reads 00=pass / 80=fail.
                                 * (docs/OS/app-launch.md.) */
+#define SYS_sio_timing   0x60B /* (baud, latency_us) -> 0: how long the PARAVIRTUAL SIOV
+                                * service pretends to take.  baud 0 = answer immediately
+                                * (the default: authentic timing means authentic LOAD
+                                * TIMES, ~110 s for ElektraGlide, and that is the wrong
+                                * default for daily use).  Set baud to the link rate
+                                * (19200 standard) for titles whose intros are timed
+                                * against the drive -- BallBlazer animates from the VBI
+                                * while its sectors stream, so the duration of a SIO call
+                                * IS its animation budget.  latency_us adds the rotational
+                                * term; see docs/OS/sio-bridge.md §13.5. */
 #define SYS_trace_ring   0x60A /* (shm_id, ena) -> 0/-errno: arm or disarm the CONTINUOUS
                                 * 6502 trace (hdl/xt_trace_axi.sv, GP0 DTR_* at 0x884).
                                 * ena=1 resolves shm_id -> physical base + size and programs

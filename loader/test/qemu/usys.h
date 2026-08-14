@@ -57,6 +57,12 @@ static inline long sys_getpid(void) { return __syscall(SYS_getpid, 0, 0, 0); }
  * size in bytes (a power of two, rounded DOWN from the allocation), or -errno.
  * Unlike the older halting ring this never stops the core, so it can observe
  * things that are timing-coupled to the outside world. */
+/* How long the paravirtual SIOV service pretends to take.  baud 0 = answer
+ * immediately (default); 19200 = a real 1050.  Per title, because authentic
+ * timing costs authentic load times -- see SYS_sio_timing in xtsys.h. */
+static inline long sys_sio_timing(unsigned baud, unsigned latency_us)
+{ return __syscall(SYS_sio_timing, (long)baud, (long)latency_us, 0); }
+
 static inline long sys_trace_ring(int shm_id, int ena)
 { return __syscall(SYS_trace_ring, shm_id, ena, 0); }
 

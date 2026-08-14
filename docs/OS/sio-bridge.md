@@ -462,7 +462,15 @@ one, and objects barely move between reads.  BallBlazer's intro showed exactly
 that — the vehicle never swept across, the ball stopped, the later stages never
 ran — while GAMEPLAY was flawless, because gameplay streams nothing.
 
-The service time is now derived (SIO frames at the link rate + rotational
+**It is OFF BY DEFAULT and enabled PER TITLE** (`xlboot -a`, SYS_sio_timing).
+Authentic timing means authentic LOAD times — ~110 s for ElektraGlide, ~60 s for
+Despatch Rider, against seconds for an instant answer.  That is correct
+emulation and the wrong default for daily use, so the handful of titles whose
+intros are timed against the drive opt in and pay for it while everything else
+stays snappy.  The desktop's per-title context menu is the natural home for the
+switch, alongside "Enable US-Doubler" (§13.6).
+
+The service time is derived (SIO frames at the link rate + rotational
 latency) with both terms as runtime knobs, so a faster link shortens the
 transfer term by itself.  The latency term is CALIBRATED (27 ms, not the ~60 ms
 a bare rotational average suggests) because issuing the delay costs scheduling

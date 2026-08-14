@@ -529,11 +529,19 @@ static void sio_mbox_write(uint32_t off, const uint8_t *src, uint32_t n);  /* fw
  * answer-immediately behaviour. */
 uint32_t g_sio_delay_us = 0;
 
-/* Paravirtual SIOV service model (see the note in xl_sio_service).  SIOV is the
- * OS's own routine, which runs the standard link rate; a title that wants more
- * speed bypasses SIOV and drives the serial bus itself, and that path has its
- * own pacing.  0 disables the model entirely. */
-uint32_t g_siov_baud       = 19200u;
+/* Paravirtual SIOV service model (see the note in xl_sio_service).
+ *
+ * DEFAULT IS FAST (baud 0 = model off), because authentic timing means
+ * AUTHENTIC LOAD TIMES: a real 1050 at 19200 takes ~130 ms per sector, which is
+ * ~110 s for ElektraGlide and ~60 s for Despatch Rider where an instant answer
+ * took seconds.  That is the correct emulation and the wrong default for daily
+ * use, so it is opt-in PER TITLE -- the handful of titles whose intros are
+ * timed against the drive (BallBlazer) switch it on and pay for it, and
+ * everything else stays snappy.
+ *
+ * Set g_siov_baud to the link rate (19200 standard, higher for a US-Doubler,
+ * docs/OS/sio-bridge.md §13.6) to enable it. */
+uint32_t g_siov_baud       = 0u;
 /* 27 ms, not the ~60 ms a bare rotational average suggests: the delay itself
  * costs scheduling time, so the figure is CALIBRATED against the reference
  * rather than derived in isolation.  At 19200 with a 128-byte sector this puts
