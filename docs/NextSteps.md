@@ -725,6 +725,36 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **CORRECTION — "WE DO EXTRA WORK" IS PROBABLY PHASE MISMATCH (2026-08-14).**
+  Scanning $BD's read sequence for UPWARD jumps (reload points) in entry.bin:
+        **UPWARD jumps: 0.** 241 samples, 241 distinct, strictly DESCENDING
+        $F0 -> $00 -- i.e. **exactly ONE COMPLETE ENVELOPE**, ending at $00, with
+        the 15 below-$0F samples being its fade-out tail.
+  So the envelope RUNS ONCE AND STOPS AT $00, which is **exactly the state Altirra
+  is in** ($BD=$00 for 300/300 frames). Altirra is therefore most likely PAST an
+  envelope that we happened to capture DURING.
+
+  **THE PREVIOUS ENTRY'S CONCLUSION ("our envelope runs, Altirra's does not, so we
+  do extra work") IS WITHDRAWN AS UNPROVEN.** It is the same phase-mismatch trap
+  that produced most of tonight's retractions, now recurring one level deeper on
+  a variable rather than a window.
+
+  **TO SETTLE IT PROPERLY, ALIGN ON THE ENVELOPE ITSELF, NOT ON WALL-CLOCK:**
+   1. On Altirra, drive it BACKWARD/FORWARD to a moment when $BD is NON-ZERO
+      (cold_reset then step frames while polling $BD until it moves), then measure
+      ITS steps/frame. Comparing a running envelope against a finished one proves
+      nothing.
+   2. If Altirra's $BD NEVER becomes non-zero across a full intro, THEN the
+      "extra note" claim is real -- but that needs a sweep, not a single 300-frame
+      sample at one arbitrary moment.
+   3. Equally, check whether OUR envelope RESTARTS (a second descent later in a
+      longer capture). If ours restarts and Altirra's does not, that is the
+      divergence; if both run once, there is none here.
+  **AND ASK SIMON: does the intro have music?** One listen settles which machine
+  is behaving.
+  ############################################################################
+
+  ############################################################################
   **DECISIVE, AND IT INVERTS THE ASSUMPTION: ALTIRRA'S ENVELOPE IS NOT RUNNING
   AT ALL (2026-08-14).** Peeking Altirra's $BD every frame for 300 frames at the
   intro scene (PC=$37df):
