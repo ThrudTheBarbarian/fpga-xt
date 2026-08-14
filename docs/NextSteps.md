@@ -725,6 +725,35 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **BOTH SIM PATHS ARE CLEAN — STOP INFERRING, BUILD THE READ PATH (2026-08-14).**
+        make -C sim antic_timing   -> T10: /NMI=1, NMIST-DLI=0, ANTIC_TIMING OK
+        make -C sim antic_dli_cdc  -> *** NOT-REPRODUCED (CDC-latency refuted) ***
+  Neither the timing machine in isolation nor the register-write CDC produces a
+  spurious DLI. Hardware nonetheless dispatches 1608 DLIs ($C01D = JMP (VDSLST),
+  decoded from OUR ROM). No model available to us reproduces it.
+
+  **STRUCTURAL FACT NOT YET CHASED: our DLIST is $3C7C, Altirra's is $BA00.** The
+  ANTIC start addresses genuinely DIFFER, so Altirra's dlist() -- which parses
+  only from $BA00 -- has NEVER examined the $3C7C segment on the machine that
+  owns it. The 198-entry DLI-free parse of $3C7C was done by hand against
+  ANOTHER machine's RAM. Our stores put $BA00 at $3C7A/$3C7B, just BELOW the
+  list, so that word may be a code pointer rather than part of the DL at all --
+  unresolved either way.
+
+  **THE REAL BLOCKER, AND THE RECOMMENDATION: WE CANNOT READ OUR OWN GUEST RAM.**
+  Every dead end tonight traces back to this. 52,000-61,000 `STA (zp),Y` stores
+  per capture window are UNRESOLVABLE (the target lives in zero page at runtime),
+  and any one of them could set a DLI bit in a control byte. Before more
+  inference, BUILD A GUEST-RAM READ PATH:
+      option A -- a small 6502 stub that copies a memory range into the SIO
+                  mailbox page, which the kernel already reads (lowest risk, no
+                  RTL, reuses xl_boot's romwin_write to inject the stub);
+      option B -- a debug read aperture in RTL (needs a bitstream).
+  With it, "what is at $3C7C on OUR machine" and "does any control byte have bit
+  7" become one command instead of an argument. Recommend option A.
+  ############################################################################
+
+  ############################################################################
   **OUR DISPLAY LIST, FROM OUR OWN STORES (2026-08-14).** Decoding absolute
   stores into $3C00-$3E00 from our traces (no borrowed memory):
         $3C7A=00 $3C7B=BA   -> the game writes **$BA00** into the DL structure
