@@ -701,6 +701,42 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
+  **PHASE CORRECTION + THE STRUCTURAL RESULT (2026-08-14, latest).** The t=45 s
+  capture was NOT the intro -- it was the GAME (the intro ends and the game
+  starts, as Simon observed). The TRUE intro window is t~31-35 s. Captured there
+  (1,282,800 entries, DROPS=0): page $3000 dominates with 1,273,246 samples, in
+  regions $30CC-30F1, $3307-33A1, $33D3-33E7, **$37D3-37D9**, $37FC-3854,
+  $3DE0-3E6A.
+
+  Against Altirra's intro, executed on OURS in that window:
+      $3AB0 sprite plotter .... 0 samples
+      $3043 dispatcher ........ 0 samples
+      $3282 / $32C3 ........... 0 samples
+      $3950 sprite table ...... 0 samples
+  and none of those four routines' opcode signatures match ANYWHERE among our
+  5314 executed PCs. Both machines run page-3 code; they run DIFFERENT ROUTINES
+  AT DIFFERENT ADDRESSES. Altirra's intro dispatcher chain is $3043 -> $3282 ->
+  $32C3 -> $32CF (from alt.callstack()).
+
+  **THIS VINDICATES THE ORIGINAL $37AE OBSERVATION.** Our machine really does
+  execute $37xx code that Altirra never runs -- $37D3-$37D9 and $37FC-$3854 are
+  right there in the true intro window. Earlier doubt cast on that finding (from
+  a trace taken at t=45 s, i.e. in the GAME) was the phase trap again, and is
+  withdrawn. SCOPE EVERY CLAIM TO ITS WINDOW: load = t~2-6 s, intro = t~31-35 s,
+  game = t~45 s+.
+
+  Combined with the machines being in LOCKSTEP THROUGH THE LOAD (identical
+  loader, same spin loops, bytes 18/18), the picture is exactly Simon's
+  SEMI-CRACK: same disc, same loader, same sectors, then the protection check
+  fails on ours and it runs a DIFFERENT INTRO IMPLEMENTATION -- one that never
+  sets PRIOR=$54 and never drives the four missiles as the fifth-player figure.
+
+  **CAVEAT ON THE OPERAND CHANNEL:** tools/trace_writes.py resolves operands by
+  peeking ALTIRRA. That is only valid where the two memories AGREE (it held for
+  the loader, 18/18). It is INVALID for our $3xxx intro code, which Altirra does
+  not have. Decoding our own intro's P/M writes needs a guest-RAM read path,
+  which does NOT exist (XT_DBG_STRM_RADDR/RDLO/RDHI address the trace ring).
+
   **BETTER NEXT MOVE — diff at the PROTECTION READ, not in the intro.** By the
   intro the two machines have long since parted, so diffing there only re-measures
   the gap. Sector 130 is read at roughly transaction 34 of 302, about 11% into a
