@@ -725,6 +725,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **LONG CONTINUOUS BOARD CAPTURE CONFIRMS IT (2026-08-15).** `hw_long2.bin`,
+  **6,917,312 records** (4 back-to-back `dtrace 4` segments from t=14 s), the
+  like-for-like comparison that was missing all night. Sample counts finally meet
+  the >=1000 bar.
+        P/M shape bytes, non-zero fraction   P0    P1    P2    P3
+        Altirra          n=2250              18%   31%   67%   72%
+        board continuous n=962               15%   24%   51%   58%
+  **Same ordering, same shape, no divergence.** The uniformly lower values track
+  the different phase coverage.
+        $BC at $BCEB   board n=1058: $00 74% / $FF 5% / $FD 18%
+                       Altirra n=3000: $00 86% / $FF 8% / $FD  5%
+  A modest residual ($FD 18% vs 5%) but the windows are NOT phase-matched (ours
+  t=14-30 s, Altirra frames 652-3652), and our own captures span 0-100% on this
+  metric. **NOT a divergence on this evidence.**
+
+  **CAPTURE RECIPE — THE `&` TRAP.** `xlboot` must run in the FOREGROUND:
+      rm -f /t1.bin..; /System/bin/xlboot /media/6502/Games/BallBlazer.atx; sleep 14;
+      /System/bin/6502 dtrace 4 /t1.bin; ... ; cat /t1.bin /t2.bin /t3.bin /t4.bin
+  Backgrounding it with `&` produced a capture that was **8.1M of 8.4M records
+  spinning in $4Cxx with ZERO game code** -- the game never launched. **A capture
+  whose page histogram lacks $3xxx is DEAD; check the histogram BEFORE analysing.**
+  A saturated ring (every segment exactly 16777216 bytes) is another tell;
+  real activity gives varying sizes.
+  ############################################################################
+
+  ############################################################################
   **RETRACTION #8, AND THE HONEST STATE: NO 6502-VISIBLE DIVERGENCE EXISTS
   (2026-08-15).**
   The "P1/P2 get only zeros" result came from multi.bin's **32 samples** -- the
