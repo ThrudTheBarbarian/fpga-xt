@@ -236,6 +236,79 @@ static void stream_trace(unsigned long secs, const char *path)
     odec(n * 8); os(" bytes) to "); os(path); oc('\n'); flush(1);
 }
 
+/* `6502 dtrace <secs> [path]` — the CONTINUOUS trace.  Unlike `trace` above this
+ * NEVER halts the core: the PL streams entries straight to a DDR ring
+ * (hdl/xt_trace_axi.sv) and we only read the ring afterwards.  That is the whole
+ * point — the stop-the-world drain in `trace` freezes the 6502 while the virtual
+ * SIO drive keeps clocking bytes at it, so any title that is LOADING while you
+ * watch it fails with LOAD ERROR and the trace you get describes the failure you
+ * caused.  This one can watch a load.
+ *
+ * The ring is XT_SHM_CONTIG (the PL is a DMA engine with no MMU) and the kernel
+ * resolves the id to a physical base itself — see SYS_trace_ring. */
+#define DTR_CTRL   (DBG + 0x84ul)
+#define DTR_WROTE  (DBG + 0x90ul)
+#define DTR_DROPS  (DBG + 0x94ul)
+
+static void ddr_trace(unsigned long secs, const char *path)
+{
+    /* plv is a BUDGET and the desktop's window surfaces are CONTIG too, so 64 MB
+     * is often unavailable.  Take the largest ring we can get rather than
+     * failing outright -- a shorter trace still answers the question, and the
+     * size is REPORTED so nobody mistakes a small ring for a complete capture. */
+    unsigned long want = 64ul << 20;
+    int id = -1;
+    while (want >= (4ul << 20)) {
+        id = sys_shm_create((unsigned)want, XT_SHM_CONTIG);
+        if (id >= 0) break;
+        want >>= 1;
+    }
+    if (id < 0) { on = 0; os("6502 dtrace: no contiguous shm (plv budget)\n"); flush(2); sys_exit(1); }
+    unsigned char *ring = (unsigned char *)sys_shm_map(id);
+    if (!ring) { on = 0; os("6502 dtrace: map failed\n"); flush(2); sys_exit(1); }
+
+    /* fidelity core only — the tap lives in xt6502f_debug */
+    if (!(rd(CTRL_SALLYRST) & 2ul)) {
+        wr(CTRL_SALLYRST, 2ul | 1ul); wr(CTRL_SALLYRST, 2ul);
+        on = 0; os("6502 dtrace: switched to fidelity core (cold-booted)\n"); flush(1);
+    }
+
+    long rsz = sys_trace_ring(id, 1);
+    if (rsz <= 0) { on = 0; os("6502 dtrace: arm failed\n"); flush(2); sys_exit(1); }
+    on = 0; os("6502 dtrace: ring "); odec((unsigned long)rsz >> 20); os(" MB, capturing ");
+    odec(secs); os("s (core NOT halted)\n"); flush(1);
+
+    long long deadline = now_us() + (long long)secs * 1000000ll;
+    while (now_us() < deadline) sys_nanosleep(50000);   /* 50 ms; the PL does the work */
+
+    /* Read the counters BEFORE disarming.  They describe the capture, and a tool
+     * that reads them afterwards is at the mercy of what the RTL does while
+     * parked -- which is exactly how the first capture wrote an empty file. */
+    unsigned long wrote = rd(DTR_WROTE);
+    unsigned long drops = rd(DTR_DROPS);
+    sys_trace_ring(id, 0);
+
+    /* If the ring wrapped, the oldest surviving entry is at wrote % ring. Dump
+     * oldest -> newest so the file reads chronologically either way. */
+    unsigned long n     = (wrote < (unsigned long)rsz) ? wrote : (unsigned long)rsz;
+    unsigned long start = (wrote < (unsigned long)rsz) ? 0ul : (wrote % (unsigned long)rsz);
+    int fd = (int)sys_open(path, 0x0241 /* O_WRONLY|O_CREAT|O_TRUNC */);
+    if (fd < 0) { on = 0; os("6502 dtrace: cannot open output\n"); flush(2); sys_exit(1); }
+    if (start + n <= (unsigned long)rsz) {
+        sys_write(fd, ring + start, n);
+    } else {                                          /* wrapped: tail then head */
+        unsigned long first = (unsigned long)rsz - start;
+        sys_write(fd, ring + start, first);
+        sys_write(fd, ring, n - first);
+    }
+    sys_close(fd);
+
+    on = 0; os("6502 dtrace: "); odec(n); os(" bytes ("); odec(n / 8);
+    os(" entries) to "); os(path); os("  DROPS="); odec(drops);
+    os(drops ? "  *** TRACE HAS GAPS ***\n" : "  (complete)\n");
+    flush(1);
+}
+
 static void status(void)
 {
     unsigned long st = rd(DBG_STAT), pc = rd(DBG_PC) & 0xFFFF;
@@ -301,6 +374,13 @@ void _app_entry(int argc, char **argv)
 {
     if (argc < 2) { status(); sys_exit(0); }
     const char *cmd = argv[1];
+    if (streq(cmd, "dtrace")) {
+        unsigned long secs = (argc >= 3) ? parse_num(argv[2]) : 20ul;
+        const char *path = (argc >= 4) ? argv[3] : "/6502trace.bin";
+        if (!secs) { on = 0; os("usage: 6502 dtrace <secs> [path]\n"); flush(2); sys_exit(2); }
+        ddr_trace(secs, path);
+        sys_exit(0);
+    }
 
     if (streq(cmd, "-h") || streq(cmd, "--help") || streq(cmd, "help")) { help(); sys_exit(0); }
 

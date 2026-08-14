@@ -157,6 +157,7 @@ module xt_trace_axi #(
     state_t     state;
     logic [4:0] beat;
     logic [31:0] ring_off;
+    logic        en_d;
 
     // REGISTERED read — this must not be a combinational mem[] lookup.  An async
     // read forces the 512x64 array into distributed LUT RAM (~1400 slices) and
@@ -175,7 +176,7 @@ module xt_trace_axi #(
 
     always_ff @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
-            state <= S_IDLE; beat <= 5'd0; rbin <= '0; rptr_gray_x <= '0;
+            state <= S_IDLE; beat <= 5'd0; rbin <= '0; rptr_gray_x <= '0; en_d <= 1'b0;
             ring_off <= 32'd0; wr_bytes <= 32'd0;
             m_axi_awvalid <= 1'b0; m_axi_wvalid <= 1'b0; m_axi_wlast <= 1'b0;
             m_axi_awaddr <= 32'd0; m_axi_awlen <= 8'd0;
@@ -184,11 +185,19 @@ module xt_trace_axi #(
             wgray_s1 <= wgray;
             wgray_s2 <= wgray_s1;
 
+            en_d <= en;
             if (!en) begin
-                // parked: drop everything on the floor and re-arm at the base
+                // Parked: discard whatever is in flight, but DO NOT clear wr_bytes.
+                // The counter is the only evidence of how much was captured, and
+                // clearing it here meant every read AFTER a disarm returned 0 --
+                // the capture worked and the dump then wrote an empty file.
+                // Clearing belongs on the ENABLE RISING EDGE, which is what the
+                // register documentation already promises ("rising edge re-arms").
                 state <= S_IDLE; rbin <= wbin_sync; rptr_gray_x <= bin2gray(wbin_sync);
-                ring_off <= 32'd0; wr_bytes <= 32'd0;
                 m_axi_awvalid <= 1'b0; m_axi_wvalid <= 1'b0; m_axi_wlast <= 1'b0;
+            end else if (en && !en_d) begin
+                ring_off <= 32'd0; wr_bytes <= 32'd0;   // re-arm: start of the ring
+                state <= S_IDLE;
             end else case (state)
                 S_IDLE: if (have_burst) begin
                     m_axi_awaddr  <= ring_base + ring_off;
