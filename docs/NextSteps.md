@@ -725,6 +725,37 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **$BD IS A 240-STEP NOTE ENVELOPE — THE INTRO IS MUSIC-PACED (2026-08-14).**
+  Histogramming A at `$3E5A lda $BD`:
+        bbt.bin:   227 samples, **227 DISTINCT values**, running $F0, $EF, $EE,
+                   $ED, $EC, ... -- a MONOTONIC COUNTDOWN. Below $0F: **1 (0.4%)**
+        entry.bin: 241 samples, 241 distinct, below $0F: 15 (6.2%)
+  So $BD counts down from **$F0 (240)** one step per call (~0.81/frame), taking
+  ~240 frames ~= **4 SECONDS** to fall below $0F. Only in that final stretch does
+  `$3e60 sta $BC` run, writing $0E..$00 -- **the decaying VOLUME nibble into
+  AUDC2** (`ora #$A0`).
+
+  **THIS IS A NOTE ENVELOPE.** A ~4 s tone whose last ~15 frames fade out. $BC is
+  non-zero only during the fade, and $BC==$FF (needed for `inc $C2`) requires a
+  `dec $BC` exactly when $BC has reached $00 -- the very tail of the fade.
+  **THEREFORE THE INTRO'S SCENE PACING IS DRIVEN BY THE MUSIC**: roughly one scene
+  advance per note. "Once per ~12 s" is two or three notes, not a broken counter.
+
+  **THIS MAY BE CORRECT BEHAVIOUR, NOT A BUG.** Before treating it as a fault,
+  establish what the intro is SUPPOSED to sound/look like:
+   1. Is our note length right? 240 steps at ~0.81/frame ~= 296 frames ~= 5 s per
+      note. Compare against Altirra: measure ITS $BD countdown rate at the same
+      scene (peek $BD each frame for ~300 frames). If Altirra's envelope runs
+      faster, our notes are too long and everything downstream stretches.
+   2. Does Altirra even run this envelope? Its $BC is $00 for 300/300 frames,
+      which is consistent with "fade already finished" -- so sample $BD there
+      directly rather than inferring from $BC.
+   3. If the envelope rates MATCH, then the intro pacing is by design and the real
+      bug is elsewhere -- revisit what Simon actually sees (the man never
+      appearing) against a correctly-paced reference run.
+  ############################################################################
+
+  ############################################################################
   **NO IRQ ANOMALY IN THE INTRO — the sound engine is VBI-driven (2026-08-14).**
   Duration-free rates per VBI ($BC78):
         bbt.bin (PURE intro, 99.3% page $3000): VBI 281, **NMI 1.00/VBI**,
