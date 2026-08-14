@@ -99,6 +99,16 @@ module xt_trace_axi #(
     wire full = (wgray_nxt == {~rgray_s2[FIFO_AW:FIFO_AW-1],
                                 rgray_s2[FIFO_AW-2:0]});
 
+    // THE MEMORY ARRAY GETS ITS OWN RESET-FREE PROCESS.  A BRAM cannot have an
+    // asynchronous reset, and putting the array in a block whose sensitivity
+    // list carries `posedge rst_cpu` poisons the inference for everything in it:
+    // Vivado reported "Trying to implement RAM 'mem_reg' in registers" and built
+    // 512x64 = 32768 flip-flops, which is what actually blew the slice budget.
+    // RAM contents never need resetting -- the pointers do, and they live below.
+    always_ff @(posedge clk_cpu) begin
+        if (tr_valid && !full) mem[wbin[FIFO_AW-1:0]] <= tr_data;
+    end
+
     always_ff @(posedge clk_cpu or posedge rst_cpu) begin
         if (rst_cpu) begin
             wbin <= '0; wgray <= '0; {rgray_s2, rgray_s1} <= '0;
@@ -106,7 +116,6 @@ module xt_trace_axi #(
             rgray_s1 <= rptr_gray_x;
             rgray_s2 <= rgray_s1;
             if (tr_valid && !full) begin
-                mem[wbin[FIFO_AW-1:0]] <= tr_data;
                 wbin  <= wbin_nxt;
                 wgray <= wgray_nxt;
             end
