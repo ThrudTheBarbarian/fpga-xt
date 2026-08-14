@@ -725,6 +725,29 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE GAP CONTAINS NO ZERO-PAGE STORE TO $BC (2026-08-14) — so the writer is an
+  ABSOLUTE INDEXED store landing in page zero.** The last `$BC==$00` read is at
+  idx 1,905,889 and the first `$FF` read at 1,915,203: a gap of only **9,314
+  instructions** containing just **12 zero-page store sites**, and peeking every
+  one of their operands gives:
+        $3D4A->$C6  $3D4C->$C7  $3D4E->$C8  $3803->$93  $3808->$94  $381C->$95
+        $3822->$8F  $3828->$90  $382F->$8F  $3845->$8D  $384B->$8E  $3852->$92
+  **NOT ONE writes $BC**, and there were ZERO `STA (zp),Y` ($91) in the gap.
+
+  So $BC went $00 -> $FF with no zero-page store touching it. The only remaining
+  form is an **ABSOLUTE INDEXED store whose computed target lands in page zero**
+  -- e.g. `STA $0000,X` with X=$BC, or `STA $00xx,Y`. A zero-page-opcode scan
+  STRUCTURALLY CANNOT SEE THESE, which is why every search so far missed it.
+  **NEXT (should finish it): re-scan the 9,314-instruction gap for opcodes $9D
+  (STA abs,X) and $99 (STA abs,Y), peek each site's 16-bit base from Altirra, add
+  X or Y AT RETIRE, and keep any whose target == $00BC.** That is a tiny search
+  over a tiny window and it will name the writer outright.
+  (Method note: "no store to X in the gap" was only true of the addressing modes
+  I enumerated. Enumerate ALL modes that can reach an address, not just the
+  obvious ones.)
+  ############################################################################
+
+  ############################################################################
   **THE $00 -> $FF TRANSITION IS NOT AT THE FIRST $FF READ (2026-08-14).**
   Dumping the 40 instructions before the first `$BC==$FF` read (idx 1,915,203 in
   entry.bin) shows NO `sta $BC`. At idx 1,915,193 an `LDA zp` already pulls $FF
