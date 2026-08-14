@@ -149,7 +149,20 @@ module xt_trace_axi #(
     logic [4:0] beat;
     logic [31:0] ring_off;
 
-    assign m_axi_wdata = mem[rbin[FIFO_AW-1:0]];
+    // REGISTERED read — this must not be a combinational mem[] lookup.  An async
+    // read forces the 512x64 array into distributed LUT RAM (~1400 slices) and
+    // the design then fails placement; a BRAM needs its read address registered.
+    // rd_addr always points one step AHEAD of what is being presented, so rd_q
+    // holds the right entry on the cycle the beat is accepted.
+    // The ADDRESS is combinational and only the OUTPUT is registered — that is
+    // the pattern that infers a BRAM.  Registering the address too would put two
+    // stages in series and present each beat one cycle stale.
+    logic [63:0] rd_q;
+    wire [FIFO_AW-1:0] next_rd = (state == S_DATA && m_axi_wready)
+                                 ? (rbin[FIFO_AW-1:0] + 1'b1)
+                                 :  rbin[FIFO_AW-1:0];
+    always_ff @(posedge clk_sys) rd_q <= mem[next_rd];
+    assign m_axi_wdata = rd_q;
 
     always_ff @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
