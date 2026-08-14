@@ -701,7 +701,35 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (--frames 60 --step 1 --chunk 8000). Use alt.pmg()/alt.peek()/alt.disasm()
   state comparison instead of full-trace diffing until that is sorted.
 
-  **ROOT-CAUSE LOCUS FOUND (2026-08-14): we are STUCK in a wait for $C2 == $FF.**
+  **THE $C2 WRITER, AND A RATE PROBLEM (2026-08-14).** alt.memsearch finds the
+  ONLY writer of $C2: `INC $C2` at **$3E00**, inside a SOUND-UPDATE routine:
+        $3dfc cmp #$FF
+        $3dfe bcs $3E02          ; skip the INC if A >= $FF
+        $3e00 inc $C2            ; <-- the only writer anywhere in memory
+        $3e02 lsr x4 / ora #$A0 / sta AUDC1 ($D201) / sta AUDC2 ($D203) / rts
+  In our t=26..38 s window $3E00 executes **174 times** (~14.5 Hz), and the BCS
+  is never taken. $C2 must climb to $FF = 255 ticks, so at that rate the wait at
+  $30CC lasts ~17.6 SECONDS.
+
+  So "stuck" is too strong -- it is a VERY LONG WAIT, which is consistent with
+  Simon seeing the vehicle stop and stay still and the game eventually starting.
+  If this routine is meant to run once per frame (60 Hz) the wait should clear in
+  ~4.25 s, i.e. our tick rate would be ~4x too slow.
+
+  NEXT, AND MEASURE BEFORE CONCLUDING: (a) find what CALLS $3DF0/$3DFE and how
+  often it should fire -- is it a VBI, a DLI, or a timer IRQ? (b) measure
+  ALTIRRA's tick rate for the same routine (bp_set/watch_set on $3E00 and count
+  per frame) -- note polling $C2 every 3 frames showed $00 for 90 frames on
+  Altirra, which is FEWER increments than ours, so the naive reading is
+  contradictory and the two must be compared AT THE SAME SCENE, not at whatever
+  moment each happens to be in. (c) if our rate really is ~4x low, the suspect is
+  interrupt cadence (VBI/DLI/POKEY timer IRQ), not GTIA.
+
+  Do NOT conclude a rate bug from our number alone -- 174 ticks in 12 s is only
+  meaningful against Altirra's rate in the SAME scene.
+
+  **EARLIER FRAMING (still true, but see the rate note above): we sit in a wait
+  for $C2 == $FF.**
   Disassembly of our own path (via alt.disasm; legitimate, memories match):
         $30c4 lda #$01
         $30c6 cmp $CA / bne $30C6      ; wait for $CA == $01   (this one PASSES)
