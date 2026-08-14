@@ -725,6 +725,40 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **$309B IS A DELIBERATE ONE-TIME INIT, NOT A STRAY INSTRUCTION (2026-08-14).**
+  Region cross-checked first: our executed opcodes $3088-$30A8 match Altirra
+  byte-for-byte EXCEPT $308A, where ours reads $00 -- that is the INTERRUPT-ENTRY
+  marker (IR==$00), not a memory difference. So the disassembly is trustworthy:
+        $3091  A9 FD     LDA #$FD
+        $3093  85 82     STA $82          ; arm a counter with $FD
+        $3095  A5 82     LDA $82          <- **3196 executions**
+        $3097  D0 FC     BNE $3095        <- **SPIN until $82 reaches $00**
+        $3099  C6 83     DEC $83
+        **$309B  C6 BC     DEC $BC**        <- the bootstrap ($00 -> $FF)
+        $309D  20 53 BC  JSR $BC53
+        $30A0  20 EB 3B  JSR $3BEB
+        $30A3  20 C4 37  JSR $37C4
+  So this is a DELIBERATE INIT SEQUENCE: set $82=$FD, spin until an interrupt
+  counts it to zero, then `dec $83` and `dec $BC`. With $BC at $00 that `dec`
+  INTENTIONALLY yields $FF, arming the sound engine. **We are not executing a
+  wrong instruction -- we are executing the RIGHT one.**
+
+  **SO THE DIVERGENCE INVERTS AGAIN: ALTIRRA APPARENTLY NEVER REACHES THIS INIT**
+  (its $BC stays $00 forever). The question is no longer "why do we run $309B"
+  but **"why does the REFERENCE not run it -- or run it at a different time?"**
+  NEXT:
+   1. `alt.bp_set(0x309B)` (or watch $82/$83) and run a full intro from cold
+      reset -- does Altirra EVER reach $309B? If it does, WHEN, and what is $BC
+      at that moment?
+   2. Note the spin at $3095/$3097 (3196 iterations) waits for **$82** to be
+      decremented to zero BY SOMETHING ELSE -- find that decrementer; if it is
+      interrupt-driven, its rate decides when this init completes on each machine.
+   3. Consider that BOTH may be correct and simply at different points: Simon's
+      run is non-deterministic. The music question ("does the intro have music?")
+      would disambiguate cheaply.
+  ############################################################################
+
+  ############################################################################
   **THE LOOP CLOSES — ROOT CAUSE CANDIDATE IS `$309B dec $BC` WRAPPING $00 -> $FF
   (2026-08-14).** Predecessor analysis shows the sound engine is reached ONLY from
   inside the VBI, and the whole path is gated by $BC:
