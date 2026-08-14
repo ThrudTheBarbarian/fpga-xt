@@ -725,6 +725,31 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE INTRO *DOES* REWRITE THE DISPLAY LIST — writer found (2026-08-14).**
+  Watch armed INSIDE the intro (at PC=$32D0, icnt=14,092,976), 9 s later:
+        HALTED (bkpt)  PC=**$5FBE**  A=$00  X=$40  Y=$7E  icnt=16,789,892
+        wp_seen=1  wp_hit=1
+  So $3C7E IS written during the intro, by GAME code at $5FBE -- not the loader
+  ($CBxx) and not the SIO stub. Y=$7E is the low byte of the target, so this is
+  exactly the `STA (zp),Y` class that trace decoding could never resolve. **A=$00
+  and STA does not modify A, so the VALUE WRITTEN IS $00** -- bit 7 CLEAR, i.e.
+  a plain blank-line control byte, NOT a DLI flag.
+
+  This SUPERSEDES the "the list is static after load" entry below, which was
+  measured in the GAME window (t=38-58 s) and is simply not true of the intro.
+  Scope every watch result by the PC it was armed at: $3xxx = intro, $4C/$5D = game.
+
+  WHERE THAT LEAVES THE DLI QUESTION: the one runtime DL write we have caught
+  writes $00, so it does NOT explain the ~1608 DLIs. But it PROVES the intro
+  mutates the list, so a static parse of $3C7C cannot settle whether a DLI bit is
+  ever present. NEXT: watch more control bytes during the intro (0x3C90 in the
+  animated modeF run, 0x3D45 the JVB, and bytes in the $BA00 segment) and record
+  the VALUE (A at the halt) each time. One address per boot -- a hit halts the
+  run, so ALWAYS `6502 watch off` then `6502 go`. Better still, build the mailbox
+  read path and snapshot the WHOLE list at two points in the intro and diff it.
+  ############################################################################
+
+  ############################################################################
   **WATCH RE-RUN, ARMED AFTER THE LOAD (2026-08-14): $3C7E IS NOT WRITTEN.**
         armed at icnt=18,021,668 (PC=$4C7E) -> 20 s later icnt=27,285,464 (PC=$5D36)
         wp_seen=0  wp_hit=0      and the core stayed RUNNING (no halt)
