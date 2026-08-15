@@ -1400,6 +1400,19 @@ ANTIC2_PXPOS_SRC = $(ANTIC2_SRC) $(HDL_DIR)/antic_beam.sv \
 	    $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_color_sel.sv \
 	    $(HDL_DIR)/antic_char_ctl.sv $(HDL_DIR)/antic_pixel_shift.sv
 
+pm_align: build/tb_pm_align.vvp
+	@vvp -N $<
+
+build/tb_pm_align.vvp: tb_pm_align.sv $(ANTIC2_PXPOS_SRC) $(ANTIC_GTIA_SRC) \
+	    $(HDL_DIR)/antic2_fabric.sv $(HDL_DIR)/gtia_pm_collide.sv \
+	    $(HDL_DIR)/color_resolver.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pm_align \
+	    $(ANTIC2_PXPOS_SRC) $(HDL_DIR)/gtia_reg_file.sv $(HDL_DIR)/gtia_stage.sv \
+	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
+	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/gtia_special.sv \
+	    $(HDL_DIR)/gtia_pm_collide.sv $(HDL_DIR)/color_resolver.sv \
+	    $(HDL_DIR)/antic2_fabric.sv tb_pm_align.sv
+
 antic2_pxpos: build/tb_antic2_pxpos.vvp
 	@vvp -N $<
 
