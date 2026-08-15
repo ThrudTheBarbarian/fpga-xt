@@ -725,6 +725,38 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE RENDER PATH IS *NOT* EXONERATED — ALTIRRA DRAWS PLAYERS UNDER THE EXACT
+  CONFIGURATION WHERE WE DRAW NONE (2026-08-15).**
+  With the screen as ground truth (both machines reach gameplay ~22-28 s, so the
+  man's scene is inside the 0-24 s window on both):
+        **OURS:    0 of 9 mode-9 frames contain ANY player pixel**
+        **ALTIRRA: 5 of 30 mode-9 frames DO**, fraction growing monotonically
+                   0.05% -> 0.16% -> 0.30% -> 0.72% (an object appearing)
+  **AND THE CONFIGURATION MATCHES.** `altdense` captured at frame 450+25(k+1), so
+  the player-bearing frames altd25-29 are frames 1100-1200 = **t~22-24 s**. And
+  Altirra's PRIOR went to **$54 at frame 680 (t=13.6 s)**. **So Altirra is drawing
+  players at t=22-24 s WHILE RUNNING PRIOR $54 IN MODE 9 — exactly the
+  configuration under which we draw none.**
+  **=> "PRIOR $54 (playfield above players) hides the man" is REFUTED: it does not
+  hide them on Altirra.** And **the earlier "render path exonerated" was based on
+  the GAME WRITING correct P/M data (registers, shapes, positions), NOT on the
+  SCREEN showing it.** Both can be true at once, and together they isolate the
+  fault: **the 6502 writes the object correctly and OUR CHIPSET does not put it on
+  screen.**
+  **THIS IS THE ORIGINAL QUESTION, ANSWERED THE WAY SIMON FRAMED IT:** *"if the
+  game writes an object we never draw, the bug is ours in the LIVE render path."*
+  **The game writes it. We never draw it. The bug is ours in the live render
+  path.**
+  **NEXT, AND IT IS NOW WELL-POSED:** take OUR mode-9 frames and ALTIRRA's
+  player-bearing mode-9 frames at t~22-24 s, and compare the P/M state at the
+  SAME instant -- HPOSP/SIZEP/GRAFP-via-DMA, PRIOR, and the shape bytes at
+  $0400-$07FF -- then walk the live chipset (`gtia_obj_walk` -> `gtia_priority`
+  -> `color_resolver`) for that exact case. **Do NOT re-run the P/M register
+  comparison at aggregate level; it already matched. The question is why matching
+  inputs produce a player on one machine and not the other.**
+  ############################################################################
+
+  ############################################################################
   **RETRACTION #17 AND #18: OUR INTRO IS NOT SHORTER, AND IT IS NOT VARIABLE
   (2026-08-15). THE "SHORTER INTRO" CONCLUSION COLLAPSES.**
   Five FRESH launches, screen grabs at t = 24/28/32/36/40 s, hue-mapped:
