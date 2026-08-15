@@ -725,6 +725,48 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **LEFT-EDGE BAR: CONFIRMED IN SIM, AND ONE OF THE TWO CANDIDATE FIXES IS
+  REFUTED (2026-08-15).  `make -C sim gtia_stage` IS RED ON PURPOSE.**
+  `tb_gtia_stage` TG/TG2 drive GTIA mode 9 with **COLBK at hue 1 and the
+  playfield registers at hue 2**, so the two are told apart by HUE ALONE exactly
+  as on hardware:
+        TG  (after line_start):       cc0 $26 h2, cc1 $26 h2, cc2 $1f h1, cc3 $1f h1
+        TG2 (window opens mid-line):  0cc $26 h2, 1cc $26 h2, 2cc $1f h1, ...
+  The window opens at machine cycle 20 = px_pos 80 = **PLANE COLUMN 0**, so those
+  two colour clocks ARE plane columns 0-3 -- **the measured bar, to the pixel.
+  Width, hue and position all agree with the board.**
+  **THESE ASSERT (unlike T10 in tb_gtia_obj_walk, which only REPORTS).** The
+  claim *"in a GTIA mode every displayed playfield pixel carries COLBK's hue"* is
+  true whichever fix is chosen, so the test is right and the RTL is wrong. T10's
+  layer was genuinely unknown, so it reports. **Keep that distinction.**
+
+  **FIX (b) IS REFUTED: `pf_win` IS NOT RISING EARLY.** a2_video.sv:139-155
+  assigns `win_cap <= px_in_window` and `pv_cap_a <= px_wr ? px_val : 2'd0` in
+  the **SAME `if (!px_odd)` BRANCH ON THE SAME `px_tick`**. The window flag and
+  the playfield data are captured in LOCKSTEP and cannot drift. So the artefact
+  is NOT an upstream misalignment; it is the `gtia_win`/`gtia_nib` staging in
+  `gtia_stage`.
+  **AND `gtia_win` IS CONSISTENT WITH `gtia_nib`:** both load on the ODD clock
+  (`win_ready <= pf_win`, `nib_ready <= {an_prev, an_pair}`) and both transfer on
+  the EVEN clock. The nibble GENUINELY needs two colour clocks to assemble (2
+  bits per clock, 4 bits per nibble), so the staging itself is right.
+  **THE ACTUAL DEFECT IS THE FALL-THROUGH.** During the priming pair `gtia_win`
+  is 0, so `resolved` takes **`sel_color` -- a NORMAL PLAYFIELD COLOUR, WHICH
+  DOES NOT EXIST IN A GTIA MODE.** ANTIC is sending luminance/index data there,
+  not a playfield source, so `sel_color` is meaningless; a real Atari shows the
+  BACKGROUND at that edge, not COLPF3.
+  **LIKELY MINIMAL FIX (NOT YET APPLIED):** when `gtia_active && !win_is_object
+  && !gtia_win`, emit **COLBK** rather than `sel_color`. Narrow and defensible,
+  but it changes the border/field boundary, so **sim it, then a bitstream, then
+  SIMON MUST CONFIRM VISUALLY.** Do not claim it works without his eyes.
+  **DO NOT "fix" by shifting cc_pos** (a2_video.sv:227-233: everything positional
+  shares one origin; shifting slides objects across the playfield).
+  **LOOSE END (does NOT block the fix):** COLBK's traced writes are $00/$50/$30
+  (hues 0/5/3), none hue 1 or $28, so where the hue-1 field and the hue-2 bar
+  each originate is not fully derived. The hue-mismatch assertion holds anyway.
+  ############################################################################
+
+  ############################################################################
   **THE LEFT-EDGE BAR: MECHANISM FOUND (2026-08-15). GTIA-MODE RECOLOUR IS
   UNPRIMED FOR THE FIRST 2 COLOUR CLOCKS OF EVERY LINE.**
   Measured with `graboverlay` (XL plane, 320x192 BMP) during the intro, then the
