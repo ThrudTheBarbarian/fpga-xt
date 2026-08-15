@@ -918,6 +918,23 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   `pm_align` agree by shifting the object to the WRONG ABSOLUTE PLACE, and TM
   caught exactly that. **The test was right and the fix was wrong.**
 
+  **THE MECHANISM, EXACTLY (`a2_video.sv:138-162`).** `an_pair` is built from
+  `pv_cap_a`/`pv_cap_b`, which are **REGISTERED** at `px_tick` — so `an_pair` at
+  colour clock N carries clock **N-1**'s data. That is the uniform one-colour-clock
+  capture delay the header describes, and the ORDINARY path accounts for it
+  correctly (its edge lands exactly right). The GTIA nibble assembly then consumes
+  **two of those already-delayed pairs** and adds its **own pair handover**
+  (`nib_ready` -> `gtia_nib`, `gtia_stage.sv:229-239`). Measured net cost over the
+  ordinary path: **+2 colour clocks = +4 hi-res px**, which is the whole bug.
+
+  **SO THE FIX IS TO ASSEMBLE THE GTIA NIBBLE EARLIER — from the pixel stream
+  (`px_val`) within the colour clock rather than from the REGISTERED pair** — so
+  the nibble is ready without spending the capture delay twice. That is a
+  restructuring of the GTIA nibble path across `a2_video` and `gtia_stage`, not a
+  one-line change, and it is the THIRD distinct approach (the first two are
+  recorded above as failures). **It is a design change: get Simon's sanction
+  before spending it, and budget the full ACID sweep behind it.**
+
   **THE FIX MUST ADVANCE THE GTIA-MODE PLAYFIELD BY A PAIR, NOT DELAY THE
   OBJECTS.** That is what the header calls causally impossible — and it is,
   *given when antic2 currently delivers the pairs*. So the real change is
