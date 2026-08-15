@@ -87,6 +87,35 @@ via the XEX path (`6502 run /peek.xex`, which forces `PORTB=$FD`, loads `$BFFC` 
 parks — read the result out of `A`).  So the window IS mapped on that path and is not
 on the reset path, with the same upload code in both.  That difference is the bug.
 
+**Reproduced on a CLEAN bitstream built from committed source (TIMING GATE PASS,
+clk_sys +0.069 / clk_sally +0.335 / clk_pix +0.278), loaded via dap-recover + bare
+load.**  So the experimental `pia_regs .rst (rst_bus | cold_boot_bus)` is NOT the
+cause and is no longer on the board.  Clean A/B on that bitstream:
+
+| condition | result |
+|---|---|
+| fresh eject, no game this power cycle | **BLUE (BASIC)** |
+| after BallBlazer + eject | **GREEN (self-test)** |
+
+**So `upload_image` populates `$A000-$BFFF` correctly at power-up — BASIC works —
+and only fails to restore it after a game has run.**  ROM and RAM are the SAME `mem`
+array; `rom_override` blocks CPU *writes* only, so a game running with BASIC banked
+out overwrites the BASIC image in place.  The re-upload is what should repair it.
+
+**The contradiction to chase:** at `PMI6` the sizing loop's write to `$A000` IS
+blocked (that is why RAMSIZ=`$A0`), proving `rom_override` asserts — yet the read at
+that same address returns `$A0`.  With `rom_override` true the mux can only return
+`bram_dout_q`, so `mem[$A000]` really does hold `$A0` after the upload wrote `$A5`.
+Every probed address returns its own high byte (`$A000`->`$A0`, `$BFFC`->`$BF`,
+`$BFFD`->`$BF`), which is an open-bus signature, not game data.
+Also negative: forcing PORTB to BASIC-off (`$FF`) immediately before the eject does
+NOT fix it, and both xtc bank latches read `$00`.
+NOTE `ROMWIN_BASE` = `0x43C00000` is the SAME AXI base the blitter reports at boot
+(low 4 KB = blitter regs, hence the ">= $1000" restriction) — worth ruling in/out
+whether desktop/blitter traffic during the window-close redraw corrupts the paced
+`romwin_write` burst.  NEXT: a `sally_mem` testbench that uploads `$A000-$BFFF` and
+reads it back with `portb=$FD`, since the board cannot see inside the array.
+
 **BEWARE `a8_core.sv` is SIM-ONLY.**  Its banking arm-gate (`bank_armed_q`,
 `portb_bank_d`, reset `$FF`) looks exactly like the culprit and is not synthesized.
 Live memory path is `sally_mem.sv` (`fpga_xt_top:1756-1810`).
