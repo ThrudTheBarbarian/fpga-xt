@@ -725,6 +725,33 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE INTRO-SPEED MECHANISM, MEASURED AS A PER-VBI RATIO: WE NEVER ENTER THE
+  $30CC WAIT (2026-08-15).**
+  Using the per-VBI sound tick ($BCEB) as the clock -- phase-independent, and the
+  fraction discipline this whole night argued for:
+        per VBI            ALTIRRA (n=3000)   OURS (n=1058)
+        **$30CC C2 wait      15.0843            0.0000**   <- we NEVER enter it
+        $3DE0 ticker         0.1377             0.2533     <- ours ~1.8x MORE
+        $3E00 inc C2         0.0850             0.0501
+        $3542 P/M upload     0.8960             0.7259
+        $3043 dispatcher     0.0047             0.0057
+  **`$30CC cmp $C2 / bne $30CC` is the pacing wait. Altirra executes it ~15 times
+  EVERY FRAME; we execute it ZERO times, ever, in a 6.9M-record continuous
+  capture.** That is the ~3x speed difference: Altirra pauses there each frame
+  waiting on $C2 and we skip it entirely.
+  **CORRECTS AN EARLIER READING:** I previously described OUR machine as spinning
+  ~12 s at $30CC (158,820 iterations). In the continuous capture we never execute
+  it at all -- that earlier figure came from a different, pre-fix capture and
+  must not be reused.
+  **THE PATH TO $30CC:** `$30C1 jsr $33F2` -> `$30C4 lda #$01 / cmp $CA / bne
+  $30C6` (wait on $CA) -> `$30CA lda #$FF` -> `$30CC cmp $C2 / bne $30CC`.
+  **So we must be failing to reach $30C4/$30CA at all.** NEXT: predecessor-
+  histogram $30C4 / $30CA / $30CC and $33F2's return in a CONTINUOUS board
+  capture, and compare with alt_vlong -- find WHERE our control flow leaves that
+  path. That is the last link between "intro too fast" and "man never drawn".
+  ############################################################################
+
+  ############################################################################
   **SYNTHESIS: THE MAN IS MISSING BECAUSE OUR INTRO RUNS ~3x FASTER
   (2026-08-15). THIS CLOSES BACK ONTO SIMON'S ORIGINAL SYMPTOM.**
   `$33AF` is the ONLY writer of $54 (`$33AD lda #$54` is an IMMEDIATE; MEMSEARCH
