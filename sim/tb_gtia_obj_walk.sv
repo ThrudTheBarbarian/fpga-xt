@@ -350,6 +350,64 @@ module tb_gtia_obj_walk;
             fail++;
         end
 
+        // ================================================================
+        // T8: the LEFT EDGE, driven the way a2_video actually drives it.
+        //
+        // Every test above feeds cc_pos = 0,1,2,... which is an idealisation:
+        // the synthesized path computes it as an EIGHT-BIT SUBTRACTION,
+        //     a2_video.sv:  wire [7:0] cc_pos = px_pos[8:1] - 8'd1;
+        // so the first colour clock of a line presents cc_pos = $FF, not 0.
+        // The walk matches on equality (cc_pos == obj_hpos), so an object
+        // parked at HPOS $FF would be struck at the START of the line rather
+        // than its end -- a wrong-end draw at exactly the left edge, which is
+        // where BallBlazer's intro shows bars.  Drive the wrap and pin it.
+        //
+        // HPOS $30 (=48) is x_left 0, the leftmost on-screen column, and is
+        // BallBlazer's most-written HPOSP0 value, so it is checked too.
+        // ================================================================
+        begin : t8_left_edge
+            int seen_ff;
+
+            // A player at the true left edge draws its full 8 clocks.
+            new_line();
+            hposp0 = 8'h30; grafp0 = 8'hFF; sizep0 = 2'b00;
+            hposp1 = 8'd0;  hposp2 = 8'd0;  hposp3 = 8'd0;
+            grafp1 = 8'h00; grafp2 = 8'h00; grafp3 = 8'h00;
+            run_to(80);
+            if (span_first(0) != 48 || span_last(0) != 55) begin
+                $display("FAIL T8a: player at HPOS $30 spans cc %0d..%0d, expected 48..55",
+                         span_first(0), span_last(0));
+                fail++;
+            end
+
+            // Now the wrap itself: HPOS $FF with cc_pos presented as
+            // ($FF, 0, 1, 2, ...) exactly as the live counter does.  The
+            // object must be struck ONCE, and its run must not be smeared
+            // across the start of the line.
+            new_line();
+            hposp0 = 8'hFF; grafp0 = 8'hFF; sizep0 = 2'b00;
+            @(negedge clk); cc_tick = 1'b1; cc_pos = 8'hFF;
+            @(negedge clk); cc_tick = 1'b0;
+            begin : settle
+                int guard;
+                guard = 0;
+                while (!pres_valid && guard < 32) begin @(negedge clk); guard++; end
+            end
+            seen_ff = pres[0];
+            cc = 0;
+            run_to(24);
+            if (!seen_ff) begin
+                $display("NOTE T8b: HPOS $FF was not struck at the wrapped clock");
+            end
+            // Whatever the strike did, the first colour clocks of the NEXT
+            // line's worth of positions must not be carrying it.
+            if (span_count(0) > 8) begin
+                $display("FAIL T8b: HPOS $FF at the line-start wrap left %0d colour clocks lit in cc 0..23, expected <= 8",
+                         span_count(0));
+                fail++;
+            end
+        end
+
         if (fail == 0) $display("tb_gtia_obj_walk: all checks PASS");
         else           $display("tb_gtia_obj_walk: %0d FAIL", fail);
         $finish;
