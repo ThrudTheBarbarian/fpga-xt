@@ -420,15 +420,33 @@ Four mounted double-density images is ~520 KB of kernel memory — not a concern
 
 ### 13.5 Timing, and where the rotation model plugs in
 
-ATX support (`xl_boot.c`, 2026-08-13) already carries a 288 RPM model: 208333 us
-per revolution, ATX angular positions in 8 us units, head angle taken from the A9
-global timer.  It currently only decides **which** duplicate sector to return.
+ATX support (`xl_boot.c`) carries a 288 RPM model: 208333 us per revolution, ATX
+angular positions in 8 us units, head angle taken from the A9 global timer.  It
+decides **which** duplicate sector to return, and — via `g_sio_rot`, on by
+default and scoped to ATX — also **when** the data frame starts.
 
-On the serial bus it gains a second and more important consumer: it must decide
-**when** the data frame starts.  Rotational latency is exactly what a timing
-protection measures, and a reply that arrives instantly is as much a tell as a
-reply with the wrong bytes.  The same applies to the inter-byte gap — pace SERIN
-at the programmed bit rate rather than as fast as the A9 can push.
+Deciding *when* matters as much as *which*.  Rotational latency is exactly what a
+timing protection measures, and a reply that arrives instantly is as much a tell
+as a reply with the wrong bytes.  The same applies to the inter-byte gap — pace
+SERIN at the programmed bit rate rather than as fast as the A9 can push.
+
+**Rotational latency alone is not enough, and BallBlazer measures the
+difference.**  Its intro animates from the VBI while sectors stream, so the
+animation's budget is how long each SIO call takes.  With `g_sio_rot` on but
+per-sector service time at whatever the A9 manages (~70 ms/sector), the intro
+runs at roughly double speed; `xlboot -a` (~130 ms/sector, a real 1050) restores
+it.  Measured on hardware, 320x192 grabs ~0.57 s apart:
+
+| | default | `-a` |
+|---|---|---|
+| intro | ~28 s, then gameplay | still running at **54 s** |
+| the waving figure | appears **twice** | appears **five times**, alternating the two team colours |
+| playfield states | **12** distinct bright-pixel counts in two clusters, nothing between | **24** counts filling the gap — it sweeps instead of jumping |
+
+Altirra, same ATX, is still in intro code at 55 s, so `-a` matches the reference
+and the default does not.  This is the §13.7 policy arriving as evidence rather
+than as an argument: for an ATX whose loader paces the display, authentic timing
+*is* the correct behaviour, and the fast path is the exception.
 
 **Two rules the implementation had to learn the hard way, and they pull in
 opposite directions.**
