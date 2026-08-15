@@ -891,8 +891,21 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   0.462 ns, `clk_sally_unbuf` 0.168 ns, `clk_sys_unbuf` 0.150 ns, all positive.
   dap-recover then bare load (never `reset && load`). Board verified up: ping
   0% loss, `ps` shows **gemd + desktop** on fresh PIDs, `[net] up`, die 49 C.
-  **AWAITING SIMON'S EYES ON THE INTRO — the fix is measured in sim and against
-  Altirra, but not yet confirmed visually on the screen.**
+  **CONFIRMED ON HARDWARE BY MEASUREMENT, 2026-08-15 13:52.** Same capture
+  method as the pre-fix data (`xlboot -a`, `6502 go`, 96 `graboverlay` frames ->
+  `scratchpad/postfix.bin`), so it is like-for-like. Man-to-vehicle gap per row:
+
+        vehicle RIGHT   PRE-FIX  {6:4, 8:2, 10:1, 14:5, 16:4}
+                        POST-FIX {2:4, 4:2, 6:1, 10:5, 12:4}
+        vehicle LEFT    PRE-FIX  {0:6, 2:1, 6:5, 8:4, 10:5}   <- TOUCHING at 0
+                        POST-FIX {2:4, 4:2, 6:1, 10:5, 12:4}
+        ALTIRRA         {2:4, 4:2, 6:1, 10:5, 12:4}  (both sides)
+
+  **The board now matches the reference EXACTLY on both sides.** Right-side gaps
+  dropped by exactly 4 px; the gap-0 touching rows — Simon's "drawn over the last
+  pixel of the vehicle" — are gone. Sprite size and position are otherwise
+  unchanged (562/542/546 px, same x extents), so nothing else moved.
+  **Simon's visual sign-off is still welcome, but the symptom is measured gone.**
 
   **VALIDATED:** `make -C sim pm_align` (new, drives the LIVE `antic2_fabric`);
   `gtia_stage` all checks incl. the four **TM** man-visibility checks and the
