@@ -5309,10 +5309,26 @@ only noticeable now that HDMI audio exists.  `NOCLIK` (`$02DB`, read at `$F31B`)
 measures `$00`, so the OS is not inhibiting it, and it is unrelated to the
 self-test bug despite showing up in the same session.
 
-FIX (not done — it is a feature change, Simon's call): latch `wdata[3]` as a
-separate bit (leave `consol_rd` using `[2:0]` so the ACID console-key vectors are
-untouched), route it up through `antic2` → `antic_top` → `fpga_xt_top`, and mix it
-into `audio_sample_l/r` ahead of `u_audio_lpf` as a square wave.
+**FIXED and DEPLOYED (6e4d1d91, 08c5ecbf) — open only until Simon confirms by ear.**
+`gtia_reg_file` now latches `wdata[3:0]` and exports `consol_spk` (`consol_rd` still
+uses `[2:0]`, so the ACID console-key vectors are untouched); routed up through
+`a2_video` → `antic2_fabric` → `fpga_xt_top`, 2-FF synced clk_sally → clk_sys, and
+mixed as a saturated square wave ahead of `u_audio_lpf` so the click is band-limited
+like POKEY's channels rather than aliasing.
+
+Verification:
+- `make -C sim consol_spk` — bit 3 reaches `consol_spk`, does not disturb the
+  console-key reads, and a held key still reads correctly with the speaker on.
+- **All ELEVEN `gtia_*` ACID vectors PASS** (consol, default, addrmirror, vdelay,
+  collision, phantomdma, collision2, pmoverlap, pmresize, pmretrigger, psuedomodee).
+- The mix had to be **REGISTERED**: combinationally it drove `clk_sys` to
+  WNS = -0.401 ns and two phys_opt/route recovery passes could not recover it.
+  Registered, the gate passes at +0.049 ns. Do not un-register it.
+- No DC bias: the OS writes `A=$00` to `$D01F` at idle (write watchpoint, `PC=$C167`),
+  so bit 3 rests low. If loud audio ever distorts rather than the click being absent,
+  that assumption is where to look — the mix is DC-coupled.
+
+Amplitude is `SPK_AMP = 24'h0C0000` (~5% FS) in `fpga_xt_top.sv` — the one knob.
 
 ## sim/tb_gtia_reg_file.sv no longer elaborates — stale bench
 
