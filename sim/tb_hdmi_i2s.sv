@@ -15,10 +15,10 @@
 // Three things are checked, and each of them is a way the audio could be wrong
 // while looking plausible on a scope:
 //
-//   1. FRAME RATE — the average must be the declared 48 kHz.  The clock does
-//      not divide evenly (150 MHz / 3.072 MHz = 48.828125), so the accumulator
-//      is the only thing keeping the rate honest; a plain divider would be
-//      0.35 % flat and drift against the CTS the receiver derives.
+//   1. FRAME RATE — must be exactly MCLK/256.  In I2S mode the transmitter does
+//      not measure WS: it divides MCLK by the ratio in TPI 0x20[6:4] to compute
+//      the CTS it sends the sink.  So the RATIO is what has to be right, and an
+//      integer divider is the only way to guarantee it.
 //   2. SLOT ORDER AND POLARITY — WS low = LEFT.  Getting this backwards swaps
 //      the channels, which is inaudible on mono material and therefore exactly
 //      the sort of bug that ships.
@@ -28,8 +28,12 @@
 //
 module tb_hdmi_i2s;
 
-    localparam int unsigned CLK_HZ    = 150_000_000;
-    localparam int unsigned SAMPLE_HZ = 48_000;
+    // The audio root: MCLK = 256 fs, forwarded to the SiI9022A's MCLK pin.
+    // The MMCM's real output is 12.28448 MHz (VCO 1425 / 116), so fs is 47.986
+    // kHz — 0.03 % off nominal, and EXACTLY MCLK/256 either way, which is the
+    // ratio the transmitter is told and the only thing it can act on.
+    localparam int unsigned CLK_HZ    = 12_288_000;
+    localparam int unsigned SAMPLE_HZ = CLK_HZ / 256;
     localparam real         HALF_NS   = 500.0e6 / real'(CLK_HZ);  // half period, ns
 
     logic clk = 0, rst = 1;
@@ -38,7 +42,7 @@ module tb_hdmi_i2s;
     logic [23:0] sample_l = 24'h000000, sample_r = 24'h000000;
     wire         sck, ws, sd, frame_start;
 
-    hdmi_i2s_out #(.CLK_HZ(CLK_HZ), .SAMPLE_HZ(SAMPLE_HZ)) dut (
+    hdmi_i2s_out dut (
         .clk(clk), .rst(rst),
         .sample_l(sample_l), .sample_r(sample_r), .signed_in(1'b0),
         .sck(sck), .ws(ws), .sd(sd), .frame_start(frame_start)

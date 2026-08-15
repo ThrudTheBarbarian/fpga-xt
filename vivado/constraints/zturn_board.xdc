@@ -66,13 +66,18 @@ set_property IOB TRUE [get_ports rgb_vsync]
 set_property IOB TRUE [get_ports rgb_de]
 
 # ---- I2S audio to the SiI9022A (Bank 34) -----------------------------------
-# Schematic sheet 3 (SOM bank 34) -> sheet 10 (SiI9022A), each through a 0R link:
+# Schematic sheet 3 (SOM bank 34) -> sheet 10 (HDMI), each through a 0R link:
+#   IO_B34__CLKO1 R116 -> SiI9022A pin 38 MCLK   (net "12MHZ")
 #   I2S_SCLK      R107 -> SiI9022A pin 45 SCK
 #   I2S_FSYNC_OUT R109 -> SiI9022A pin 44 WS
 #   I2S_Dout      R108 -> SiI9022A pin 41 SD0
 # The net names are the PS's convention; on this board they land on PL pins, so
-# the fabric drives them.  MCLK is not driven (the part runs MCLK-less) and
-# SD1..SD3 / SPDIF are unused.
+# the fabric drives them.  MCLK included: the 12 MHz oscillator Y3 that shares
+# that net is isolated by R115 (DNP), so U15 through R116 is its only driver and
+# there is no contention.  SD1..SD3 are unconnected and SPDIF is grounded (R110).
+set_property PACKAGE_PIN U15 [get_ports hdmi_mclk]
+set_property IOSTANDARD LVCMOS33 [get_ports hdmi_mclk]
+set_property SLEW SLOW [get_ports hdmi_mclk]
 set_property PACKAGE_PIN T17 [get_ports hdmi_i2s_sck]
 set_property PACKAGE_PIN R18 [get_ports hdmi_i2s_ws]
 set_property PACKAGE_PIN V17 [get_ports hdmi_i2s_sd]

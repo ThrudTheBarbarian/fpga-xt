@@ -40,9 +40,12 @@ module fpga_xt_top (
     output wire        rgb_pixclk,
 
     // ---- I2S audio to the SiI9022A ----------------------------------------
-    // Three PL bank-34 pins (schematic sheet 3 -> sheet 10, through 0R links):
-    // SCK = T17, WS = R18, SD0 = V17.  The part is MCLK-less and its SD1..SD3
-    // and SPDIF inputs are unused, so these three carry all of HDMI audio.
+    // Four PL bank-34 pins (schematic sheet 10, each through a 0R link):
+    // MCLK = U15, SCK = T17, WS = R18, SD0 = V17.  MCLK is ours to drive — the
+    // board's 12 MHz oscillator Y3 is isolated by R115 (DNP) — and the chip
+    // needs it, because in I2S mode it computes CTS by dividing MCLK.  SD1..SD3
+    // are unconnected and SPDIF is grounded, so these four carry all HDMI audio.
+    output wire        hdmi_mclk,
     output wire        hdmi_i2s_sck,
     output wire        hdmi_i2s_ws,
     output wire        hdmi_i2s_sd,
@@ -2245,22 +2248,99 @@ module fpga_xt_top (
     );
 
     // ---- HDMI audio -------------------------------------------------------
-    // In the SAME clock domain as the mixer (clk_sys), so there is no CDC and
-    // nothing to drift: the serialiser's own WS cadence defines the sample rate
-    // and it reads the mixer's current value once per frame.
-    hdmi_i2s_out #(
-        .CLK_HZ    (150_000_000),           // clk_sys, as fed to antic_top
-        .SAMPLE_HZ (48_000)
-    ) u_hdmi_i2s (
-        .clk         (clk_sys),
-        .rst         (~rst_sys_n),
-        .sample_l    (audio_sample_l),
-        .sample_r    (audio_sample_r),
+    // The SiI9022A's MCLK comes from US: on this board the 12 MHz oscillator Y3
+    // is isolated by R115 (DNP) and the only populated driver of that net is PL
+    // ball U15 through R116 (0R).  In I2S mode the transmitter divides MCLK by
+    // the ratio in TPI 0x20[6:4] to compute the CTS it sends the sink, so MCLK
+    // must exist AND be an exact multiple of the frame rate.  One clock is
+    // therefore the root of all of it: MCLK = 256 fs, SCK = MCLK/4, WS =
+    // MCLK/256, every division integer.
+    //
+    // 12.288 MHz is not reachable exactly from 50 MHz: VCO 1425 (x28.5) / 116
+    // gives 12.28448 MHz, so fs is 47.986 kHz — 0.03 % below nominal, and the
+    // RATIO the chip is told is exact regardless, which is the part that
+    // matters.  (The nearest spare output on MMCM #2 would have been 0.37 %
+    // out, an audible ~6 cents on sustained tones, so this gets its own MMCM.)
+    wire mmcm3_fb_in, mmcm3_fb_out;
+    wire clk_aud_unbuf, clk_aud;
+    wire mmcm3_locked;
+
+    MMCME2_BASE #(
+        .CLKIN1_PERIOD    (20.000),
+        .CLKFBOUT_MULT_F  (28.500),          // VCO = 1425 MHz (-2 part: max 1440)
+        .DIVCLK_DIVIDE    (1),
+        .CLKOUT0_DIVIDE_F (116.000),         // 12.28448 MHz = 256 fs
+        .BANDWIDTH        ("OPTIMIZED")
+    ) u_mmcm3 (
+        .CLKIN1   (fclk_50),
+        .CLKFBIN  (mmcm3_fb_in),
+        .CLKFBOUT (mmcm3_fb_out),
+        .CLKOUT0  (clk_aud_unbuf),
+        .CLKOUT1  (), .CLKOUT2 (), .CLKOUT3 (),
+        .CLKOUT4  (), .CLKOUT5 (), .CLKOUT6 (),
+        .RST      (1'b0),                    // as MMCM1/2 — off the glitchy pin
+        .PWRDWN   (1'b0),
+        .LOCKED   (mmcm3_locked)
+    );
+
+    BUFG u_bufg_fb3  (.I(mmcm3_fb_out),  .O(mmcm3_fb_in));
+    BUFG u_bufg_aud  (.I(clk_aud_unbuf), .O(clk_aud));
+
+    // reset into the audio domain
+    (* ASYNC_REG = "TRUE" *) reg [1:0] aud_rst_sync = 2'b11;
+    always_ff @(posedge clk_aud) aud_rst_sync <= {aud_rst_sync[0], ~rst_sys_n};
+    wire rst_aud = aud_rst_sync[1];
+
+    // Sample handover, clk_sys -> clk_aud.  The mixer's output is combinational
+    // and free-running; sampling it directly from the audio domain would let a
+    // 24-bit word tear mid-change and put a full-scale click on the wire.  So
+    // the AUDIO side asks (a toggle, once per frame) and the SYS side answers by
+    // latching the pair into a holding register.  The serialiser then consumes
+    // that register at the FOLLOWING frame start — by which point it has been
+    // stable for ~20 us, against a handover that completes in tens of ns.  The
+    // audio it carries is therefore one frame (21 us) old, which is deterministic
+    // and inaudible.
+    wire         i2s_frame_start;
+    reg          aud_req = 1'b0;
+    always_ff @(posedge clk_aud) if (i2s_frame_start) aud_req <= ~aud_req;
+
+    (* ASYNC_REG = "TRUE" *) reg [1:0] req_sync = 2'b00;
+    reg                                req_seen = 1'b0;
+    reg [23:0]                         hold_l = 24'd0, hold_r = 24'd0;
+    always_ff @(posedge clk_sys) begin
+        req_sync <= {req_sync[0], aud_req};
+        if (req_sync[1] != req_seen) begin
+            req_seen <= req_sync[1];
+            hold_l   <= audio_sample_l;
+            hold_r   <= audio_sample_r;
+        end
+    end
+
+    hdmi_i2s_out u_hdmi_i2s (
+        .clk         (clk_aud),
+        .rst         (rst_aud),
+        .sample_l    (hold_l),
+        .sample_r    (hold_r),
         .signed_in   (1'b0),                // POKEY sums are unsigned
         .sck         (hdmi_i2s_sck),
         .ws          (hdmi_i2s_ws),
         .sd          (hdmi_i2s_sd),
-        .frame_start ()
+        .frame_start (i2s_frame_start)
+    );
+
+    // Forward clk_aud to the SiI9022A's MCLK pin through an ODDR, for the same
+    // reason rgb_pixclk uses one: a plain assign routes a global clock through
+    // the fabric to the IOB and does not present a clean clock at the pad.
+    ODDR #(
+        .DDR_CLK_EDGE ("OPPOSITE_EDGE"),
+        .INIT         (1'b0),
+        .SRTYPE       ("SYNC")
+    ) u_oddr_mclk (
+        .Q  (hdmi_mclk),
+        .C  (clk_aud),
+        .CE (1'b1),
+        .D1 (1'b1), .D2 (1'b0),
+        .R  (1'b0), .S  (1'b0)
     );
 
     // Status signals back to SALLY
