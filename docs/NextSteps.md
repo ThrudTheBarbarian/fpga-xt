@@ -967,6 +967,36 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   redo from this description. **Do not re-attempt without fixing the bench model
   first — otherwise you will be tuning tests to match a change.**
 
+  **ATTEMPT 4 (the two-part fix): GEOMETRY PERFECT, BUT IT BREAKS `antic_pmdma`.
+  NOT COMMITTED. REVERTED.** Changes: (a) `a2_video` gains an EARLY pair
+  `cc_tick_e = px_tick && px_odd`, `an_pair_e = px_hires ? {pv_cap_a[0],
+  px_val[0]} : px_val` (the pair for **cc_pos + 1**); (b) `gtia_stage` runs the
+  nibble assembly off that strobe, completes on **EVEN cc_pos**, and hands the
+  pair straight to the display; (c) `tb_gtia_stage` gains a faithful stimulus
+  (`cc_tick_e` fires BEFORE `cc_tick`, while `cc_pos` still names the previous
+  clock) with the T11 sample points re-derived.
+
+        pm_align   ordinary edge 176 / player 176   (unchanged)
+                   GTIA mode 9 edge **176** / player 176   (was 180)  = ALTIRRA
+
+  `gtia_stage` (all four **TM** man-visibility checks + the whole T11 series),
+  `pm_align`, `antic2_pxpos`, `gtia_obj_walk`, `antic_modes`, `gtia_collision`,
+  `antic_pfstarttiming`, `antic_pfstoptiming` — **all PASS**.
+
+  **BUT `antic_pmdma` FAILS** (`reached _testFailed $1e0d`,
+  `d0=00 d1=08 d2=0c d3=08`), **and the CONTROL PROVES IT IS MINE**: the same
+  test built from **stashed clean RTL** into a separate binary
+  (`sim/build/tb_acid2_BASE.vvp`, so the running sweep was never disturbed)
+  **PASSES**. So the fix is not correct as written and must not land.
+
+  **WHERE TO LOOK NEXT.** The change moved TWO things that ride the same branch:
+  the nibble AND `win_ready <= pf_win`, so the GTIA **window** is now sampled on
+  the early strobe too. `nib_ready` also feeds the COLLISION class, whose phase
+  was supposed to stay put — worth checking it really did. `antic_pmdma`'s
+  `d1=08 d2=0c d3=08` is the concrete signature to chase. **Do not re-attempt by
+  adjusting the bench; the bench is now faithful and it agreed — the failure is
+  in the design.**
+
   **THE FIX MUST ADVANCE THE GTIA-MODE PLAYFIELD BY A PAIR, NOT DELAY THE
   OBJECTS.** That is what the header calls causally impossible — and it is,
   *given when antic2 currently delivers the pairs*. So the real change is
