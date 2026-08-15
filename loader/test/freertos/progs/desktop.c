@@ -358,6 +358,9 @@ static void xl_fullscreen_enter(void) {
                                                  // across the top of the picture.
     wind_open(g_fswin, 0, 0, PW, PH);            // opening it focuses it (gemd), which is what
                                                  // routes MOTION here and makes the reveal work
+    sys_cursor_autohide(2500);                   // nothing to point at on a full-screen picture,
+                                                 // so let a parked arrow fade out; any movement
+                                                 // brings it straight back (kernel-side timer)
     xl_sync();                                   // ... now it is the full-screen window's
 }
 
@@ -367,6 +370,7 @@ static void xl_fullscreen_exit(void) {
     wind_plane_bind(w, 0, 0, 0, 0);
     g_fswin = 0; g_fs_exit = 0;
     wind_close(w); wind_delete(w);
+    sys_cursor_autohide(0);                      // the desktop always wants a visible pointer
     menu_bar(g_menubar, 1);                      // the strip comes back with the desktop
     xl_sync();                                   // back to the emulator window
 }

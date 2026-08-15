@@ -540,6 +540,12 @@ struct xt_pollfd { int fd; short events; short revents; };
                                 * 1=resize-EW, 2=resize-NS, 3=resize-NWSE, 4=resize-NESW.
                                 * Resize glyphs are centre-hotspot (the kernel offsets the
                                 * sprite); gemd swaps on frame-zone hover. No-op off-HW. */
+#define SYS_cursor_autohide 0x703 /* (ms) -> 0: hide the HW cursor after `ms` with no pointer
+                                * movement, and show it again on the next move. 0 = never hide
+                                * (the default). For full-screen, where a parked arrow sits on
+                                * the picture with nothing to point at. The kernel owns the
+                                * timer because it owns the sprite; the caller owns the policy,
+                                * since only it knows it is full-screen. No-op off-HW. */
 
 /* one input event (SYS_input, and one read() record from /OS/dev/input); type values match the
  * AES aes_event enum. `wheel` is the signed notch count for OS_EV_WHEEL (>0 = away from the

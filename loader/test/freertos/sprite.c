@@ -7,6 +7,8 @@
  * writes before the fetcher (HP2) reads them.
  */
 #include <stdint.h>
+#include "FreeRTOS.h"
+#include "task.h"
 #include "xtsys.h"                /* struct os_event, OS_EV_* */
 extern int con_gui_readc(void);         /* console bytes routed to the desktop (focus=desktop) */
 extern int con_gui_readc_timeout(int ms);
@@ -141,7 +143,55 @@ void cursor_init(void) {
     spr_reg((uint8_t)(R_CTRL0 + CUR_SLOT), 0x21u);    /* enable(0) + format32(5) */
     spr_reg(R_GLOBAL, 0x01u);
 }
+/* ---- idle auto-hide -------------------------------------------------------
+ * In full-screen there is nothing for the arrow to point at, so a parked cursor
+ * is just a blob on the picture.  Hide it after a quiet interval and bring it
+ * straight back on the next movement.
+ *
+ * The POLICY lives in the caller (only the desktop knows it is full-screen);
+ * the TIMER lives here because the sprite does.  Showing again is free:
+ * cursor_move already re-asserts the enable bits on every move as a self-heal,
+ * so the same write that repositions the cursor un-hides it.
+ *
+ * A dedicated task rather than a hook on the input path, because the whole
+ * point is to act when NO input is arriving. */
+static volatile int s_autohide_ms;               /* 0 = never hide */
+static volatile unsigned s_last_move_ms;
+static volatile int s_hidden;
+
+static unsigned now_ms(void) { return (unsigned)(xTaskGetTickCount() * portTICK_PERIOD_MS); }
+
+static void cursor_idle_task(void *arg) {
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        int ms = s_autohide_ms;
+        if (ms > 0 && !s_hidden && (int)(now_ms() - s_last_move_ms) >= ms) {
+            s_hidden = 1;
+            spr_reg((uint8_t)(R_CTRL0 + CUR_SLOT), 0x20u);   /* format32, enable CLEARED */
+        }
+    }
+}
+
+void cursor_autohide(int ms) {
+    static int started;
+    if (ms > 0 && !started) {            /* created on first use, not at boot: nothing
+                                          * should pay for a feature it never turns on */
+        started = 1;
+        xTaskCreate(cursor_idle_task, "curhide", 512, NULL, tskIDLE_PRIORITY + 1, NULL);
+    }
+    s_autohide_ms  = ms < 0 ? 0 : ms;
+    s_last_move_ms = now_ms();
+    if (s_hidden) {                              /* leaving the mode un-hides at once */
+        s_hidden = 0;
+        spr_reg((uint8_t)(R_CTRL0 + CUR_SLOT), 0x21u);
+        spr_reg(R_GLOBAL, 0x01u);
+    }
+}
+
 void cursor_move(int x, int y) {
+    s_last_move_ms = now_ms();
+    s_hidden = 0;                     /* the enable writes below do the un-hiding */
     cur_x = x; cur_y = y;
     sprite_set(CUR_SLOT, 0, 5, s_shapes[cur_shape].ax, 0,
                x - s_shapes[cur_shape].hx, y - s_shapes[cur_shape].hy);
