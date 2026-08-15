@@ -33,15 +33,23 @@
     lda #$01
     sta $F1             ; ptr hi = $01  (start at $0100)
     ldy #$00
-    lda #$00
+nextpage:
+    lda #$00            ; MUST be reloaded per page: the loop below leaves the
+                        ; PAGE NUMBER in A (lda $F1), so branching straight back
+                        ; to wipehi filled every page with its own page number
+                        ; instead of zero ($A000->$A0, $BFFC->$BF ...).
 wipehi:
     sta ($F0),y
     iny
     bne wipehi
     inc $F1
     lda $F1
-    cmp #$C0            ; stop before the $C000 OS ROM
-    bne wipehi
+    cmp #$A0            ; stop before $A000: ROM and RAM share one array in
+                        ; sally_mem, so wiping the BASIC window destroys the
+                        ; freshly uploaded BASIC image whenever a game left
+                        ; BASIC banked out (rom_override does not block it).
+                        ; upload_image rewrites $A000-$BFFF every boot anyway.
+    bne nextpage
 
     ; Wipe zero page $0000-$00FF last (this also clears the $F0/$F1 pointer and
     ; PUPBT1-3 at $033D-$033F was already cleared in the sweep above).
