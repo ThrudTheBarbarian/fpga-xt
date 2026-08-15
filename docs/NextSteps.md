@@ -725,6 +725,31 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **REFINEMENT: OUR INTRO DURATION VARIES BETWEEN RUNS (2026-08-15).**
+  Three separate launches, each a fresh `xlboot`:
+        stages.bin run: intro at t=15 s, **gameplay ($4Cxx) by t=30 s**
+        tr27 run:       **still intro at t=27 s** ($37xx dominant, NO $4Cxx)
+        tr31 run:       **still intro at t=31 s** ($30xx dominant -- the scene
+                        dispatcher, 693,400 records -- NO $4Cxx)
+  **Three runs, three different progressions**, and tr31 is deep in the $30xx
+  dispatcher at t=31 s, i.e. FURTHER ALONG in the intro than the run that had
+  already left it by t=30 s.
+  **=> "our intro is ALWAYS shorter" is TOO STRONG.** What holds: **our intro ends
+  somewhere in the 26-31+ s range while Altirra's is still running past 73 s** --
+  a large difference, but a VARIABLE one.
+  **This is consistent with the POKEY-RANDOM seeding** ($3000-$303E reads $D20A
+  four times plus `bit RANDOM / bpl`) and with Simon's own report that the
+  goalposts appeared on one build and not another.
+  **CONSEQUENCE FOR METHOD: our side must be characterised as a DISTRIBUTION over
+  several runs, never from a single capture.** Altirra is deterministic across
+  cold resets (5 runs byte-identical) and can serve as a fixed ruler; we cannot.
+  **NEXT: repeat the staged snapshot over >=5 fresh launches and record, for each,
+  the wall-clock time at which $4Cxx first appears.** That gives our intro-length
+  DISTRIBUTION against Altirra's fixed >73 s. Only then is "how much shorter" a
+  real number.
+  ############################################################################
+
+  ############################################################################
   **RETRACTION #16: THE $B3 "SPIN" IS THE NORMAL WAIT-FOR-VBLANK IDIOM
   (2026-08-15). WE ARE NOT STUCK — WE ARE IN GAMEPLAY.**
   Writers of $B3 in our t=45 s snapshot (opcode scan + operand resolve):
