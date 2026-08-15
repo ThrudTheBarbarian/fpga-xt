@@ -174,6 +174,31 @@ static int pf_gen_video(char *buf, int sz)
     return o.n;
 }
 
+/* /OS/proc/romdiag — the ROM-window upload counters (PL DIAG8/DIAG9 over GP0).
+ * DIAG8: [31:16]=window AXI writes the loader ACCEPTED, [15:0]=rom_we pulses it
+ * EMITTED to sally_mem.  DIAG9: [23:8]=last rom_addr, [7:0]=last rom_data.
+ * Both counters are free-running 16-bit and never reset, so read the DELTA
+ * across an upload: equal deltas = nothing dropped; axi advancing while we does
+ * not = the loader takes AXI but never drains (FIFO); neither advancing = the PS
+ * write never reaches the loader.  `last_addr` after a full upload_image must be
+ * $FFFF — anything lower means the burst stopped early. */
+static int pf_gen_romdiag(char *buf, int sz)
+{
+    pfb o = { buf, 0, sz };
+#ifdef XT_HW
+    volatile uint32_t *diag = (volatile uint32_t *)0x43C00400u;   /* XT_BLK_DIAG */
+    uint32_t d8 = diag[0x1C / 4], d9 = diag[0x20 / 4];
+    pfb_s(&o, "axi_accepted:  "); pfb_d(&o, (int)((d8 >> 16) & 0xFFFF)); pfb_c(&o, '\n');
+    pfb_s(&o, "rom_we_pulses: "); pfb_d(&o, (int)(d8 & 0xFFFF)); pfb_c(&o, '\n');
+    pfb_s(&o, "last_addr:     "); pfb_d(&o, (int)((d9 >> 8) & 0xFFFF));
+    pfb_s(&o, "  (decimal; 65535 = $FFFF = a complete upload)\n");
+    pfb_s(&o, "last_data:     "); pfb_d(&o, (int)(d9 & 0xFF)); pfb_c(&o, '\n');
+#else
+    pfb_s(&o, "no PL on qemu\n");
+#endif
+    return o.n;
+}
+
 /* /OS/proc/video-sii — the transmitter's registers, SEPARATE from the PL diag:
  * reading the SiI over I2C is itself a suspect for triggering the 2 s monitor
  * re-acquire, so it must be possible to read one without the other. */
@@ -675,6 +700,7 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     if (!strcmp(rel, "/uptime"))       len = pf_gen_uptime(buf, PF_BUF);
     else if (!strcmp(rel, "/meminfo")) len = pf_gen_meminfo(buf, PF_BUF);
     else if (!strcmp(rel, "/video"))   len = pf_gen_video(buf, PF_BUF);
+    else if (!strcmp(rel, "/romdiag")) len = pf_gen_romdiag(buf, PF_BUF);
     else if (!strcmp(rel, "/video-sii")) len = pf_gen_video_sii(buf, PF_BUF);
     else if (!strcmp(rel, "/video-kick")) len = pf_gen_video_kick(buf, PF_BUF);
     else if (!strcmp(rel, "/video-sleep")) len = pf_gen_video_sleep(buf, PF_BUF);
@@ -748,7 +774,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp", "limits", "cpu1", "cpuinfo", "kfs" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "romdiag", "video-sii", "video-kick", "video-sleep", "temp", "limits", "cpu1", "cpuinfo", "kfs" };
         int fi = index - emitted;
         if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };

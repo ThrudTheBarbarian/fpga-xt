@@ -2975,8 +2975,14 @@ module fpga_xt_top (
         ad_s0 <= romdiag_addr; ad_s1 <= ad_s0;
         da_s0 <= romdiag_data; da_s1 <= da_s0;
     end
-    assign diag8_word = antic_dbg_antic;   // TEMP: ANTIC-side DLI diag {nmien_q,nmist_q,dli_cnt,mode}
-    assign diag9_word = dli_diag_word;     // TEMP: fid-side DLI-delivery instrumentation
+    // DIAG8/DIAG9 carry the ROM-WINDOW UPLOAD counters, which is what
+    // hdl/xt_gp0_pkg.sv documents them as.  They had been borrowed for the ACID
+    // DLI-delivery investigation and the romdiag registers above were left
+    // computed-but-unconnected, so /OS/proc/romdiag read the DLI word instead and
+    // reported "rom_we_pulses: 0" on a board whose OS upload demonstrably works.
+    // The DLI cluster passes now; the upload path is the live question.
+    assign diag8_word = {romdiag_axi, we_s1};        // [31:16]=AXI accepted, [15:0]=rom_we emitted
+    assign diag9_word = {8'h00, ad_s1, da_s1};       // [23:8]=last rom_addr, [7:0]=last rom_data
 `else
     assign diag8_word = antic_dbg_antic;
     assign diag9_word = dli_diag_word;
