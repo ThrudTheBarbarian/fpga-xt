@@ -245,6 +245,15 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   breakpoints; step DLIs with beam position (wire DBG_BEAM).
 
 ## Open Issues (tracked bugs)
+- **`libc.so`'s `readdir` still enumerates by index, so a program that deletes while
+  walking a directory skips every other entry.** This is the same defect that made
+  `rm -rf` delete only half a directory (fixed in the posix shim at `c611c564` by
+  pinning an open DIR's listing at the first `readdir`); `loader/libc-dirent.c`
+  deliberately carries no snapshot, so any program linked against `libc.so` rather
+  than the shim — anything that is not toybox or dropbear — still has it. Nothing in
+  the tree is known to delete-while-walking through `libc.so`, so this is latent, not
+  live. Fix the same way if a caller appears: slurp the listing on the first
+  `readdir` and iterate that.
 - **Retire the per-switch `TLBIALL` sledgehammer (residual stale image-region TLB entry).**
   `vm_switch` does a full `TLBIALL` on every process switch as a robust backstop for HW
   scp/ssh crashes (conflicting/stale TLB entries over image-region section `0x29`: scp
