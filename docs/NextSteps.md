@@ -639,11 +639,21 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   which is exactly the reported "vehicle stalls instead of sweeping" and the
   "{smooth anim}{abrupt switch}" repetition.
 
-  **DO NOT over-read this yet.** Grabs are ~0.57 s apart (~1.75 Hz), so a
-  per-frame flicker (lower content drawn on alternate frames) would alias into
-  the same A/B pattern as a genuine two-state flip. **Distinguishing them needs
-  a capture faster than one grab per frame** — that is the next experiment, and
-  it decides whether this is a rendering bug or a game-logic/timing one.
+  **PER-FRAME FLICKER IS RULED OUT — the states persist for SECONDS.** Grabs are
+  ~0.57 s apart, so content drawn on alternate frames would alias into
+  independent coin flips. It does not. Sequence over grabs 16-43:
+
+        B A BBBBBBBB AA BBBBBBBB AAAAAAA B
+        runs: 1, 1, 8, 2, 8, 7, 1  -- longest 8 grabs = **4.6 s**
+        7 runs observed vs ~14.5 expected if successive samples were independent
+
+  So the lower-half content genuinely **appears and disappears on a ~4-5 s
+  cycle** and is **byte-identical and motionless while present**. This is a
+  scene/sequencing behaviour, not a rasteriser flicker, which points the next
+  investigation back at the game-logic side (the `$97` -> `$A1` -> `$3083` init
+  -> `dec $BC` chain) rather than at the display path. **A still, cycling
+  playfield is what "the vehicle stalls instead of sweeping" looks like when
+  measured.**
 
   **NOT YET COMPARABLE TO ALTIRRA.** A cold-reset Altirra sat on a static
   mode-9 screen for 1200+ frames (~20 s), i.e. it never entered this animation
