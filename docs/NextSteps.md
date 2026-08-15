@@ -5326,3 +5326,14 @@ NOT in `all`, which is why the rot went unnoticed.
 The CONSOL speaker checks that would naturally live there are in
 `sim/tb_consol_spk.sv` (`make -C sim consol_spk`, and it IS in `all`) so the key
 click has coverage regardless.
+
+Scope of the rewrite, measured (attempted the port rename and backed it out):
+binding `pm_fetch` in place of `pm_mask` makes the file elaborate, and T1-T4/T7
+then pass — but **T5b, T5d, T6 and T6b all fail**, because they rely on the old
+per-store mask OVERRIDING VDELAY. VDELAY resets to `$00`, yet T5d reads
+`GRAFM = $0c` from `cur = $CC`, i.e. group 3 took the previous-fetch copy. So
+four of the eight tests need restating against the current contract
+(`grafp[i] = (vdelay & (0x10<<i)) ? pm_prev_p[i] : pm_p[i]`, and `mix_m()` for
+GRAFM), not a rename. Restating them from the implementation would freeze
+whatever it does in as "expected", so the authoritative reference is the ACID
+vector `make -C sim acid2 TEST=gtia_vdelay`.
