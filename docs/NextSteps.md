@@ -725,6 +725,40 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION #14 AND A CONVERGENCE: WE STALL IN THE $C2 WAIT, AND $C2 ADVANCES
+  ~40% TOO SLOWLY (2026-08-15). THE ORIGINAL MECHANISM WAS RIGHT.**
+  A LONGER continuous board capture (`longq.bin`, **10,735,584 records**, 6
+  back-to-back `dtrace 4` segments) versus alt_vlong (19.2M):
+        per VBI (clock $BCEB)   OURS (1405 VBI)        ALTIRRA (3000 VBI)
+        $30C6 ($CA wait)         55,572 = **39.6/VBI**   556,338 = **185.4/VBI**
+        $30CC ($C2 wait)        333,167 = **237.1/VBI**   45,253 = **15.1/VBI**
+        $BE0A (releases $CA)          3                        4
+        $BE00 (countdown $D2)       166                      281
+  **RETRACTION #14: "$BE0A never runs on ours" was a WINDOW ARTEFACT** -- it runs
+  3 times here. So was "$30CC executes zero times" (retraction #12 was ITSELF the
+  artefact): it executes **333,167 times**.
+  **THE PICTURE INVERTS CLEANLY: we pass the $CA wait ~4.7x FASTER, then STALL in
+  the $C2 wait, spinning ~16x MORE than Altirra.** And `inc $C2` at $3E00 runs at
+  **0.0501/VBI on ours vs 0.0850 on Altirra -- our $C2 advances ~40% SLOWER**, so
+  a `cmp #$FF` wait takes far longer.
+  **=> THIS IS THE ORIGINAL MECHANISM, VINDICATED:** $C2 needs 255 ticks;
+  `inc $C2` fires only when $BC wraps at `$3DE1 inx / bne $3E0F`; so the $30CC
+  wait stalls the intro, scenes do not advance, and the man's scene never plays.
+  The chain from the very first night's analysis stands -- what was wrong was the
+  *evidence* used to retract it, not the mechanism.
+  **THE DECODED GATE (for the record):**
+        $BDF6 lda $D0 / $BDF8 adc $D4 (FR0) / $BDFA sta $D0 / $BDFC bcc / $BDFE inc $D1
+              -> 16-bit pointer $D0/$D1 += FR0
+        $BE00 dec $D2 / $BE02 bne $BE31      -> countdown; on ZERO:
+        $BE04 lda #$01 ... $BE0A sta $CA     -> releases the $30C6 wait
+  **NEXT: why does $BC wrap to $FF less often on ours?** That is what throttles
+  `inc $C2`. $BC writers: `dec $BC` at $309B/$30EA/$3E12 and `sta $BC` at $3E60
+  ($0E..$00). Compare **$BC-wrap events per VBI** on both sides, and the $BD
+  envelope rate that drives $3E60. **Use ONLY terminated events for rates, and
+  match window lengths -- three retractions tonight came from ignoring that.**
+  ############################################################################
+
+  ############################################################################
   **THE GATE IS $BE0A: THE WRITER THAT RELEASES THE $CA WAIT NEVER RUNS ON OURS
   (2026-08-15). AND THIS INVERTS THE "WE RUN FASTER" READING.**
   Only two sites touch $CA (found by scanning zp INC/DEC/STA/STX/STY opcodes and
