@@ -328,13 +328,21 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 - none
 
 ## Audio (PCM1808 capture + HDMI audio)
-- **HW LISTEN: does HDMI audio actually reach a speaker?** The fabric drives the
-  SiI9022A's MCLK/SCK/WS/SD0 (`hdl/hdmi_i2s_out.sv`, balls U15/T17/R18/V17) and the
-  PS configures and unmutes the chip's I2S path (`sii_enable_audio()` in
-  `loader/test/freertos/hdmi.c`). Sim passes and the register readback is logged
-  (`[hdmi] audio 26/20/27=`), but nothing has been heard yet. Play BallBlazer's
-  intro and listen; if silent, read back 0x26/0x20/0x27 and check the sink's own
-  audio-status display before touching the RTL.
+- **HDMI audio quality — confirm the anti-alias filter fixed it.** Sound reaches the
+  speakers: BallBlazer's melody is clearly audible. The first listen reported it as
+  "harsh" and "rough", possibly saturating, which is the signature of decimating a
+  megahertz-rate square-wave source to 48 kHz with nothing band-limiting it — POKEY
+  switches at up to ~1.79 MHz and its poly channels are broadband, so everything
+  above 24 kHz folds back as inharmonic hash. `hdl/audio_lpf.sv` now band-limits in
+  `clk_sys` (two one-pole IIRs, ~11.6 kHz each; `make -C sim audio_lpf` measures
+  40 kHz at -20 dB), centres the unipolar range so silence is zero rather than one
+  end of the scale, and backs the level off 6 dB from the 94 %-of-full-scale it had.
+  **Deployed but not yet judged by ear.** If it still is not right, tune rather than
+  redesign: `LPF_SHIFT` (12 = duller/less alias, 10 = brighter/more) and `GAIN_SHIFT`
+  (2 = -12 dB if it still sounds clipped).
+  Diagnosis order if it ever goes silent: `cat /OS/proc/video-sii` (want 0x26=128,
+  0x20=144, 0x27=216, 0x1A=1), then the sink's own audio-status display, then
+  whether the sink has speakers at all — before touching RTL.
 - **Route the audio MMCM out to the carrier as the PCM1808 SCKI** — the 256 fs
   master clock now EXISTS: `u_mmcm3` in `fpga_xt_top` produces 12.28448 MHz (VCO
   1425 / 116) as the single audio root, already feeding the SiI9022A's MCLK. The
