@@ -725,6 +725,36 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE GATE IS $BE0A: THE WRITER THAT RELEASES THE $CA WAIT NEVER RUNS ON OURS
+  (2026-08-15). AND THIS INVERTS THE "WE RUN FASTER" READING.**
+  Only two sites touch $CA (found by scanning zp INC/DEC/STA/STX/STY opcodes and
+  resolving each operand against Altirra):
+        **$BC69 STY $CA**  -> writes **$00** (arms the gate)
+        **$BE0A STA $CA**  -> writes **$01** (RELEASES the `$30C6 cmp $CA` wait)
+        per capture        ALTIRRA (3000 VBI)   OURS (1058 VBI)
+        $BC69                    3                   1
+        **$BE0A                  4                   0**   <- never executes on ours
+  **Both machines enter the wait exactly once ($30C4 executes once in each
+  capture). Altirra is released by $BE0A and proceeds to $30CA/$30CC/$30D0; ours
+  spins at $30C6 and the capture ends.**
+  **=> RETRACTION #13: "we wait ~3.2x LESS per frame" was an artefact of dividing
+  a SINGLE UNTERMINATED SPIN by frame count.** The likelier reading is the
+  OPPOSITE: **we are STUCK in the $CA wait, not racing past it.** The main thread
+  parks at $30C6 while VBI-driven code keeps the screen advancing -- which is why
+  the display still reaches gameplay at t~26 s even though the main thread is
+  blocked.
+  **THIS ALSO RE-OPENS "the intro runs ~3x faster"** -- that synthesis rested on
+  the same per-VBI division. **The SOLID part is the SITE COUNT: $BE0A runs 4
+  times on Altirra and 0 on ours.**
+  **NEXT: why does $BE0A never execute?** It is in the $BExx sound-engine region.
+  Predecessor-histogram $BE0A and walk back to the branch that gates it; compare
+  that gate's INPUT on both machines. **Mind the window caveat: ours is 6.9M
+  records vs Altirra's 19.2M — before concluding "never", take a LONGER
+  continuous board capture (more back-to-back `dtrace 4` segments) and confirm
+  $BE0A is still absent.**
+  ############################################################################
+
+  ############################################################################
   **THE PACING PATH, QUANTIFIED: WE WAIT ~3.2x LESS PER FRAME (2026-08-15).**
   Both machines take the path `$30C1 jsr $33F2` -> `$30C4 lda #$01` ->
   `$30C6 cmp $CA / $30C8 bne $30C6` (wait for $CA==1) -> `$30CA lda #$FF` ->
