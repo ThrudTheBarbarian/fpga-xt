@@ -626,26 +626,34 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   so the colour path itself is fine) — same luminance, different hue; confirm
   it is not simply a different animation moment before treating it as a bug.
 
-- **ACID `mmu_xlbanking` FAILS — a real regression, NOT from the GTIA work.**
-  `_testFailed $1e0d`, message **"Unable to bank in kernel ROM."** (PORTB
-  kernel-ROM banking). **Attribution is settled without a bisect:** the same test
-  fails **identically** on a `tb_acid2.vvp` built **01:43:50** — which predates
-  both `b0de37fe` (01:46) and `6ef5bab2` (03:33) — and on a binary rebuilt at
-  05:44 containing both. Same trap address, same message, so **the failure
-  exists with and without tonight's changes.**
+- **ACID `mmu_xlbanking` PASSES. The reported failure was MY HARNESS, not the
+  design.** `tb_acid.sv:1251-1252` `$readmemh`s **`atari_xl_rom.mem` and
+  `atari_basic_rom.mem` relative to the CWD**, exactly as it does `acid.mem`.
+  The parallel runner gave each test its own directory and copied only
+  `acid.mem`/`acid_cfg.mem`, so the test banked in an **empty ROM** and trapped
+  at `_testFailed $1e0d`, *"Unable to bank in kernel ROM."* Copy the two ROM
+  images into the same directory and the identical binary reports **PASS**.
+  `docs/pokey-timing-handoff.md` was right all along; there is **no regression
+  and nothing to bisect**.
 
-  This matters because `docs/pokey-timing-handoff.md` records
-  `mmu_xlbanking` among **six failures already cleared** (`35c8faa`) with state
-  **"ACID 55/58 — zero failing tests"**. Either that fix regressed later, or the
-  claim was optimistic. **Next step: bisect `mmu_xlbanking` from `35c8faa`
-  forward** — it is a fast test, so a bisect is cheap.
+  **RULE, generalised from the one that preceded it.** "The memory image is part
+  of the test" is too narrow — **EVERY file the testbench opens is part of the
+  test, and they are ALL resolved against the CWD.** Enumerate them with
+  `grep -n readmemh` before running a testbench anywhere but its own directory.
 
-  **THE REBUILT SUITE IS COMPLETE: 57 tests = 54 PASS + 2 skip + 1 FAIL.** The
-  skips are `pokey_serdirect` and `pokey_skstat` (`cpu_65c816` and `mod_*` are
-  excluded from the run); the single fail is `mmu_xlbanking` above. The two long
-  tests both passed — `antic_dmapattern` and `cpu_illtiming`, each ~1¼ h of CPU.
-  **So the priority fix costs nothing anywhere else in the suite.** Log:
-  `scratchpad/acid_par.log`.
+  **AND THE CONTROL THAT "SETTLED" IT WAS WORTHLESS.** The failure was attributed
+  to pre-existing RTL because it reproduced on a binary built 01:43:50 as well as
+  the 05:44 rebuild. Both runs used the **same broken harness**, so the agreement
+  measured the harness, not the design. **A control only exonerates the variable
+  it actually varies** — it must differ in the suspected cause and match in
+  everything else, and here the true cause was held fixed across both arms.
+
+  **A full re-run with the corrected harness is in flight** (launched 07:46,
+  8-way) to confirm no other verdict was distorted — the PIA latch resets to
+  `$FF`, i.e. "OS in", so a missing ROM image is not self-evidently confined to
+  the one test that names it. Old log kept as `scratchpad/acid_par_NOROM.log`;
+  new one is `scratchpad/acid_par2.log`. Expected: **55 pass + 2 skip + 0 fail**,
+  which would match the documented 55/8na/0fail baseline exactly.
 
 - **BallBlazer intro: the remaining symptoms, now MEASURED.** The game PLAYS
   PERFECTLY. (The 4 px left-edge bar is FIXED, `b0de37fe`; the missing man is
