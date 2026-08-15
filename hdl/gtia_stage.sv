@@ -334,9 +334,29 @@ module gtia_stage (
     // background win inside the window is recoloured by the GTIA mode.
     wire win_is_object = (win_src >= 4'd6);
 
+    // A GTIA mode has NO ORDINARY PLAYFIELD COLOUR.  ANTIC is sending luminance
+    // or index data, not a playfield source, so COLPF0-3 mean nothing while one
+    // is selected and falling through to sel_color paints a colour that cannot
+    // occur -- measured on hardware as a four-pixel bar at plane columns 0-3
+    // carrying hue 2 on a screen that mode 9 permits only hue 1 on.
+    //
+    // It shows at the window's opening edge because gtia_win needs a pair to
+    // prime: line_start clears it, an ODD colour clock loads win_ready from
+    // pf_win and the NEXT EVEN clock hands it over.  That staging is CORRECT --
+    // the nibble genuinely takes two colour clocks to assemble -- and pf_win is
+    // captured in lockstep with the playfield value (a2_video captures win_cap
+    // and pv_cap_a in the same branch on the same px_tick), so neither the
+    // window nor the pipeline is early or late.  Only the fall-through is wrong.
+    //
+    // The background is what belongs there, and this costs nothing outside the
+    // window: a2_video drives this_px_src = px_wr ? px_pf_src : SRC_BK, so in
+    // the border the source is already BAK and sel_color is already colbk.  The
+    // only pixels that change are the ones inside the window whose pair has not
+    // yet assembled -- which is precisely the artefact.
     wire [7:0] resolved =
         win_black                                        ? 8'h00       :
-        (gtia_active && gtia_win && !win_is_object)      ? gtia_color  :
+        (gtia_active && !win_is_object)                  ? (gtia_win ? gtia_color
+                                                                     : colbk) :
                                                            sel_color;
 
     // ---- the sequence ----------------------------------------------------
