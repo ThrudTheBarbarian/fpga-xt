@@ -839,10 +839,25 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   ours alternates (8680 <-> 12344 bright px). **Not established. Must not drive
   an RTL change.**
 
-  **Next step if picked up:** sample COLBK per scanline rather than per frame —
-  the register value in vertical blank is the wrong measurement. Find the
-  kernel's COLBK writes (they will be WSYNC-paced, not DLI-driven) and compare
-  when each lands against the beam.
+  **AND A SHAPE TEST ARGUES THE SCENES SIMPLY DIFFER.** The mode-9 nibble data
+  sets the LUMINANCE pattern while COLBK sets the hue, so comparing *shape* is
+  palette-independent: threshold each band at its own median brightness and
+  intersect. Over t = 6..32 s (`shapecmp.py`):
+
+        ours    43.9% of the band bright      altirra 47.6% bright
+        **shape IoU 44.7%** -- at every sample
+
+  Identical content would score >90%; chance for two masks of this density is
+  ~29%. **44.7% means similar density but different content**, i.e. the two
+  machines are at different points in the sequence. That **weakens** the "our
+  rendering is wrong" reading rather than supporting it, and is the strongest
+  reason not to touch RTL over this.
+
+  **Next step if picked up:** scene-match properly first (the shape IoU is the
+  cheap check — get it above ~90% before comparing colour at all). Only then
+  sample COLBK **per scanline**, since the register value in vertical blank is
+  the wrong measurement; the kernel's COLBK writes will be WSYNC-paced, not
+  DLI-driven.
 
   **TRAP THAT COST AN HOUR: `SDLSTL` ($0230) IS STALE HERE.** It reads `$BA00`,
   but `$BA00` holds **6502 code** (`18 69 4A` = CLC/ADC #$4A) — the game drives
