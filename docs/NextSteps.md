@@ -707,6 +707,26 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   interleaved animation stalls or races. This is a **timing** question in the
   SIO path, not a rasteriser one.
 
+  **THE LOAD IS NOW MEASURED, AND IT SPANS THE WHOLE INTRO.** The SIO mailbox
+  exposes the live request word at `0x43C00A0C` = `{aux2,aux1,cmd,dev}`, so
+  `/System/bin/mem 43C00A0C` sampled in a loop reads the sector stream directly
+  (e.g. `0x02CB5231` = cmd `$52` 'R', dev `$31` drive 1, sector `$02CB` = 715):
+
+        loading runs t~6.2 s (sector 37) -> t~33.6 s (sector 715)  = **~27 s**
+        steady cadence **8 sectors per 0.56 s ~= 14.3 sectors/s ~= 1830 B/s**
+        mostly +8 per step, with periodic **+26** jumps (non-contiguous reads)
+
+  **Our intro length ~= our load duration**, which is what the disk-pacing
+  hypothesis predicts. **The decisive number is time-to-gameplay for the SAME
+  ATX on both machines** — measure Altirra's the same way and compare; a
+  same-artefact comparison that needs no scene matching.
+
+  **Sampling caveat:** each `/System/bin/mem` is a process spawn costing
+  **~0.56 s**, so a `mem` loop samples at ~1.8 Hz — far slower than the ~14
+  sectors/s it is watching. It is fine for the overall load profile but **cannot
+  resolve individual sector timings**; do not read per-sector conclusions from
+  it.
+
   **NOT YET ESTABLISHED:** where the display is actually configured. Neither
   window contains writes to `$D400-$D40F`, `$D01B`, nor to the OS shadows
   `$022F`/`$0230`/`$026F`. Take a trace between them (e.g. `dtrace 10`) and
