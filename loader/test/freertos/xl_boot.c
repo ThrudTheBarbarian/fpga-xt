@@ -631,7 +631,14 @@ static void xl_sio_bus_poll(void)
 
     uint8_t  out[256];
     uint32_t outlen = 0;
-    uint8_t  st = 0x8B;                             /* device NAK by default */
+    /* An ABSENT device times out (0x8A); it does not NAK.  The difference is the
+     * whole behaviour of a machine with no disk attached: 0x8B says "a drive is
+     * there and refused", so the OS retries — which is the buzz you hear — and
+     * its D1: boot never concludes, leaving a green screen with no READY.  0x8A
+     * says "nobody answered", which is what a real SIO bus does with nothing on
+     * it, and the OS gives up on disk boot and goes to BASIC.  (Write NAKs below
+     * are a different thing: those are a MOUNTED drive refusing one command.) */
+    uint8_t  st = 0x8A;                             /* device does not respond */
 
     int drive = (dev >= 0x31 && dev <= 0x38) ? (int)(dev - 0x31) : -1;
     if (drive >= 0 && g_drv[drive].img)
