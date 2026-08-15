@@ -851,6 +851,18 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   the playfield, and our man touches the vehicle where Altirra's does not.
   **GAME FRAMES CANNOT PIN THE SIZE. Stop trying; run the controlled case.**
 
+  **THE BASE COUNTER ALIGNMENT IS PROVEN CORRECT — the suspect is now a single
+  `-1`.** `sim/tb_antic2_pxpos.sv` exists for exactly this hazard (its header:
+  *"One pixel of skew moves every object comparison a colour clock and silently
+  mis-colours the whole line, so it is worth an assertion rather than an
+  argument"*). `make antic2_pxpos` **PASSES: 1820 pixels, `px_pos == hcount*4 + k`**,
+  counted by the bench independently of the design. So px_pos vs the beam is
+  right, and the ONLY remaining degree of freedom in
+  `cc_pos = px_pos[8:1] - 8'd1` is that **deliberate `-1`**, which compensates
+  for the playfield pair being captured a clock late ("the objects must be
+  evaluated where that pair was, one colour clock back"). Reading cannot settle
+  whether it is correct — it is self-consistent either way; only measurement can.
+
   **THE ONLY VALID TEST: put an object where 1 cc CHANGES THE ANSWER.** Game
   frames cannot do it. Use the ACID ramp geometry — nibbles are 2 cc wide, so an
   object straddling a bit-2 boundary (nibble 3->4, 7->8, B->C) collides
