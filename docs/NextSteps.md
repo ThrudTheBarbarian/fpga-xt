@@ -661,6 +661,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   where ours is hue 1, but **the scenes were never matched, so that difference
   is unverified and must not be treated as a defect.** Scene-match first.
 
+  **THE INTRO DOES DRIVE SOUND — answering "is there music?" from data.** A
+  non-halting `6502 dtrace 20 /introtr.bin` taken during the intro (2,097,151
+  records = the last ~3.5 s, `DROPS=0`) decodes to these hardware writes:
+
+        $D000/$D001 HPOSP0/1     320 each   (the two animated players)
+        $D200-$D203 AUDF1/AUDC1/AUDF2/AUDC2  320 each   <-- POKEY IS BEING DRIVEN
+        $D20E IRQEN            17521
+        $D20A SKRES             8403
+        $D20D SEROUT             325 · $D20F SKCTL 130 · $D303 PBCTL 130
+
+  So the intro **is** writing POKEY tone/control registers ~1.5x per frame.
+  Whether it is audible is Simon's ear, but "the game never asks for sound" is
+  ruled out. The heavy `$D20E`/`$D20A`/`$D20D` traffic is **serial I/O — the
+  game is still loading from disk while the intro plays**, which is worth
+  remembering before blaming timing on the display path.
+
+  **The intro is doing real work, not spinning.** PC pages: `$32xx` 22.2%,
+  `$3Bxx` 19.5%, `$31xx` 19.4%, `$BExx` 14.9%, `$3Axx` 12.5%, `$BFxx` 6.7%;
+  619 distinct PCs in `$3000-$3FFF`, 906 overall. The hottest site is a 7-byte
+  loop at `$31EA-$31FD` (~58,200 iterations each in 3.5 s).
+  **NOTE:** no writes at all to `$D400-$D40F` (DMACTL/DLIST/WSYNC/NMIEN) or to
+  `$D01B` PRIOR in this window — the display is configured earlier, so a trace
+  aimed at mode setup must be taken from nearer `6502 go`. Also
+  `trace_writes.py` does not decode `STA (zp),Y`, which the block-fill routine
+  uses heavily, so screen-memory writes are under-counted here.
+
   **Altirra decode gotcha (cost a null result tonight):** RAWSCREEN needs
   **nearest-neighbour** palette matching — exact lookup maps nothing and reports
   a confident, wholly false 100% "unmatched". Frames are **336x224 RGBA**
