@@ -210,6 +210,14 @@ module a2_video (
     // clock's pair -- non-blocking assignment is doing the pipelining here.
     wire cc_tick = px_tick && !px_odd;
 
+    // The DISPLAY nibble needs its pair a colour clock sooner than cc_tick
+    // gives it (cc_tick fires at the START of a clock and the captures still
+    // hold the PREVIOUS one).  Sampled at the END of the clock, this pair is
+    // for cc_pos + 1.  Collisions keep the original, later pair.
+    wire       cc_tick_e = px_tick && px_odd;
+    wire [1:0] an_pair_e = px_hires ? {pv_cap_a[0], (px_wr ? px_val[0] : 1'b0)}
+                                    : (px_wr ? px_val : 2'd0);
+
     // ...and the objects must be evaluated where that pair was, one colour
     // clock back.  px_pos[8:1] is constant across a colour clock, so subtracting
     // one gives the previous one throughout.
@@ -341,6 +349,7 @@ module a2_video (
         .active(px_collide), .hitclr(hitclr),
         .pf_src_a(pf_src_a_eff), .pf_src_b(pf_src_b_eff),
         .an_pair(an_pair), .pf_win(win_cap),
+        .cc_tick_e(cc_tick_e), .an_pair_e(an_pair_e),
         .hposp0(dl_hposp0), .hposp1(dl_hposp1),
         .hposp2(dl_hposp2), .hposp3(dl_hposp3),
         .hposm0(dl_hposm0), .hposm1(dl_hposm1),

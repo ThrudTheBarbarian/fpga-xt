@@ -78,6 +78,11 @@ module gtia_stage (
 
     // ---- what a GTIA mode sees instead -----------------------------------
     input  wire [1:0] an_pair,          // this colour clock's two playfield bits
+    // The pair for cc_pos + 1, at the END of the colour clock.  Feeds a SECOND,
+    // earlier nibble used ONLY by the display; collisions and the window keep
+    // the original one untouched.
+    input  wire       cc_tick_e,
+    input  wire [1:0] an_pair_e,
     input  wire       pf_win,           // ...and whether it is inside the window
 
     // ---- live registers --------------------------------------------------
@@ -239,6 +244,32 @@ module gtia_stage (
         end
     end
 
+    // ---- the DISPLAY nibble, one pair earlier ----------------------------
+    // A GTIA mode costs an extra pair only because the nibble is assembled from
+    // pairs that are ALREADY a capture-clock old.  Assembling it from the
+    // end-of-clock pair removes that, putting the GTIA playfield back in line
+    // with the objects (sim/tb_pm_align.sv; Altirra shows no shift).  SEPARATE
+    // registers on purpose: nib_ready/gtia_nib above keep driving COLLISIONS
+    // and the window on their original phase -- moving those broke antic_pmdma.
+    logic [1:0] an_prev_e;
+    logic [3:0] disp_nib;
+    logic       disp_win_r, disp_win;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst || line_start) begin
+            an_prev_e  <= 2'd0;
+            disp_nib   <= 4'd0;
+            disp_win_r <= 1'b0;
+            disp_win   <= 1'b0;
+        end else if (cc_tick_e) begin
+            an_prev_e  <= an_pair_e;
+            disp_win_r <= pf_win;
+            if (!cc_pos[0]) begin
+                disp_nib <= {an_prev_e, an_pair_e};
+                disp_win <= disp_win_r;
+            end
+        end
+    end
+
     wire       gtia_active;
     wire [7:0] gtia_color;
 
@@ -315,7 +346,7 @@ module gtia_stage (
     // but on the DISPLAY nibble `gtia_nib` rather than `nib_ready`, because
     // priority drives the picture and is a pair later than the collision class.
     wire [2:0] pri_pf_now =
-        (prior[7:6] == 2'b10 && gtia_nib[2]) ? (3'd1 + {1'b0, gtia_nib[1:0]})
+        (prior[7:6] == 2'b10 && disp_nib[2]) ? (3'd1 + {1'b0, disp_nib[1:0]})
                                              : 3'd0;   // SRC_BK
     assign pri_pf = gtia_active ? pri_pf_now : cur_pf;
 
@@ -327,7 +358,7 @@ module gtia_stage (
     );
 
     gtia_special u_special (
-        .gtia_mode(prior[7:6]), .nibble(gtia_nib), .colbk(colbk),
+        .gtia_mode(prior[7:6]), .nibble(disp_nib), .colbk(colbk),
         .colpf0(colpf0), .colpf1(colpf1), .colpf2(colpf2), .colpf3(colpf3),
         .colpm0(colpm0), .colpm1(colpm1), .colpm2(colpm2), .colpm3(colpm3),
         .active(gtia_active), .color(gtia_color)
@@ -381,7 +412,7 @@ module gtia_stage (
     // yet assembled -- which is precisely the artefact.
     wire [7:0] resolved =
         win_black                                        ? 8'h00       :
-        (gtia_active && !win_is_object)                  ? (gtia_win ? gtia_color
+        (gtia_active && !win_is_object)                  ? (disp_win ? gtia_color
                                                                      : colbk) :
                                                            sel_color;
 

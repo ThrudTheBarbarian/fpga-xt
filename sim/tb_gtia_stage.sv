@@ -20,6 +20,11 @@ module tb_gtia_stage;
     always #5 clk = ~clk;
 
     logic       line_start, cc_tick, active, hitclr;
+    // The END-OF-COLOUR-CLOCK strobe.  In the chip an_pair_e carries the pair
+    // for cc_pos + 1, so it is driven here BEFORE cc_pos advances -- that is
+    // what makes this stimulus faithful rather than merely convenient.
+    logic       cc_tick_e = 1'b0;
+    logic [1:0] an_pair_e = 2'd0;
     logic [7:0] cc_pos;
     logic [2:0] pf_src_a, pf_src_b;
     logic [1:0] an_pair;
@@ -47,6 +52,7 @@ module tb_gtia_stage;
         .active(active), .hitclr(hitclr),
         .pf_src_a(pf_src_a), .pf_src_b(pf_src_b),
         .an_pair(an_pair), .pf_win(pf_win),
+        .cc_tick_e(cc_tick_e), .an_pair_e(an_pair_e),
         .hposp0(hposp0), .hposp1(hposp1), .hposp2(hposp2), .hposp3(hposp3),
         .hposm0(hposm0), .hposm1(hposm1), .hposm2(hposm2), .hposm3(hposm3),
         .sizep0(sizep0), .sizep1(sizep1), .sizep2(sizep2), .sizep3(sizep3),
@@ -71,6 +77,11 @@ module tb_gtia_stage;
     task automatic step_cc(input [2:0] pa, input [2:0] pb);
         int n;
         begin
+            // End of the PREVIOUS colour clock: this clock's pair becomes
+            // available while cc_pos still names the previous one.
+            an_pair_e = an_pair;
+            @(negedge clk); cc_tick_e = 1'b1;
+            @(negedge clk); cc_tick_e = 1'b0;
             pf_src_a = pa; pf_src_b = pb; cc_pos = 8'(cc);
             @(negedge clk); cc_tick = 1'b1;
             @(negedge clk); cc_tick = 1'b0;
@@ -323,22 +334,23 @@ module tb_gtia_stage;
         // T11: GTIA modes — two bits a colour clock, two colour clocks a nibble
         // ================================================================
         // The nibble for an aligned PAIR of colour clocks is only complete once
-        // the second has delivered its bits, so it goes on display for the NEXT
-        // pair.  That is causal, not a choice, and real GR.9/10/11 displays sit
-        // shifted for the same reason.
+        // the second has delivered its bits.  It goes on display for the pair
+        // that STARTS as it completes -- not the one after.  Paying an extra
+        // pair here is what put the GTIA playfield one GTIA pixel right of the
+        // objects; measured against Altirra, which shows no such shift
+        // (sim/tb_pm_align.sv, tools/altirra_gtia_shift_ref.py).
         new_line();
         hposp0 = 8'd200; grafp0 = 8'h00;        // no objects in the way
         prior = 8'h41;                          // GTIA mode 9 + priority $01
         pf_win = 1'b1;
         colbk = 8'h50;                          // hue 5, luma 0
         an_pair = 2'b10; step_cc(3'd0, 3'd0);   // cc 0
-        an_pair = 2'b11; step_cc(3'd0, 3'd0);   // cc 1: nibble $B is complete
-        an_pair = 2'b00; step_cc(3'd0, 3'd0);   // cc 2: it goes on display
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);   // cc 1: nibble $B complete AND
         chk(got_a, 8'h5B, "T11 mode 9 nibble $B -> hue 5 luma B");
         chk(got_b, 8'h5B, "T11b both halves of the colour clock");
-        an_pair = 2'b00; step_cc(3'd0, 3'd0);   // cc 3: still the same pixel
+        an_pair = 2'b00; step_cc(3'd0, 3'd0);   // cc 2: the pair's second clock
         chk(got_a, 8'h5B, "T11c a GTIA pixel spans two colour clocks");
-        an_pair = 2'b00; step_cc(3'd0, 3'd0);   // cc 4: the next nibble, $0
+        an_pair = 2'b00; step_cc(3'd0, 3'd0);   // cc 3: the next nibble, $0
         chk(got_a, 8'h50, "T11d the following GTIA pixel");
 
         // Mode 11 is the mirror: the nibble is the hue.
