@@ -773,9 +773,15 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   costs nothing anywhere in the suite.** Log `scratchpad/acid_par2.log`; the old
   broken-harness run is kept as `scratchpad/acid_par_NOROM.log`.
 
-- **BallBlazer intro: the remaining symptoms, now MEASURED.** The game PLAYS
-  PERFECTLY. (The 4 px left-edge bar is FIXED, `b0de37fe`; the missing man is
-  FIXED, `6ef5bab2`.) Full-intro inventory: 72 `graboverlay` grabs ~0.57 s apart
+- **BallBlazer intro: THE RENDER PATH IS CLOSED. Only Simon's four decisions
+  remain** — (1) make `xlboot -a` the ATX default (or fold it into `g_sio_rot`,
+  or make it per-title)? (2) his eyes on the intro under `-a`; (3) gameplay feel
+  under `-a`; (4) is the intro's sound audible? **No RTL work is open here, and
+  none should be started.** Fixed and verified: the left-edge bar (`b0de37fe`),
+  the missing man (`6ef5bab2`, HW-confirmed), mode-10 priority (`e103bb43`),
+  mid-line COLBK (`dbeb9023`), and the logo band's hue (`f6b175c1`) and shape
+  (`37e66bcd`) — **the last two were MEASUREMENT ARTIFACTS, not defects.** The
+  game PLAYS PERFECTLY. Full-intro inventory: 72 `graboverlay` grabs ~0.57 s apart
   from `6502 go` (`scratchpad/full.bin`, analysed by `objinv.py` + `lum.py`).
 
   **The man appears TWICE, in the two team colours** — which settles the
@@ -785,9 +791,19 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
         grabs 30-34  **$56**  38 -> 232 -> **546** -> 472 -> 116 px, enters from the LEFT  (x 120->185)
 
   **The logo IS rendered and correctly placed.** Ours spans x=20..303, y=25..84;
-  Altirra's spans x=24..311, y=41..101 in its 336x224 frame, and Altirra's frame
-  carries ~8 px of extra border per side and ~16 rows on top, so those are the
-  **same rectangle**.
+  Altirra's spans x=24..311, y=41..101 in its 336x224 frame — the **same
+  rectangle** under the measured mapping **`altirra = board + (4, 16)`**.
+
+  **DO NOT RE-DERIVE THAT OFFSET FROM BORDER WIDTHS.** An earlier version of
+  this line reasoned "Altirra's frame carries ~8 px of extra border per side",
+  which is (a) an assumption and (b) **wrong**: Altirra's playfield at normal
+  width measures **x=10..329**, i.e. **10 left and 6 right — not symmetric**.
+  That guess is what put the later band comparison at +8 while the extents above
+  said +4, and the 4 px of misregistration cost days as a phantom "different
+  content" result. **The +4 is measured twice** (these extents, and a shape
+  registration peak of IoU 92.2%); the exact overlay border geometry that
+  produces it has NOT been established, and does not need to be. **Use the
+  mapping, not a border argument.**
 
   **THE OPEN SYMPTOM, stated as measured.** The mode-9 playfield alternates
   between exactly **two pixel-identical layouts** and is perfectly static within
