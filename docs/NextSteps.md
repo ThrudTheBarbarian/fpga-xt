@@ -725,6 +725,36 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **DENSE SAMPLING: ALTIRRA'S MAN APPEARS LATE IN A *LONGER* MODE-9 PHASE
+  (2026-08-15). THIS LOOKS LIKE SEQUENCING, NOT PRIORITY.**
+        ALTIRRA  30 mode-9 frames, **5 with player pixels**, and the fraction
+                 GROWS MONOTONICALLY over the last five:
+                 altd25 **0.05%** -> altd26 **0.16%** -> altd27 **0.30%**
+                 -> altd28 **0.72%** -> altd29 **0.72%**
+        OURS      9 mode-9 frames, **0 with player pixels**
+  A monotonically growing player fraction is an object APPEARING and EXPANDING --
+  plausibly the man walking out and waving.
+  **BUT THE SPANS DIFFER, AND THAT IS THE POINT.** ALL THIRTY of Altirra's
+  sampled frames are still in mode 9, and the player appears near the END of that
+  long stretch. **Ours leaves mode 9 after frame 8 (t~18 s)** -- every later frame
+  is a different scene (f09-f17 have hue1 = 0%). **Our mode-9 phase is SHORTER,
+  and we exit it before the point where Altirra's man appears.**
+  **=> "we exit the scene early" is AT LEAST AS CONSISTENT with this data as "our
+  priority hides the player", and it also fits the reported symptom (the intro
+  fast-forwards / repeats). DO NOT CHANGE THE PRIORITY PATH.**
+  **THE DISCRIMINATING TEST:** measure **HOW LONG each machine stays in mode 9**
+  (PRIOR[7:6]==01) from the same code landmark -- on ours from the trace
+  (PRIOR writes at $33AF and any others), on Altirra by sampling PRIOR per frame.
+  If our mode-9 phase is genuinely shorter, the man is a casualty of SEQUENCING
+  and the whole priority line is void. Only if the phases are the SAME LENGTH and
+  we still show no player does the priority asymmetry (gtia_stage line 294 vs
+  line 142) become the suspect again.
+  **SAMPLING NOTE:** ours was 18 frames at 1 s intervals from t~10 s; Altirra's
+  was 30 frames 25 emulator-frames apart from boot+450. **Not the same cadence or
+  window** -- re-measure both against a CODE LANDMARK before drawing more.
+  ############################################################################
+
+  ############################################################################
   **ORACLE RESULT: THE PRIORITY HYPOTHESIS IS *NOT* CONFIRMED (2026-08-15).**
   Altirra with **NTSC artifacting DISABLED** (`CONFIG artifact none` -- syntax is
   `CONFIG <key> <value>`, and it drops rawscreen to a clean **336x224**), six
