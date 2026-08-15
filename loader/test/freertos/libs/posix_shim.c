@@ -335,9 +335,20 @@ static struct dsnap *dsnap_load(const char *dir)
  * read-heavy walks the cache is for. */
 static void dsnap_flush(void) { for (int i = 0; i < DSNAP_N; i++) if (g_dsnap[i].valid) dsnap_free(&g_dsnap[i]); }
 
+/* An open DIR owns its listing, taken once on the first readdir and iterated to the
+ * end regardless of what this process does to the directory meanwhile.  It MUST NOT
+ * iterate the shared cache by index: `rm -rf` deletes each entry inside the readdir
+ * loop, every unlink calls dsnap_flush(), and the next readdir would re-enumerate a
+ * directory one entry SHORTER and return index i of the NEW listing — skipping the
+ * entry that shifted into i.  That deleted exactly every other file (60 -> 30 -> 15
+ * on real hardware) and then failed to remove the non-empty directory.  Pinning is
+ * also what a real kernel does: getdents snapshots per open fd. */
 struct __xt_DIR {
     int pfd;                 /* pseudo-fd owning the path (closed on closedir) */
-    int idx;                 /* readdir cursor (into the snapshot / SYS_readdir) */
+    int idx;                 /* readdir cursor (into the pinned listing / SYS_readdir) */
+    struct dsnap_ent *ents;  /* pinned listing, owned by this DIR (0 = per-entry fallback) */
+    int n;                   /* entries in `ents` */
+    int pinned;              /* the listing has been taken (even if `ents` is 0) */
     struct dirent de;
 };
 
@@ -365,10 +376,17 @@ struct dirent *readdir(DIR *d)
 {
     const char *path = d ? pfd_path(d->pfd) : 0;
     if (!path) return 0;
-    struct dsnap *s = dsnap_load(path);            /* one batch read serves the whole loop */
-    if (s) {
-        if (d->idx >= s->n) return 0;
-        struct dsnap_ent *e = &s->e[d->idx++];
+    if (!d->pinned) {                              /* first readdir: take the listing for keeps */
+        struct dsnap *s = dsnap_load(path);        /* one batch read serves the whole loop */
+        if (s) {                                   /* take ownership; the cache refills on demand */
+            d->ents = s->e; d->n = s->n;
+            s->e = 0; s->n = 0; s->valid = 0; s->dir[0] = 0;
+        }
+        d->pinned = 1;
+    }
+    if (d->ents) {
+        if (d->idx >= d->n) return 0;
+        struct dsnap_ent *e = &d->ents[d->idx++];
         memset(&d->de, 0, sizeof d->de);
         d->de.d_ino = d->idx;
         d->de.d_type = IFTODT(e->mode & XT_S_IFMT);
@@ -385,7 +403,13 @@ struct dirent *readdir(DIR *d)
     return &d->de;
 }
 
-void rewinddir(DIR *d) { if (d) d->idx = 0; }
+/* rewinddir re-reads the directory, so drop the pinned listing rather than just
+ * rewinding into a snapshot that may now be stale. */
+void rewinddir(DIR *d)
+{
+    if (!d) return;
+    free(d->ents); d->ents = 0; d->n = 0; d->pinned = 0; d->idx = 0;
+}
 int dirfd(DIR *d) { return d ? d->pfd : -1; }
 
 int closedir(DIR *d)
@@ -393,6 +417,7 @@ int closedir(DIR *d)
     if (!d) return -1;
     int i = d->pfd - XT_PFD_BASE;
     if (i >= 0 && i < XT_PFD_MAX) g_pfd[i].used = 0;
+    free(d->ents);
     free(d);
     return 0;
 }
