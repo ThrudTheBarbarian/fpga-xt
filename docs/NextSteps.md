@@ -970,13 +970,17 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   `$022F`/`$0230`/`$026F`. Take a trace between them (e.g. `dtrace 10`) and
   verify its window by instruction count before concluding anything.
 
-  **NEW OPEN ITEM — THE LOGO BAND'S HUE DIFFERS, NOW SCENE-MATCHED.** With `-a`
-  our timeline matches the reference's, so the two can finally be compared at
+  **THE LOGO BAND: NO HUE DISCREPANCY. BOTH MACHINES RENDER IT IN ONE HUE.**
+  With `-a` our timeline matches the reference's, so the two can be compared at
   equal elapsed time. Logo band (ours y=25..84 x=20..303; Altirra y=41..101
-  x=28..311, i.e. the same rectangle), sampled at t = 6, 10, 14, 20, 26, 32 s:
+  x=28..311, i.e. the same rectangle):
 
         ours     **hue1 100.0%** at EVERY sample
-        Altirra  **hueB 54.1%, hue1 26.5%, hueC 19.5%** at EVERY sample
+        Altirra  **hue1 100.0%** at EVERY sample (fresh sweep, unmapped = 0)
+
+  An earlier entry recorded Altirra as `hueB 54.1% / hue1 26.5% / hueC 19.5%`
+  at every sample. **That does not reproduce** — see below, which also shows how
+  a cross-palette decode can manufacture exactly that kind of split.
 
   **THE DISPLAY LIST IS NOW KNOWN, AND IT RULES OUT THE OBVIOUS EXPLANATION.**
   The bridge has an **`ANTIC`** verb and a decoded **`DLIST`** verb — use them;
@@ -1000,6 +1004,35 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   different content, since Altirra's band is **static** across all samples while
   ours alternates (8680 <-> 12344 bright px). **Not established. Must not drive
   an RTL change.**
+
+  **THE HUE DIFFERENCE DOES NOT REPRODUCE — A FRESH, EXACTLY-DECODED SWEEP PUTS
+  ALTIRRA AT hue1 100%, THE SAME AS OURS (2026-08-15).** Captured over the
+  bridge (`scratchpad/altband.py`, 110 captures every 34 frames from boot,
+  `CONFIG artifact none`), band `y=41..101 x=28..311` — the same rectangle:
+
+        t = 7.1 12.8 18.5 24.2 29.8 35.5 41.2 46.9 52.5 s -> **hue1 100.0%** at
+        EVERY sample (17324 of 17324 px), **unmapped = 0**
+
+  `unmapped = 0` means every pixel matched **Altirra's own palette exactly**, so
+  the decode is not in question. Those samples bracket the recorded sample
+  points (6, 10, 14, 20, 26, 32 s), so **this is not a timing difference.**
+  **The recorded `hueB 54.1% / hue1 26.5% / hueC 19.5%` could not be reproduced
+  at any sample.**
+
+  **A sufficient mechanism for such a phantom IS demonstrated, though its exact
+  provenance is not:** decoding the *same* pure-hue-1 Altirra frame through the
+  BOARD's `hdl/palette/atari_ntsc.hex` by nearest neighbour returns
+  **hueE 31.9% / hueF 30.5% / hue0 27.0% / hue1 10.6%** — a wholesale
+  misassignment out of thin air. Artifacting was tested and **ruled out**
+  (`artifact=ntsc` and `pal` both still read hue1 100%; only `ntschi` bends it
+  to 86.5%). **RULE: decode each machine's frame through ITS OWN palette, and
+  assert `unmapped == 0` before comparing hue at all.** Altirra's palette comes
+  from the `PALETTE` verb (768 B = 256 x 3 RGB); the board's is
+  `hdl/palette/atari_ntsc.hex`. They are NOT interchangeable.
+
+  **So there is no hue discrepancy to explain.** What is left is the shape/
+  content difference (IoU 44.7%), i.e. the two machines are at different points
+  in the sequence — a timeline offset, not a rendering defect.
 
   **HALF OF THAT IS NOW SETTLED: OUR CHIPSET DOES FOLLOW A MID-LINE COLBK WRITE
   (2026-08-15).** The mechanism above is the only way to get three hues with DLIs
