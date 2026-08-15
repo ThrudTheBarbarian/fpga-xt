@@ -762,6 +762,20 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   [[sio_virtual_drive_state]] and [[atx_and_fast_loaders]] (BallBlazer bypasses
   SIOV and drives POKEY/PIA directly, so the calibrated SIOV model never applied).
 
+  **AND THE PLAYFIELD ANIMATES UNDER `-a` — the "abrupt switch" is cured.**
+  Counting distinct bright-pixel totals across the sweep (`lum.py`):
+
+        DEFAULT    41 frames, **12** distinct counts, in TWO clusters with a bare
+                   gap: {8096, 8668, 8680, 8896} ... nothing ... {11528, 12300-12360}
+        `-a`       91 frames, **24** distinct counts that FILL that gap:
+                   9064, 9184, 9912, 10744, 10880, 11544, 11936, 11992, 12008,
+                   12088, 12120, 12260 ...
+
+  Under the fast default the playfield only ever appears at its two endpoints —
+  it JUMPS. Under authentic timing it passes through the intermediate states, i.e.
+  it SWEEPS. **That is precisely the reported "{smooth anim}{abrupt switch}"
+  repetition, and it is a timing artefact, not a rasteriser one.**
+
   **DECISION FOR SIMON:** `-a` is off by default because it also means authentic
   (slow) load times. The measurement says ATX titles whose intro animates from
   the VBI need it. Options: make `-a` the default for ATX, fold the extra
