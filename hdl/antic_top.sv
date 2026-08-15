@@ -171,6 +171,16 @@ module antic_top #(
     output wire [3:0]  audio_block_start,
     output wire        audio_frame_ready,
 
+    // The same mixed stereo sample, unpacketised, for a board whose HDMI
+    // transmitter is a separate chip: the Z-Turn's SiI9022A takes I2S on its
+    // own pins, so `hdmi_i2s_out` at the top level serialises THIS pair rather
+    // than the 4-deep packet buffer above.  Combinational and always current;
+    // the serialiser samples it once per audio frame, which is what fixes the
+    // emitted rate to its own WS cadence and stops the two drifting apart.
+    // Unsigned 24-bit (POKEY is naturally positive) — the serialiser centres it.
+    output wire [23:0] audio_sample_l,
+    output wire [23:0] audio_sample_r,
+
     // DMA-mode bus master output (active when dma_mode_q=1, i.e. when
     // the chiplet-extension register $D481[0]=0). At the FPGA pads
     // these multiplex with bus_addr / bus_rw / bus_data_in via the
@@ -843,8 +853,8 @@ module antic_top #(
         .audio_block_start (audio_block_start),
         .frame_ready       (audio_frame_ready),
         .sample_strobe     (),
-        .last_sample_l     (),
-        .last_sample_r     ()
+        .last_sample_l     (audio_sample_l),
+        .last_sample_r     (audio_sample_r)
     );
 
     // ---- CPU RAM access (dedicated BRAM ports) --------------------------

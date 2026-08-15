@@ -39,6 +39,14 @@ module fpga_xt_top (
     output wire        rgb_de,
     output wire        rgb_pixclk,
 
+    // ---- I2S audio to the SiI9022A ----------------------------------------
+    // Three PL bank-34 pins (schematic sheet 3 -> sheet 10, through 0R links):
+    // SCK = T17, WS = R18, SD0 = V17.  The part is MCLK-less and its SD1..SD3
+    // and SPDIF inputs are unused, so these three carry all of HDMI audio.
+    output wire        hdmi_i2s_sck,
+    output wire        hdmi_i2s_ws,
+    output wire        hdmi_i2s_sd,
+
     // ---- Debug UART (through PS MIO) --------------------------------------
     output wire        uart_tx,
     input  wire        uart_rx,
@@ -2123,6 +2131,9 @@ module fpga_xt_top (
     wire [31:0] antic_dbg_tb_stat;  // status  antic_top -> GP0 (2-FF synced inside GP0)
     wire [24:0] antic_dbg_tb_cap;   // capture antic_top -> GP0 (2-FF synced inside GP0)
 
+    // POKEY's mixed stereo sample, serialised to the SiI9022A's I2S pins below.
+    wire [23:0] audio_sample_l, audio_sample_r;
+
     antic_top #(
         .POKEY_CLK_BUS_HZ (150_000_000)     // clk_sys nominal — the I2S/PCM
                                             // mixer's reference (the POKEYs
@@ -2158,6 +2169,8 @@ module fpga_xt_top (
         .audio_r0(), .audio_r1(), .audio_r2(), .audio_r3(),
         .audio_present(), .audio_flat(), .audio_block_start(),
         .audio_frame_ready(),
+        .audio_sample_l     (audio_sample_l),
+        .audio_sample_r     (audio_sample_r),
         .dma_addr_o         (),
         .dma_rw_o           (),
         .dma_oe             (),
@@ -2229,6 +2242,25 @@ module fpga_xt_top (
         .bus_extirq_n_in    (1'b1),
         .bus_rd4_in         (1'b1),
         .bus_rd5_in         (1'b1)
+    );
+
+    // ---- HDMI audio -------------------------------------------------------
+    // In the SAME clock domain as the mixer (clk_sys), so there is no CDC and
+    // nothing to drift: the serialiser's own WS cadence defines the sample rate
+    // and it reads the mixer's current value once per frame.
+    hdmi_i2s_out #(
+        .CLK_HZ    (150_000_000),           // clk_sys, as fed to antic_top
+        .SAMPLE_HZ (48_000)
+    ) u_hdmi_i2s (
+        .clk         (clk_sys),
+        .rst         (~rst_sys_n),
+        .sample_l    (audio_sample_l),
+        .sample_r    (audio_sample_r),
+        .signed_in   (1'b0),                // POKEY sums are unsigned
+        .sck         (hdmi_i2s_sck),
+        .ws          (hdmi_i2s_ws),
+        .sd          (hdmi_i2s_sd),
+        .frame_start ()
     );
 
     // Status signals back to SALLY

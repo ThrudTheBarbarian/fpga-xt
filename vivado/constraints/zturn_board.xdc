@@ -65,6 +65,26 @@ set_property IOB TRUE [get_ports rgb_hsync]
 set_property IOB TRUE [get_ports rgb_vsync]
 set_property IOB TRUE [get_ports rgb_de]
 
+# ---- I2S audio to the SiI9022A (Bank 34) -----------------------------------
+# Schematic sheet 3 (SOM bank 34) -> sheet 10 (SiI9022A), each through a 0R link:
+#   I2S_SCLK      R107 -> SiI9022A pin 45 SCK
+#   I2S_FSYNC_OUT R109 -> SiI9022A pin 44 WS
+#   I2S_Dout      R108 -> SiI9022A pin 41 SD0
+# The net names are the PS's convention; on this board they land on PL pins, so
+# the fabric drives them.  MCLK is not driven (the part runs MCLK-less) and
+# SD1..SD3 / SPDIF are unused.
+set_property PACKAGE_PIN T17 [get_ports hdmi_i2s_sck]
+set_property PACKAGE_PIN R18 [get_ports hdmi_i2s_ws]
+set_property PACKAGE_PIN V17 [get_ports hdmi_i2s_sd]
+set_property IOSTANDARD LVCMOS33 [get_ports hdmi_i2s_sck]
+set_property IOSTANDARD LVCMOS33 [get_ports hdmi_i2s_ws]
+set_property IOSTANDARD LVCMOS33 [get_ports hdmi_i2s_sd]
+# 3.072 MHz on a 3.3 V CMOS input a few centimetres away — slow slew keeps the
+# edges clean and stays inside the bank's shared supply budget.
+set_property SLEW SLOW [get_ports hdmi_i2s_sck]
+set_property SLEW SLOW [get_ports hdmi_i2s_ws]
+set_property SLEW SLOW [get_ports hdmi_i2s_sd]
+
 # ---- User push-button as reset (SW[0] on baseboard, active-low) ------------
 set_property PACKAGE_PIN R19     [get_ports rst_n]
 set_property IOSTANDARD  LVCMOS33 [get_ports rst_n]
