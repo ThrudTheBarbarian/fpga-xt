@@ -376,6 +376,46 @@ module tb_gtia_stage;
         chk(got_a, colbk, "T11h the border is not recoloured by a GTIA mode");
         prior = 8'h01; colbk = 8'h00;
 
+        // ----------------------------------------------------------------
+        // T11i-k: GTIA modes under PRIOR SCHEME 2 (playfield ABOVE players).
+        //
+        // This is the BallBlazer case ($54) generalised.  gtia_stage feeds the
+        // priority network a SUBSTITUTED playfield source in GTIA modes
+        // (pri_pf_now): mode 9/11 class EVERY playfield pixel as SRC_BK, so a
+        // player still wins even though the scheme ranks playfield first; mode
+        // 10 instead classes nibbles with bit 2 SET as PF0-3, which under this
+        // scheme DO outrank the player.  Mode 10 must therefore behave
+        // DIFFERENTLY from 9 and 11 here -- that asymmetry is the whole claim,
+        // and it was previously inherited from the collision rule untested.
+        // ----------------------------------------------------------------
+        new_line();
+        pf_win = 1'b1;                          // T11h left the window CLOSED;
+                                                // without this the cases below
+                                                // run on the border and pass
+                                                // (or fail) for the wrong reason
+        hposp0 = 8'd2; grafp0 = 8'hFF;
+        prior = 8'hD4;                          // mode 11 + scheme 2
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        chk(got_a, colpm0, "T11i mode 11 + scheme 2: the player still wins");
+
+        new_line();
+        prior = 8'h94;                          // mode 10 + scheme 2
+        an_pair = 2'b01; step_cc(3'd0, 3'd0);   // nibble 0101 = 5 -> PF1 class
+        an_pair = 2'b01; step_cc(3'd0, 3'd0);
+        an_pair = 2'b01; step_cc(3'd0, 3'd0);
+        chk(got_a, colpf1, "T11j mode 10 + scheme 2: a PF nibble hides the player");
+
+        new_line();
+        prior = 8'h94;                          // mode 10 + scheme 2
+        an_pair = 2'b00; step_cc(3'd0, 3'd0);   // nibble 0001 = 1 -> SRC_BK class
+        an_pair = 2'b01; step_cc(3'd0, 3'd0);
+        an_pair = 2'b01; step_cc(3'd0, 3'd0);
+        chk(got_a, colpm0, "T11k mode 10 + scheme 2: a background nibble does not");
+
+        hposp0 = 8'd200; grafp0 = 8'h00; prior = 8'h01;
+
         // ================================================================
         // ================================================================
         // TG: THE FIRST COLOUR CLOCKS OF A LINE IN A GTIA MODE.
