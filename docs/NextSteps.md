@@ -725,6 +725,39 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION #15, AND THE REASON THIS THREAD KEEPS FLIP-FLOPPING: THE INTRO
+  CONTAINS A ~1-MINUTE WAIT AND EVERY CAPTURE IS SHORTER THAN IT (2026-08-15).**
+        per VBI                 OURS (longq, 1405 VBI)   ALTIRRA (3000 VBI)
+        $BC == $FF (the wrap)   **0.0975**                **0.0853**
+        $3E00 inc $C2           **0.0968**                **0.0850**
+        $3DE0 ticker             0.2000                    0.1377
+        $3E58 envelope           0.1025                    0.0523
+  **Our $C2 advances FASTER, not 40% slower.** The 0.0501 figure came from the
+  SHORTER hw_long2 capture. **The sound-engine rates MATCH within ~14%.**
+  **=> RETRACTION #15: "our $C2 advances ~40% slower" is WITHDRAWN.**
+  **THE STRUCTURAL PROBLEM, AND IT EXPLAINS #12/#13/#14/#15 TOGETHER:** at ~0.09
+  increments per VBI, reaching `$C2 == $FF` needs **255 / 0.09 ~= 2800 VBIs ~= 55
+  SECONDS -- ON BOTH MACHINES.** The intro contains a **~1-minute, TWO-STAGE wait**
+  ($30C6 on $CA, then $30CC on $C2). **Every capture taken tonight (4-28 s) is
+  SHORTER THAN ONE STAGE.** So $30C6-vs-$30CC counts invert depending on which
+  stage the window happened to catch -- that is phase, not rate.
+  **=> NO CONFIRMED RATE DIVERGENCE EXISTS IN THE SOUND ENGINE.** $BC-wrap,
+  inc $C2, ticker and envelope rates are all comparable or slightly faster on
+  ours.
+  **WHAT ANY FUTURE ATTEMPT MUST DO DIFFERENTLY:**
+   * **Captures must span MINUTES, not seconds** -- or abandon tracing for this
+     question and use a COUNTER/WATCHPOINT instrument that survives the whole
+     wait. A 16 MB `dtrace` segment is ~4 s; one stage of this wait is ~55 s.
+   * **Anchor on the STAGE, not the clock:** record which of $30C6/$30CC the
+     machine is in at capture start, and only compare like stages.
+   * **Rates are only meaningful for TERMINATED events** -- and neither wait
+     terminates inside a 4 s segment.
+  **STILL UNEXPLAINED: Simon's visual symptom.** What is SOLID and shipped is the
+  left-edge bar fix. The intro-timing thread has NOT produced a confirmed
+  machine-to-machine divergence, and should not be presented as though it has.
+  ############################################################################
+
+  ############################################################################
   **RETRACTION #14 AND A CONVERGENCE: WE STALL IN THE $C2 WAIT, AND $C2 ADVANCES
   ~40% TOO SLOWLY (2026-08-15). THE ORIGINAL MECHANISM WAS RIGHT.**
   A LONGER continuous board capture (`longq.bin`, **10,735,584 records**, 6
