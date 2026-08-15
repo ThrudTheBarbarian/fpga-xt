@@ -725,6 +725,29 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE PACING PATH, QUANTIFIED: WE WAIT ~3.2x LESS PER FRAME (2026-08-15).**
+  Both machines take the path `$30C1 jsr $33F2` -> `$30C4 lda #$01` ->
+  `$30C6 cmp $CA / $30C8 bne $30C6` (wait for $CA==1) -> `$30CA lda #$FF` ->
+  `$30CC cmp $C2 / $30CE bne $30CC` (wait for $C2==$FF) -> $30D0.
+        per VBI            ALTIRRA (19.2M, 3000 VBI)   OURS (6.9M, 1058 VBI)
+        $30C6 ($CA wait)   556,338 = **185.4/VBI**      61,285 = **57.9/VBI**
+        $30CC ($C2 wait)    45,253 = **15.1/VBI**            0 = **0.0/VBI**
+        $30CA / $30D0      reached                      NOT reached in window
+  **Per frame Altirra spends 185 iterations in the $CA wait PLUS 15 in the $C2
+  wait; we spend 58 and zero. We wait ~3.2x LESS -- that IS the ~3x speed
+  difference, on a normalised clock.**
+  **DO NOT CLAIM "we never exit $30C6".** Our capture is 2.8x SHORTER than
+  Altirra's, so the exit may simply lie beyond the window. **The per-VBI ratio is
+  the sound comparison; the raw absence of $30CA/$30CC is NOT.**
+  **NEXT: why does our $CA wait cost fewer iterations per frame?** $CA is the
+  gate; find what increments it (predecessor/writer histogram for $00CA on both
+  sides, remembering `trace_writes.py` cannot decode `STA (zp),Y`) and compare
+  the INCREMENT RATE PER VBI. If $CA advances faster per frame on ours, the wait
+  is satisfied sooner and everything downstream runs early -- including $33AF's
+  PRIOR $54, which hides every player.
+  ############################################################################
+
+  ############################################################################
   **THE INTRO-SPEED MECHANISM, MEASURED AS A PER-VBI RATIO: WE NEVER ENTER THE
   $30CC WAIT (2026-08-15).**
   Using the per-VBI sound tick ($BCEB) as the clock -- phase-independent, and the
