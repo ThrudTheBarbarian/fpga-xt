@@ -2391,7 +2391,7 @@ static void ctx_menu_at(int mx, int my) {
 enum { MB_DESKTOP = 0, MB_OBJECT, MB_SHOW, MB_WINDOW, MB_SETTINGS };
 static OBJECT *g_menubar;
 
-static const char *mb_desktop[]  = { "About", MENU_SEP, "Empty bin", MENU_SEP, "Shutdown" };
+static const char *mb_desktop[]  = { "About", MENU_SEP, "Empty bin", MENU_SEP, "Reset 6502", "Shutdown" };
 static const char *mb_object[]   = { "New \xE2\x80\xA6", MENU_SEP, "Open", "Info \xE2\x80\xA6", "Copy",
                                      "Append", "Insert", "Delete \xE2\x80\xA6", MENU_SEP,
                                      "Select all", "Find \xE2\x80\xA6", "Print \xE2\x80\xA6" };
@@ -2403,7 +2403,7 @@ static const char *mb_show[]     = { "As icons", "As text", MENU_SEP, "Filter", 
 static const char *mb_window[]   = { "Close", "Close all", MENU_SEP, "Cycle", "Duplicate", "Pin" };
 static const char *mb_settings[] = { "Main config", "Applications", "Icon Mgr", MENU_SEP, "Record script", "XL overscan" };
 static const menu_def mb_menus[] = {
-    { "Desktop",  mb_desktop,  5 }, { "Object", mb_object, 12 }, { "Show", mb_show, 20 },
+    { "Desktop",  mb_desktop,  6 }, { "Object", mb_object, 12 }, { "Show", mb_show, 20 },
     { "Window",   mb_window,   6 }, { "Settings", mb_settings, 6 },
 };
 static void menu_show(void) { g_menubar = menu_build(mb_menus, 5, PW); menu_bar(g_menubar, 1); }
@@ -2506,7 +2506,16 @@ static void menu_dispatch(int to, int io) {
         switch (io) {
         case 0: form_alert(1, "[1][XTOS Desktop|a GEM desktop for XTOS][OK]"); break;    // About     IMPL
         case 2: form_alert(1, "[1][Empty bin|the bin is empty][OK]"); break;             // Empty bin IMPL
-        case 4: menu_stub("Shutdown"); break;                                            // TODO shutdown       STUB
+        case 4:                                                                          // Reset 6502 IMPL
+            /* A real power-cycle of the fabric 6502, mounted media KEPT — so a
+             * disk reboots, exactly as reset does on an XL with the drive on.
+             * This exists because closing the emulator window no longer resets
+             * anything (it ejects and leaves the guest running), which left no
+             * way at all to restart a wedged game. */
+            if (form_alert(2, "[2][Reset the 6502?|Anything running is lost.][Reset|Cancel]") == 1)
+                sys_xl_reset(1);                                                         // BASIC on
+            break;
+        case 5: menu_stub("Shutdown"); break;                                            // TODO shutdown       STUB
         } break;
     case MB_OBJECT:
         switch (io) {
