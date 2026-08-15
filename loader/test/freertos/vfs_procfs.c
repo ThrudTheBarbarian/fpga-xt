@@ -184,6 +184,13 @@ static int pf_gen_video_sii(char *buf, int sz)
     extern int hdmi_sii_read(int);
     pfb_s(&o, "sii[0x1A]:     "); pfb_d(&o, hdmi_sii_read(0x1A)); pfb_s(&o, "  (want 1: HDMI out, TMDS on)\n");
     pfb_s(&o, "sii[0x3D]:     "); pfb_d(&o, hdmi_sii_read(0x3D)); pfb_s(&o, "  (irq/hotplug status)\n");
+    /* Audio, so "is there sound?" can be answered without a reboot to read the
+     * boot klog.  Want 128 / 144 / 216 = 0x80 I2S+layout0+UNMUTED, 0x90 rising
+     * SCK + MCLK 256fs + WS-low-is-left, 0xD8 24-bit 48 kHz.  A 0x26 of 0x90
+     * means still muted; 0x00 means the audio path was never selected. */
+    pfb_s(&o, "sii[0x26]:     "); pfb_d(&o, hdmi_sii_read(0x26)); pfb_s(&o, "  (want 128: I2S, layout 0, unmuted)\n");
+    pfb_s(&o, "sii[0x20]:     "); pfb_d(&o, hdmi_sii_read(0x20)); pfb_s(&o, "  (want 144: MCLK 256fs, WS low = left)\n");
+    pfb_s(&o, "sii[0x27]:     "); pfb_d(&o, hdmi_sii_read(0x27)); pfb_s(&o, "  (want 216: 24-bit, 48 kHz)\n");
 #else
     pfb_s(&o, "no SiI9022 on qemu\n");
 #endif
