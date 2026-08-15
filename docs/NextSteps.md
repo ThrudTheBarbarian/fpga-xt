@@ -725,6 +725,38 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION #11 (MY OWN INSTRUMENT MISREAD) AND THE CORRECTED PICTURE:
+  ALTIRRA HAS AN ~11.5 s "$41" WINDOW WHERE PLAYERS ARE ABOVE THE PLAYFIELD
+  (2026-08-15).**
+  FIVE independent cold-reset runs, PRIOR sampled per frame -- **Altirra is
+  DETERMINISTIC across cold resets** (runs 0 and 1 byte-identical):
+        PRIOR histogram {$00: 107, $41: 573, $54: 820}; **first $54 at frame 680
+        (t~13.6 s)**
+  **So Altirra DOES reach $54, at t~13.6 s.** The earlier "PRIOR stays $41 for
+  1892 frames" was **ME MISREADING MY OWN LOG**: altprior.py only printed changes
+  to the MODE BITS (PRIOR[7:6]), and $41 -> $54 leaves those at 01, so the
+  transition was never logged. The instrument was fine; the reading was not.
+  **CORRECTED DIVERGENCE -- smaller, but sharper:**
+        ALTIRRA  $00 -> **$41 for frames 107..680 (t~2.1..13.6 s)** -> $54
+        OURS     $54 already in effect at the FIRST sample, **t=4 s**
+  **$41 = scheme 0 = PLAYERS ABOVE PLAYFIELD.** That ~11.5 s window is exactly
+  when Altirra's man is visible. **Ours appears to have little or no such
+  window**, which is why 0 of 9 of our mode-9 frames contain a player pixel.
+  **WHERE DOES $41 COME FROM?** `MEMSEARCH 8d1bd0` finds only three absolute
+  PRIOR writers: $33AF ($54), $BCC4 (`lda #$01`, executed by nobody), and
+  **$C083 (OS ROM)**. GPRIOR ($026F) = **$41** on Altirra. So the OS is almost
+  certainly pushing GPRIOR -> PRIOR during that window. **OUR OS ROM IS A
+  DIFFERENT BUILD** (our vectors $C018/$C02C vs Altirra's $C18E/$C1A2), so it is
+  a strong candidate for not doing that push, leaving $33AF's $54 standing.
+  **NEXT: capture our EARLY intro (t=0..6 s) and ask whether our PRIOR is EVER
+  $41, and whether anything writes it.** Then compare GPRIOR ($026F) on both.
+  If ours never sees $41, the missing man is an OS-ROM behaviour difference, not
+  an RTL bug.
+  **NOTE the earlier "we run $33AF ~36 s early" is now ~10 s, and the branch-rate
+  mechanism stays REFUTED (fall-through 5.3% Altirra vs 6.5% ours).**
+  ############################################################################
+
+  ############################################################################
   **QUALIFYING THE "36 SECONDS EARLY" CLAIM — THE PROPOSED MECHANISM IS DEAD,
   AND THE COMPARISON IS CROSS-RUN (2026-08-15).**
   The gate is `$33A0 iny / $33A1 bne $33D3`, so the $54 setup at $33A3 is reached
