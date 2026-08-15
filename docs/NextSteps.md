@@ -328,21 +328,11 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 - none
 
 ## Audio (PCM1808 capture + HDMI audio)
-- **HDMI audio quality — confirm the anti-alias filter fixed it.** Sound reaches the
-  speakers: BallBlazer's melody is clearly audible. The first listen reported it as
-  "harsh" and "rough", possibly saturating, which is the signature of decimating a
-  megahertz-rate square-wave source to 48 kHz with nothing band-limiting it — POKEY
-  switches at up to ~1.79 MHz and its poly channels are broadband, so everything
-  above 24 kHz folds back as inharmonic hash. `hdl/audio_lpf.sv` now band-limits in
-  `clk_sys` (two one-pole IIRs, ~11.6 kHz each; `make -C sim audio_lpf` measures
-  40 kHz at -20 dB), centres the unipolar range so silence is zero rather than one
-  end of the scale, and backs the level off 6 dB from the 94 %-of-full-scale it had.
-  **Deployed but not yet judged by ear.** If it still is not right, tune rather than
-  redesign: `LPF_SHIFT` (12 = duller/less alias, 10 = brighter/more) and `GAIN_SHIFT`
-  (2 = -12 dB if it still sounds clipped).
-  Diagnosis order if it ever goes silent: `cat /OS/proc/video-sii` (want 0x26=128,
-  0x20=144, 0x27=216, 0x1A=1), then the sink's own audio-status display, then
-  whether the sink has speakers at all — before touching RTL.
+- **If HDMI audio ever goes silent, diagnose in this order** (it works today —
+  BallBlazer's music is confirmed good by ear): `cat /OS/proc/video-sii` and expect
+  0x26=128, 0x20=144, 0x27=216, 0x1A=1; then the sink's own audio-status display;
+  then whether the sink has speakers at all. RTL last — the wire is sim-proven
+  (`make -C sim hdmi_i2s`, `make -C sim audio_lpf`).
 - **Route the audio MMCM out to the carrier as the PCM1808 SCKI** — the 256 fs
   master clock now EXISTS: `u_mmcm3` in `fpga_xt_top` produces 12.28448 MHz (VCO
   1425 / 116) as the single audio root, already feeding the SiI9022A's MCLK. The
