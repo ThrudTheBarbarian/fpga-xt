@@ -611,11 +611,52 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   so the colour path itself is fine) — same luminance, different hue; confirm
   it is not simply a different animation moment before treating it as a bug.
 
-- **BallBlazer intro: the remaining symptoms.** The game PLAYS PERFECTLY. The
-  intro still shows, deterministically: two objects on screen where there should
-  be one, a vehicle that stalls instead of sweeping, and a ball that never
-  crosses. (The 4 px left-edge bar is FIXED, `b0de37fe`; the missing man is
-  FIXED, `6ef5bab2`.)
+- **BallBlazer intro: the remaining symptoms, now MEASURED.** The game PLAYS
+  PERFECTLY. (The 4 px left-edge bar is FIXED, `b0de37fe`; the missing man is
+  FIXED, `6ef5bab2`.) Full-intro inventory: 72 `graboverlay` grabs ~0.57 s apart
+  from `6502 go` (`scratchpad/full.bin`, analysed by `objinv.py` + `lum.py`).
+
+  **The man appears TWICE, in the two team colours** — which settles the
+  "$56 vs $36" question; both occur and nothing is wrong:
+
+        grabs 20-24  **$36**  22 -> 186 -> **562** -> 542 -> 150 px, enters from the RIGHT (x 172->120)
+        grabs 30-34  **$56**  38 -> 232 -> **546** -> 472 -> 116 px, enters from the LEFT  (x 120->185)
+
+  **The logo IS rendered and correctly placed.** Ours spans x=20..303, y=25..84;
+  Altirra's spans x=24..311, y=41..101 in its 336x224 frame, and Altirra's frame
+  carries ~8 px of extra border per side and ~16 rows on top, so those are the
+  **same rectangle**.
+
+  **THE OPEN SYMPTOM, stated as measured.** The mode-9 playfield alternates
+  between exactly **two pixel-identical layouts** and is perfectly static within
+  each (consecutive grabs report byte-identical bright-pixel counts and
+  `dx=dy=0.0`):
+
+        state A   8680 px   y=25..84    logo only
+        state B  12344 px   y=25..190   logo + lower-half content
+
+  observed A/B/A/B... across grabs 16-43. **Nothing sweeps and nothing moves** —
+  which is exactly the reported "vehicle stalls instead of sweeping" and the
+  "{smooth anim}{abrupt switch}" repetition.
+
+  **DO NOT over-read this yet.** Grabs are ~0.57 s apart (~1.75 Hz), so a
+  per-frame flicker (lower content drawn on alternate frames) would alias into
+  the same A/B pattern as a genuine two-state flip. **Distinguishing them needs
+  a capture faster than one grab per frame** — that is the next experiment, and
+  it decides whether this is a rendering bug or a game-logic/timing one.
+
+  **NOT YET COMPARABLE TO ALTIRRA.** A cold-reset Altirra sat on a static
+  mode-9 screen for 1200+ frames (~20 s), i.e. it never entered this animation
+  — most likely waiting on input. Its logo band also decodes to hue B/C (cyan)
+  where ours is hue 1, but **the scenes were never matched, so that difference
+  is unverified and must not be treated as a defect.** Scene-match first.
+
+  **Altirra decode gotcha (cost a null result tonight):** RAWSCREEN needs
+  **nearest-neighbour** palette matching — exact lookup maps nothing and reports
+  a confident, wholly false 100% "unmatched". Frames are **336x224 RGBA**
+  (301056 B); `CONFIG artifact none` first. Altirra's 256-entry palette contains
+  odd-luminance entries, so decoded codes may read `$BB`/`$C1`; **the hue nibble
+  is reliable, the low luminance bit is not.**
 
   **VERIFIED CORRECT — do not re-test** (each by a minimal repro validated
   against Altirra first): HPOSP writes in VBLANK (`pmsweep.xex`) and MID-LINE
