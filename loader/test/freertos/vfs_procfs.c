@@ -190,9 +190,12 @@ static int pf_gen_romdiag(char *buf, int sz)
     uint32_t d8 = diag[0x1C / 4], d9 = diag[0x20 / 4];
     pfb_s(&o, "axi_accepted:  "); pfb_d(&o, (int)((d8 >> 16) & 0xFFFF)); pfb_c(&o, '\n');
     pfb_s(&o, "rom_we_pulses: "); pfb_d(&o, (int)(d8 & 0xFFFF)); pfb_c(&o, '\n');
-    pfb_s(&o, "last_addr:     "); pfb_d(&o, (int)((d9 >> 8) & 0xFFFF));
+    pfb_s(&o, "last_addr:     "); pfb_d(&o, (int)(d9 & 0xFFFF));
     pfb_s(&o, "  (decimal; 65535 = $FFFF = a complete upload)\n");
-    pfb_s(&o, "last_data:     "); pfb_d(&o, (int)(d9 & 0xFF)); pfb_c(&o, '\n');
+    pfb_s(&o, "BFFC_writes:   "); pfb_d(&o, (int)((d9 >> 24) & 0xFF));
+    pfb_s(&o, "  (free-running; +1 per upload)\n");
+    pfb_s(&o, "BFFC_data:     "); pfb_d(&o, (int)((d9 >> 16) & 0xFF));
+    pfb_s(&o, "  (decimal; 0 = the correct cartridge flag, 191 = \$BF = wrong)\n");
 #else
     pfb_s(&o, "no PL on qemu\n");
 #endif
