@@ -663,6 +663,18 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   critical path** — but if a mode-10 title ever matters, settle it against
   Altirra (`PMG` + `RAWSCREEN`), not against these tests.
 
+  **Both CHEAP oracles were checked and BOTH are dead ends — do not re-tread
+  them.** (a) **The Altirra bridge has `PEEK` but no POKE**, so the scenario
+  (mode 10 + PRIOR scheme 2 + a player) cannot be set up without loading a
+  program. (b) **`emu/` cannot answer it either:** `emu/gtia.c` is collisions
+  and object bookkeeping only — **there is no framebuffer or colour resolver**
+  anywhere in `emu/` (it models registers for ACID, not pixels), and its
+  `gtia_clock(g, hpos, pf, hires_lit)` takes `pf` as "the playfield colour class
+  (0..3, or -1)" from a caller that **does not exist in-tree**. So emu neither
+  confirms nor contradicts the class; **no discrepancy is claimed.** Settling
+  this needs a purpose-built mode-10 XEX run on both — real work, and outside
+  the BallBlazer scope.
+
   **The `pf_win` trap is now FIXED, not just noted:** T11h restored `prior` and
   `colbk` but left the playfield window CLOSED, so the first draft of these
   three ran on the border, where one failed and two passed — all for the wrong
