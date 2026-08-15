@@ -424,6 +424,28 @@ module tb_gtia_stage;
         an_pair = 2'b01; step_cc(3'd2, 3'd2);
         chk(got_a, colpm0, "T11k mode 10 + scheme 2: a background nibble does not");
 
+        // T11l: A MID-LINE COLBK WRITE MUST CHANGE THE HUE WITHIN THE LINE.
+        // In mode 9 the pixel is COLBK's HUE with the nibble as LUMA, so a
+        // WSYNC-paced kernel rewriting COLBK part-way down the frame is how a
+        // title paints several hues in ONE frame with DLIs disabled -- which is
+        // exactly what BallBlazer's logo band does on the reference.  If any
+        // stage latched the colour registers per scanline we would render ONE
+        // hue where the reference renders THREE, and this check would fail.
+        new_line();
+        hposp0 = 8'd200; grafp0 = 8'h00;        // no objects in the way
+        prior = 8'h41; pf_win = 1'b1;           // mode 9
+        colbk = 8'h50;
+        an_pair = 2'b10; step_cc(3'd0, 3'd0);
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);   // nibble $B
+        an_pair = 2'b10; step_cc(3'd0, 3'd0);
+        chk(got_a, 8'h5B, "T11l hue 5 before the mid-line COLBK write");
+        colbk = 8'h90;                          // <-- the mid-line write
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        an_pair = 2'b10; step_cc(3'd0, 3'd0);
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        an_pair = 2'b10; step_cc(3'd0, 3'd0);
+        chk(got_a, 8'h9B, "T11l2 the SAME LINE follows COLBK to hue 9");
+
         hposp0 = 8'd200; grafp0 = 8'h00; prior = 8'h01;
 
         // ================================================================

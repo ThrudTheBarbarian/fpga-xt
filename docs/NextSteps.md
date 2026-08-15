@@ -1001,6 +1001,24 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   ours alternates (8680 <-> 12344 bright px). **Not established. Must not drive
   an RTL change.**
 
+  **HALF OF THAT IS NOW SETTLED: OUR CHIPSET DOES FOLLOW A MID-LINE COLBK WRITE
+  (2026-08-15).** The mechanism above is the only way to get three hues with DLIs
+  off, so the first question is whether we can render it at all — and we can.
+  `colbk` is written straight into `gtia_reg_file.sv:173` on the CPU write and
+  reaches `gtia_stage` combinationally through `a2_video`; **nothing latches the
+  colour registers per scanline.** Pinned by `tb_gtia_stage` **T11l/T11l2**: in
+  mode 9, hue 5 before a mid-line `COLBK` write and **hue 9 in the SAME LINE**
+  after it. **NEGATIVE-CONTROLLED** — suppress just the write and T11l2 fails
+  with `colour $5b, expected $9b`, which is exactly what a per-scanline latch
+  would produce.
+
+  So **the single hue on our board is NOT an RTL limitation.** What remains is
+  the content question: the shape test below (IoU 44.7%) says the two machines
+  are at different points in the sequence, and that is now the leading — and
+  only — surviving explanation. **Still not a defect; still must not drive an
+  RTL change.** To close it properly, scene-match to IoU > 90% FIRST, then
+  compare hue.
+
   **AND A SHAPE TEST ARGUES THE SCENES SIMPLY DIFFER.** The mode-9 nibble data
   sets the LUMINANCE pattern while COLBK sets the hue, so comparing *shape* is
   palette-independent: threshold each band at its own median brightness and
