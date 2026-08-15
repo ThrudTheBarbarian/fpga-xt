@@ -639,14 +639,19 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   and hides it** (T11j -> COLPF1), while a background-class nibble does not
   (T11k -> COLPM0).
 
-  **A NEGATIVE CONTROL SAYS ONLY ONE OF THE THREE ACTUALLY GUARDS THE FIX.**
-  Reverting `assign pri_pf` to the pre-fix `cur_pf` and re-running: **TM fails
-  (the man goes invisible, as it must) and T11j fails** (mode 10 emits COLPM0 —
-  the player wrongly wins where the PF nibble should hide it) — **but T11i and
-  T11k still PASS**, because they expect the player to win and the pre-fix code
-  also lets it win. They document the modes; they do not discriminate. **Adding
-  a passing test proves nothing until you have seen it fail** — the RTL was
-  restored byte-identically afterwards and the suite is green.
+  **ALL THREE ARE NEGATIVE-CONTROLLED: revert `assign pri_pf` to the pre-fix
+  `cur_pf` and T11i, T11j and T11k ALL FAIL** (alongside TM, the man going
+  invisible as it must); restore it and the suite is green, RTL byte-identical.
+
+  Getting there took a second pass, and the reason is the reusable part. As
+  first written, T11i/T11k drove **playfield source 0** — which is *already*
+  SRC_BK, so the pre-fix and post-fix code agree on it and the cases could not
+  discriminate: they passed either way. Driving a **lit** source (PF1) is what
+  makes the two differ, because the pre-fix code hands priority a PF class that
+  outranks the player under this scheme. **That is also why TM discriminates —
+  it uses real playfield data.** **A test whose stimulus is the degenerate case
+  is documentation, not a guard; adding a passing test proves nothing until you
+  have watched it fail.**
 
   **The `pf_win` trap is now FIXED, not just noted:** T11h restored `prior` and
   `colbk` but left the playfield window CLOSED, so the first draft of these

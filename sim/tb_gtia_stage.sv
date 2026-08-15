@@ -391,12 +391,16 @@ module tb_gtia_stage;
         // DIFFERENTLY from 9 and 11 here -- that asymmetry is the whole claim,
         // and it was previously inherited from the collision rule untested.
         // ----------------------------------------------------------------
+        // Drive a LIT playfield source (PF1), not source 0.  Source 0 is
+        // already SRC_BK, so pre-fix and post-fix agree on it and the case
+        // cannot discriminate; with a lit source the pre-fix code hands
+        // priority a PF class, which under this scheme hides the player.
         new_line();
         hposp0 = 8'd2; grafp0 = 8'hFF;
         prior = 8'hD4;                          // mode 11 + scheme 2
-        an_pair = 2'b11; step_cc(3'd0, 3'd0);
-        an_pair = 2'b11; step_cc(3'd0, 3'd0);
-        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        an_pair = 2'b11; step_cc(3'd2, 3'd2);
+        an_pair = 2'b11; step_cc(3'd2, 3'd2);
+        an_pair = 2'b11; step_cc(3'd2, 3'd2);
         chk(got_a, colpm0, "T11i mode 11 + scheme 2: the player still wins");
 
         new_line();
@@ -408,9 +412,9 @@ module tb_gtia_stage;
 
         new_line();
         prior = 8'h94;                          // mode 10 + scheme 2
-        an_pair = 2'b00; step_cc(3'd0, 3'd0);   // nibble 0001 = 1 -> SRC_BK class
-        an_pair = 2'b01; step_cc(3'd0, 3'd0);
-        an_pair = 2'b01; step_cc(3'd0, 3'd0);
+        an_pair = 2'b00; step_cc(3'd2, 3'd2);   // nibble 0001 = 1 -> SRC_BK class
+        an_pair = 2'b01; step_cc(3'd2, 3'd2);
+        an_pair = 2'b01; step_cc(3'd2, 3'd2);
         chk(got_a, colpm0, "T11k mode 10 + scheme 2: a background nibble does not");
 
         hposp0 = 8'd200; grafp0 = 8'h00; prior = 8'h01;
