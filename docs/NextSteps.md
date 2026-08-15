@@ -637,9 +637,21 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   classes every playfield pixel as SRC_BK so **the player still wins** (T11i);
   mode 10 classes a nibble with bit 2 SET as PF0-3, which **outranks the player
   and hides it** (T11j -> COLPF1), while a background-class nibble does not
-  (T11k -> COLPM0). **Watch `pf_win` when adding cases here:** T11h leaves the
-  playfield window CLOSED, and the first draft of these three ran on the border,
-  where one failed for the wrong reason and two passed for the wrong reason.
+  (T11k -> COLPM0).
+
+  **A NEGATIVE CONTROL SAYS ONLY ONE OF THE THREE ACTUALLY GUARDS THE FIX.**
+  Reverting `assign pri_pf` to the pre-fix `cur_pf` and re-running: **TM fails
+  (the man goes invisible, as it must) and T11j fails** (mode 10 emits COLPM0 —
+  the player wrongly wins where the PF nibble should hide it) — **but T11i and
+  T11k still PASS**, because they expect the player to win and the pre-fix code
+  also lets it win. They document the modes; they do not discriminate. **Adding
+  a passing test proves nothing until you have seen it fail** — the RTL was
+  restored byte-identically afterwards and the suite is green.
+
+  **The `pf_win` trap is now FIXED, not just noted:** T11h restored `prior` and
+  `colbk` but left the playfield window CLOSED, so the first draft of these
+  three ran on the border, where one failed and two passed — all for the wrong
+  reason. T11h now restores `pf_win` too, alongside the other two.
 
 - **ACID `mmu_xlbanking` PASSES. The reported failure was MY HARNESS, not the
   design.** `tb_acid.sv:1251-1252` `$readmemh`s **`atari_xl_rom.mem` and

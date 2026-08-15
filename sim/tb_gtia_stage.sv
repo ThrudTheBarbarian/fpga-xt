@@ -374,7 +374,10 @@ module tb_gtia_stage;
         an_pair = 2'b11; step_cc(3'd0, 3'd0);
         an_pair = 2'b11; step_cc(3'd0, 3'd0);
         chk(got_a, colbk, "T11h the border is not recoloured by a GTIA mode");
-        prior = 8'h01; colbk = 8'h00;
+        // Restore the WINDOW as well as prior/colbk.  Leaving it closed makes
+        // every later case run on the border, where a playfield check fails and
+        // a player check passes -- both for the wrong reason.
+        prior = 8'h01; colbk = 8'h00; pf_win = 1'b1;
 
         // ----------------------------------------------------------------
         // T11i-k: GTIA modes under PRIOR SCHEME 2 (playfield ABOVE players).
@@ -389,10 +392,6 @@ module tb_gtia_stage;
         // and it was previously inherited from the collision rule untested.
         // ----------------------------------------------------------------
         new_line();
-        pf_win = 1'b1;                          // T11h left the window CLOSED;
-                                                // without this the cases below
-                                                // run on the border and pass
-                                                // (or fail) for the wrong reason
         hposp0 = 8'd2; grafp0 = 8'hFF;
         prior = 8'hD4;                          // mode 11 + scheme 2
         an_pair = 2'b11; step_cc(3'd0, 3'd0);
