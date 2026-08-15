@@ -453,6 +453,44 @@ module tb_gtia_obj_walk;
             resize = 4'h0;
         end
 
+        // ================================================================
+        // T10: HPOS $00 MUST NOT DRAW.  This is the left-edge bar.
+        //
+        // Geometry: x_left = (HPOS - 48) * 2, so HPOS $00 is x = -96, i.e.
+        // fully off the left of the visible area -- an object that has never
+        // been positioned (HPOS still 0 from reset) must show NOTHING.  But the
+        // walk matches on equality, `cc_pos == obj_hpos`, and cc_pos passes
+        // through 0 at the left edge, so a never-positioned object with shape
+        // data strikes there and paints the leftmost colour clocks.
+        //
+        // Measured on hardware (graboverlay, BallBlazer intro): columns 0-3 --
+        // exactly 4 pixels, i.e. 2 colour clocks, a MISSILE's width -- carry
+        // #E37841 over 148 of 192 rows, and that colour appears NOWHERE else in
+        // the frame.  PRIOR=$54 sets the fifth-player bit, so the missiles take
+        // COLPF3, which the game writes as hue 3 (orange) while the rest of the
+        // scene is hue 2.
+        // ================================================================
+        begin : t10_hpos_zero
+            new_line();
+            hposp0 = 8'd60; grafp0 = 8'h00;
+            hposp1 = 8'd0;  grafp1 = 8'hFF;      // never positioned, has shape
+            hposp2 = 8'd0;  grafp2 = 8'h00;
+            hposp3 = 8'd0;  grafp3 = 8'h00;
+            hposm0 = 8'd0;  hposm1 = 8'd0; hposm2 = 8'd0; hposm3 = 8'd0;
+            grafm  = 8'hFF;                      // all four missiles, shape set
+            sizep1 = 2'b00; sizem = 8'h00;
+            run_to(64);
+            // Reported, NOT asserted: real GTIA emits at cc 0 as well and
+            // relies on that landing in horizontal blanking, so whether the
+            // suppression belongs here or in a2_video's px_pos -> screen
+            // mapping is still open.  Asserting the wrong layer would bake in
+            // the wrong fix, so this records the emission and stays green.
+            $display("NOTE T10: HPOS $00 -- player 1 drew %0d cc at %0d..%0d; missiles drew %0d/%0d/%0d/%0d cc (each 2 cc = 4 px = the measured left-edge bar)",
+                     span_count(1), span_first(1), span_last(1),
+                     span_count(4), span_count(5), span_count(6), span_count(7));
+            grafm = 8'h00; grafp1 = 8'h00;
+        end
+
         if (fail == 0) $display("tb_gtia_obj_walk: all checks PASS");
         else           $display("tb_gtia_obj_walk: %0d FAIL", fail);
         $finish;
