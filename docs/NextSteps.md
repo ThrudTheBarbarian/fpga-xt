@@ -725,6 +725,42 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RESOLVED TO A TIMING DIVERGENCE: WE RUN $33AF ~36 SECONDS TOO EARLY
+  (2026-08-15). THE MAN IS A CASUALTY OF SEQUENCING, NOT OF THE RENDER PATH.**
+  **CHANNEL VALIDATED FIRST** (the step that saved this from being wrong):
+        Altirra now: `PMG`.prior = **$54** (HARDWARE), GPRIOR $026F = **$41** (OS SHADOW)
+  They genuinely differ, and `PMG`.prior tracks the HARDWARE register -- so the
+  earlier sweep reading $41 for 1892 consecutive intro frames was real.
+  **NEITHER MACHINE RUNS A PER-FRAME VBI COPY.** `trace_writes --altirra` over
+  alt_vlong (19.2M records) finds **only 5 PRIOR writes, ALL from $33AF, ALL
+  $54** -- and ours finds only 2, also $33AF/$54. A GPRIOR->PRIOR copy would give
+  hundreds. So **$41 is a one-time value standing from boot**, not maintained.
+  **THE DIVERGENCE IS WHEN $33AF RUNS:**
+        ALTIRRA  PRIOR = $41 from t~2.2 s and **STILL $41 at t~40 s** -- $33AF has
+                 NOT run at any point during the whole intro
+        OURS     scheme-2 behaviour on the screen from the FIRST sample at
+                 **t=4 s**; mode 9 ends t~18 s; GAMEPLAY by t~26 s
+  **Both machines execute the same byte-identical code; ours executes it roughly
+  THIRTY-SIX SECONDS EARLIER.** $33AF is display setup (DMACTL=$3E, GRACTL=$03,
+  PRIOR=$54) and $33AD is an IMMEDIATE `lda #$54`, so there is no data
+  dependence -- only control flow.
+  **THIS TIES THE WHOLE SYMPTOM TOGETHER:** PRIOR $54 = scheme 2 = playfield above
+  all four players, and in mode 9 the playfield covers the entire window, so
+  **every player is hidden from t=4 s onward -- which is why 0 of 9 of our mode-9
+  frames contain a single player pixel while Altirra's man appears late in its
+  much longer mode-9 phase (0.05% -> 0.72%, monotonic growth).** It is the same
+  fault as the intro running too fast and cutting to gameplay early.
+  **=> THE MISSING MAN AND THE FAST/REPEATING INTRO ARE ONE BUG, AND IT IS
+  CPU-SIDE SEQUENCING.** The render path is exonerated for this symptom; do NOT
+  touch gtia_priority.
+  **NEXT:** find what gates the path to $33AF and why we reach it ~36 s early --
+  predecessor-histogram $33A3/$33AD in a CONTINUOUS board capture, and compare
+  against Altirra with **>=1000 samples per side, fractions, phase-anchored on a
+  code landmark**. Note this is the SAME territory as the retracted $97/$BC chain
+  (#6) -- rebuild it from measurement, not from that chain.
+  ############################################################################
+
+  ############################################################################
   **PRIOR DIFFERS DURING THE INTRO: OURS $54, ALTIRRA $41 — STRONGEST LEAD FOR
   THE MISSING MAN, BUT ONE CHANNEL IS UNVALIDATED (2026-08-15).**
         ALTIRRA PRIOR sweep from cold reset (per frame, `PMG`.prior):
