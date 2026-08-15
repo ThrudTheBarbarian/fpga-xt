@@ -592,8 +592,23 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   fix mirrors the substitution the collision path already had and priority
   lacked (`hdl/gtia_stage.sv:317-320`), on `gtia_nib` rather than `nib_ready`
   because priority drives the display a pair later. Non-GTIA modes are
-  bit-identical. ACID `gtia_psuedomodee` / `antic_pmdma` / `gtia_phantomdma` all
-  PASS (the only three that set PRIOR[7:6] != 00); **WNS +0.124 ns**.
+  bit-identical by construction. **WNS +0.124 ns.**
+
+  **CORRECTION — THE ACID PASSES CITED FOR THIS FIX WERE RUN AGAINST A STALE
+  BINARY AND PROVE NOTHING ABOUT IT.** `sim/build/tb_acid2.vvp` was built
+  **01:43:50**; `hdl/gtia_stage.sv` was last edited **03:31:31** and committed at
+  03:33:16 — and even the bar fix committed at 01:46:15. So
+  `gtia_psuedomodee` / `antic_pmdma` / `gtia_phantomdma` "passing" exercised RTL
+  containing **neither** fix. **The fix's real validation is `tb_gtia_stage`'s TM
+  case and the hardware itself** (bitstream built from the fixed source, timing
+  closed, the figure renders) — both of which stand.
+
+  **ROOT CAUSE OF THE ERROR, worth not repeating:** the batch script invoked
+  `vvp -N build/tb_acid2.vvp` **directly**, bypassing the Makefile. `sim/Makefile:1544`
+  declares `build/tb_acid2.vvp: tb_acid.sv $(A8_CORE_SRC)`, so **`make acid2`
+  would have rebuilt it automatically.** **RULE: run simulations through the
+  build system, or assert the binary is newer than every RTL file it covers
+  before believing a result.**
 
   **This is the same fault class as the left-edge bar: a GTIA mode is not an
   ordinary playfield — the bar was the COLOUR half, the man the PRIORITY half.**
