@@ -725,6 +725,27 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **SCOPING CORRECTION: THE BAR FIX DOES NOT EXPLAIN THE MISSING MAN
+  (2026-08-15).** Do not let these two run together.
+  The measured spurious playfield is **4 pixels, columns 0-3**, and its colour
+  appears at **ZERO other pixels in the frame** -- so there is **no other
+  spurious playfield anywhere on screen**. The man appears MID-SCREEN. **A
+  four-pixel left-edge artefact cannot hide him.**
+  "PRIOR $54 puts the playfield above all players, so spurious playfield hides
+  objects" is a REAL mechanism but its MEASURED EXTENT is four pixels. Expecting
+  the man to return with the bar fix over-reads the evidence.
+  **THE MAN REMAINS OPEN, and the likeliest explanation is still SEQUENCING** --
+  the scene never plays -- which is the thread whose mechanism ($97 -> $A1 -> $BC)
+  was RETRACTED as a sample-size artifact (#6). That leaves the intro's
+  slowness/repetition ({smooth anim}{abrupt switch}) genuinely UNEXPLAINED.
+  **NEXT, AFTER THE BAR IS CONFIRMED FIXED:** re-open the sequencing question
+  with the sample discipline learned tonight -- >=1000 samples per side,
+  fractions not counts, phase-anchored on a code landmark, and a CONTINUOUS
+  board capture (hw_long2.bin style, 4 back-to-back dtrace segments) against
+  alt_vlong.bin. Do NOT rebuild the retracted $97/$BC chain from a short capture.
+  ############################################################################
+
+  ############################################################################
   **LEFT-EDGE BAR: CONFIRMED IN SIM, AND ONE OF THE TWO CANDIDATE FIXES IS
   REFUTED (2026-08-15).  `make -C sim gtia_stage` IS RED ON PURPOSE.**
   `tb_gtia_stage` TG/TG2 drive GTIA mode 9 with **COLBK at hue 1 and the
