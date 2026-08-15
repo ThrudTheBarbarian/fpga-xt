@@ -2304,6 +2304,22 @@ module fpga_xt_top (
     reg          aud_req = 1'b0;
     always_ff @(posedge clk_aud) if (i2s_frame_start) aud_req <= ~aud_req;
 
+    // Band-limit before the 48 kHz decimation.  POKEY switches at up to
+    // ~1.79 MHz with square edges and its poly channels are broadband, so
+    // point-sampling it at 48 kHz folds all of that back into the audible band
+    // as inharmonic hash — heard as harshness and roughness.  audio_lpf also
+    // centres the unipolar POKEY range and backs the level off 6 dB, since four
+    // channels at volume 15 are a full-scale square wave with no headroom.
+    wire signed [23:0] aud_filt_l, aud_filt_r;
+    audio_lpf u_audio_lpf (
+        .clk   (clk_sys),
+        .rst   (~rst_sys_n),
+        .in_l  (audio_sample_l),
+        .in_r  (audio_sample_r),
+        .out_l (aud_filt_l),
+        .out_r (aud_filt_r)
+    );
+
     (* ASYNC_REG = "TRUE" *) reg [1:0] req_sync = 2'b00;
     reg                                req_seen = 1'b0;
     reg [23:0]                         hold_l = 24'd0, hold_r = 24'd0;
@@ -2311,8 +2327,8 @@ module fpga_xt_top (
         req_sync <= {req_sync[0], aud_req};
         if (req_sync[1] != req_seen) begin
             req_seen <= req_sync[1];
-            hold_l   <= audio_sample_l;
-            hold_r   <= audio_sample_r;
+            hold_l   <= aud_filt_l;
+            hold_r   <= aud_filt_r;
         end
     end
 
@@ -2321,7 +2337,7 @@ module fpga_xt_top (
         .rst         (rst_aud),
         .sample_l    (hold_l),
         .sample_r    (hold_r),
-        .signed_in   (1'b0),                // POKEY sums are unsigned
+        .signed_in   (1'b1),                // audio_lpf already centred it
         .sck         (hdmi_i2s_sck),
         .ws          (hdmi_i2s_ws),
         .sd          (hdmi_i2s_sd),

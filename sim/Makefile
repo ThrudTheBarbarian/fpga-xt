@@ -1400,6 +1400,13 @@ ANTIC2_PXPOS_SRC = $(ANTIC2_SRC) $(HDL_DIR)/antic_beam.sv \
 	    $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_color_sel.sv \
 	    $(HDL_DIR)/antic_char_ctl.sv $(HDL_DIR)/antic_pixel_shift.sv
 
+audio_lpf: build/tb_audio_lpf.vvp
+	@vvp -N $<
+
+build/tb_audio_lpf.vvp: tb_audio_lpf.sv $(HDL_DIR)/audio_lpf.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_audio_lpf \
+	    $(HDL_DIR)/audio_lpf.sv tb_audio_lpf.sv
+
 hdmi_i2s: build/tb_hdmi_i2s.vvp
 	@vvp -N $<
 
