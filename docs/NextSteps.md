@@ -725,6 +725,34 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION #20: IT IS NOT THE MISSILES — IT IS THE FOUR PLAYERS
+  (2026-08-15).**
+  Altirra peeked at the exact moment its object is on screen (frame ~1150,
+  t~23 s):
+        **grafm = $00**, **sizem = $00**, **$0300-$03FF: 1 of 256 non-zero (0.4%)**
+        hposm = $76 $74 $72 $70
+        **hposp = $84 $7c $74 $6c**,  prior = $54,  gractl = $03
+  **GRAFM IS $00 AND THE MISSILE REGION IS EMPTY, so the object is NOT the
+  missiles / fifth player.** (And our own missile region being 2-5% non-zero is
+  therefore not a deficit -- Altirra's is 0.4%.)
+  **IT IS THE FOUR PLAYERS.** `x_left = (HPOS - 48) * 2` maps $6c/$74/$7c/$84 to
+  **x = 120 / 136 / 152 / 168**, spanning x=120..184 -- which is exactly the
+  measured object at **x=130..179**. Four adjacent players forming one figure.
+  **AND WE WRITE THOSE SAME POSITIONS:** our HPOSP2/HPOSP3 took **$74 and $6C**
+  and HPOSP0 took **$84** -- the very values Altirra uses when the man appears.
+  So **our players are correctly positioned, carry shape data, and still do not
+  appear.**
+  **=> THE TARGET IS PLAYER RENDERING AT HPOSP $6c..$84 WITH PRIOR $54 IN GTIA
+  MODE 9 — not missiles, not the fifth player, not the P/M DMA missile slot.**
+  **NEXT: build exactly that case in `sim/tb_gtia_stage.sv`** -- four players at
+  HPOSP $6c/$74/$7c/$84, SIZEP as measured, GRAFP non-zero (as DMA would supply),
+  PRIOR $54, GTIA mode 9 active, COLPM = $36 -- and assert the players WIN and
+  emit $36. If sim draws them, the fault is upstream of gtia_stage (the P/M DMA
+  player fetch or the register file); if sim does NOT, the bug is in the walk or
+  priority and is now reproducible offline.
+  ############################################################################
+
+  ############################################################################
   **THE LIVE MISSILE DMA PATH, IDENTIFIED AND READ (2026-08-15).**
   **`antic_pm_fetch.sv` is SIM-ONLY** -- instantiated only in `antic_scanline.sv`.
   **The LIVE path is `antic_pm_dma.sv`**, instantiated in `antic2.sv:843`, whose
