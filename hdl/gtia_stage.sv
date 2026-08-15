@@ -137,9 +137,27 @@ module gtia_stage (
     wire pri_start = (state == S_OBJ && pres_valid) || (state == S_A && pri_valid);
     wire col_start = pri_start;
 
+    // A GTIA MODE HAS NO ORDINARY PLAYFIELD, FOR PRIORITY EITHER.  PRIOR[7:6]
+    // stops the playfield being a playfield: in modes 9 and 11 the byte is a
+    // luminance or a hue, carrying no PF0-3 class at all, and only mode 10's
+    // nibble selects one.  Feeding the raw source to the priority network makes
+    // the field outrank the players under any scheme that puts playfield first
+    // -- PRIOR $54 (scheme 2) hides EVERY player EVERYWHERE, because in mode 9
+    // every pixel is "playfield".  Measured: BallBlazer's four players at HPOSP
+    // $6c/$74/$7c/$84 vanish on our board while Altirra draws them from the same
+    // registers.
+    //
+    // This is the SAME substitution the collision path already makes below
+    // (`col_pf`), and it was applied there and not here -- the asymmetry was the
+    // bug.  The phase differs though: collisions use `nib_ready`, but priority
+    // drives the DISPLAY, so it must use the display nibble `gtia_nib`, which is
+    // a pair later.  Using col_pf here directly would be one GTIA pixel early.
+    // Declared here, ASSIGNED below once gtia_nib/gtia_active exist.
+    wire [2:0] pri_pf;
+
     gtia_priority u_pri (
         .clk(clk), .rst(rst),
-        .start(pri_start), .pres(pres), .pf_src(cur_pf), .prior(prior),
+        .start(pri_start), .pres(pres), .pf_src(pri_pf), .prior(prior),
         .win_src(win_src), .win_black(win_black),
         .win_multi01(win_multi01), .win_multi23(win_multi23),
         .valid(pri_valid)
@@ -292,6 +310,14 @@ module gtia_stage (
                                               : 3'd0;   // SRC_BK
 
     wire [2:0] col_pf = gtia_active ? col_pf_now : cur_pf;
+
+    // The PRIORITY counterpart of col_pf (see the note at u_pri).  Same rule,
+    // but on the DISPLAY nibble `gtia_nib` rather than `nib_ready`, because
+    // priority drives the picture and is a pair later than the collision class.
+    wire [2:0] pri_pf_now =
+        (prior[7:6] == 2'b10 && gtia_nib[2]) ? (3'd1 + {1'b0, gtia_nib[1:0]})
+                                             : 3'd0;   // SRC_BK
+    assign pri_pf = gtia_active ? pri_pf_now : cur_pf;
 
     gtia_collide u_col (
         .clk(clk), .rst(rst),
