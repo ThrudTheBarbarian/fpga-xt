@@ -65,7 +65,11 @@ cd ~/$REMOTE_DIR
 export PLACE_DIRECTIVE="$PLACE_DIRECTIVE"
 export INCR_REF_DCP="$INCR_REF_DCP"
 export INCR_DIRECTIVE="$INCR_DIRECTIVE"
-export TIMING_GATE_ALLOW_NEG="$TIMING_GATE_ALLOW_NEG"
+# Default to "0", not empty.  This export is unconditional, and the gate read a
+# set-but-EMPTY value as "override requested" — silently disabling the
+# don't-flash-a-negative-build rule on every remote build.  (timing_gate.tcl now
+# treats empty as unset too; belt and braces.)
+export TIMING_GATE_ALLOW_NEG="${TIMING_GATE_ALLOW_NEG:-0}"
 # Regenerate the PS block design (gen_ps_bd.tcl) for synth/impl/bit so it
 # tracks the script, not the stale committed BD output — else an HP port added
 # to the script but not re-run fails elaboration with "m_axi_hpN_* does not

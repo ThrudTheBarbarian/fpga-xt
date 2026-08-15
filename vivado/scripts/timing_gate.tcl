@@ -25,7 +25,13 @@ proc fpgaxt_timing_gate {out_dir} {
     }
 
     # ---- 2. per-clock worst setup slack -------------------------------------
+    # An EMPTY value means "not set".  It has to, because run-valhalla.sh
+    # exports the variable unconditionally — so a bare `ne "0"` test made every
+    # remote build set the override, and the gate printed FAIL and then wrote
+    # the bitstream anyway.  A safety net that is off by default is worse than
+    # no safety net, because it reads as protection.
     set allow_neg [expr {[info exists ::env(TIMING_GATE_ALLOW_NEG)] \
+                         && $::env(TIMING_GATE_ALLOW_NEG) ne "" \
                          && $::env(TIMING_GATE_ALLOW_NEG) ne "0"}]
     set fails {}
     set n_clocks 0
