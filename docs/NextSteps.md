@@ -725,6 +725,33 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **STAGED SNAPSHOTS SETTLE IT: WE ARE NOT PARKED — OUR INTRO IS SIMPLY MUCH
+  SHORTER THAN ALTIRRA'S (2026-08-15).**
+  Four gap-free 4 s `dtrace` snapshots taken AT t = 15 / 30 / 45 / 60 s (the ring
+  keeps the LAST ~4 s, so `dtrace 60` samples 60 s in):
+        t=15s  $37xx/$3Bxx/$3Axx/$BExx (INTRO code), VBI=320, $BC=$00, **waits 0.0%**
+        t=30s  **$4Cxx/$5Axx/$5Dxx/$81xx**, **VBI=0**,          **waits 0.0%**
+        t=45s  identical page profile,      VBI=0,              waits 0.0%
+        t=60s  identical page profile,      VBI=0,              waits 0.0%
+  **$30C6 and $30CC are 0.0% of ALL FOUR snapshots -- WE ARE NEVER PARKED.** The
+  "stuck in a wait" framing is dead; earlier $30CC counts were TRANSIENT visits
+  during the intro, not parking. (And `altwait.log`'s 12 PC samples already ruled
+  out parking on Altirra, so **NEITHER machine parks**.)
+  **WHAT IS CONFIRMED INSTEAD:** by **t=30 s our board has LEFT THE INTRO
+  ENTIRELY** -- a different code region ($4Cxx), **ZERO sound-engine ticks**, and
+  a byte-stable page profile across t=30/45/60 s (396k/404k/396k for $4Cxx).
+  **Altirra is still in mode 9 at t=40 s+.**
+  **=> THE ORIGINAL OBSERVATION IS THE RIGHT ONE, NOW ON MATCHED INSTRUMENTS:
+  OUR INTRO IS FAR SHORTER THAN ALTIRRA'S -- ours ends by ~26 s, Altirra's is
+  still running at 40 s. The man's scene is in the part we never play.**
+  **NEXT: find what CUTS the intro short.** Not a wait, not the render path, not
+  a rate difference in the sound engine (those match within ~14%). Compare the
+  SCENE SEQUENCE itself: which scenes each machine plays and in what order,
+  anchored on the $3043 dispatcher and the $353A P/M uploader, using staged
+  snapshots at MATCHED wall-clock points on both sides.
+  ############################################################################
+
+  ############################################################################
   **THE PER-FRAME COUNTER PROBE IS UNDER-POWERED — AND SO IS EVERY 1 Hz SAMPLER
   FOR THIS QUESTION (2026-08-15).**
   `altwait.py` sampled $C2/$CA/$BC and the PC once per frame for 1500 frames
