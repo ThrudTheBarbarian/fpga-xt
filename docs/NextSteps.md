@@ -725,6 +725,58 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE LEFT-EDGE BAR: MECHANISM FOUND (2026-08-15). GTIA-MODE RECOLOUR IS
+  UNPRIMED FOR THE FIRST 2 COLOUR CLOCKS OF EVERY LINE.**
+  Measured with `graboverlay` (XL plane, 320x192 BMP) during the intro, then the
+  colours mapped through `hdl/palette/atari_ntsc.hex`:
+        our whole screen: **$10 $12 $14 $16 $18 $1A $1C $1E**
+                          = **hue 1, ALL EVEN LUMINANCES** = exactly GTIA mode 9
+                            (16 luminances of COLBK's hue), PRIOR[7:6]=01
+        the bar (cols 0-3, 592 px, 148 of 192 rows, 2 frames 6 s apart):
+                          **$28 = hue 2 -- THE WRONG HUE**
+  In mode 9 `gtia_special` computes `color = {colbk[7:4], nibble}`, so EVERY
+  playfield pixel must carry COLBK's hue. A hue-2 pixel never went through the
+  recolour: it took `sel_color`, not `gtia_color`.
+  **WHY (gtia_stage.sv:204-221):** `line_start` clears `win_ready` and
+  `gtia_win` to 0. Re-priming takes TWO steps -- an ODD colour clock loads
+  `win_ready <= pf_win`, and the NEXT EVEN clock does `gtia_win <= win_ready`.
+  **So gtia_win is 0 for the first 2 colour clocks of every line**, and
+  `resolved = (gtia_active && gtia_win && !win_is_object) ? gtia_color :
+  sel_color` therefore emits the UN-RECOLOURED playfield colour there.
+        2 colour clocks = **4 pixels** = columns 0-3            MATCHES
+        un-recoloured   = raw register hue, not COLBK's        MATCHES ($28)
+        every line the playfield is active = 148 of 192 rows   MATCHES
+  **THE SAME PIPELINE CARRIES `gtia_nib`**, cleared identically, so the first
+  pair's nibble is stale/zero as well.
+  **OPEN BEFORE FIXING:** COLBK's traced writes are $00/$50/$30 (hue 0/5/3),
+  none of them hue 1 or $28, so where the hue-1 background and the hue-2 bar
+  each come from is NOT yet fully derived -- **do not patch on this alone.**
+  Next: a `tb_gtia_stage` case that asserts the first 2 colour clocks after
+  line_start in a GTIA mode, which will either reproduce this or refute it.
+  **DO NOT "FIX" BY SHIFTING cc_pos** (a2_video.sv:227-233: everything positional
+  shares one origin; shifting it slides objects across the playfield).
+
+  **RETRACTION #9 -- my own "HPOS $00 paints the left edge".** `antic_wb_adapt`:
+  the framebuffer is 320 px taken from **px_pos 80..399** ("a normal window opens
+  at machine cycle 20 and 20*4 = 80"). With `cc_pos = px_pos[8:1] - 1`, an object
+  at HPOS h lands at **plane column 2h - 78**, so HPOS $00 -> column **-78**, OFF
+  THE PLANE. The sim emission at cc 0..1 is real but never reaches the screen.
+  T10 was left REPORTING rather than ASSERTING precisely so this could be undone
+  without having baked in the wrong mechanism.
+
+  **ALTIRRA: A HUNG BRIDGE MAY JUST BE PAUSED.** It had been silently paused
+  since the breakpoint work, and **the Python client library HANGS against a
+  paused emulator with no error**. The RAW protocol says so at once:
+        s=socket.create_connection(('127.0.0.1',6503)); f=s.makefile('rwb')
+        cmd('HELLO '+token) -> {"ok":true,...,"paused":true}   then cmd('RESUME')
+  Token file: line 1 `tcp:127.0.0.1:6503`, line 2 the token. Verbs: HELLO, PING,
+  RESUME, COLD_RESET, FRAME 1, REGS, RAWSCREEN [path=..|inline=true],
+  RENDER_FRAME, DISASM. **BPCLEARALL is NOT a verb.**
+  **`alt.rawscreen()` IS NTSC-FILTERED** -- 672x224 XRGB8888 with **790-986
+  distinct colours** where ours has 9. **Do NOT diff its colours against ours.**
+  ############################################################################
+
+  ############################################################################
   **PRIOR $54 UNIFIES THE BARS AND THE MISSING MAN (2026-08-15).**
   PRIOR is **$54 on BOTH machines** (ours written once at $33AF; Altirra's
   `alt.pmg()` agrees). It decodes as:
