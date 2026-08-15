@@ -35,6 +35,11 @@ module tb_rom_integ;
         .rom_addr(rom_addr), .rom_data(rom_data), .rom_we(rom_we)
     );
 
+    // ANTIC keeps fetching on port B while the ROM window writes port A — the
+    // board's real condition (the desktop is on screen during every upload).
+    logic [15:0] tb_dma_addr = 16'd0;
+    always_ff @(posedge clk_sally) tb_dma_addr <= tb_dma_addr + 16'd1;
+
     // ---- sally_mem CPU-side probe ----
     logic [15:0] addr = 0; logic [7:0] data_in = 0; logic rw = 1; wire [7:0] data_out;
     logic [7:0] portb = 8'h03;   // OS ROM ON (bit0=1), BASIC off (bit1=1)
@@ -65,7 +70,7 @@ module tb_rom_integ;
         .m_axi_wdata(ax_wdata), .m_axi_wstrb(ax_wstrb), .m_axi_wlast(ax_wlast), .m_axi_wvalid(ax_wvalid),
         .m_axi_wready(ax_wready), .m_axi_bvalid(ax_bvalid), .m_axi_bready(ax_bready),
         .rom_addr(rom_addr), .rom_data(rom_data), .rom_we(rom_we),   // <== the wired link
-        .stack_op(1'b0), .s_high(4'd0), .dma_clk(clk_sally), .dma_addr(16'd0), .dma_rdata()
+        .stack_op(1'b0), .s_high(4'd0), .dma_clk(clk_sally), .dma_addr(tb_dma_addr), .dma_rdata()
     );
     axi_slave_mem u_axi (
         .clk(clk_sally), .rst(rst),
@@ -203,6 +208,30 @@ module tb_rom_integ;
                 $display("  !!  T5: ALL FOUR LANDED ON THE ALIGNED ADDRESS (last wins) — 3/4 of every group is LOST");
             else
                 $display("  !!  T5: aligned writes do not reconstruct the group");
+        end
+
+        // T6: BOARD-FAITHFUL upload conditions. On the board upload_image runs with
+        // the 6502 HELD IN RESET, so sally_mem's `rdy` is LOW for the whole burst
+        // (mem_rdy = fid_mem_step, fpga_xt_top:1080) — and the read latch is gated
+        // `else if (rdy)`, while the mem write is NOT.  ANTIC also keeps fetching on
+        // port B throughout (tb_dma_addr, above).  Neither condition was simulated
+        // before, and both are live every time the board does an eject.
+        $display("[T6] upload with rdy LOW (CPU in reset) + ANTIC DMA on port B");
+        portb = 8'hFF;                              // BASIC off: window is RAM
+        repeat (2) @(posedge clk_sally);
+        cpu_wr(16'hB200, 8'h11); cpu_wr(16'hB201, 8'h22);
+        repeat (4) @(posedge clk_sally);
+        tb_rdy = 1'b0;                              // <-- CPU held in reset
+        axi_wr(16'hB200, 8'hC1);
+        axi_wr(16'hB201, 8'hC2);
+        repeat (32) @(posedge clk_sally);
+        tb_rdy = 1'b1;                              // release
+        repeat (4) @(posedge clk_sally);
+        portb = 8'hFD;                              // BASIC on
+        repeat (4) @(posedge clk_sally);
+        begin logic [7:0] v;
+            cpu_rd(16'hB200, v); chk("T6 B200 uploaded while rdy low", v, 8'hC1);
+            cpu_rd(16'hB201, v); chk("T6 B201 uploaded while rdy low", v, 8'hC2);
         end
 
         if (nfail == 0) $display("*** ROM_INTEG OK ***");
