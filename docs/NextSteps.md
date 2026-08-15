@@ -808,6 +808,37 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   `$022F`/`$0230`/`$026F`. Take a trace between them (e.g. `dtrace 10`) and
   verify its window by instruction count before concluding anything.
 
+  **NEW OPEN ITEM — THE LOGO BAND'S HUE DIFFERS, NOW SCENE-MATCHED.** With `-a`
+  our timeline matches the reference's, so the two can finally be compared at
+  equal elapsed time. Logo band (ours y=25..84 x=20..303; Altirra y=41..101
+  x=28..311, i.e. the same rectangle), sampled at t = 6, 10, 14, 20, 26, 32 s:
+
+        ours     **hue1 100.0%** at EVERY sample
+        Altirra  **hueB 54.1%, hue1 26.5%, hueC 19.5%** at EVERY sample
+
+  In GTIA mode 9 every playfield pixel must carry COLBK's hue, and Altirra's
+  COLBK is `$10` (hue 1) — so **those scanlines are not mode 9 on the reference,
+  and they are on ours.** That is the same fault family as the bar and the man
+  (a GTIA mode applied where it does not belong), which makes it worth chasing.
+
+  **BUT IT IS NOT ESTABLISHED, AND MUST NOT DRIVE AN RTL CHANGE YET:**
+  - Altirra's band is **static** across all samples while ours alternates
+    (8680 <-> 12344 bright px), so the two may still not be showing the same
+    scene content even at equal elapsed time.
+  - **The display list could NOT be read.** `SDLSTL` ($0230) still reads `$BA00`,
+    but `$BA00` now contains **6502 code** (`18 69 4A` = CLC/ADC #$4A), so the
+    shadow is stale and the game drives ANTIC's DLIST directly. An earlier peek
+    of `$BA00` did decode sensibly (six `$70` blanks, `$4F` LMS mode F at
+    `$B050`, then `$0F` lines), so that memory is reused during the run.
+    **Any display-list dump taken via `SDLSTL` here is worthless — confirm the
+    bytes actually decode as a display list before believing them.**
+
+  **Next step if picked up:** get the REAL display list (ANTIC `DLISTL/H`
+  `$D402/$D403` are write-only, so find the game's own copy or trace the writes)
+  and check whether the logo lines use a non-F ANTIC mode. If they do, the
+  question becomes whether PRIOR's GTIA bits are being applied per-scanline or
+  per-frame on our side.
+
   **Altirra decode gotcha (cost a null result tonight):** RAWSCREEN needs
   **nearest-neighbour** palette matching — exact lookup maps nothing and reports
   a confident, wholly false 100% "unmatched". Frames are **336x224 RGBA**
