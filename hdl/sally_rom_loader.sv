@@ -141,6 +141,20 @@ module sally_rom_loader (
                                       : s_axi_wstrb[1] ? s_axi_wdata[15:8]
                                       : s_axi_wstrb[2] ? s_axi_wdata[23:16]
                                                        : s_axi_wdata[31:24];
+                        // Take the byte's low address bits from the STROBE, which
+                        // is what actually identifies the byte, not from AWADDR.
+                        // The two agree when the master presents an exact byte
+                        // address (what the Zynq PS does today, proven on silicon:
+                        // the ROM diag latched last_addr = $FFFF, an unaligned
+                        // address). They DISAGREE if a master ever word-aligns
+                        // AWADDR and uses lane strobes — then every 4-byte group
+                        // lands on the aligned address, last-one-wins, silently
+                        // losing 3 bytes in 4 and corrupting the OS/BASIC upload.
+                        // sim/tb_rom_integ.sv T5 covers exactly that.
+                        push_addr[1:0] <= s_axi_wstrb[0] ? 2'd0
+                                        : s_axi_wstrb[1] ? 2'd1
+                                        : s_axi_wstrb[2] ? 2'd2
+                                                         : 2'd3;
                         fifo_push    <= 1'b1;
                         wstate       <= WST_B;
                     end
