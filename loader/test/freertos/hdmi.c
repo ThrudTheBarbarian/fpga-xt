@@ -201,6 +201,85 @@ static void sii_enable_output(void)
       puthex8(a); klog(" "); puthex8(p); klog(" "); puthex8(s); klog(" "); puthex8(sp); klog("\r\n"); }
 }
 
+/* Turn on the I2S audio path.  Order and register meanings are straight from
+ * docs/HDMI/SIL9022a-programmer.pdf, "Configuring Audio using I2S" — the
+ * sequence matters (TPI 0x21-0x25 only exist once 0x26[7:6] selects I2S, and
+ * the chip starts sending Audio InfoFrames on the UNMUTE write, so that write
+ * has to come last).
+ *
+ * The fabric feeds MCLK/SCK/WS/SD0 from one clock (hdl/hdmi_i2s_out.sv):
+ * MCLK = 256 fs on ball U15, SCK = MCLK/4, WS = MCLK/256, WS low = LEFT, data
+ * changing on SCK's falling edge, MSB first, one-bit I2S delay, 24 bits
+ * left-justified in a 32-bit slot.  Every field below just tells the chip that.
+ *
+ * MCLK is not optional here: in I2S mode the transmitter computes the CTS it
+ * sends the sink by dividing MCLK by the ratio in 0x20[6:4].  It never measures
+ * WS.  Get that ratio wrong and the far end regenerates the wrong audio clock
+ * no matter how correct the bits are. */
+static void sii_enable_audio(void)
+{
+    /* 2. select I2S, layout 0 (2-channel), MUTED while we configure */
+    sii_write(0x26, 0x90);      /* [7:6]=10 I2S, [5]=0 layout0, [4]=1 mute      */
+
+    /* 3. incoming SD format */
+    sii_write(0x20, 0x90);      /* [7]=1   chip samples SD on SCK's RISING edge
+                                 *         (we change data on the falling edge)
+                                 * [6:4]=001 MCLK = 256 fs
+                                 * [3]=0   WS LOW is the left channel
+                                 * [2]=0   data left-justified in the slot
+                                 * [1]=0   MSB first
+                                 * [0]=0   one-bit WS-to-SD shift, per I2S      */
+
+    /* 4. map SD0 -> FIFO#0; a stereo I2S line fills FIFO#0 with both channels,
+     *    so FIFO#1..3 stay disabled (writing them with bit7=0). */
+    sii_write(0x1F, 0x80);      /* enable, SD0, FIFO#0                          */
+    sii_write(0x1F, 0x01);      /* FIFO#1 disabled                              */
+    sii_write(0x1F, 0x02);      /* FIFO#2 disabled                              */
+    sii_write(0x1F, 0x03);      /* FIFO#3 disabled                              */
+
+    /* 5. rate and sample size (not derivable from an I2S stream) */
+    sii_write(0x27, 0xD8);      /* [7:6]=11 24-bit, [5:3]=011 48 kHz            */
+
+    /* 6. channel-status header for the stream we put on the wire */
+    sii_write(0x21, 0x00);      /* byte 0: consumer, PCM, no copyright          */
+    sii_write(0x22, 0x00);      /* byte 1: category code                        */
+    sii_write(0x23, 0x00);      /* byte 2: source / channel number              */
+    sii_write(0x24, 0x02);      /* byte 3: accuracy 0, fs 0010 = 48 kHz         */
+    sii_write(0x25, 0x0B);      /* byte 4: word length 1011 = 24 bits           */
+
+    /* 7. Audio InfoFrame (CEA-861-E).  For PCM a source sets coding type,
+     *    sample size and frequency to "refer to stream header"; only the
+     *    channel count and speaker allocation are stated here. */
+    {
+        uint8_t inf[14]; unsigned i; uint8_t sum;
+        inf[0] = 0x84;                       /* type: Audio InfoFrame           */
+        inf[1] = 0x01;                       /* version                         */
+        inf[2] = 0x0A;                       /* length                          */
+        inf[3] = 0x00;                       /* checksum, filled below          */
+        inf[4] = 0x01;                       /* DB1: CT=0 refer-to-header, CC=2ch
+                                              *      (must match 0x26[5] layout) */
+        for (i = 5; i < 14; i++) inf[i] = 0x00;   /* DB2..DB10: refer to header,
+                                                   * CA=0 (stereo), no downmix   */
+        sum = 0;
+        for (i = 0; i < 14; i++) if (i != 3) sum = (uint8_t)(sum + inf[i]);
+        inf[3] = (uint8_t)(0x100u - sum);
+
+        sii_write(0xBF, 0xC2);               /* enable + repeat, select Audio   */
+        /* The chip latches the group when its LAST byte lands (0xCD for Audio),
+         * so write straight through 0xC0..0xCD. */
+        for (i = 0; i < 14; i++) sii_write((uint8_t)(0xC0 + i), inf[i]);
+    }
+
+    /* 9. same selection again, mute cleared — this write starts the audio */
+    sii_write(0x26, 0x80);      /* [7:6]=10 I2S, [5]=0 layout0, [4]=0 unmuted   */
+
+    klog("[hdmi] audio 26/20/27=");
+    { uint8_t a = 0, b = 0, c = 0;
+      sii_read(0x26, &a); sii_read(0x20, &b); sii_read(0x27, &c);
+      puthex8(a); klog(" "); puthex8(b); klog(" "); puthex8(c);
+      klog(" (I2S 48k/24-bit, MCLK=256fs)\r\n"); }
+}
+
 void hdmi_init(void)
 {
     sii9022_reset();
@@ -216,6 +295,7 @@ void hdmi_init(void)
     }
     if (!ok) { klog("[hdmi] SiI9022 not responding (devid != 0xB0)\r\n"); return; }
     sii_enable_output();
+    sii_enable_audio();
     klog("[hdmi] SiI9022 devid=0xB0, 1080p60 enabled\r\n");
 }
 
@@ -270,6 +350,10 @@ void hdmi_reinit(void)
     sii_write(0x1A, 0x11);                /* HDMI mode, TMDS OFF               */
     gt_delay_us(500000);                  /* 500 ms of dark — a real unplug    */
     sii_enable_output();
+    sii_enable_audio();                   /* the unmute write re-arms the Audio
+                                           * InfoFrame, so re-run it with the
+                                           * video rather than leaving a silent
+                                           * link after a replug               */
     i2c_unlock();
     klog("[hdmi] soft-replug: TMDS cycled + output re-enabled\r\n");
 }
