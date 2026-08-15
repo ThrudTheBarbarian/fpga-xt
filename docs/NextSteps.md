@@ -899,20 +899,41 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   registers peeked off Altirra at the instant the man is on screen, i.e. the
   test that pins `6ef5bab2`.
 
-  **WHY IT FAILS, and it is instructive:** `pri_start` is driven by
-  `pres_valid`, which was NOT delayed, so the priority network still resolves at
-  the old instant and reads a presence that has not arrived yet. Delaying the
-  DATA without delaying the HANDSHAKE loses the object rather than moving it.
+  **WHY IT FAILS — and this CORRECTS an earlier explanation in this file.** The
+  first account said the delay "loses the object because `pres_valid` was not
+  delayed". **That is WRONG**: `pm_align` shows the player still rendered, 16 px
+  wide, simply moved to 180. Nothing is lost.
 
-  **AND THE OBVIOUS ALTERNATIVE HAS A CATCH.** Shifting the object match itself
-  (`cc_pos - 2` in `gtia_obj_walk` under a GTIA mode) would move presence and
-  its valid together — but the walk is SHARED with collisions, and collisions
-  are currently correct precisely because they pair the EARLY nibble
-  (`nib_ready`) with un-delayed objects. Shift the walk and the collision path
-  needs `gtia_nib` too, which puts the passing ACID collision tests at risk.
-  **So the fix is a two-sided change (display AND collision phase together), not
-  a one-liner.** Both attempts reverted; tree clean, `gtia_stage` green,
-  `pm_align` back to baseline on a forced rebuild.
+  **The real reason is that ATTEMPT 2 MOVES THE WRONG THING.** Read the absolute
+  positions, not the relative ones:
+
+        ordinary  playfield px0 at emitted 96; edge (pf-relative 80) at 176  CORRECT
+                  player HPOS 88 -> pf-relative 80 -> emitted 176            CORRECT
+        mode 9    player still at 176                                        CORRECT
+                  edge at 180 -> pf-relative 84, but it should be 80         **LATE by 4**
+
+  **So the OBJECTS ARE RIGHT and the GTIA-MODE PLAYFIELD IS LATE.** TM checks the
+  player at `cc == HPOS` (it sets `cc = $6c + i*8` and steps once), which is the
+  CORRECT SPEC — a player at HPOS h belongs at colour clock h. Attempt 2 made
+  `pm_align` agree by shifting the object to the WRONG ABSOLUTE PLACE, and TM
+  caught exactly that. **The test was right and the fix was wrong.**
+
+  **THE FIX MUST ADVANCE THE GTIA-MODE PLAYFIELD BY A PAIR, NOT DELAY THE
+  OBJECTS.** That is what the header calls causally impossible — and it is,
+  *given when antic2 currently delivers the pairs*. So the real change is
+  upstream: antic2 must deliver the GTIA-mode pairs two colour clocks earlier
+  relative to the object counter (equivalently, the nibble assembly must start a
+  pair sooner), so the assembled nibble is ready without costing extra time on
+  screen. This is the same family as the note at `a2_video.sv:218-244` that
+  antic2's beam sits SIX colour clocks behind emu's, compensated on CPU writes
+  by `HPOS_CC_DELAY = 6` but never on the playfield data path.
+
+  **AND DO NOT "FIX" IT BY SHIFTING THE OBJECT MATCH EITHER** (`cc_pos - 2` in
+  `gtia_obj_walk` under a GTIA mode). That has the same defect as attempt 2 — it
+  moves objects that are already correct — and it would additionally drag the
+  COLLISION path, which is right today precisely because it pairs the EARLY
+  nibble (`nib_ready`) with un-delayed objects. Both attempts reverted; tree
+  clean, `gtia_stage` green, `pm_align` back to baseline on a forced rebuild.
 
   **A REAL FIX MUST BE GATED ON:** `make -C sim pm_align` (mode-9 edge must reach
   176 with the player still at 176), `gtia_stage`, `antic2_pxpos`, the left-edge
