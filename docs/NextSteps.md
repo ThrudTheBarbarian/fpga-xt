@@ -328,14 +328,25 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 - none
 
 ## Audio (PCM1808 capture + HDMI audio)
-- **FPGA SCKI for the PCM1808 (the carrier's one new audio clock)** — the SiI9022A
-  is MCLK-less (takes only BCLK/LRCLK/DATA), so no master clock exists in the design
-  today. The PCM1808 *requires* a 256 fs SCKI. **Generate 12.288 MHz in the FPGA
-  (MMCM) and route it out to the carrier as the PCM1808 SCKI**; derive BCK (÷4 =
-  3.072 MHz) and LRCK (÷256 = 48 kHz) from that *same* domain so SCKI/BCK/LRCK stay
-  synchronous (else the ADC resync-mutes). Make that 12.288 MHz MMCM the single root
-  for the SiI9022 BCLK/LRCLK too, so capture and playback are sample-locked. *(src:
-  docs/OS/pcm1808-audio-in.svg)*
+- **HW LISTEN: does HDMI audio actually reach a speaker?** The fabric drives the
+  SiI9022A's MCLK/SCK/WS/SD0 (`hdl/hdmi_i2s_out.sv`, balls U15/T17/R18/V17) and the
+  PS configures and unmutes the chip's I2S path (`sii_enable_audio()` in
+  `loader/test/freertos/hdmi.c`). Sim passes and the register readback is logged
+  (`[hdmi] audio 26/20/27=`), but nothing has been heard yet. Play BallBlazer's
+  intro and listen; if silent, read back 0x26/0x20/0x27 and check the sink's own
+  audio-status display before touching the RTL.
+- **Route the audio MMCM out to the carrier as the PCM1808 SCKI** — the 256 fs
+  master clock now EXISTS: `u_mmcm3` in `fpga_xt_top` produces 12.28448 MHz (VCO
+  1425 / 116) as the single audio root, already feeding the SiI9022A's MCLK. The
+  PCM1808 *requires* a 256 fs SCKI, so take it from that same clock and derive BCK
+  (÷4) and LRCK (÷256) from it too, or the ADC resync-mutes. Capture and playback
+  are then sample-locked by construction. *(src: docs/OS/pcm1808-audio-in.svg)*
+  > Note for anyone reading an older revision of this file: it used to say the
+  > SiI9022A is "MCLK-less (takes only BCLK/LRCLK/DATA)". **That is wrong** and it
+  > cost a design iteration. Schematic sheet 10 shows MCLK on pin 38, fed from PL
+  > ball U15 through R116 (0R); the onboard 12 MHz oscillator Y3 is isolated by
+  > R115 (DNP). In I2S mode the chip computes CTS by dividing MCLK — it never
+  > measures WS — so without MCLK there is no audio at all.
 - **Repoint `pcm1808_rx.sv` off `clk_bus`** — today it derives BCK/LRCK from
   `clk_bus` (fractional-N); move them to the 12.288 MHz MMCM dividers. Fix the stale
   header comments ("slave mode, no SCKI", "FMT0=0,FMT1=0" — PCM1808 has one FMT pin;
@@ -343,9 +354,6 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 - **Add `adc_sclki_o` + `adc_sdata_i` top-level pads + carrier pin assignment**, and
   the per-channel analog front-end (1 µF DC-block + 100 Ω + 1 nF; VCC 5 V / VDD 3.3 V;
   MD0=MD1→GND). *(src: pcm1808-audio-in.svg)*
-- **HDMI audio islands** — route the POKEY I²S stream out over the SiI9022A's audio
-  islands (BCLK/LRCLK/DATA path; MCLK-less). *(desired; not on critical path; src:
-  docs/HDMI/hdmi.md, docs/Zynq/FPGA.md)*
   
 ## Memory / banking (DDR3 banked window — parallel track, not on boot path)
 - none
