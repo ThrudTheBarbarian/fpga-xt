@@ -816,28 +816,40 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
         ours     **hue1 100.0%** at EVERY sample
         Altirra  **hueB 54.1%, hue1 26.5%, hueC 19.5%** at EVERY sample
 
-  In GTIA mode 9 every playfield pixel must carry COLBK's hue, and Altirra's
-  COLBK is `$10` (hue 1) — so **those scanlines are not mode 9 on the reference,
-  and they are on ours.** That is the same fault family as the bar and the man
-  (a GTIA mode applied where it does not belong), which makes it worth chasing.
+  **THE DISPLAY LIST IS NOW KNOWN, AND IT RULES OUT THE OBVIOUS EXPLANATION.**
+  The bridge has an **`ANTIC`** verb and a decoded **`DLIST`** verb — use them;
+  do not chase this through memory. Altirra reports:
 
-  **BUT IT IS NOT ESTABLISHED, AND MUST NOT DRIVE AN RTL CHANGE YET:**
-  - Altirra's band is **static** across all samples while ours alternates
-    (8680 <-> 12344 bright px), so the two may still not be showing the same
-    scene content even at equal elapsed time.
-  - **The display list could NOT be read.** `SDLSTL` ($0230) still reads `$BA00`,
-    but `$BA00` now contains **6502 code** (`18 69 4A` = CLC/ADC #$4A), so the
-    shadow is stale and the game drives ANTIC's DLIST directly. An earlier peek
-    of `$BA00` did decode sensibly (six `$70` blanks, `$4F` LMS mode F at
-    `$B050`, then `$0F` lines), so that memory is reused during the run.
-    **Any display-list dump taken via `SDLSTL` here is worthless — confirm the
-    bytes actually decode as a display list before believing them.**
+        DLIST = **$3C7C** (SDLSTL's $BA00 is STALE -- see the trap below)
+        198 entries: 15 blank lines, then **ANTIC MODE $F for the ENTIRE screen**
+        DMACTL $3E, **NMIEN $40 (VBI only -- DLIs are DISABLED)**, PRIOR $54
 
-  **Next step if picked up:** get the REAL display list (ANTIC `DLISTL/H`
-  `$D402/$D403` are write-only, so find the game's own copy or trace the writes)
-  and check whether the logo lines use a non-F ANTIC mode. If they do, the
-  question becomes whether PRIOR's GTIA bits are being applied per-scanline or
-  per-frame on our side.
+  So every playfield line on the reference **is** mode F under GTIA mode 9.
+  **The earlier reading of this — "those scanlines are not mode 9 on the
+  reference" — is WRONG; they are.** With DLIs off, more than one hue in a frame
+  can only come from **COLBK being rewritten DURING the frame** by a WSYNC-paced
+  kernel. `PMG` confirms COLBK moves: it read `$10` at one sample and `$00` at
+  another, and the peek lands at `beam_y=248`, i.e. **in vertical blank** — so
+  register peeks say nothing about the value in force over the logo band.
+
+  **WHAT IS ACTUALLY OPEN:** ours renders that band in one hue, the reference in
+  three. That is consistent with mid-screen COLBK writes landing differently on
+  our side — but it is equally consistent with the two machines simply showing
+  different content, since Altirra's band is **static** across all samples while
+  ours alternates (8680 <-> 12344 bright px). **Not established. Must not drive
+  an RTL change.**
+
+  **Next step if picked up:** sample COLBK per scanline rather than per frame —
+  the register value in vertical blank is the wrong measurement. Find the
+  kernel's COLBK writes (they will be WSYNC-paced, not DLI-driven) and compare
+  when each lands against the beam.
+
+  **TRAP THAT COST AN HOUR: `SDLSTL` ($0230) IS STALE HERE.** It reads `$BA00`,
+  but `$BA00` holds **6502 code** (`18 69 4A` = CLC/ADC #$4A) — the game drives
+  ANTIC's DLIST directly and reuses that memory. An earlier peek of `$BA00` did
+  decode plausibly as a display list, which is exactly what made it dangerous.
+  **Confirm bytes decode as the structure you think they are before reasoning
+  from them, and prefer the `ANTIC`/`DLIST` verbs.**
 
   **Altirra decode gotcha (cost a null result tonight):** RAWSCREEN needs
   **nearest-neighbour** palette matching — exact lookup maps nothing and reports
