@@ -935,6 +935,38 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   recorded above as failures). **It is a design change: get Simon's sanction
   before spending it, and budget the full ACID sweep behind it.**
 
+  **ATTEMPT 3 FIXES THE GEOMETRY EXACTLY, BUT THE UNIT BENCH CANNOT VALIDATE IT.
+  REVERTED.** Two changes together, and each is worth exactly 2 px:
+   1. `a2_video`: an EARLY pair — `cc_tick_e = px_tick && px_odd` with
+      `an_pair_e = px_hires ? {pv_cap_a[0], px_val[0]} : px_val`, sampled at the
+      END of the colour clock where `pv_cap_a` already holds this clock's first
+      half and `px_val` IS its second. Alone: edge 180 -> **178**.
+   2. `gtia_stage`: run the nibble assembly off that strobe and hand the
+      completed pair STRAIGHT to the display (the second register existed only
+      to re-align to a pair boundary, and with the early strobe completion is
+      already on one). Together: edge 180 -> **176**, player stays 176,
+      **ordinary modes bit-identical** — i.e. EXACTLY Altirra's geometry.
+
+  **WHY IT WAS REVERTED ANYWAY:** `tb_gtia_stage` cannot model it. In the CHIP,
+  `an_pair_e` at `cc_pos = C` carries data for **C+1** (because `cc_pos` is
+  `px_pos-1` and the captures are for the current clock); in the BENCH,
+  `an_pair` at `cc_tick` is already the current clock's data — **the bench models
+  no capture delay at all**. So the two differ by one colour clock and **no
+  single completion parity satisfies both**: with the chip-correct parity the
+  bench forms the wrong nibble (T11 reads `$52`/nibble 2 where `$5b`/nibble B is
+  intended). Making the bench faithful means rewriting its timing model AND
+  re-deriving which nibble every T11 case forms — **by trial and error, on the
+  suite that protects the man (TM)**. That is a separate, careful piece of work,
+  not something to converge on by guessing.
+
+  **STATE: the chip-level fix is PROVEN against the reference (`pm_align` exact,
+  matching Altirra) and the unit-level validation is NOT done.** The stimulus
+  model in `tb_gtia_stage` must gain a capture-delay stage FIRST; then the fix
+  can be re-applied and judged honestly. Backups of the working change are in
+  the session scratchpad (`gs.bak4`, `av.bak4`) but the diff is small enough to
+  redo from this description. **Do not re-attempt without fixing the bench model
+  first — otherwise you will be tuning tests to match a change.**
+
   **THE FIX MUST ADVANCE THE GTIA-MODE PLAYFIELD BY A PAIR, NOT DELAY THE
   OBJECTS.** That is what the header calls causally impossible — and it is,
   *given when antic2 currently delivers the pairs*. So the real change is
