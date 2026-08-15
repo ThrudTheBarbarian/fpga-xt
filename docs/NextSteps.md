@@ -734,10 +734,39 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 
   **THIS REVERSES THE DIRECTION OF THE TIMING QUESTION** and fits the disk
   pacing: if our virtual drive delivers **faster** than a real 1050, every
-  load-gated intro stage completes early and the intro is compressed. Our
-  measured **14.3 sectors/s (~1830 B/s)** is the number to check against a real
-  drive's cadence. See [[sio_virtual_drive_state]] and [[atx_and_fast_loaders]]
-  (BallBlazer bypasses SIOV and drives POKEY/PIA directly).
+  load-gated intro stage completes early and the intro is compressed.
+
+  **CONFIRMED BY EXPERIMENT — `xlboot -a` REPRODUCES THE REFERENCE INTRO.**
+  `xlboot -a` selects authentic drive timing (**~130 ms/sector**, vs our measured
+  **~70 ms/sector** = ~1.9x too fast). Same 320x192 grab sweep, ~0.57 s apart:
+
+        DEFAULT (72 grabs)   man appears **twice**  -- grabs 20-24 $36, 30-34 $56
+                             **gameplay by grab ~50 (t ~ 28 s)**
+        `-a`    (96 grabs)   man appears **five times, ALTERNATING**:
+                             28-32 $36, 47-51 $56, 67-71 $36, 77-80 $56, 92-95 $36
+                             **STILL IN THE INTRO AT GRAB 95 (t ~ 54 s)**
+
+  Altirra was likewise still in intro code at 55 s, so **`-a` matches the
+  reference and the default does not.** The two characters take turns; with the
+  fast default the sequence is compressed to roughly double speed and most of
+  the alternation is lost — which is what "drives in, stops, and waits" looks
+  like when the surrounding animation has been cut short.
+
+  **The mechanism was already anticipated in the code** (`loader/test/freertos/
+  xl_boot.c:640-651`): *"BallBlazer's INTRO ANIMATES WHILE ITS SECTORS STREAM --
+  so if we deliver in too tight a burst the guest's SIO ISR starves the VBI
+  animation and objects stop, jump, or vanish."* `g_sio_delay_us` (default 0) and
+  `g_sio_rot` (default **1**, ATX-only) are the knobs. Note `g_sio_rot` alone is
+  **not sufficient** — it was already on for this measurement; the additional
+  per-sector service time from `-a` is what closes the gap. See
+  [[sio_virtual_drive_state]] and [[atx_and_fast_loaders]] (BallBlazer bypasses
+  SIOV and drives POKEY/PIA directly, so the calibrated SIOV model never applied).
+
+  **DECISION FOR SIMON:** `-a` is off by default because it also means authentic
+  (slow) load times. The measurement says ATX titles whose intro animates from
+  the VBI need it. Options: make `-a` the default for ATX, fold the extra
+  service time into the existing ATX-scoped `g_sio_rot` path, or leave it opt-in
+  and document it per title.
 
   **CORRECTION:** the older note that "Altirra reaches gameplay at t~22 s" is
   **contradicted** by this measurement and should not be relied on.
