@@ -725,6 +725,52 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **PRIOR $54 UNIFIES THE BARS AND THE MISSING MAN (2026-08-15).**
+  PRIOR is **$54 on BOTH machines** (ours written once at $33AF; Altirra's
+  `alt.pmg()` agrees). It decodes as:
+        bits 7:6 = 01  -> **GTIA mode 9** (16 luminances of COLBK's hue)
+        bit  4   = 1   -> fifth player (missiles join PF3)
+        bits 3:0 = 0100 -> **priority scheme 2: PLAYFIELD ABOVE ALL PLAYERS**
+  Our scheme-2 table (`gtia_priority.sv` rank_of, case 2) ranks PF0-3 at 0-3 and
+  P0-3 at 4-7 -- **CORRECT**. The colour path is right too: gtia_stage recolours
+  only a playfield/background win (`win_is_object = win_src >= 4'd6`), so players
+  keep their own colour in GTIA modes. **Nothing is wrong in GTIA here.**
+  **THE CONSEQUENCE IS THE POINT:** with PF above P0-3, a player is visible ONLY
+  where the playfield is background. **Any spurious playfield content HIDES the
+  players behind it.** The LEFT-EDGE BARS are exactly spurious playfield content,
+  and their height is a MODE LINE's.
+  **=> THE BARS AND THE MISSING MAN ARE PLAUSIBLY ONE BUG, NOT TWO:** our ANTIC
+  playfield carries content where Altirra's carries background, and PRIOR $54
+  converts that into a hidden object. **This also explains why every P/M
+  measurement matched** -- the players are written, positioned and shaped
+  correctly, and then covered.
+  **=> THE SUSPECT MOVES FROM GTIA TO ANTIC'S PLAYFIELD GENERATION.**
+  **NEXT:** compare the PLAYFIELD, not the players. `alt.rawscreen()` gives
+  Altirra's screen; ours needs a board framebuffer grab (plane_grab -- see
+  [[plane_grab_cache_and_oracles]], the stale-cache phantom was FIXED in
+  d6f2c77a, trust devmem probes). The bars are persistent, so they do NOT need
+  tight phase matching -- **capture the bar region on both and diff it.** That is
+  the cheapest decisive experiment left.
+
+  **SIM STATUS OF THE LIVE RENDER PATH (all pass, commits 15fcb818, 14c42532):**
+  gtia_obj_walk, gtia_stage (26 of 28 fabric clocks), gtia_priority, gtia_collide.
+  * **T8 (new)** drives `cc_pos` the way a2_video really does -- an 8-bit
+    subtraction presenting **$FF at line start**, where every existing case fed a
+    clean 0-upward count. A player at **HPOS $30** (x_left 0, the true left edge,
+    BallBlazer's most-written HPOSP0) spans cc **48..55** correctly, and an object
+    at $FF struck on the wrapped clock stays within its 8 clocks. **The cc_pos
+    wrap lead is RETIRED.**
+  * **A REAL TEST-QUALITY HOLE:** both benches instantiated their DUT with input
+    **`resize` DANGLING** -- it means "SIZEP was WRITTEN this colour clock" and
+    gates the resize clock and the 1x-alt lockup, so it floated **x** into all of
+    it. Both now drive it. Tying it low is NOT sufficient: **T5 changes SIZEP
+    mid-draw with no strobe, which cannot happen in hardware**, so defined-low
+    makes T5 unphysical. **T9 (new)** is T5 plus the strobe, one colour clock
+    wide: spans cc 60..67 for 8 clocks, shape does not restart. No bug, new
+    coverage.
+  ############################################################################
+
+  ############################################################################
   **LONG CONTINUOUS BOARD CAPTURE CONFIRMS IT (2026-08-15).** `hw_long2.bin`,
   **6,917,312 records** (4 back-to-back `dtrace 4` segments from t=14 s), the
   like-for-like comparison that was missing all night. Sample counts finally meet
