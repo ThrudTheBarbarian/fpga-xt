@@ -617,14 +617,18 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   register-level agreement kept "proving" the render path innocent. **When every
   input matches and the output does not, suspect the last stage, not the first.**
 
-  **STILL OPEN, needs Simon's eyes:** the intro AS A WHOLE (the vehicle that
-  stalls instead of sweeping, the ball that never crosses, the
-  `{smooth anim}{abrupt switch}` repetition) — those were never shown to share
-  this cause. Also: **does the intro have MUSIC on our board?** And one
-  measured discrepancy: our man renders in **$56** where an Altirra peek of the
-  object reported **$36** (a different object earlier in our own intro IS $36,
-  so the colour path itself is fine) — same luminance, different hue; confirm
-  it is not simply a different animation moment before treating it as a bug.
+  **The rest of the intro was a SECOND, INDEPENDENT cause: drive pacing, not
+  hardware** — see the `xlboot -a` entry below. The vehicle that "stalls instead
+  of sweeping" and the truncated repetition are what the reference sequence looks
+  like when the loader delivers sectors ~1.9x faster than a 1050, and `-a`
+  restores them. **The `$36`-vs-`$56` worry is CLOSED: both occur** — the figure
+  appears twice by default and five times under `-a`, alternating the two team
+  colours, so the colour path was never in question.
+
+  **Still needs Simon's eyes** (nothing here is a known defect): the intro as a
+  whole under `-a`, gameplay feel, and **whether the intro's sound is AUDIBLE** —
+  it does drive AUDF1/AUDC1/AUDF2/AUDC2 ~1.5x/frame, so silence would be
+  downstream of the guest, not a missing write.
 
 - **ACID `mmu_xlbanking` PASSES. The reported failure was MY HARNESS, not the
   design.** `tb_acid.sv:1251-1252` `$readmemh`s **`atari_xl_rom.mem` and
