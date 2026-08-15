@@ -725,6 +725,41 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE MISSING MAN: NO PLAYER IS VISIBLE ANYWHERE IN THE INTRO (2026-08-15).**
+  Eight frames grabbed across the intro on the FIXED bitstream, colours mapped
+  through the palette and grouped by HUE:
+        frames 1-4 (t~12-24 s): 8 colours, **hue 1 = 100.0%  -- NOTHING ELSE**
+        frame  5   (t~28 s):    hue3 44.8%, hue5 45.8%, hue0 9.4%  (scene change)
+        frames 6-8 (t~32-40 s): hue7 44.8%, hue11 43.8%           (gameplay)
+  **Player colours come from COLPM0-3 = $52/$32/$54/$34 -- hues 3 and 5.** In a
+  GTIA mode a winning player keeps its OWN colour, so a visible player must show
+  as hue 3 or 5. **Across the whole mode-9 intro there are ZERO hue-3 and ZERO
+  hue-5 pixels: no player is drawn anywhere, on any frame** -- while we separately
+  measured HPOSP0/HPOSP1 animated with Altirra-matching values and shape data
+  uploaded. The players are set up correctly and then never appear.
+
+  **MECHANISM, AND IT IS AN EXPLICIT ASYMMETRY IN OUR CODE.** PRIOR $54 selects
+  **scheme 2: playfield above all four players**. In GTIA mode 9 the playfield
+  covers the ENTIRE window -- every nibble is a luminance, never background -- so
+  scheme 2 hides EVERY player EVERYWHERE. gtia_stage already knows a GTIA-mode
+  pixel is not a playfield pixel, and says so in its own comment ("PRIOR[7:6]
+  stops the playfield being a playfield ... mode 9: no playfield collisions at
+  all -- the byte is a LUMINANCE"), **but applies that rule ONLY to collisions**:
+        line 294  `wire [2:0] col_pf = gtia_active ? col_pf_now : cur_pf;`  <- collisions: GTIA-aware
+        line 142  `.pf_src(cur_pf)`                                          <- priority:  RAW, not GTIA-aware
+  So in mode 9 the luminance is still ranked PF0-3 and outranks every player.
+
+  **DO NOT CHANGE RTL ON THIS WITHOUT THE ORACLE.** The claim that players should
+  win over a mode-9 field is exactly the kind that has been wrong nine times
+  tonight. **THE DECISIVE TEST: does ALTIRRA show player-coloured pixels during
+  the mode-9 intro?** If yes, our priority path is wrong and should take the same
+  GTIA-aware substitution the collision path already uses. If no, the man is not
+  a player at all and this whole line is void.
+  **CAUTION on the oracle:** `alt.rawscreen()` is NTSC-FILTERED (672x224, 790+
+  colours vs our 8), so compare HUE FAMILIES / structure, never exact colours.
+  ############################################################################
+
+  ############################################################################
   **THE LEFT-EDGE BAR IS FIXED — CONFIRMED ON HARDWARE BY MEASUREMENT
   (2026-08-15, commit b0de37fe, bitstream loaded).**
         graboverlay, two intro frames 6 s apart, colours mapped through the palette
