@@ -725,6 +725,31 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE LIVE MISSILE DMA PATH, IDENTIFIED AND READ (2026-08-15).**
+  **`antic_pm_fetch.sv` is SIM-ONLY** -- instantiated only in `antic_scanline.sv`.
+  **The LIVE path is `antic_pm_dma.sv`**, instantiated in `antic2.sv:843`, whose
+  output feeds `gtia_reg_file` in `a2_video` as pm_we/pm_obj/pm_data/pm_fetch
+  (obj 0 = missiles, 1..4 = players).
+  Read of `antic_pm_dma.sv`, and it looks CORRECT:
+        `missile_en = dmactl[2] || dmactl[3]`   -- DMACTL $3E sets BOTH
+        `slot_m = (hcount == 7'd0) && missile_en`
+        `m_addr = base + (one_line ? 16'h0300 : 16'h0180) + idx`
+        PMBASE $00 + one-line -> **$0300 + idx**, which is right
+  **So the missile fetch path is correct BY CODE READING, and GRAFM should be
+  loaded from DMA.** (The game writes GRAFM ZERO times directly, so DMA is its
+  only source.)
+  **=> THE NEXT STEP MUST BE EMPIRICAL, NOT MORE CODE READING.** Verify on
+  hardware/sim that (a) the missile byte is actually fetched each scanline,
+  (b) GRAFM is non-zero in the window, and (c) `pres[7:4]` goes non-zero so
+  `gtia_priority`'s `any_missile` can let the fifth player win.
+  **NOTE the shape data is THINNER than expected:** our missile region ($0300)
+  measured only **2-5% non-zero**, where a 28-row-tall object would want ~11% of
+  256 bytes. Worth checking whether the uploader fills the missile region as
+  fully as Altirra's does -- compare $0300-$03FF non-zero counts on both at
+  t~22-24 s, the window where Altirra's 50x28 object is on screen.
+  ############################################################################
+
+  ############################################################################
   **THE MISSING OBJECT IS THE FIFTH PLAYER (MISSILES), AND IT IS AT THE POSITION
   WE ALREADY WRITE (2026-08-15).**
   Altirra's object, located on screen (altd28/altd29, artifacting OFF, 336x224):
