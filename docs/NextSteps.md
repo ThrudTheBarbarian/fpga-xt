@@ -851,173 +851,67 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   the playfield, and our man touches the vehicle where Altirra's does not.
   **GAME FRAMES CANNOT PIN THE SIZE. Stop trying; run the controlled case.**
 
-  **ROOT CAUSE FOUND AND MEASURED (2026-08-15, `1b5ca7d3`). IN GTIA MODE 9 OUR
-  PLAYFIELD SITS ONE GTIA PIXEL (4 hi-res px = 2 colour clocks) RIGHT OF THE
-  OBJECTS; ALTIRRA SHOWS NO SHIFT.**
+  **FIXED AND COMMITTED (`13c03591`). A GTIA MODE NO LONGER SHIFTS THE PLAYFIELD
+  AWAY FROM THE OBJECTS.** Simon saw BallBlazer's man sit one GTIA pixel off the
+  vehicle. Measured with a controlled ruler — ANTIC mode F puts a playfield edge
+  on a KNOWN hi-res pixel, and a solid player parked at HPOS 88 should land
+  exactly on it — against Altirra as the reference:
 
-                          playfield edge   player
-        ALTIRRA ordinary       px 88        px 88    aligned
-        ALTIRRA GTIA mode 9    px 88        px 88    **aligned, NO shift**
-        OURS    ordinary       px 176       px 176   aligned
-        OURS    GTIA mode 9    px 180       px 176   **edge +4**
+                            playfield edge   player
+        ALTIRRA ordinary        px 88         px 88   aligned
+        ALTIRRA GTIA mode 9     px 88         px 88   **no shift**
+        OURS before, ordinary   px 176        px 176  aligned
+        OURS before, mode 9     px 180        px 176  **edge +4**
+        OURS after,  mode 9     px 176        px 176  **fixed**
 
-  Ruler: ANTIC mode F puts a playfield edge on a KNOWN hi-res pixel (screen of
-  `$00` bytes then `$FF`), with a solid player parked at HPOS 88 so its left edge
-  should land exactly on it. Four passes, {ordinary, mode 9} x {player OFF, ON}.
-  **The player-OFF pass is ESSENTIAL** — with the player drawn it COVERS the
-  edge and the two cases are indistinguishable. Ours: `make -C sim pm_align`
-  (`sim/tb_pm_align.sv`, drives the LIVE `antic2_fabric`). Reference:
-  `tools/altirra_gtia_shift_ref.py`. **Altirra geometry trap: use ~100 mode-F
-  lines and sample y=74; a 40-line list leaves y=120 below the display.**
+  Ordinary modes are bit-identical. **The objects were always correct; the
+  GTIA-mode PLAYFIELD was 4 hi-res px (2 colour clocks = one GTIA pixel) LATE.**
 
-  **THE DIAGNOSIS IS IN THE MODULE HEADER, AND IT IS ONE SENTENCE WRONG.**
-  `hdl/gtia_stage.sv:41-46` says a GTIA mode costs one more pair of colour clocks
-  and that this is *"causal rather than a choice"* — **correct**, a nibble cannot
-  be displayed before both its colour clocks have delivered their bits. It then
-  concludes *"The shift is uniform within a GTIA mode, so nothing moves relative
-  to anything else while one is selected."* **That is the bug: OBJECTS DO NOT GO
-  THROUGH THE NIBBLE ASSEMBLY, so they never receive that extra pair, and the
-  playfield moves relative to them.**
+  **ROOT CAUSE — one sentence in `gtia_stage.sv`'s own header.** It is right that
+  a GTIA mode costs an extra pair of colour clocks and that this is *causal* (a
+  nibble cannot be displayed before both its colour clocks have delivered their
+  bits). It is wrong that *"the shift is uniform ... so nothing moves relative to
+  anything else"*: **objects never pass through the nibble assembly**, so the
+  playfield alone paid that pair.
 
-  **FIX DIRECTION: delay the OBJECTS by one pair while a GTIA mode is active.**
-  Advancing the playfield is causally impossible (the nibble genuinely is not
-  ready), and the reference keeps the two aligned, so the object path must take
-  the same extra pair. **Do NOT touch `cc_pos`** — ordinary modes measure exact
-  on our chip, so `a2_video.sv:216` is right. **The naive fix does NOT work and
-  was tested: flipping the pair-alignment parity at `gtia_stage.sv:231`
-  (`cc_pos[0]` -> `!cc_pos[0]`) leaves the mode-9 edge at 180, unchanged** — the
-  two-register handover costs a full pair either way. Reverted, tree clean.
+  **THE FIX.** `a2_video` gains `cc_tick_e = px_tick && px_odd` and `an_pair_e` —
+  the pair sampled at the END of the colour clock, which is the pair for
+  **`cc_pos + 1`**. `gtia_stage` gains a **SEPARATE display-only register set**
+  (`an_prev_e`/`disp_nib`/`disp_win`) clocked on that strobe, completing on
+  **EVEN `cc_pos`** and going straight to the display.
+  **`nib_ready`/`gtia_nib`/`win_ready`/`gtia_win` are UNTOUCHED**, so the
+  COLLISION class and the original window keep their phase — that separation is
+  the whole difference between this and the attempt that broke three tests.
+  `tb_gtia_stage` gained a faithful stimulus (`cc_tick_e` fires BEFORE `cc_tick`
+  while `cc_pos` still names the previous clock) and T11's sample points were
+  re-derived: the GTIA pixel now spans cc1..cc2, still TWO clocks.
 
-  **FIX ATTEMPT 2 — CORRECT ALIGNMENT, BUT IT RE-BREAKS THE MAN. REVERTED.**
-  Delaying the object presence by one aligned pair for the DISPLAY path only
-  (a `pres_ready`/`pres_pair` handover mirroring `nib_ready`/`gtia_nib`, feeding
-  `u_pri` while `u_col` keeps the un-delayed `pres`) **does produce the right
-  geometry**: mode-9 player moves 176 -> 180, coincident with the edge, and
-  ordinary modes stay bit-identical (176/176). `antic2_pxpos`, `gtia_obj_walk`
-  and `antic_modes` all still pass. **But `tb_gtia_stage` fails 7 checks,
-  including all four `TM: THE MAN IS INVISIBLE`** — the case built from
-  registers peeked off Altirra at the instant the man is on screen, i.e. the
-  test that pins `6ef5bab2`.
+  **VALIDATED:** `make -C sim pm_align` (new, drives the LIVE `antic2_fabric`);
+  `gtia_stage` all checks incl. the four **TM** man-visibility checks and the
+  whole T11 series; `antic2_pxpos` (1820 px); `gtia_obj_walk`; `antic_modes`; and
+  on ACID — `antic_pmdma`, `gtia_phantomdma`, `gtia_collision2`, `gtia_collision`,
+  `gtia_pmoverlap`, `gtia_pmretrigger`, `gtia_pmresize`, `antic_pfstarttiming`,
+  `antic_pfstoptiming`. **`antic_gtia`'s 2 failures are PRE-EXISTING** (verified
+  at baseline via `git stash`; that shell does not instantiate `gtia_stage`).
+  **NOT YET CONFIRMED ON HARDWARE** — needs a bitstream build.
 
-  **WHY IT FAILS — and this CORRECTS an earlier explanation in this file.** The
-  first account said the delay "loses the object because `pres_valid` was not
-  delayed". **That is WRONG**: `pm_align` shows the player still rendered, 16 px
-  wide, simply moved to 180. Nothing is lost.
+  **APPROACHES THAT FAIL — do not re-try them.** (1) Flipping the pair-alignment
+  parity: the mode-9 edge stays at 180; the two-register handover costs a pair
+  either way. (2) Delaying object presence into `u_pri`: `pm_align` goes green but
+  it MOVES AN OBJECT THAT WAS ALREADY CORRECT, and TM catches it — the test was
+  right and the fix was wrong. (3) Shifting the object match in `gtia_obj_walk`:
+  same defect, and it drags the collision path. (4) Moving the nibble, the window
+  AND the collision nibble onto the early strobe: correct geometry but breaks
+  `antic_pmdma`, `gtia_phantomdma`, `gtia_collision2`. (5) Leaving the window on
+  `cc_tick` while moving the nibble: T11 reads `colbk` — **the display window MUST
+  ride the nibble's phase.**
 
-  **The real reason is that ATTEMPT 2 MOVES THE WRONG THING.** Read the absolute
-  positions, not the relative ones:
-
-        ordinary  playfield px0 at emitted 96; edge (pf-relative 80) at 176  CORRECT
-                  player HPOS 88 -> pf-relative 80 -> emitted 176            CORRECT
-        mode 9    player still at 176                                        CORRECT
-                  edge at 180 -> pf-relative 84, but it should be 80         **LATE by 4**
-
-  **So the OBJECTS ARE RIGHT and the GTIA-MODE PLAYFIELD IS LATE.** TM checks the
-  player at `cc == HPOS` (it sets `cc = $6c + i*8` and steps once), which is the
-  CORRECT SPEC — a player at HPOS h belongs at colour clock h. Attempt 2 made
-  `pm_align` agree by shifting the object to the WRONG ABSOLUTE PLACE, and TM
-  caught exactly that. **The test was right and the fix was wrong.**
-
-  **THE MECHANISM, EXACTLY (`a2_video.sv:138-162`).** `an_pair` is built from
-  `pv_cap_a`/`pv_cap_b`, which are **REGISTERED** at `px_tick` — so `an_pair` at
-  colour clock N carries clock **N-1**'s data. That is the uniform one-colour-clock
-  capture delay the header describes, and the ORDINARY path accounts for it
-  correctly (its edge lands exactly right). The GTIA nibble assembly then consumes
-  **two of those already-delayed pairs** and adds its **own pair handover**
-  (`nib_ready` -> `gtia_nib`, `gtia_stage.sv:229-239`). Measured net cost over the
-  ordinary path: **+2 colour clocks = +4 hi-res px**, which is the whole bug.
-
-  **SO THE FIX IS TO ASSEMBLE THE GTIA NIBBLE EARLIER — from the pixel stream
-  (`px_val`) within the colour clock rather than from the REGISTERED pair** — so
-  the nibble is ready without spending the capture delay twice. That is a
-  restructuring of the GTIA nibble path across `a2_video` and `gtia_stage`, not a
-  one-line change, and it is the THIRD distinct approach (the first two are
-  recorded above as failures). **It is a design change: get Simon's sanction
-  before spending it, and budget the full ACID sweep behind it.**
-
-  **ATTEMPT 3 FIXES THE GEOMETRY EXACTLY, BUT THE UNIT BENCH CANNOT VALIDATE IT.
-  REVERTED.** Two changes together, and each is worth exactly 2 px:
-   1. `a2_video`: an EARLY pair — `cc_tick_e = px_tick && px_odd` with
-      `an_pair_e = px_hires ? {pv_cap_a[0], px_val[0]} : px_val`, sampled at the
-      END of the colour clock where `pv_cap_a` already holds this clock's first
-      half and `px_val` IS its second. Alone: edge 180 -> **178**.
-   2. `gtia_stage`: run the nibble assembly off that strobe and hand the
-      completed pair STRAIGHT to the display (the second register existed only
-      to re-align to a pair boundary, and with the early strobe completion is
-      already on one). Together: edge 180 -> **176**, player stays 176,
-      **ordinary modes bit-identical** — i.e. EXACTLY Altirra's geometry.
-
-  **WHY IT WAS REVERTED ANYWAY:** `tb_gtia_stage` cannot model it. In the CHIP,
-  `an_pair_e` at `cc_pos = C` carries data for **C+1** (because `cc_pos` is
-  `px_pos-1` and the captures are for the current clock); in the BENCH,
-  `an_pair` at `cc_tick` is already the current clock's data — **the bench models
-  no capture delay at all**. So the two differ by one colour clock and **no
-  single completion parity satisfies both**: with the chip-correct parity the
-  bench forms the wrong nibble (T11 reads `$52`/nibble 2 where `$5b`/nibble B is
-  intended). Making the bench faithful means rewriting its timing model AND
-  re-deriving which nibble every T11 case forms — **by trial and error, on the
-  suite that protects the man (TM)**. That is a separate, careful piece of work,
-  not something to converge on by guessing.
-
-  **STATE: the chip-level fix is PROVEN against the reference (`pm_align` exact,
-  matching Altirra) and the unit-level validation is NOT done.** The stimulus
-  model in `tb_gtia_stage` must gain a capture-delay stage FIRST; then the fix
-  can be re-applied and judged honestly. Backups of the working change are in
-  the session scratchpad (`gs.bak4`, `av.bak4`) but the diff is small enough to
-  redo from this description. **Do not re-attempt without fixing the bench model
-  first — otherwise you will be tuning tests to match a change.**
-
-  **ATTEMPT 4 (the two-part fix): GEOMETRY PERFECT, BUT IT BREAKS `antic_pmdma`.
-  NOT COMMITTED. REVERTED.** Changes: (a) `a2_video` gains an EARLY pair
-  `cc_tick_e = px_tick && px_odd`, `an_pair_e = px_hires ? {pv_cap_a[0],
-  px_val[0]} : px_val` (the pair for **cc_pos + 1**); (b) `gtia_stage` runs the
-  nibble assembly off that strobe, completes on **EVEN cc_pos**, and hands the
-  pair straight to the display; (c) `tb_gtia_stage` gains a faithful stimulus
-  (`cc_tick_e` fires BEFORE `cc_tick`, while `cc_pos` still names the previous
-  clock) with the T11 sample points re-derived.
-
-        pm_align   ordinary edge 176 / player 176   (unchanged)
-                   GTIA mode 9 edge **176** / player 176   (was 180)  = ALTIRRA
-
-  `gtia_stage` (all four **TM** man-visibility checks + the whole T11 series),
-  `pm_align`, `antic2_pxpos`, `gtia_obj_walk`, `antic_modes`, `gtia_collision`,
-  `antic_pfstarttiming`, `antic_pfstoptiming` — **all PASS**.
-
-  **BUT `antic_pmdma` FAILS** (`reached _testFailed $1e0d`,
-  `d0=00 d1=08 d2=0c d3=08`), **and the CONTROL PROVES IT IS MINE**: the same
-  test built from **stashed clean RTL** into a separate binary
-  (`sim/build/tb_acid2_BASE.vvp`, so the running sweep was never disturbed)
-  **PASSES**. So the fix is not correct as written and must not land.
-
-  **WHERE TO LOOK NEXT.** The change moved TWO things that ride the same branch:
-  the nibble AND `win_ready <= pf_win`, so the GTIA **window** is now sampled on
-  the early strobe too. `nib_ready` also feeds the COLLISION class, whose phase
-  was supposed to stay put — worth checking it really did. `antic_pmdma`'s
-  `d1=08 d2=0c d3=08` is the concrete signature to chase. **Do not re-attempt by
-  adjusting the bench; the bench is now faithful and it agreed — the failure is
-  in the design.**
-
-  **THE FIX MUST ADVANCE THE GTIA-MODE PLAYFIELD BY A PAIR, NOT DELAY THE
-  OBJECTS.** That is what the header calls causally impossible — and it is,
-  *given when antic2 currently delivers the pairs*. So the real change is
-  upstream: antic2 must deliver the GTIA-mode pairs two colour clocks earlier
-  relative to the object counter (equivalently, the nibble assembly must start a
-  pair sooner), so the assembled nibble is ready without costing extra time on
-  screen. This is the same family as the note at `a2_video.sv:218-244` that
-  antic2's beam sits SIX colour clocks behind emu's, compensated on CPU writes
-  by `HPOS_CC_DELAY = 6` but never on the playfield data path.
-
-  **AND DO NOT "FIX" IT BY SHIFTING THE OBJECT MATCH EITHER** (`cc_pos - 2` in
-  `gtia_obj_walk` under a GTIA mode). That has the same defect as attempt 2 — it
-  moves objects that are already correct — and it would additionally drag the
-  COLLISION path, which is right today precisely because it pairs the EARLY
-  nibble (`nib_ready`) with un-delayed objects. Both attempts reverted; tree
-  clean, `gtia_stage` green, `pm_align` back to baseline on a forced rebuild.
-
-  **A REAL FIX MUST BE GATED ON:** `make -C sim pm_align` (mode-9 edge must reach
-  176 with the player still at 176), `gtia_stage`, `antic2_pxpos`, the left-edge
-  bar behaviour, and a full ACID sweep (`acid2`, 55 pass / 2 skip / 0 fail of
-  57) — objects feed the collision path too. **Not attempted; Simon's call.**
+  **THE MEASUREMENT METHOD IS REUSABLE.** `sim/tb_pm_align.sv` +
+  `tools/altirra_gtia_shift_ref.py`. Four passes, {ordinary, GTIA mode 9} x
+  {player OFF, player ON} — **the player-OFF pass is ESSENTIAL**, because with the
+  player drawn it COVERS the edge and both cases look identical. Altirra geometry
+  trap: use ~100 mode-F lines and sample y=74; a 40-line list leaves y=120 below
+  the display.
 
   **THE BASE COUNTER ALIGNMENT IS PROVEN CORRECT — and it is not the suspect.** `sim/tb_antic2_pxpos.sv` exists for exactly this hazard (its header:
   *"One pixel of skew moves every object comparison a colour clock and silently
