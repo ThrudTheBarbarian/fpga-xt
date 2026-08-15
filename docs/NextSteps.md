@@ -725,6 +725,42 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **ORACLE RESULT: THE PRIORITY HYPOTHESIS IS *NOT* CONFIRMED (2026-08-15).**
+  Altirra with **NTSC artifacting DISABLED** (`CONFIG artifact none` -- syntax is
+  `CONFIG <key> <value>`, and it drops rawscreen to a clean **336x224**), six
+  frames across its intro, colours mapped by NEAREST NEIGHBOUR through Altirra's
+  own palette (`PALETTE` verb; exact lookup FAILS on rounding of 1..65):
+        alt_seq_a: hue1 100.0%              player hues 3+5 = 0.00%
+        alt_seq_b: hue1 99.27, hue3 0.73    player hues 3+5 = **0.73%**
+        alt_seq_c: hue1 100.0%              player hues 3+5 = 0.00%
+        alt_seq_d: hue1 100.0%              player hues 3+5 = 0.00%
+        alt_seq_e/f: gameplay (hue7 41.96, hue11 41.96)
+  **Altirra's mode-9 intro is ALSO ~100% hue 1.** Three of four frames contain NO
+  player pixels, exactly like ours. Only ONE frame carries 0.73% hue 3 (~1650 px,
+  plausibly a small object).
+  **That is 1-of-4 versus our 0-of-4 -- nowhere near enough to claim a
+  difference.** The hypothesis may still be right (that 0.73% could BE the man)
+  but four frames a side is precisely the thin sampling behind retractions #6 and
+  #8. **DO NOT CHANGE THE PRIORITY PATH ON THIS EVIDENCE.**
+  **NEXT: DENSE SAMPLING BOTH SIDES.** >=20 frames each across the mode-9 phase,
+  and compare the FRACTION OF FRAMES containing any hue-3/hue-5 pixel. If Altirra
+  shows player pixels in a meaningful share of frames and we show none, the
+  hypothesis is confirmed and the fix is to give the priority path the same
+  GTIA-aware substitution the collision path already has (gtia_stage line 294 vs
+  line 142). If both are ~0, the man is not a visible player in this phase and
+  the whole line is void.
+
+  **TWO TOOLING FACTS ESTABLISHED (both needed for any future screen compare):**
+  * **NEAREST-NEIGHBOUR palette matching is required** -- Altirra's rawscreen
+    values differ from its own palette by 1..65 per channel, so exact lookup
+    silently maps NOTHING and yields a confident empty answer.
+  * **The 16-vs-8 colour count is PALETTE GRANULARITY, not players.** Altirra's
+    palette has distinct ODD luminances ($17 = #768600); ours duplicates each
+    pair because luma bit 0 is unused. Do not read that as a rendering
+    difference.
+  ############################################################################
+
+  ############################################################################
   **THE MISSING MAN: NO PLAYER IS VISIBLE ANYWHERE IN THE INTRO (2026-08-15).**
   Eight frames grabbed across the intro on the FIXED bitstream, colours mapped
   through the palette and grouped by HUE:
