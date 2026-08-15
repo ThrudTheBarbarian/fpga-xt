@@ -725,6 +725,33 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE PER-FRAME COUNTER PROBE IS UNDER-POWERED — AND SO IS EVERY 1 Hz SAMPLER
+  FOR THIS QUESTION (2026-08-15).**
+  `altwait.py` sampled $C2/$CA/$BC and the PC once per frame for 1500 frames
+  (t~30 s) on Altirra:
+        f  872 t~17.4s  C2=00 CA=**01** BC=00  pc=$31f6   <- caught the $CA release
+        f 1500 t~30.0s  C2=00 CA=00 BC=00  pc=$3b23
+        **$C2 read $00 at EVERY sample; the PC was NEVER in $30C6/$30CC.**
+  **THAT IS A RESOLUTION ARTEFACT, NOT A FINDING.** Altirra's 45,253 $30CC
+  executions over 3000 frames is ~15 instructions per frame out of ~30,000 cycles
+  = **0.05% duty**; ours at 237/frame is ~0.8%. **A once-per-frame peek will
+  essentially never land inside the loop**, and $C2 is evidently incremented and
+  consumed within a frame, so a frame-boundary sample only ever sees $00.
+  **=> DO NOT read "Altirra never waits" or "$C2 never climbs" from this. The
+  instrument cannot see it.** Probe killed rather than mined for a 16th
+  retraction.
+  **WHAT WOULD ACTUALLY WORK, IF THIS IS PICKED UP AGAIN:**
+   * **Sub-frame residency needs a TRACE, not a sampler** -- but the trace must
+     span a whole ~55 s stage, i.e. **12-20 stitched `dtrace 4` segments**
+     (a 16 MB segment is only ~4 s).
+   * **Or count, do not sample:** an instrument that COUNTS $30CC entries/exits
+     and $C2 transitions in hardware would answer it in one run. The `6502` tool
+     has no memory read and no counters today -- adding one would be the cheapest
+     real fix to the methodology.
+   * **Compare LIKE STAGES**, never elapsed time.
+  ############################################################################
+
+  ############################################################################
   **RETRACTION #15, AND THE REASON THIS THREAD KEEPS FLIP-FLOPPING: THE INTRO
   CONTAINS A ~1-MINUTE WAIT AND EVERY CAPTURE IS SHORTER THAN IT (2026-08-15).**
         per VBI                 OURS (longq, 1405 VBI)   ALTIRRA (3000 VBI)
