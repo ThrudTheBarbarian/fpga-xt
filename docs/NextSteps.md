@@ -832,13 +832,24 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   **our man reaches gap 0 -- touching -- in 6 rows where Altirra's minimum is 2.**
   That is precisely Simon's "drawn over the last pixel of the vehicle".
 
-  **THE MAGNITUDE IS NOT PINNED — do not quote one.** Three methods disagree:
-  the same-colour matched pose gives 2 px (1 cc); the gap structure gives 4 px
-  (2 cc); and the mod-4 phase test (playfield boundaries are x≡0 mod 4 on BOTH
-  machines, and the man's mod-4 start distribution is IDENTICAL, {0:45,2:39},
-  for the exactly matched pose g30<->f1248) favours a shift that is a multiple
-  of 4 px, since a 1 cc shift would SWAP that distribution. Direction is solid;
-  size is not.
+  **THE MAGNITUDE IS NOT PINNED — do not quote one, and do not try to squeeze it
+  out of game frames.** The estimates disagree (2 px from a same-colour pose
+  pair, 4 px from the gap structure), and **BOTH rest on a POSE-MATCHING
+  CRITERION THAT IS NOT SOUND.** Matching on pixel count + run-width HISTOGRAM
+  is a **multiset** match, not a per-row match: two different animation frames
+  can share a width multiset. The proof it is unsound is internal — if two
+  frames were genuinely the same pose their run starts would differ by a
+  CONSTANT, so the mod-4 start distribution would be either IDENTICAL or exactly
+  SWAPPED. Board g79 `{0:34,2:50}` against Altirra f1248 `{0:45,2:39}` is
+  **neither**, so those two frames are not the same pose despite matching
+  histograms. **The earlier mod-4 phase argument is therefore withdrawn**, and
+  the gap comparison is cross-colour (board red vs Altirra blue) so it compares
+  different scenes.
+
+  **What survives is the DIRECTION only**, and it survives because it is the
+  same sign in every comparison: our P/M sits left of the reference relative to
+  the playfield, and our man touches the vehicle where Altirra's does not.
+  **GAME FRAMES CANNOT PIN THE SIZE. Stop trying; run the controlled case.**
 
   **THE ONLY VALID TEST: put an object where 1 cc CHANGES THE ANSWER.** Game
   frames cannot do it. Use the ACID ramp geometry — nibbles are 2 cc wide, so an
