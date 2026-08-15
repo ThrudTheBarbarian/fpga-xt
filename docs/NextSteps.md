@@ -638,8 +638,14 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   `mmu_xlbanking` among **six failures already cleared** (`35c8faa`) with state
   **"ACID 55/58 — zero failing tests"**. Either that fix regressed later, or the
   claim was optimistic. **Next step: bisect `mmu_xlbanking` from `35c8faa`
-  forward** — it is a fast test, so a bisect is cheap. Full rebuilt-suite result
-  is in `scratchpad/acid_par.log`.
+  forward** — it is a fast test, so a bisect is cheap.
+
+  **THE REBUILT SUITE IS COMPLETE: 57 tests = 54 PASS + 2 skip + 1 FAIL.** The
+  skips are `pokey_serdirect` and `pokey_skstat` (`cpu_65c816` and `mod_*` are
+  excluded from the run); the single fail is `mmu_xlbanking` above. The two long
+  tests both passed — `antic_dmapattern` and `cpu_illtiming`, each ~1¼ h of CPU.
+  **So the priority fix costs nothing anywhere else in the suite.** Log:
+  `scratchpad/acid_par.log`.
 
 - **BallBlazer intro: the remaining symptoms, now MEASURED.** The game PLAYS
   PERFECTLY. (The 4 px left-edge bar is FIXED, `b0de37fe`; the missing man is
