@@ -672,24 +672,68 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   the reference test's own assertion, passing on our chipset and matched by a
   second implementation.
 
-  **What genuinely remains open is narrower: the class rule is proven for
-  COLLISIONS, not for PRIORITY.** `gtia_collision2` reads only `MxPF`/`PxPF`;
-  it never asserts a COLOUR. The fix reuses the collision class to drive
-  priority, which is the natural reading but is not what the test measures.
-  **BallBlazer is mode 9 throughout, so nothing here is on the critical path.**
+  **AND THE PRIORITY HALF IS NOW CONFIRMED AGAINST ALTIRRA TOO
+  (2026-08-15) — THE CORNER IS CLOSED.** `gtia_collision2` proves the rule for
+  COLLISIONS only (it reads `MxPF`/`PxPF`, never a COLOUR), and `6ef5bab2`
+  reuses that class to drive PRIORITY. That reuse is now measured, not assumed.
 
-  **The cheap oracles cannot close that last gap — do not re-tread them.**
-  (a) The Altirra bridge has `PEEK` but **no POKE**, so the scenario (mode 10 +
-  PRIOR scheme 2 + a player) cannot be set up without loading a program.
-  (b) `emu/` confirms the collision rule (above) but **cannot speak to priority
-  at all**: there is **no framebuffer or colour resolver anywhere in `emu/`** —
-  it models registers for ACID, not pixels. Settling the priority half needs a
-  purpose-built mode-10 XEX compared against Altirra's `RAWSCREEN`.
+  Driven entirely over the AltirraBridge — **no board, no bitstream, no XEX.**
+  `HWPOKE` sets the hardware registers, `MEMLOAD` writes a display list at
+  `$3000` (3 blank + LMS mode F + 99 × `$0F` + JVB) and a screen at `$4000`
+  filled with one repeated nibble, and `POKE` sets the OS shadows
+  (`SDMCTL/SDLSTL/GPRIOR/PCOLR0-1/COLOR1/COLOR4`) so the VBLANK re-asserts them.
+  PRIOR `$94` = mode 10 + scheme 2; player 0 solid (`GRAFP0=$FF`), quad size,
+  `HPOSP0=$70`; `COLPM0=$3A`, `COLPM1=$8A`, `COLPF1=$28`.
 
-  **Correction, for the record:** an earlier revision of this section claimed
-  `gtia_clock`'s caller "does not exist in-tree". It does — `emu/system.c:256`.
-  That claim came from grepping only `emu/gtia.*` and generalising to the whole
-  tree. **Scope a search to what you are about to assert about it.**
+        nibble 1 (bit 2 CLEAR) COLPM0 runs = [0-9] [136-199] [330-335]
+        nibble 5 (bit 2 SET)   COLPM0 runs = [0-9]           [330-335]
+
+  The 320-wide playfield occupies x=10..329, so **[0-9] and [330-335] are the
+  BORDER** — which in mode 10 is COLPM0, not COLBK, in both frames alike. The
+  discriminating run is the middle one: **x=136..199 is exactly 64 px** (a
+  quad-size 8-bit player) at exactly `(\$70-48)*2 = 128` plus the 8 px left
+  border. So a bit-2-CLEAR nibble lets the player through, and a bit-2-SET
+  nibble hides it **completely** under scheme 2 — precisely T11k and T11j.
+  Script: `scratchpad/mode10_pri.py`.
+
+  **`emu/` cannot speak to priority** (no framebuffer or colour resolver
+  anywhere in it — it models registers for ACID, not pixels), but it is no
+  longer needed for this.
+
+  **THREE CORRECTIONS, for the record** — all three were assertions from
+  memory that a single grep would have caught:
+   1. `gtia_clock` "has no in-tree caller" — it does, `emu/system.c:256`. That
+      came from grepping only `emu/gtia.*` and generalising to the whole tree.
+   2. The Altirra bridge "has `PEEK` but no POKE" — **it has `POKE`, `POKE16`,
+      `HWPOKE`, `MEMLOAD`, `BOOT`, `STATE_SAVE/LOAD` slots and much more.** The
+      verb list in the standing brief was *the verbs I had used*, not the verbs
+      that exist; `AltirraBridge/docs/COMMANDS.md` is the authority.
+   3. "Settling this needs a purpose-built XEX / is outside scope" — it needed
+      neither a XEX nor the board, and it was a consequence of **my own**
+      commit, so it was never out of scope. **Before recording something as a
+      dead end, read the tool's own reference.**
+
+  **ALTIRRABRIDGE OPERATING NOTES (learned the hard way, 2026-08-15).**
+  - **`RAWSCREEN inline=true` HANGS the bridge.** Reproduced twice: the server
+    logs `command: RAWSCREEN inline=true` and never answers, and the client
+    blocks forever (it has **no socket timeout** — set
+    `a._sock.settimeout(30)` yourself). **Use the server-side form**
+    `a.rawscreen(path="/tmp/x.bin")` and read the file: raw XRGB8888,
+    336x224, stride 1344, bytes on the wire B,G,R,0. `PALETTE` is 768 bytes
+    = 256 x 3 RGB.
+  - **The bridge is SINGLE-CLIENT.** A second connection is refused with
+    `Rejecting second client`, which surfaces as `Connection reset by peer`
+    on HELLO — that is a busy slot, **not** a dead bridge. A hung client keeps
+    the slot until its socket is closed.
+  - **`--headless` does not work on this macOS build**: the SDL `offscreen`
+    driver fails with `Could not initialize OpenGL / GLES library`. Use
+    `SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy` instead — it falls back to
+    SDL_Renderer and opens no window.
+  - **`BOOT_BARE` fails here** ("stub did not reach its JMP * park loop"); use
+    `cold_reset()` + `frame(200)` and drive the OS shadows.
+  - Launch: `AltirraSDL --bridge=tcp:127.0.0.1:6503`, token in
+    `$TMPDIR/altirra-bridge-<pid>.token`. **A separate instance from an earlier
+    session runs on port 6502 with `--disk /private/tmp` — leave it alone.**
 
   **The `pf_win` trap is now FIXED, not just noted:** T11h restored `prior` and
   `colbk` but left the playfield window CLOSED, so the first draft of these

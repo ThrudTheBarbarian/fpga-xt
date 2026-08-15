@@ -403,6 +403,13 @@ module tb_gtia_stage;
         an_pair = 2'b11; step_cc(3'd2, 3'd2);
         chk(got_a, colpm0, "T11i mode 11 + scheme 2: the player still wins");
 
+        // T11j/T11k are REFERENCE-VALIDATED, not just self-consistent: the same
+        // two cases were built on Altirra over the AltirraBridge (mode 10,
+        // PRIOR $94, quad player 0 at HPOSP0 $70, screen filled with one
+        // repeated nibble) and its rendered frame agrees on both halves --
+        // nibble 5 hides the player COMPLETELY, nibble 1 draws it in full
+        // (a 64 px run at x=136..199, the border being COLPM0 in mode 10).
+        // Do not relax either expectation.  See docs/NextSteps.md.
         new_line();
         prior = 8'h94;                          // mode 10 + scheme 2
         an_pair = 2'b01; step_cc(3'd0, 3'd0);   // nibble 0101 = 5 -> PF1 class
