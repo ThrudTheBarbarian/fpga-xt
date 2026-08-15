@@ -377,6 +377,88 @@ module tb_gtia_stage;
         prior = 8'h01; colbk = 8'h00;
 
         // ================================================================
+        // ================================================================
+        // TG: THE FIRST COLOUR CLOCKS OF A LINE IN A GTIA MODE.
+        //
+        // This is the left-edge bar, reduced to its smallest form.  Measured on
+        // hardware (graboverlay, BallBlazer intro): the whole screen is hue 1 at
+        // every even luminance -- exactly GTIA mode 9, sixteen luminances of
+        // COLBK's hue -- EXCEPT columns 0-3, four pixels, which carry $28, hue
+        // 2.  In mode 9 gtia_special computes {colbk[7:4], nibble}, so every
+        // playfield pixel must carry COLBK's hue; a hue-2 pixel never went
+        // through the recolour.
+        //
+        // Suspected cause: line_start clears win_ready and gtia_win, and
+        // repriming needs an ODD colour clock to load win_ready from pf_win and
+        // the NEXT EVEN clock to move it into gtia_win -- so gtia_win is 0 for
+        // the first two colour clocks and the resolve falls through to
+        // sel_color.  Two colour clocks is four pixels, which is the measured
+        // bar.  COLBK is hue 1 and the playfield registers are hue 2 here, so
+        // the two are told apart by HUE ALONE, exactly as on hardware.
+        // ================================================================
+        begin : tg_line_start_gtia
+            logic [7:0] first_a [0:3];
+            logic [7:0] first_b [0:3];
+            prior  = 8'h41;             // PRIOR[7:6]=01 -> GTIA mode 9
+            colbk  = 8'h10;             // hue 1: every recoloured pixel is $1x
+            colpf0 = 8'h20; colpf1 = 8'h22; colpf2 = 8'h24; colpf3 = 8'h26;
+            grafp0 = 8'h00; grafp1 = 8'h00; grafp2 = 8'h00; grafp3 = 8'h00;
+            grafm  = 8'h00;
+            hposp0 = 8'd200; hposp1 = 8'd200; hposp2 = 8'd200; hposp3 = 8'd200;
+            hposm0 = 8'd200; hposm1 = 8'd200; hposm2 = 8'd200; hposm3 = 8'd200;
+            an_pair = 2'b11;            // a non-zero nibble either half
+            pf_win  = 1'b1;             // the playfield IS displaying
+            new_line();
+            for (int i = 0; i < 4; i++) begin
+                step_cc(3'd4, 3'd4);    // PF0 both halves
+                first_a[i] = got_a; first_b[i] = got_b;
+            end
+            for (int i = 0; i < 4; i++)
+                $display("NOTE TG: cc %0d after line_start -> a=$%02h b=$%02h (hue %0d/%0d)",
+                         i, first_a[i], first_b[i], first_a[i][7:4], first_b[i][7:4]);
+            // The claim under test: in a GTIA mode EVERY displayed playfield
+            // pixel carries COLBK's hue.  Anything else is the bar.
+            for (int i = 0; i < 4; i++) begin
+                if (first_a[i][7:4] !== colbk[7:4]) begin
+                    $display("FAIL TG: cc %0d half A is hue %0d ($%02h), expected COLBK's hue %0d -- this is the left-edge bar",
+                             i, first_a[i][7:4], first_a[i], colbk[7:4]);
+                    fail++;
+                end
+                if (first_b[i][7:4] !== colbk[7:4]) begin
+                    $display("FAIL TG: cc %0d half B is hue %0d ($%02h), expected COLBK's hue %0d -- this is the left-edge bar",
+                             i, first_b[i][7:4], first_b[i], colbk[7:4]);
+                    fail++;
+                end
+            end
+            // ---- the FAITHFUL case: the window OPENS mid-line ----------
+            // On hardware the playfield window does not open at cc 0; it opens
+            // at machine cycle 20, which is px_pos 80, which is plane column 0.
+            // If the same two-clock lag applies to pf_win's RISING EDGE then the
+            // artefact lands exactly at plane column 0 -- which is where it was
+            // measured.  This is the case that decides it.
+            begin : tg_window_open
+                logic [7:0] w_a [0:5];
+                new_line();
+                pf_win = 1'b0;
+                for (int i = 0; i < 8; i++) step_cc(3'd4, 3'd4);   // border
+                pf_win = 1'b1;                                     // window OPENS
+                for (int i = 0; i < 6; i++) begin
+                    step_cc(3'd4, 3'd4);
+                    w_a[i] = got_a;
+                end
+                for (int i = 0; i < 6; i++)
+                    $display("NOTE TG2: %0d cc after the window opened -> $%02h (hue %0d)",
+                             i, w_a[i], w_a[i][7:4]);
+                for (int i = 0; i < 6; i++)
+                    if (w_a[i][7:4] !== colbk[7:4]) begin
+                        $display("FAIL TG2: %0d cc after the window opened the pixel is hue %0d ($%02h), expected COLBK's hue %0d",
+                                 i, w_a[i][7:4], w_a[i], colbk[7:4]);
+                        fail++;
+                    end
+            end
+            pf_win = 1'b0; an_pair = 2'd0; prior = 8'h01;
+        end
+
         // T1: the schedule fits in a colour clock
         // ================================================================
         // Checked last so it covers every case above, and it is the one that
