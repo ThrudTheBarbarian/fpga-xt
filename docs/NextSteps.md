@@ -725,6 +725,37 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE MISSING OBJECT IS THE FIFTH PLAYER (MISSILES), AND IT IS AT THE POSITION
+  WE ALREADY WRITE (2026-08-15).**
+  Altirra's object, located on screen (altd28/altd29, artifacting OFF, 336x224):
+        **542 px, x=130..179 (50 wide), y=141..168 (28 tall), ALL colour $36**
+  **RETRACTION #19 (a heuristic, not a conclusion): "hues 3 and 5 = players" was
+  IMPRECISE.** $36 is NOT a COLPM value (those are $52/$32/$54/$34) -- it is one
+  of **COLPF3**'s written values. **But in GTIA mode 9 the playfield is recoloured
+  to COLBK's hue, so a COLPF3-coloured region MUST be an object**, and **PRIOR
+  $54 has BIT 4 SET = FIFTH PLAYER, under which the MISSILES take COLPF3.**
+  **=> ALTIRRA IS DRAWING THE FIFTH PLAYER (MISSILES) AS A 50x28 OBJECT
+  MID-SCREEN. WE DRAW NOTHING OF THAT COLOUR ANYWHERE.**
+  **AND THE POSITION MATCHES WHAT WE ALREADY WRITE:** our **HPOSM values are
+  $70..$82**, and `x_left = (HPOS - 48) * 2` puts them at **x ~= 128..164** --
+  squarely inside Altirra's x=130..179 object. Our missiles also receive shape
+  bytes (missile region $0300: 5% and 2% non-zero in two captures).
+  **=> THE BUG IS NARROWED TO OUR FIFTH-PLAYER / MISSILE RENDERING.** The inputs
+  are right (HPOSM positioned mid-screen, shape data present, PRIOR bit 4 set)
+  and the object does not appear.
+  **WHERE TO LOOK (all live, all synthesized):**
+   * `gtia_priority.sv`: `pm5 = prior[4]`; the fifth-player step uses `s = 4'd7`
+     (PF3) with **`s_present = pm5 && any_missile`** and `any_missile = |pres[7:4]`
+   * `gtia_obj_walk.sv`: missiles are objects 4..7, two bits each from GRAFM,
+     sized by SIZEM -- check they are being STRUCK and EMITTED at HPOSM $70..$82
+   * the P/M DMA fetch for the MISSILE region ($0300 with PMBASE $00), which is a
+     different address than the players' $0400-$0700
+  **FIRST CHECK: does `pres[7:4]` ever go non-zero on our board in that window?**
+  If the missiles are never present in the walk, priority never sees them and the
+  fifth player can never win.
+  ############################################################################
+
+  ############################################################################
   **THE RENDER PATH IS *NOT* EXONERATED — ALTIRRA DRAWS PLAYERS UNDER THE EXACT
   CONFIGURATION WHERE WE DRAW NONE (2026-08-15).**
   With the screen as ground truth (both machines reach gameplay ~22-28 s, so the
