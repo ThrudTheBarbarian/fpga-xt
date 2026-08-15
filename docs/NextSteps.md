@@ -725,6 +725,36 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **OUR MAIN THREAD SPINS ON $B3 IN CODE ALTIRRA NEVER EXECUTES (2026-08-15).**
+  **ALTIRRA NEVER TOUCHES $4Cxx/$5Axx/$5Dxx/$81xx AT ALL** -- zero occurrences in
+  **23.9M records** across five captures spanning t=13..73 s (alt_vlong plus the
+  four matched-point snapshots). **Ours executes them heavily from t=30 s.**
+  Disassembled (realigned from $4C72 -- the $4C70 alignment is mid-instruction):
+        $4C72  lda $B3
+        $4C74  bpl $4C8A
+               ... jsr $A0B2 / jsr $9C47 / inc $B5 / lda #$00 / sta $B3
+        $4C8A  jmp $4C72
+        ($4C8D  lda #$AB / sta VVBLKI $0222 -- this region installs a VBI vector)
+  **Our top three PCs are exactly that loop: $4C74 (132,091), $4C72 (132,076),
+  $4C8A (132,047) -- near-identical counts.** So **OUR MAIN THREAD IS PARKED,
+  SPINNING ON $B3 WAITING FOR IT TO GO NEGATIVE.**
+  **This refines the earlier "not a hang" remark:** the 5394 distinct PCs are
+  interrupt handlers and other subsystems still running -- but the MAIN THREAD is
+  stuck. Both statements are true; the main thread is what matters.
+  **=> THE PICTURE: at t~26 s we leave the intro into a region ALTIRRA NEVER
+  ENTERS, and park there spinning on $B3. Altirra meanwhile is still playing the
+  intro at t=60 s (sound tick exactly 1/frame, P/M uploader active). The man's
+  scene is in the part we never reach.**
+  **NEXT: (1) find every writer of $B3** (scan zp INC/DEC/STA/STX/STY opcodes and
+  resolve operands, as was done for $CA -- `trace_writes.py` sees neither INC/DEC
+  nor `STA (zp),Y`); **(2) find what BRANCHES us into $4Cxx at t~26 s** -- take a
+  snapshot straddling the transition (`dtrace 26`/`28`; the ring keeps the last
+  ~3.5 s) and predecessor-histogram the first $4Cxx execution. **$B3 is set to
+  $00 inside the loop itself ($4C88), so something ELSE must make it negative --
+  most likely an interrupt handler. If that handler never runs, we spin forever.**
+  ############################################################################
+
+  ############################################################################
   **THE LIKE-FOR-LIKE COMPARISON, AT LAST: ALTIRRA IS STILL IN THE INTRO AT
   t=60 s WHILE WE ARE NOT (2026-08-15).**
   Gap-free snapshots at the SAME wall-clock points on both machines -- ours via
