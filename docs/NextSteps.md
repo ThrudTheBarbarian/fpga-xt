@@ -687,6 +687,31 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   `trace_writes.py` does not decode `STA (zp),Y`, which the block-fill routine
   uses heavily, so screen-memory writes are under-counted here.
 
+  **LEADING HYPOTHESIS FOR THE CYCLE: the intro is paced by the VIRTUAL DRIVE,
+  not by the display path.** Evidence, all measured:
+
+  - A `dtrace 3` window (verified by instruction count to cover **t≈3.9-6.9 s**,
+    NOT t=0-3 — check this before reading any absence) shows the 6502 in
+    **loader code**: `$3Dxx` 42.3%, `$3Exx` 32.5%, `$FFxx` 10.0%, `$C2xx` 8.0%,
+    ending in a **2-instruction spin at `$3D9E/$3DA0`** — a wait loop, with the
+    logo already on screen.
+  - The later window shows **`$D20E` IRQEN 17521, `$D20A` SKRES 8403,
+    `$D20D` SEROUT 325** — sustained serial traffic, i.e. **still loading**.
+  - The screen is byte-identical for seconds at a time in both states.
+
+  So the "vehicle that stalls and waits" may simply be the game **waiting on
+  disk**, and the ~4-5 s A/B cycle may track load phases. See
+  [[sio_virtual_drive_state]]: our drive must **match the measured rate** of a
+  real one. **NEXT: time the SIO transaction rate during the intro and compare
+  against a real 810/1050 cadence** — if we deliver faster or slower, the
+  interleaved animation stalls or races. This is a **timing** question in the
+  SIO path, not a rasteriser one.
+
+  **NOT YET ESTABLISHED:** where the display is actually configured. Neither
+  window contains writes to `$D400-$D40F`, `$D01B`, nor to the OS shadows
+  `$022F`/`$0230`/`$026F`. Take a trace between them (e.g. `dtrace 10`) and
+  verify its window by instruction count before concluding anything.
+
   **Altirra decode gotcha (cost a null result tonight):** RAWSCREEN needs
   **nearest-neighbour** palette matching — exact lookup maps nothing and reports
   a confident, wholly false 100% "unmatched". Frames are **336x224 RGBA**
