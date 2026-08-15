@@ -1072,12 +1072,25 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   ARTIFACTS** — the hue one did not reproduce at all (above), and the shape one
   was a 4 px offset. Same hue, same picture. **There was never a defect here.**
 
-  **METHOD, twice over:** **register before you compare, and re-measure a
-  recorded figure before building on it.** A logo is high-frequency content, so
-  a few pixels of misalignment destroys IoU between identical images — the
-  low score was itself the evidence of misregistration, and it stood for days as
-  "different content". Both band rectangles came from notes and neither was ever
-  checked against the other.
+  **CANONICAL MAPPING — USE THIS FOR EVERY BOARD/ALTIRRA PIXEL COMPARISON:**
+
+        **altirra_x = board_x + 4        altirra_y = board_y + 16**
+
+  (board grab 320x192 from `graboverlay`; Altirra raw frame 336x224.)
+  **AND THE OFFSET IS NOT NEW — THIS DOCUMENT ALREADY HAD IT.** The logo extents
+  recorded above say ours spans `x=20..303` and Altirra's `x=24..311`, i.e.
+  **+4**. The band comparison then used Altirra `x=28` against our `x=20`, i.e.
+  **+8** — contradicting the logo alignment recorded in the same file. **So
+  there is no playfield-origin difference to chase**; the two rectangles were
+  simply derived at different times under different border assumptions, and the
+  registration peak independently confirms the +4.
+
+  **METHOD, three times over:** **register before you compare**, **re-measure a
+  recorded figure before building on it**, and **check a new rectangle against
+  the alignment already in the file**. A logo is high-frequency content, so a few
+  pixels of misalignment destroys IoU between identical images — the low score
+  was itself the evidence of misregistration, and it stood for days as "different
+  content" while the correct offset sat 190 lines up the same page.
 
   **TRAP THAT COST AN HOUR: `SDLSTL` ($0230) IS STALE HERE.** It reads `$BA00`,
   but `$BA00` holds **6502 code** (`18 69 4A` = CLC/ADC #$4A) — the game drives
