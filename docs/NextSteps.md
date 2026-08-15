@@ -653,6 +653,16 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   is documentation, not a guard; adding a passing test proves nothing until you
   have watched it fail.**
 
+  **What T11i-k do NOT settle.** They pin the mapping the RTL *implements* and
+  will catch a regression in it; they are not a reference. The corner without
+  independent evidence is **mode 10 nibbles 0-3**, where the nibble indexes
+  COLPM0-3 (`gtia_special.sv:11`) — the playfield is drawn in a PLAYER's colour,
+  and the fix classes it SRC_BK for priority because `gtia_nib[2]` is clear.
+  Nibbles 4-7 -> PF0-3 is the natural reading; 0-3 rests on the inherited
+  collision rule. **BallBlazer is mode 9 throughout, so nothing here is on the
+  critical path** — but if a mode-10 title ever matters, settle it against
+  Altirra (`PMG` + `RAWSCREEN`), not against these tests.
+
   **The `pf_win` trap is now FIXED, not just noted:** T11h restored `prior` and
   `colbk` but left the playfield window CLOSED, so the first draft of these
   three ran on the border, where one failed and two passed — all for the wrong
