@@ -102,6 +102,27 @@ and only fails to restore it after a game has run.**  ROM and RAM are the SAME `
 array; `rom_override` blocks CPU *writes* only, so a game running with BASIC banked
 out overwrites the BASIC image in place.  The re-upload is what should repair it.
 
+**The ROM upload is NOT dropping anything — that theory is dead.**  DIAG8/DIAG9
+(reconnected, `/OS/proc/romdiag`) measure, on the POST-GAME eject: delta **59392**
+pulses per upload (exactly `0xC000 + 0x2800`), `axi_accepted == rom_we_pulses` at
+every point, `last_addr = $FFFF`.  Nothing dropped in the CDC FIFO, nothing
+truncated.  `make -C sim rom_integ` T3 reproduces the board's exact order (BASIC
+off, CPU dirties `$A000`/`$BFFC`, upload, BASIC on, read) and PASSES.
+
+**But the byte is still wrong**, and the timing says when:
+
+| icnt (same boot) | `mem[$BFFC]` |
+|---|---|
+| 223630 (early coldstart) | `$BF` |
+| 3883984 (self-test running) | `$00` |
+
+The `$00` arrives LATE — written by the self-test's own memory test, not by the
+upload.  So immediately after the upload completes, `$BFFC` already holds `$BF`.
+A PORTB=`$FF` probe (bank latches 0 ⇒ `use_early`=0 ⇒ the read is `bram_dout_q`)
+returns `$BF` too, so that really is `mem[$BFFC]`.  Pulse counts cannot show the
+DATA or the intermediate addresses — hence the `$BFFC` watch tap now in DIAG9
+(writes-seen, and the byte the loader delivered).
+
 **The contradiction to chase:** at `PMI6` the sizing loop's write to `$A000` IS
 blocked (that is why RAMSIZ=`$A0`), proving `rom_override` asserts — yet the read at
 that same address returns `$A0`.  With `rom_override` true the mux can only return
@@ -5388,3 +5409,25 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
   (the weak-register guard is value-based since phase-611). Closing it would need a
   canonical trampoline address, which this loader cannot give. Recorded rather than
   papered over. *(fpga-xtc `docs/Design/bound-methods-across-modules.md`)*
+
+## BASIC has no key click — CONSOL bit 3 is not implemented
+
+The Atari key click is the OS pulsing the CONSOL speaker bit (`$D01F` bit 3).
+`hdl/gtia_reg_file.sv` (the LIVE GTIA under `USE_ANTIC2`) latches only the low
+three bits:
+
+```systemverilog
+else if (we && (a == 5'h1F))      consol_w <= wdata[2:0];
+```
+
+Bit 3 is discarded at the register, and `antic_top`'s `consol_w_q` (from the other
+`gtia_regs`) has no audio consumer, so there is NO path from `$D01F` bit 3 to the
+audio mix in either implementation.  The click has therefore never worked; it is
+only noticeable now that HDMI audio exists.  `NOCLIK` (`$02DB`, read at `$F31B`)
+measures `$00`, so the OS is not inhibiting it, and it is unrelated to the
+self-test bug despite showing up in the same session.
+
+FIX (not done — it is a feature change, Simon's call): latch `wdata[3]` as a
+separate bit (leave `consol_rd` using `[2:0]` so the ACID console-key vectors are
+untouched), route it up through `antic2` → `antic_top` → `fpga_xt_top`, and mix it
+into `audio_sample_l/r` ahead of `u_audio_lpf` as a square wave.
