@@ -49,9 +49,14 @@
 `default_nettype none
 
 module audio_lpf #(
-    // Corner = CLK_HZ / (2*pi*2^LPF_SHIFT) per pole.  Raise to dull the top
-    // end, lower to let more through (and more aliasing with it).
-    parameter int unsigned LPF_SHIFT  = 11,
+    // Corner = CLK_HZ / (2*pi*2^SHIFT) per pole.  The two stages are separately
+    // adjustable because a shift is a power of two, so moving both together
+    // halves or doubles the corner — far too coarse when the verdict is "a bit
+    // bright, not much".  Staggering them (11 -> ~11.6 kHz, 12 -> ~5.8 kHz)
+    // lands the pair around 8 kHz and takes roughly 4 dB off at 11 kHz, which is
+    // the small step that description asks for.
+    parameter int unsigned LPF_SHIFT  = 11,   // first pole
+    parameter int unsigned LPF_SHIFT2 = 12,   // second pole
     // Right-shift applied after centring, for headroom.  1 = -6 dB.
     parameter int unsigned GAIN_SHIFT = 1,
     // Midpoint of the incoming unsigned range: the mixer's full scale is
@@ -68,24 +73,28 @@ module audio_lpf #(
     output wire signed [23:0] out_r
 );
 
-    localparam int unsigned ACC_W = 24 + LPF_SHIFT;
+    // Each stage's accumulator holds x * 2^shift, so it needs that many extra
+    // bits; size them independently now the shifts differ.
+    localparam int unsigned ACC1_W = 24 + LPF_SHIFT;
+    localparam int unsigned ACC2_W = 24 + LPF_SHIFT2;
 
-    logic [ACC_W-1:0] a1_l, a2_l, a1_r, a2_r;
+    logic [ACC1_W-1:0] a1_l, a1_r;
+    logic [ACC2_W-1:0] a2_l, a2_r;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             a1_l <= '0; a2_l <= '0; a1_r <= '0; a2_r <= '0;
         end else begin
-            a1_l <= a1_l - (a1_l >> LPF_SHIFT) + ACC_W'(in_l);
-            a2_l <= a2_l - (a2_l >> LPF_SHIFT) + ACC_W'(a1_l >> LPF_SHIFT);
-            a1_r <= a1_r - (a1_r >> LPF_SHIFT) + ACC_W'(in_r);
-            a2_r <= a2_r - (a2_r >> LPF_SHIFT) + ACC_W'(a1_r >> LPF_SHIFT);
+            a1_l <= a1_l - (a1_l >> LPF_SHIFT)  + ACC1_W'(in_l);
+            a2_l <= a2_l - (a2_l >> LPF_SHIFT2) + ACC2_W'(a1_l >> LPF_SHIFT);
+            a1_r <= a1_r - (a1_r >> LPF_SHIFT)  + ACC1_W'(in_r);
+            a2_r <= a2_r - (a2_r >> LPF_SHIFT2) + ACC2_W'(a1_r >> LPF_SHIFT);
         end
     end
 
     // acc holds x * 2^K, so shifting back down recovers the filtered value.
-    wire [23:0] filt_l = 24'(a2_l >> LPF_SHIFT);
-    wire [23:0] filt_r = 24'(a2_r >> LPF_SHIFT);
+    wire [23:0] filt_l = 24'(a2_l >> LPF_SHIFT2);
+    wire [23:0] filt_r = 24'(a2_r >> LPF_SHIFT2);
 
     // Centre, then scale for headroom.  The subtraction is done at 25 bits so
     // a sample below the midpoint stays negative rather than wrapping.
