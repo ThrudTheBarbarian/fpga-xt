@@ -725,6 +725,35 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION #17 AND #18: OUR INTRO IS NOT SHORTER, AND IT IS NOT VARIABLE
+  (2026-08-15). THE "SHORTER INTRO" CONCLUSION COLLAPSES.**
+  Five FRESH launches, screen grabs at t = 24/28/32/36/40 s, hue-mapped:
+        run 1..5 (ALL IDENTICAL): **t=24 s INTRO (hue1 100%), t=28 s GAME**,
+        and game at 32/36/40 s.
+  **=> RETRACTION #17: "our intro duration VARIES between runs" is WRONG.** It is
+  highly repeatable (5/5). The apparent variation came from inferring phase from
+  CODE PAGES in traces rather than from the SCREEN.
+  **=> RETRACTION #18: "our intro is much SHORTER than Altirra's" is WRONG.**
+  Altirra's own screen transition, from the `alt_seq` set (frames at boot+500/
+  650/800/950/1100/1250 ~= t=10/13/16/19/22/25 s): **a-d are mode 9, e-f are
+  gameplay -- Altirra reaches the game screen at t~22 s, slightly EARLIER than
+  our 24-28 s.** Both machines reach gameplay at a similar time.
+  **AND THE LABELLING ERROR BEHIND IT:** I called Altirra's $37xx/$3Bxx activity
+  at t=45-60 s "intro code". **It is not** -- `$353A` (the P/M uploader) lives in
+  $37xx and runs during GAMEPLAY too. So "Altirra is still playing the intro at
+  t=60 s" was an inference from code pages, not a screen observation.
+  **WHAT SURVIVES, AND IT IS NARROWER:** at t=30/45/60 s the two machines run
+  DIFFERENT CODE REGIONS -- ours $4Cxx/$5Axx/$5Dxx/$81xx (which **Altirra never
+  executes at all**: zero in 23.9M records) and Altirra's $37xx/$3Bxx/$3Axx with
+  its sound tick at exactly 1/frame. **Both are in "the game" by ~t=25 s; they
+  simply run different code there.** Whether that difference matters to the
+  missing man is NO LONGER ESTABLISHED.
+  **LESSON: DO NOT INFER A PHASE FROM CODE PAGES WHEN THE SCREEN CAN BE
+  MEASURED DIRECTLY.** The screen is the ground truth for "which scene is
+  playing"; code-page profiles conflate scenes that share subroutines.
+  ############################################################################
+
+  ############################################################################
   **REFINEMENT: OUR INTRO DURATION VARIES BETWEEN RUNS (2026-08-15).**
   Three separate launches, each a fresh `xlboot`:
         stages.bin run: intro at t=15 s, **gameplay ($4Cxx) by t=30 s**
