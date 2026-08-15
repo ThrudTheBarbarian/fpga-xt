@@ -725,6 +725,38 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE MAN: OUR OS VBI SHADOW COPY *DECAYS AND THEN STOPS* (2026-08-15).
+  MOST CONCRETE FINDING SO FAR.**
+  Our OS ROM DOES contain the classic VBI stage-2 shadow sequence (found by
+  searching `sim/atari_xl_rom.mem` for `8D 1B D0`):
+        $C146  8D 00 D4   sta DMACTL
+        $C149  AD 6F 02   lda GPRIOR ($026F)
+        $C14C  8D 1B D0   sta PRIOR  ($D01B)
+  **How often it actually executes, measured across our captures:**
+        early.bin  (first 4 s):  **209 times (~52/s = EVERY FRAME)**, GPRIOR = **$41 x130**, $00 x79
+        prior.bin  (t~5-13 s):   **14 times (~1.75/s)**,              GPRIOR = **$41 x14**
+        hw_long2.bin / multi.bin / entry.bin (later): **NEVER EXECUTED**
+  **So we DO push $41 (scheme 0, players above playfield) -- at full frame rate
+  at first, then sparsely, then not at all -- while $33AF keeps writing $54.
+  As the VBI copy dies out, $54 stands unopposed and EVERY PLAYER IS HIDDEN.**
+  That matches the screen exactly: 0 of 9 mode-9 frames contain a player pixel,
+  from t=4 s onward.
+  **=> THE TARGET IS "WHY DOES THE OS VBI STAGE-2 STOP RUNNING?", NOT THE RENDER
+  PATH.** Compare against Altirra, whose PRIOR holds $41 for frames 107..680
+  (t~2.1..13.6 s) before going to $54 -- i.e. its stage-2 keeps winning for far
+  longer.
+  **CAUTION:** the three "NEVER EXECUTED" captures are from EARLIER SESSIONS and
+  different phases; re-measure the decay in ONE continuous capture before
+  treating the rate curve as exact. The early-vs-prior contrast (209 vs 14) is
+  within tonight's runs and is the solid part.
+  **NOTE this rhymes with an earlier measured result that must NOT be
+  contradicted carelessly: "$BC80=0, VBI path 100% FULL, no dropped VBIs" was
+  true IN ITS WINDOW.** Stage-2 ceasing is not the same as the VBI being dropped
+  -- a game commonly installs its own VVBLKD. The question is whether OUR
+  stage-2 stops EARLIER than Altirra's.
+  ############################################################################
+
+  ############################################################################
   **RETRACTION #11 (MY OWN INSTRUMENT MISREAD) AND THE CORRECTED PICTURE:
   ALTIRRA HAS AN ~11.5 s "$41" WINDOW WHERE PLAYERS ARE ABOVE THE PLAYFIELD
   (2026-08-15).**
