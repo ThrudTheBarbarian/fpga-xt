@@ -28,6 +28,10 @@ module tb_gtia_obj_walk;
     logic [1:0] sizep0, sizep1, sizep2, sizep3;
     logic [7:0] sizem, grafm;
     logic [7:0] grafp0, grafp1, grafp2, grafp3;
+    // "SIZEP was WRITTEN this colour clock", one bit per player.  Left dangling
+    // this floats x into obj_resize and every decision it gates, so a case can
+    // pass on x-propagation rather than on behaviour.  Driven explicitly.
+    logic [3:0] resize;
 
     wire [7:0] pres;
     wire       pres_valid;
@@ -38,6 +42,7 @@ module tb_gtia_obj_walk;
         .hposp0(hposp0), .hposp1(hposp1), .hposp2(hposp2), .hposp3(hposp3),
         .hposm0(hposm0), .hposm1(hposm1), .hposm2(hposm2), .hposm3(hposm3),
         .sizep0(sizep0), .sizep1(sizep1), .sizep2(sizep2), .sizep3(sizep3),
+        .resize(resize),
         .sizem(sizem),
         .grafp0(grafp0), .grafp1(grafp1), .grafp2(grafp2), .grafp3(grafp3),
         .grafm(grafm),
@@ -111,7 +116,7 @@ module tb_gtia_obj_walk;
         hposp0 = 8'd60; hposp1 = 8'd0; hposp2 = 8'd0; hposp3 = 8'd0;
         hposm0 = 8'd0;  hposm1 = 8'd0; hposm2 = 8'd0; hposm3 = 8'd0;
         sizep0 = 2'b00; sizep1 = 2'b00; sizep2 = 2'b00; sizep3 = 2'b00;
-        sizem  = 8'h00;
+        sizem  = 8'h00; resize = 4'h0;
         grafp0 = 8'h00; grafp1 = 8'h00; grafp2 = 8'h00; grafp3 = 8'h00;
         grafm  = 8'h00;
         for (int i = 0; i < 256; i++) trace[i] = 8'h00;
@@ -406,6 +411,46 @@ module tb_gtia_obj_walk;
                          span_count(0));
                 fail++;
             end
+        end
+
+        // ================================================================
+        // T9: the RESIZE STROBE — the path no bench had ever driven.
+        //
+        // `resize` means "SIZEP was WRITTEN this colour clock", and it gates
+        // the resize clock (rz_lock_a/rz_roll_a) and the 1x-alt lockup.  Until
+        // now it was left DANGLING in both this bench and tb_gtia_stage, so it
+        // floated x and the logic it gates was never exercised on a defined
+        // input.  T5 changes SIZEP mid-draw but asserts no strobe, which cannot
+        // happen in hardware -- SIZEP only changes BY being written.  T9 is T5
+        // with the strobe the hardware would raise.
+        // ================================================================
+        begin : t9_resize_strobe
+            new_line();
+            grafp0 = 8'hC0; hposp0 = 8'd60; sizep0 = 2'b11;  // quad, top 2 bits
+            resize = 4'h0;
+            run_to(68);                                      // into the 2nd bit
+            // The write itself: SIZEP changes and the strobe is raised for
+            // exactly the colour clock that carries it.
+            sizep0 = 2'b00;
+            resize = 4'b0001;
+            step_cc();
+            resize = 4'h0;
+            run_to(120);
+            // The shape must not restart: bits 2-7 of $C0 are clear, so nothing
+            // may be lit once the two set bits have been emitted.
+            if (span_first(0) != 60) begin
+                $display("FAIL T9: strobed resize moved the start to cc %0d, expected 60",
+                         span_first(0));
+                fail++;
+            end
+            if (span_count(0) > 12) begin
+                $display("FAIL T9b: strobed resize lit %0d colour clocks, expected the shape not to restart (<=12)",
+                         span_count(0));
+                fail++;
+            end
+            $display("NOTE T9: strobed mid-draw resize spans cc %0d..%0d for %0d clocks",
+                     span_first(0), span_last(0), span_count(0));
+            resize = 4'h0;
         end
 
         if (fail == 0) $display("tb_gtia_obj_walk: all checks PASS");

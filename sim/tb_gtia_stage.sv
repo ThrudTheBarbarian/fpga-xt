@@ -29,6 +29,9 @@ module tb_gtia_stage;
     logic [7:0] hposm0, hposm1, hposm2, hposm3;
     logic [1:0] sizep0, sizep1, sizep2, sizep3;
     logic [7:0] sizem, grafm;
+    // "SIZEP was WRITTEN this colour clock" — dangling here floated x into the
+    // resize clock and the 1x-alt lockup that gtia_obj_walk gates on it.
+    logic [3:0] resize;
     logic [7:0] grafp0, grafp1, grafp2, grafp3;
     logic [7:0] prior;
     logic [7:0] colbk, colpf0, colpf1, colpf2, colpf3;
@@ -47,6 +50,7 @@ module tb_gtia_stage;
         .hposp0(hposp0), .hposp1(hposp1), .hposp2(hposp2), .hposp3(hposp3),
         .hposm0(hposm0), .hposm1(hposm1), .hposm2(hposm2), .hposm3(hposm3),
         .sizep0(sizep0), .sizep1(sizep1), .sizep2(sizep2), .sizep3(sizep3),
+        .resize(resize),
         .sizem(sizem),
         .grafp0(grafp0), .grafp1(grafp1), .grafp2(grafp2), .grafp3(grafp3),
         .grafm(grafm), .prior(prior),
@@ -122,7 +126,7 @@ module tb_gtia_stage;
         an_pair = 2'd0; pf_win = 1'b0;
         hposp0 = 8'd200; hposp1 = 8'd200; hposp2 = 8'd200; hposp3 = 8'd200;
         hposm0 = 8'd200; hposm1 = 8'd200; hposm2 = 8'd200; hposm3 = 8'd200;
-        sizep0 = 0; sizep1 = 0; sizep2 = 0; sizep3 = 0; sizem = 0;
+        sizep0 = 0; sizep1 = 0; sizep2 = 0; sizep3 = 0; sizem = 0; resize = 0;
         grafp0 = 0; grafp1 = 0; grafp2 = 0; grafp3 = 0; grafm = 0;
         prior  = 8'h01;
         colbk  = 8'h00; colpf0 = 8'h28; colpf1 = 8'h3A; colpf2 = 8'h94;
