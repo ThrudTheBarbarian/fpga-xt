@@ -818,6 +818,28 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (`match = walking && (cc_pos == obj_hpos)`) is **correct** — an object starts
   exactly at cc == HPOS. **Do not change the walk.**
 
+  **THE SYMPTOM IS NOW REPRODUCED IN CAPTURED DATA, AND THE DIRECTION IS
+  CONSISTENT: OUR P/M SITS *LEFT* OF THE REFERENCE RELATIVE TO THE PLAYFIELD.**
+  Measuring the gap from the man to the nearest playfield pixel, per row:
+
+        vehicle on the RIGHT   board g30 red  {6:4, 8:2, 10:1, 14:5, 16:4}
+                               ALT   blue     {2:4, 4:2, 6:1, 10:5, 12:4}
+        vehicle on the LEFT    board g79 blue {0:6, 2:1, 6:5, 8:4, 10:5}
+                               ALT   red      {2:4, 4:2, 6:1, 10:5, 12:4}
+
+  The vehicle-on-the-right pair has an **identical count structure (4,2,1,5,4)**
+  with every gap value **+4 px larger on our board**; and on the left-hand pair
+  **our man reaches gap 0 -- touching -- in 6 rows where Altirra's minimum is 2.**
+  That is precisely Simon's "drawn over the last pixel of the vehicle".
+
+  **THE MAGNITUDE IS NOT PINNED — do not quote one.** Three methods disagree:
+  the same-colour matched pose gives 2 px (1 cc); the gap structure gives 4 px
+  (2 cc); and the mod-4 phase test (playfield boundaries are x≡0 mod 4 on BOTH
+  machines, and the man's mod-4 start distribution is IDENTICAL, {0:45,2:39},
+  for the exactly matched pose g30<->f1248) favours a shift that is a multiple
+  of 4 px, since a 1 cc shift would SWAP that distribution. Direction is solid;
+  size is not.
+
   **THE ONLY VALID TEST: put an object where 1 cc CHANGES THE ANSWER.** Game
   frames cannot do it. Use the ACID ramp geometry — nibbles are 2 cc wide, so an
   object straddling a bit-2 boundary (nibble 3->4, 7->8, B->C) collides
