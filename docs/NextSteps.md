@@ -1030,9 +1030,8 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   from the `PALETTE` verb (768 B = 256 x 3 RGB); the board's is
   `hdl/palette/atari_ntsc.hex`. They are NOT interchangeable.
 
-  **So there is no hue discrepancy to explain.** What is left is the shape/
-  content difference (IoU 44.7%), i.e. the two machines are at different points
-  in the sequence — a timeline offset, not a rendering defect.
+  **So there is no hue discrepancy to explain**, and the shape difference turned
+  out to be a 4 px misregistration (below). **The logo band is CLOSED.**
 
   **HALF OF THAT IS NOW SETTLED: OUR CHIPSET DOES FOLLOW A MID-LINE COLBK WRITE
   (2026-08-15).** The mechanism above is the only way to get three hues with DLIs
@@ -1045,32 +1044,40 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   with `colour $5b, expected $9b`, which is exactly what a per-scanline latch
   would produce.
 
-  So **the single hue on our board is NOT an RTL limitation.** What remains is
-  the content question: the shape test below (IoU 44.7%) says the two machines
-  are at different points in the sequence, and that is now the leading — and
-  only — surviving explanation. **Still not a defect; still must not drive an
-  RTL change.** To close it properly, scene-match to IoU > 90% FIRST, then
-  compare hue.
+  So **the single hue on our board is NOT an RTL limitation** — and in the end
+  there was nothing to explain: Altirra renders that band in one hue too, and
+  the shape difference was a 4 px misregistration (below). This guard is still
+  worth having, but it was aimed at a difference that does not exist.
 
-  **AND A SHAPE TEST ARGUES THE SCENES SIMPLY DIFFER.** The mode-9 nibble data
+  **AND THE SHAPE DIFFERENCE WAS MISREGISTRATION — 4 PIXELS. THE BANDS ARE THE
+  SAME PICTURE (2026-08-15, `tools/band_align.py`).** The mode-9 nibble data
   sets the LUMINANCE pattern while COLBK sets the hue, so comparing *shape* is
   palette-independent: threshold each band at its own median brightness and
-  intersect. Over t = 6..32 s (`shapecmp.py`):
+  intersect. The recorded score was **IoU 44.7%**, read as "similar density,
+  different content". It is reproduced exactly — **at zero shift**. Scanning the
+  relative offset instead gives a sharp peak:
 
-        ours    43.9% of the band bright      altirra 47.6% bright
-        **shape IoU 44.7%** -- at every sample
+        dx = **+4**, dy = 0   ->   **IoU 92.2%**
+        dx = 0,      dy = 0   ->   IoU 44.7%   (the recorded figure)
+        worst over +/-16      ->   IoU 21.2%
 
-  Identical content would score >90%; chance for two masks of this density is
-  ~29%. **44.7% means similar density but different content**, i.e. the two
-  machines are at different points in the sequence. That **weakens** the "our
-  rendering is wrong" reading rather than supporting it, and is the strongest
-  reason not to touch RTL over this.
+  **+4,+0 -> 92.2% is identical across every pair tried** (grabs 20/40/60/80
+  against caps 20/40/60/80, and a deliberately mismatched grab 30 vs cap 70) —
+  a sharp registration peak on high-frequency content, not a coincidence. The
+  correct correspondence is **board x=24..307 <-> Altirra x=28..311** (both 284
+  wide), y: board 25..84 <-> Altirra 41..100. The rectangle recorded for the
+  board was **4 px too far left**.
 
-  **Next step if picked up:** scene-match properly first (the shape IoU is the
-  cheap check — get it above ~90% before comparing colour at all). Only then
-  sample COLBK **per scanline**, since the register value in vertical blank is
-  the wrong measurement; the kernel's COLBK writes will be WSYNC-paced, not
-  DLI-driven.
+  **SO THE LOGO BAND IS FULLY CLOSED. BOTH "DIFFERENCES" WERE MEASUREMENT
+  ARTIFACTS** — the hue one did not reproduce at all (above), and the shape one
+  was a 4 px offset. Same hue, same picture. **There was never a defect here.**
+
+  **METHOD, twice over:** **register before you compare, and re-measure a
+  recorded figure before building on it.** A logo is high-frequency content, so
+  a few pixels of misalignment destroys IoU between identical images — the
+  low score was itself the evidence of misregistration, and it stood for days as
+  "different content". Both band rectangles came from notes and neither was ever
+  checked against the other.
 
   **TRAP THAT COST AN HOUR: `SDLSTL` ($0230) IS STALE HERE.** It reads `$BA00`,
   but `$BA00` holds **6502 code** (`18 69 4A` = CLC/ADC #$4A) — the game drives
