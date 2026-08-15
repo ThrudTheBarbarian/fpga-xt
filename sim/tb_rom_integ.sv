@@ -98,6 +98,11 @@ module tb_rom_integ;
         @(negedge clk_sally); addr = a; rw = 1;
         @(posedge clk_sally); @(negedge clk_sally); #1 v = data_out;
     endtask
+    // CPU write via sally_mem (what a game does to the window when BASIC is off)
+    task automatic cpu_wr(input [15:0] a, input [7:0] d);
+        @(negedge clk_sally); addr = a; data_in = d; rw = 0;
+        @(posedge clk_sally); @(negedge clk_sally); rw = 1;
+    endtask
     task automatic chk(input string s, input [7:0] got, input [7:0] want);
         if (got !== want) begin $display("FAIL %s: got=$%02h want=$%02h", s, got, want); nfail++; end
         else $display("  ok  %s = $%02h", s, got);
@@ -128,6 +133,45 @@ module tb_rom_integ;
             end
             if (bad) begin $display("FAIL T2: %0d/512 burst bytes wrong", bad); nfail++; end
             else $display("  ok  T2: all 512 burst bytes read back correct");
+        end
+
+        // T3: the BASIC window AFTER a game has dirtied it (board bug 2026-08-15).
+        // On the board, a cold boot lands in the XL self-test instead of BASIC once
+        // any game has run: $BFFC (CART) reads $BF instead of the ROM's $00, so the
+        // coldstart's cartridge check says "no cartridge".  ROM and RAM are the same
+        // `mem` array here and rom_override blocks CPU WRITES only, so a game running
+        // with BASIC banked out overwrites the BASIC image in place; the next
+        // upload_image is what must repair it.  Reproduce exactly that order:
+        //   BASIC OFF -> CPU dirties $A000/$BFFC -> ROM upload -> BASIC ON -> read.
+        $display("[T3] BASIC window: dirty with BASIC off, re-upload, read with BASIC on");
+        portb = 8'hFF;                       // OS ROM on, BASIC OFF -> window is RAM
+        repeat (2) @(posedge clk_sally);
+        cpu_wr(16'hA000, 8'hA0);             // the exact bytes the board reads back
+        cpu_wr(16'hBFFC, 8'hBF);
+        cpu_wr(16'hBFFD, 8'hBF);
+        repeat (4) @(posedge clk_sally);
+        begin logic [7:0] v;                  // confirm the dirty actually landed
+            cpu_rd(16'hA000, v); chk("T3 dirty A000 (BASIC off)", v, 8'hA0);
+        end
+        axi_wr(16'hA000, 8'hA5);             // upload_image restores the BASIC image
+        axi_wr(16'hBFFC, 8'h00);
+        axi_wr(16'hBFFD, 8'h05);
+        repeat (16) @(posedge clk_sally);
+        portb = 8'hFD;                       // OS ROM on, BASIC ON (bit1 clear)
+        repeat (4) @(posedge clk_sally);
+        begin logic [7:0] v;
+            cpu_rd(16'hA000, v); chk("T3 A000 after re-upload (BASIC on)", v, 8'hA5);
+            cpu_rd(16'hBFFC, v); chk("T3 BFFC = CART (must be $00)",       v, 8'h00);
+            cpu_rd(16'hBFFD, v); chk("T3 BFFD = CARTFG",                   v, 8'h05);
+        end
+
+        // T4: same window, never dirtied — isolates "upload into a clean window"
+        // from "upload over CPU-written bytes".
+        $display("[T4] BASIC window, clean: upload then read with BASIC on");
+        axi_wr(16'hB000, 8'h5A);
+        repeat (16) @(posedge clk_sally);
+        begin logic [7:0] v;
+            cpu_rd(16'hB000, v); chk("T4 B000 after upload (BASIC on)", v, 8'h5A);
         end
 
         if (nfail == 0) $display("*** ROM_INTEG OK ***");
