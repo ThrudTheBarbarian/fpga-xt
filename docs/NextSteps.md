@@ -725,6 +725,38 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE LIKE-FOR-LIKE COMPARISON, AT LAST: ALTIRRA IS STILL IN THE INTRO AT
+  t=60 s WHILE WE ARE NOT (2026-08-15).**
+  Gap-free snapshots at the SAME wall-clock points on both machines -- ours via
+  the `dtrace` ring (`dtrace 60` = a snapshot 60 s in), Altirra via TRACEFILE
+  windows of ~175 frames:
+        ALTIRRA  t=15s  $BCxx/$32xx/$3Bxx   BCEB=**175**  3043=1, 33AF=1
+                 t=30s  $31xx/$32xx/$3Bxx   BCEB=**175**  3043=2
+                 t=45s  $37xx/$BExx/$BFxx   BCEB=**175**  **353A=608**
+                 t=60s  $37xx/$3Bxx/$3Axx   BCEB=**175**  **353A=192**
+        OURS     t=15s  $37xx/$3Bxx/$3Axx   BCEB=320      3043=1, 353A=642
+                 t=30s  **$4Cxx/$5Axx/$5Dxx/$81xx  NO BCEB, NO 353A, NO 3043**
+                 t=45s  identical profile          none
+                 t=60s  identical profile          none
+  **Altirra's sound tick is EXACTLY 175 per 175 frames (1/frame) at every point,
+  and its P/M uploader is still running at t=45 s and t=60 s -- it is STILL
+  PLAYING THE INTRO.** Our board has left that world by t=30 s: different code,
+  **sound engine entirely absent**, no uploader, no dispatcher.
+  **IT IS NOT A HANG.** Our t=45 s snapshot has **5394 DISTINCT PCs** with a hot
+  inner loop at $4C72/$4C74/$4C8A (~19% combined) -- a real program in a steady
+  periodic state, not a crash. (The byte-stable profile across t=30/45/60,
+  including $81xx = 111,644 in all three, is periodicity, not a freeze.)
+  **=> THE DIVERGENCE, STATED AS DIRECTLY COMPARABLE FACT: at t=30/45/60 s
+  Altirra is executing the intro and we are executing something else. The man's
+  scene is in the part we never play.**
+  **NEXT: identify what our $4Cxx state IS and what transitions us into it around
+  t=26 s.** Candidates: the game proper starting early, an attract/demo mode, or
+  a wrong branch out of the intro. Predecessor-histogram the FIRST $4Cxx
+  execution in a capture that straddles the transition (a `dtrace 26`-ish
+  snapshot), and check whether Altirra ever reaches $4Cxx at all.
+  ############################################################################
+
+  ############################################################################
   **STAGED SNAPSHOTS SETTLE IT: WE ARE NOT PARKED — OUR INTRO IS SIMPLY MUCH
   SHORTER THAN ALTIRRA'S (2026-08-15).**
   Four gap-free 4 s `dtrace` snapshots taken AT t = 15 / 30 / 45 / 60 s (the ring
