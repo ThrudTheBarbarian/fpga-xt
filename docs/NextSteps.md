@@ -773,8 +773,62 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   costs nothing anywhere in the suite.** Log `scratchpad/acid_par2.log`; the old
   broken-harness run is kept as `scratchpad/acid_par_NOROM.log`.
 
-- **BallBlazer intro: THE RENDER PATH IS CLOSED. Only Simon's four decisions
-  remain** — (1) make `xlboot -a` the ATX default (or fold it into `g_sio_rot`,
+- **BallBlazer intro: OPEN AGAIN (2026-08-15, Simon on hardware) — a possible
+  ONE COLOUR CLOCK offset between P/M objects and the playfield.** He reports the
+  red man overlapping the vehicle's last pixel and the blue man sitting one clear
+  of it, and confirms it is on pixel boundaries so "1 colour clock" is the right
+  unit. **NOT PROVEN — and one attempt to prove it was RETRACTED.**
+
+  **WHAT IS MEASURED AND SOLID:**
+   * Our P/M **shape** is pixel-identical to Altirra: 22 matched poses (same
+     pixel count AND run-width histogram), and **dy = +16 in ALL 22** — the
+     canonical vertical mapping exactly.
+   * Every P/M run is **even-start and even-width** on BOTH machines (84/84 runs
+     per frame, four appearances). **Our renderer CANNOT emit a 1-hires-pixel
+     object**, so the thin vertical bar Simon photographed under the LUCASFILM
+     GAMES logo is **NOT a player or missile from our P/M path.** Identify it
+     with a `graboverlay` at that moment; do not attribute it to P/M.
+
+  **RETRACTED: "our P/M is 1 colour clock LEFT" (dx=+6 vs canonical +4).** That
+  was ONE matched pair. Over 22 pairs dx is **+8 (x11), +58, +18, +12, +6, -8,
+  -42** — the same Altirra pose gives +6 against one board grab and +8 against
+  another. **dx is dominated by where the character is in its walk**, because the
+  two machines are at different points in the sequence. Matching POSE does not
+  pin POSITION. **Game frames cannot measure this offset at all.**
+
+  **NO EXISTING TEST EXCLUDES A 1 cc OFFSET — all four candidates were checked:**
+   * `gtia_collision2` — missile groups sit at `$71/$79/$81/$89`, **8 cc apart**,
+     sampling alternating 8-cc bit-2 regions of the nibble ramp
+     (`$01,$23,$45,$67,$89,$AB,$CD,$EF`). A 1 cc shift keeps every missile inside
+     its own region, so it still passes. Pins to a few cc, **not to one**.
+   * `antic_pfstarttiming` / `antic_pfstoptiming` — these DO measure the relative
+     alignment (players parked at HPOSP `$80`/`$84`, read `p0pf` while stepping
+     DMACTL to move the playfield edge), but they step in **MACHINE CYCLES = 2
+     cc**, so they pin it to 2 cc, **not to one**.
+   * `tb_gtia_stage` **cannot** answer it: the bench sets `cc_pos = 8'(cc)` from
+     the same counter that indexes the playfield stream (line 74), so it
+     **defines** objects and playfield as aligned.
+
+  **WHERE IT WOULD LIVE — and the standing warning.** `hdl/a2_video.sv:216`,
+  `cc_pos = px_pos[8:1] - 8'd1`, whose own comment records
+  **`cc_pos = 2*hcount + {-1,0}`** — a documented **+/-1 colour clock ambiguity in
+  exactly the signal that positions objects against the playfield** — and warns
+  **"THE FIX IS NOT TO SHIFT cc_pos"**, because playfield and objects share that
+  origin and moving it alone slides objects across the field. `gtia_obj_walk.sv:176`
+  (`match = walking && (cc_pos == obj_hpos)`) is **correct** — an object starts
+  exactly at cc == HPOS. **Do not change the walk.**
+
+  **THE ONLY VALID TEST: put an object where 1 cc CHANGES THE ANSWER.** Game
+  frames cannot do it. Use the ACID ramp geometry — nibbles are 2 cc wide, so an
+  object straddling a bit-2 boundary (nibble 3->4, 7->8, B->C) collides
+  differently for a 1 cc shift. Run that same case on our chip and on Altirra
+  (`tools/mode10_priority_oracle.py` is the working bridge template; the
+  reference half is already measured — HPOSP0 `$70`, quad size, lands at
+  playfield-relative x=128 = `($70-48)*2`). **Until that measurement exists,
+  do not touch `cc_pos`.**
+
+- **BallBlazer intro: the rest of the render path is CLOSED. Simon's four
+  decisions remain** — (1) make `xlboot -a` the ATX default (or fold it into `g_sio_rot`,
   or make it per-title)? (2) his eyes on the intro under `-a`; (3) gameplay feel
   under `-a`; (4) is the intro's sound audible? **No RTL work is open here, and
   none should be started.** Fixed and verified: the left-edge bar (`b0de37fe`),
