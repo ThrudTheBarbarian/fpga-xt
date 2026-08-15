@@ -725,6 +725,46 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **PRIOR DIFFERS DURING THE INTRO: OURS $54, ALTIRRA $41 — STRONGEST LEAD FOR
+  THE MISSING MAN, BUT ONE CHANNEL IS UNVALIDATED (2026-08-15).**
+        ALTIRRA PRIOR sweep from cold reset (per frame, `PMG`.prior):
+              frame   0 (t~0.0 s): PRIOR=$00, GTIA mode bits 0
+              frame 108 (t~2.2 s): **PRIOR=$41**, GTIA mode bits 1
+              ...and it **NEVER CHANGES for the remaining 1892 frames (to t~40 s)**
+        OURS (dtrace during the intro, trace_writes): **PRIOR=$54 written twice
+              from $33AF**; screen behaviour agrees (players hidden).
+        **$41** = mode 9, no fifth player, **priority scheme 0 = PLAYERS ABOVE PLAYFIELD**
+        **$54** = mode 9, fifth player,   **priority scheme 2 = PLAYFIELD ABOVE PLAYERS**
+  That is exactly the difference between a visible man and a hidden one.
+  **RETRACTION #10:** "PRIOR $54 matches on both machines" was based on a single
+  `alt.pmg()` peek taken during **GAMEPLAY** — the sample-at-one-moment trap
+  again. During the INTRO they differ.
+  **PHASE SPANS ALSO DIFFER:** ours is in mode 9 t=4..18 s and in GAMEPLAY by
+  t=26 s (whole intro ~22 s); **Altirra is still in mode 9 at t=40 s.** Its player
+  pixels appear late in that long stretch (0.05% -> 0.16% -> 0.30% -> 0.72%,
+  monotonic growth = an object appearing), in 5 of 30 mode-9 frames; **ours: 0 of
+  9 mode-9 frames, across the ENTIRE span of our mode-9 phase.**
+
+  **WHAT IS NOT YET EXPLAINED — DO NOT SKIP THIS.**
+  `$33AD lda #$54` is an **IMMEDIATE CONSTANT**, and **BOTH machines execute
+  $33AF and write $54** (alt_vlong: 5 times). `MEMSEARCH 8d1bd0` finds only three
+  PRIOR writers: **$33AF ($54), $BCC4 (`lda #$01`, executed by NOBODY in any
+  trace), and $C083 (OS ROM, executed by NOBODY in these windows)**. **So the
+  source of Altirra's $41 is UNIDENTIFIED.**
+  **THE UNVALIDATED CHANNEL:** it was never confirmed that `PMG`.prior reports the
+  HARDWARE register rather than the **GPRIOR shadow ($026F)**, which the OS VBI
+  copies to PRIOR each frame. **If pmg() reports the shadow, the $54-vs-$41
+  difference may be an artefact and this whole lead collapses.**
+  **NEXT, IN ORDER:** (1) **validate the channel** — write a known value to PRIOR
+  on Altirra and see whether `PMG`.prior follows it, and separately peek GPRIOR
+  ($026F) on both machines; (2) if the difference is real, find what writes $41
+  (try a write-watch, or search for indexed/indirect PRIOR stores that
+  `MEMSEARCH 8d1bd0` cannot see); (3) only then decide whether this is a
+  sequencing divergence (we take a path that leaves $54 standing) or a shadow /
+  VBI difference.
+  ############################################################################
+
+  ############################################################################
   **DENSE SAMPLING: ALTIRRA'S MAN APPEARS LATE IN A *LONGER* MODE-9 PHASE
   (2026-08-15). THIS LOOKS LIKE SEQUENCING, NOT PRIORITY.**
         ALTIRRA  30 mode-9 frames, **5 with player pixels**, and the fraction
