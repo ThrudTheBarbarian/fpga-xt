@@ -648,12 +648,16 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   it actually varies** — it must differ in the suspected cause and match in
   everything else, and here the true cause was held fixed across both arms.
 
-  **A full re-run with the corrected harness is in flight** (launched 07:46,
-  8-way) to confirm no other verdict was distorted — the PIA latch resets to
-  `$FF`, i.e. "OS in", so a missing ROM image is not self-evidently confined to
-  the one test that names it. Old log kept as `scratchpad/acid_par_NOROM.log`;
-  new one is `scratchpad/acid_par2.log`. Expected: **55 pass + 2 skip + 0 fail**,
-  which would match the documented 55/8na/0fail baseline exactly.
+  **THE FULL RE-RUN WITH THE CORRECTED HARNESS IS COMPLETE (07:46-09:38, 8-way):
+  57 tests = 55 PASS + 2 skip + 0 FAIL.** It was worth re-running rather than
+  patching the single result, because the PIA latch resets to `$FF` ("OS in"),
+  so a missing ROM image was not self-evidently confined to the one test that
+  names it — but no other verdict moved. The skips are the documented
+  `pokey_serdirect` and `pokey_skstat`; the long tests `antic_dmapattern` (~1h21)
+  and `cpu_illtiming` (~1h52) both pass. **This matches the 55/8na/0fail baseline
+  exactly, so ACID IS FULLY GREEN with both GTIA fixes in and the priority fix
+  costs nothing anywhere in the suite.** Log `scratchpad/acid_par2.log`; the old
+  broken-harness run is kept as `scratchpad/acid_par_NOROM.log`.
 
 - **BallBlazer intro: the remaining symptoms, now MEASURED.** The game PLAYS
   PERFECTLY. (The 4 px left-edge bar is FIXED, `b0de37fe`; the missing man is
