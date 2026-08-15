@@ -725,6 +725,28 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **THE LEFT-EDGE BAR IS FIXED — CONFIRMED ON HARDWARE BY MEASUREMENT
+  (2026-08-15, commit b0de37fe, bitstream loaded).**
+        graboverlay, two intro frames 6 s apart, colours mapped through the palette
+        BEFORE: **9 distinct colours, hues {1,2}**, columns 0-3 = **$29 (hue 2)**
+                over 148 of 192 rows
+        AFTER:  **8 distinct colours, hues {1} ONLY**, columns 0-3 = **$11
+                (background) over 192/192 rows, in BOTH frames**
+  **Hue 2 is GONE from the frame entirely**, and the same eight legitimate hue-1
+  colours remain, so nothing else changed. That is exactly what GTIA mode 9
+  mandates: every playfield pixel carries COLBK's hue.
+  This artefact was verifiable WITHOUT a human judgement call -- it is a
+  four-pixel column of a specific colour code, so measuring it is stronger
+  evidence than an impression. **Simon's eyes are still wanted for the intro as a
+  whole, but the bar itself is settled.**
+  **VALIDATION BEFORE LOADING:** all three ACID tests that can reach the changed
+  line PASS -- **gtia_psuedomodee, antic_pmdma, gtia_phantomdma** (found by
+  grepping the ACID sources for PRIOR[7:6] != 00; nothing else can reach it).
+  Unit benches green. Build closed timing despite the extra mux level
+  (`write_bitstream completed successfully`; the build aborts on negative WNS).
+  ############################################################################
+
+  ############################################################################
   **SCOPING CORRECTION: THE BAR FIX DOES NOT EXPLAIN THE MISSING MAN
   (2026-08-15).** Do not let these two run together.
   The measured spurious playfield is **4 pixels, columns 0-3**, and its colour
