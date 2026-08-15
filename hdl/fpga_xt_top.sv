@@ -238,6 +238,7 @@ module fpga_xt_top (
     wire [7:0] sallyrst;                     // clk_sys, from xt_gp0_regs
     wire [31:0] joy_ovr;                      // clk_sys, from xt_gp0_regs (keypad->joystick override)
     wire [7:0]  consol_keys;                  // clk_sys, from xt_gp0_regs (CONSOL keys; kernel holds OPTION to keep BASIC off)
+    wire        consol_spk_sally;             // CONSOL bit3 = console speaker (key click)
     (* ASYNC_REG = "TRUE" *) reg [1:0] sallyrst_sync = 2'b00;
     always_ff @(posedge clk_sally) sallyrst_sync <= {sallyrst_sync[0], sallyrst[0]};
     wire rst_sally_core = rst_sally | sallyrst_sync[1];
@@ -2311,11 +2312,30 @@ module fpga_xt_top (
     // centres the unipolar POKEY range and backs the level off 6 dB, since four
     // channels at volume 15 are a full-scale square wave with no headroom.
     wire signed [23:0] aud_filt_l, aud_filt_r;
+    // ---- CONSOL speaker (XL key click) into the audio mix -------------------
+    // The Atari key click is the OS pulsing CONSOL ($D01F) bit 3, the console
+    // speaker.  gtia_reg_file exports it; bring it across clk_sally -> clk_sys
+    // with a plain 2-FF sync (it toggles at audio rates, so no handshake needed)
+    // and add it as a square wave BEFORE the anti-alias filter, so the click is
+    // band-limited exactly like POKEY's channels instead of aliasing.
+    // Polarity is not audible: inverting a square wave sounds identical, so the
+    // click works whichever sense the OS drives bit 3 with.
+    localparam logic [23:0] SPK_AMP = 24'h0C0000;   // ~5% FS: audible, no clipping
+    (* ASYNC_REG = "TRUE" *) reg spk_s0 = 1'b0, spk_s1 = 1'b0;
+    always_ff @(posedge clk_sys) begin
+        spk_s0 <= consol_spk_sally;
+        spk_s1 <= spk_s0;
+    end
+    wire [24:0] spk_mix_l = {1'b0, audio_sample_l} + (spk_s1 ? {1'b0, SPK_AMP} : 25'd0);
+    wire [24:0] spk_mix_r = {1'b0, audio_sample_r} + (spk_s1 ? {1'b0, SPK_AMP} : 25'd0);
+    wire [23:0] aud_spk_l = spk_mix_l[24] ? 24'hFFFFFF : spk_mix_l[23:0];  // saturate
+    wire [23:0] aud_spk_r = spk_mix_r[24] ? 24'hFFFFFF : spk_mix_r[23:0];
+
     audio_lpf u_audio_lpf (
         .clk   (clk_sys),
         .rst   (~rst_sys_n),
-        .in_l  (audio_sample_l),
-        .in_r  (audio_sample_r),
+        .in_l  (aud_spk_l),
+        .in_r  (aud_spk_r),
         .out_l (aud_filt_l),
         .out_r (aud_filt_r)
     );
@@ -2486,7 +2506,7 @@ module fpga_xt_top (
         .trig2(8'h01), .trig3(8'h01),
         // $D014 PAL: $0F = NTSC, and this machine IS NTSC — must agree with
         // antic_top's pal_sense_in (the OS reads it to set up VBI timing).
-        .pal_sense(8'h0F), .consol_keys(consol_s2),
+        .pal_sense(8'h0F), .consol_keys(consol_s2), .consol_spk(consol_spk_sally),
         .tune(rw_tune_s2),
         .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
         .lb_line_start(rw_lb_line_start),

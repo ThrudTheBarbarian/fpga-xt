@@ -177,6 +177,7 @@ module antic_gtia #(
     wire [15:0] m_pf, p_pf, m_pl, p_pl;
 
     gtia_reg_file u_gregs (
+        .consol_spk (),          // sim-only path: no audio mix here
         .clk(clk), .rst(rst),
         .addr(addr), .we(we && cs_gtia), .wdata(wdata), .rdata(g_rdata),
         // VDELAY MOVED INTO gtia_reg_file.  It is a one-fetch delay, not a

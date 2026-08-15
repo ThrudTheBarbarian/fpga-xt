@@ -83,6 +83,7 @@ module a2_video (
     input  wire [7:0]  trig0, trig1, trig2, trig3,
     input  wire [7:0]  pal_sense,
     input  wire [7:0]  consol_keys,
+    output wire        consol_spk,     // CONSOL bit3 = console speaker (key click)
 
     // ---- the scanline out --------------------------------------------------
     output wire        lb_wr,
@@ -105,6 +106,7 @@ module a2_video (
     wire [15:0] m_pf, p_pf, m_pl, p_pl;
 
     gtia_reg_file u_regs (
+        .consol_spk (consol_spk),
         .clk(clk), .rst(rst),
         .addr(addr), .we(cs && we), .wdata(wdata), .rdata(rdata),
         .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_fetch(pm_fetch),

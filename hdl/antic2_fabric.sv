@@ -66,6 +66,7 @@ module antic2_fabric #(
     input  wire [7:0]  trig0, trig1, trig2, trig3,
     input  wire [7:0]  pal_sense,
     input  wire [7:0]  consol_keys,
+    output wire        consol_spk,     // CONSOL bit3 = console speaker (key click)
 
     // ---- runtime bisect (accepted, not yet applied — see header) ---------
     input  wire [15:0] tune,
@@ -167,6 +168,7 @@ module antic2_fabric #(
     );
 
     a2_video u_a2_video (
+        .consol_spk (consol_spk),
         .clk(clk), .rst(rst), .px_tick(px_tick_d),
         .cs(cs_gtia), .we(we && cs_gtia), .addr(addr), .wdata(wdata),
         .rdata(gtia_rdata),

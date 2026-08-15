@@ -58,6 +58,7 @@ module gtia_reg_file (
     input  wire [7:0]  trig0, trig1, trig2, trig3,
     input  wire [7:0]  pal_sense,
     input  wire [7:0]  consol_keys,    // active low, 1 = released
+    output wire        consol_spk,     // CONSOL bit3 = console speaker (key click)
 
     // ---- register outputs -------------------------------------------------
     output logic [7:0] hposp0, hposp1, hposp2, hposp3,
@@ -206,13 +207,20 @@ module gtia_reg_file (
     end
 
     // ---- CONSOL ----------------------------------------------------------
-    logic [2:0] consol_w;
+    // CONSOL ($D01F) write latch.  Bits [2:0] pull the console-key lines low for
+    // the OS's key scan; bit 3 is the CONSOLE SPEAKER, which is what produces the
+    // XL key click.  Bit 3 used to be carried by the legacy gtia_regs (an 8-bit
+    // latch) and was dropped when antic2's gtia_reg_file became the live GTIA,
+    // which is why the click went away.  Keep consol_rd on [2:0] so the ACID
+    // console-key vectors are unaffected.
+    logic [3:0] consol_w;
     always_ff @(posedge clk or posedge rst) begin
-        if (rst)                          consol_w <= 3'b000;
-        else if (we && (a == 5'h1F))      consol_w <= wdata[2:0];
+        if (rst)                          consol_w <= 4'b0000;
+        else if (we && (a == 5'h1F))      consol_w <= wdata[3:0];
     end
 
-    wire [7:0] consol_rd = {consol_keys[7:3], consol_keys[2:0] & ~consol_w};
+    wire [7:0] consol_rd = {consol_keys[7:3], consol_keys[2:0] & ~consol_w[2:0]};
+    assign consol_spk = consol_w[3];        // console speaker -> audio mix
 
     // ---- reads -----------------------------------------------------------
     function automatic logic [7:0] nib(input logic [15:0] v, input int n);

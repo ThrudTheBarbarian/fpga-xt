@@ -331,6 +331,7 @@ module a8_core #(
     // the ACID collision tests write them directly -- so this is a missing
     // fetch path, not a missing object path.
     a2_video u_a2_video (
+        .consol_spk (),          // sim-only path: no audio mix here
         .clk(clk), .rst(rst), .px_tick(px_tick),
         .cs(cs_gtia), .we(cpu_we), .addr(c_addr[7:0]), .wdata(c_dout),
         .rdata(a2_gtia_rdata),
