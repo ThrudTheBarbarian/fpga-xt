@@ -569,10 +569,53 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   goes through the mailbox — but a poke path in `xt_gp0_regs` driving the
   existing `rom_we`/`rom_addr` port would still be useful for A9-side debug.
   **It must never be used against a running 6502** for the reason above.
-- **BallBlazer intro: OPEN. Root cause NOT found. Read this before resuming.**
-  The game PLAYS PERFECTLY; only the intro misbehaves, deterministically: two
-  objects on screen where there should be one, a vehicle that stalls instead of
-  sweeping, a ball that never crosses, and a persistent 4 px bar at the left edge.
+- **BallBlazer intro: THE MISSING MAN IS FIXED (2026-08-15, `6ef5bab2`).
+  Verified on hardware by measurement.** He appears, grows to full and fades
+  over ~2.8 s, exactly as on Altirra:
+
+        grab 10:  22 px  x=120..131      appearing
+        grab 11: 188 px  x=120..133
+        grab 12: 562 px  x=122..183  <-- FULL FIGURE, all four player slots
+        grab 13: 542 px  x=122..171
+        grab 14: 152 px  x=120..133      fading
+
+  A coherent 62x26 figure spanning the four measured HPOSP positions
+  ($6c/$74/$7c/$84 -> x = 120/136/152/168), against Altirra's 50x28 at
+  x=130..179 (Altirra's frame is 16 px wider, so its x = ours + 8). The growth
+  signature matches as well: Altirra 0.05 -> 0.16 -> 0.30 -> 0.72 %, ours
+  0.04 -> 0.31 -> **0.91** -> 0.88 -> 0.25 %.
+
+  **ROOT CAUSE — the LAST STAGE BEFORE THE PIXEL.** `gtia_stage` fed the **raw
+  playfield source to the PRIORITY network in GTIA modes**. PRIOR **$54** selects
+  scheme 2, **playfield above all four players**; in **mode 9 every pixel is
+  playfield**, so the field outranked the players everywhere and none drew. The
+  fix mirrors the substitution the collision path already had and priority
+  lacked (`hdl/gtia_stage.sv:317-320`), on `gtia_nib` rather than `nib_ready`
+  because priority drives the display a pair later. Non-GTIA modes are
+  bit-identical. ACID `gtia_psuedomodee` / `antic_pmdma` / `gtia_phantomdma` all
+  PASS (the only three that set PRIOR[7:6] != 00); **WNS +0.124 ns**.
+
+  **This is the same fault class as the left-edge bar: a GTIA mode is not an
+  ordinary playfield — the bar was the COLOUR half, the man the PRIORITY half.**
+
+  **Why it hid so long.** Every 6502-visible measurement matched Altirra, so
+  register-level agreement kept "proving" the render path innocent. **When every
+  input matches and the output does not, suspect the last stage, not the first.**
+
+  **STILL OPEN, needs Simon's eyes:** the intro AS A WHOLE (the vehicle that
+  stalls instead of sweeping, the ball that never crosses, the
+  `{smooth anim}{abrupt switch}` repetition) — those were never shown to share
+  this cause. Also: **does the intro have MUSIC on our board?** And one
+  measured discrepancy: our man renders in **$56** where an Altirra peek of the
+  object reported **$36** (a different object earlier in our own intro IS $36,
+  so the colour path itself is fine) — same luminance, different hue; confirm
+  it is not simply a different animation moment before treating it as a bug.
+
+- **BallBlazer intro: the remaining symptoms.** The game PLAYS PERFECTLY. The
+  intro still shows, deterministically: two objects on screen where there should
+  be one, a vehicle that stalls instead of sweeping, and a ball that never
+  crosses. (The 4 px left-edge bar is FIXED, `b0de37fe`; the missing man is
+  FIXED, `6ef5bab2`.)
 
   **VERIFIED CORRECT — do not re-test** (each by a minimal repro validated
   against Altirra first): HPOSP writes in VBLANK (`pmsweep.xex`) and MID-LINE
