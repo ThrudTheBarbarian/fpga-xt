@@ -725,6 +725,42 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **SYNTHESIS: THE MAN IS MISSING BECAUSE OUR INTRO RUNS ~3x FASTER
+  (2026-08-15). THIS CLOSES BACK ONTO SIMON'S ORIGINAL SYMPTOM.**
+  `$33AF` is the ONLY writer of $54 (`$33AD lda #$54` is an IMMEDIATE; MEMSEARCH
+  finds no other absolute writer that executes). So the first appearance of $54
+  IS the first execution of $33AF, measurable within each machine's own run:
+        ALTIRRA  first $54 at **frame 680 = t~13.6 s** (5 cold-reset runs, IDENTICAL)
+        OURS     $54 already in effect at the FIRST screen sample, **t=4 s**
+        => **we reach $33AF roughly 9.6 SECONDS EARLIER**
+  **And we do NOT take that branch more often** -- the `$33A0 iny / $33A1 bne`
+  fall-through rates MATCH (Altirra 5.3% n=94, ours 6.5% n=31). **We take it
+  SOONER, not oftener.** That is a SPEED difference, not a logic difference.
+  **$54 = scheme 2 = playfield above all four players, and in mode 9 the
+  playfield covers the ENTIRE window, so from the moment $33AF runs EVERY PLAYER
+  IS HIDDEN.** Hence 0 of 9 of our mode-9 frames contain a player pixel, while
+  Altirra's man appears late in its longer $41 window (player fraction growing
+  0.05% -> 0.16% -> 0.30% -> 0.72%).
+  **=> THE MAN'S SCENE IS PROBABLY STILL PLAYING ON OUR BOARD -- WITH ALL FOUR
+  PLAYERS INVISIBLE. The missing man and the fast/repeating intro are ONE bug,
+  and it is the INTRO SPEED.** Other supporting spans: our mode-9 phase is
+  t=4..18 s and we are in GAMEPLAY by t~26 s; Altirra is still in mode 9 well
+  past that.
+  **THE VBI STAGE-2 RATE FITS THE SAME PICTURE, and is NOT a separate bug:** our
+  $C146/$C149/$C14C shadow copy runs EVERY FRAME for the first 4 s (209 times,
+  GPRIOR=$41), then only 14 times over t~5-13 s, then not at all -- i.e. it stops
+  winning at almost exactly the moment $33AF lands. Altirra's PRIOR simply holds
+  $41 until 13.6 s because NOTHING overwrites it until then.
+  **=> NEXT, AND IT IS THE ORIGINAL QUESTION: WHY IS OUR INTRO ~3x FASTER?**
+  Do NOT resurrect the retracted $97/$BC chain (#6). Rebuild from measurement:
+  pick a CODE LANDMARK both machines execute early (e.g. the $3043 dispatcher, or
+  the first $353A uploader run), and compare ELAPSED TIME / FRAME COUNT to
+  $33AF within each machine's own run. >=1000 samples per side, fractions not
+  counts. Altirra is DETERMINISTIC across cold resets, which makes it a stable
+  ruler.
+  ############################################################################
+
+  ############################################################################
   **THE MAN: OUR OS VBI SHADOW COPY *DECAYS AND THEN STOPS* (2026-08-15).
   MOST CONCRETE FINDING SO FAR.**
   Our OS ROM DOES contain the classic VBI stage-2 shadow sequence (found by
