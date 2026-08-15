@@ -776,6 +776,13 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   it SWEEPS. **That is precisely the reported "{smooth anim}{abrupt switch}"
   repetition, and it is a timing artefact, not a rasteriser one.**
 
+  **`-a` DOES NOT REGRESS GAMEPLAY (checked).** A capture at t=60..94 s under
+  `-a` reaches gameplay (`PC=$5A54`) and renders the same structure as the
+  default run — `domhue=7`, two full-width `$B4` bands at y=38..104 and
+  y=152..190 (the split horizon) — identical to the default capture's gameplay
+  frames. Expected: once loaded, the drive is out of the picture. Simon's eyes
+  are still the judge of gameplay feel.
+
   **DECISION FOR SIMON:** `-a` is off by default because it also means authentic
   (slow) load times. The measurement says ATX titles whose intro animates from
   the VBI need it. Options: make `-a` the default for ATX, fold the extra
