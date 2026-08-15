@@ -5337,3 +5337,24 @@ four of the eight tests need restating against the current contract
 GRAFM), not a rename. Restating them from the implementation would freeze
 whatever it does in as "expected", so the authoritative reference is the ACID
 vector `make -C sim acid2 TEST=gtia_vdelay`.
+
+## TEMP diagnostics still in the RTL (scaffolding from the self-test hunt)
+
+Left in deliberately — they are what exonerated the ROM upload — but they are
+scaffolding, and one slot was taken from something else:
+
+- `DIAG8` / `DIAG9` (`hdl/xt_gp0_pkg.sv`, driven in `hdl/fpga_xt_top.sv`) now
+  carry the ROM-window upload counters. They had been **borrowed by the ACID
+  DLI-delivery investigation** (`antic_dbg_antic` / `dli_diag_word`), which is
+  what made `/OS/proc/romdiag` report `rom_we_pulses: 0` on a board whose upload
+  demonstrably worked. Anyone who needs the DLI diag back will not find it there.
+- `DIAG9[31:16]` is a hardcoded watch on **`$BFFC`** (`ROMDIAG_WATCH` in
+  `fpga_xt_top.sv`): writes-seen plus the byte the loader delivered. That address
+  mattered only for the cartridge-flag bug, which is fixed (b2e5d9c5).
+- `/OS/proc/romdiag` (`loader/test/freertos/vfs_procfs.c`) decodes all of it.
+
+Removing the `$BFFC` tap and deciding who owns DIAG8/DIAG9 long-term needs a
+bitstream rebuild, so it was NOT done while the board is deployed and matching
+the tree. The counters themselves are worth keeping: `axi_accepted` vs
+`rom_we_pulses` distinguishes "the PS write never arrived" from "the loader took
+it and never drained", which no other instrument on this design can do.
