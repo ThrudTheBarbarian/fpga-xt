@@ -459,6 +459,50 @@ module tb_gtia_stage;
             pf_win = 1'b0; an_pair = 2'd0; prior = 8'h01;
         end
 
+        // ================================================================
+        // TM: THE MISSING MAN, as measured on Altirra at t~23 s.
+        //
+        // Altirra draws a 50x28 object at x=130..179 in COLPF3's $36 while our
+        // board draws nothing there.  Peeking its registers at that instant:
+        //     hposp = $84 $7c $74 $6c    prior = $54    gractl = $03
+        //     grafm = $00, sizem = $00   (so it is NOT the missiles)
+        // x_left = (HPOS-48)*2 maps those to x = 120/136/152/168 -- four
+        // adjacent players forming one figure.  We write the SAME positions.
+        // PRIOR $54 = GTIA mode 9 + fifth player + priority scheme 2
+        // (playfield above all players).
+        // ================================================================
+        begin : tm_missing_man
+            logic [7:0] got [0:3];
+            prior  = 8'h54;                 // mode 9, fifth player, scheme 2
+            colbk  = 8'h10;
+            colpm0 = 8'h36; colpm1 = 8'h36; colpm2 = 8'h36; colpm3 = 8'h36;
+            colpf0 = 8'h20; colpf1 = 8'h22; colpf2 = 8'h24; colpf3 = 8'h36;
+            hposp0 = 8'h6c; hposp1 = 8'h74; hposp2 = 8'h7c; hposp3 = 8'h84;
+            sizep0 = 2'b00; sizep1 = 2'b00; sizep2 = 2'b00; sizep3 = 2'b00;
+            grafp0 = 8'hFF; grafp1 = 8'hFF; grafp2 = 8'hFF; grafp3 = 8'hFF;
+            hposm0 = 8'd250; hposm1 = 8'd250; hposm2 = 8'd250; hposm3 = 8'd250;
+            grafm  = 8'h00;                 // as Altirra: no missiles
+            an_pair = 2'b11; pf_win = 1'b1; // playfield displaying, mode 9
+            new_line();
+            seek_cc(0);
+            for (int i = 0; i < 4; i++) begin
+                cc = 8'h6c + i*8;           // stand on each player's first clock
+                step_cc(3'd4, 3'd4);        // over PF3
+                got[i] = got_a;
+            end
+            for (int i = 0; i < 4; i++)
+                $display("NOTE TM: player %0d at HPOS $%02h -> $%02h", i, 8'h6c+i*8, got[i]);
+            for (int i = 0; i < 4; i++)
+                if (got[i] !== 8'h36) begin
+                    $display("FAIL TM: player %0d emitted $%02h, expected COLPM $36 -- THE MAN IS INVISIBLE",
+                             i, got[i]);
+                    fail++;
+                end
+            prior = 8'h01; pf_win = 1'b0; an_pair = 2'd0;
+            colpm0 = 8'h30; colpm1 = 8'h44; colpm2 = 8'h68; colpm3 = 8'h7A;
+            grafp0 = 0; grafp1 = 0; grafp2 = 0; grafp3 = 0;
+        end
+
         // T1: the schedule fits in a colour clock
         // ================================================================
         // Checked last so it covers every case above, and it is the one that
