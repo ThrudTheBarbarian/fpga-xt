@@ -725,6 +725,37 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **RETRACTION #16: THE $B3 "SPIN" IS THE NORMAL WAIT-FOR-VBLANK IDIOM
+  (2026-08-15). WE ARE NOT STUCK — WE ARE IN GAMEPLAY.**
+  Writers of $B3 in our t=45 s snapshot (opcode scan + operand resolve):
+        $4C88 **STA** $B3  **225** times   (the loop clearing it)
+        $5BDA **DEC** $B3  **112** times
+        $5D81 **DEC** $B3  **113** times
+  **The decrements (112+113 = 225) EXACTLY BALANCE the clears (225).** So $B3 is
+  decremented to $FF (negative), the `bpl` falls through, the frame's work runs,
+  $B3 is cleared, and it repeats -- **225 COMPLETED iterations in a 3.5 s
+  snapshot ~= 64/s ~= FRAME RATE.** That is the standard wait-for-vblank main
+  loop, and the huge $4C72/$4C74/$4C8A counts are just a game spending most of
+  each frame waiting for the next one.
+  **=> "our main thread is parked" is WITHDRAWN. Our board is running NORMAL
+  GAMEPLAY from t~26 s.**
+  **WHAT SURVIVES, AND IT IS THE SAME CONCLUSION AS BEFORE THE DETOUR:**
+   1. **Ours leaves intro code by t=30 s; Altirra is STILL IN THE INTRO at
+      t=60 s** (sound tick exactly 1/frame at every matched point; P/M uploader
+      active at t=45 s and 60 s). Measured at MATCHED wall-clock points.
+   2. **Altirra never executes $4Cxx/$5Axx/$5Dxx/$81xx at all** -- zero in 23.9M
+      records across five captures spanning t=13..73 s.
+   3. Our $4Cxx region is a normal frame-synced main loop.
+  **=> OUR INTRO IS MUCH SHORTER THAN ALTIRRA'S AND WE PROCEED TO THE GAME. The
+  man's scene is in the part of the intro we skip.** That is the divergence to
+  chase, and it is where the evidence pointed before the $B3 detour.
+  **LESSON (worth more than the detour cost): BEFORE CALLING A LOOP A HANG,
+  COUNT ITS COMPLETIONS.** A wait-for-vblank spin looks exactly like a hang in a
+  PC histogram; the giveaway is that the loop's exit path executes once per
+  frame. Check the balance of the flag's setters and clearers.
+  ############################################################################
+
+  ############################################################################
   **OUR MAIN THREAD SPINS ON $B3 IN CODE ALTIRRA NEVER EXECUTES (2026-08-15).**
   **ALTIRRA NEVER TOUCHES $4Cxx/$5Axx/$5Dxx/$81xx AT ALL** -- zero occurrences in
   **23.9M records** across five captures spanning t=13..73 s (alt_vlong plus the
