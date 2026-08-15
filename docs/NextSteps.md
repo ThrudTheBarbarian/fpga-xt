@@ -717,9 +717,35 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
         mostly +8 per step, with periodic **+26** jumps (non-contiguous reads)
 
   **Our intro length ~= our load duration**, which is what the disk-pacing
-  hypothesis predicts. **The decisive number is time-to-gameplay for the SAME
-  ATX on both machines** — measure Altirra's the same way and compare; a
-  same-artefact comparison that needs no scene matching.
+  hypothesis predicts.
+
+  **AND THE SAME-ARTEFACT COMPARISON IS IN — OUR INTRO IS ROUGHLY HALF THE
+  REFERENCE'S. Same ATX, both cold-started, phase detected by PC:**
+
+        ours     : gameplay ($5ADA/$67EB, i.e. $4000-$7FFF) by **t ~ 28 s**
+        Altirra  : **STILL IN INTRO CODE AT 55 s** -- pc $30C7 at 50 s, $3310 at 55 s;
+                   **never entered $4000-$7FFF in 3600 frames (60 s)**
+                   60 s page histogram: $3Bxx 578, $37xx 515, $3Axx 305, $31xx 282,
+                   $3Dxx 250, $32xx 250, $33xx 241, $30xx 213 -- **no $4xxx-$7xxx at all**
+
+  Altirra sitting at **$30C7** at 50 s matches the known **~55 s two-stage wait
+  at `$30C6` (on `$CA`) then `$30CC` (on `$C2`)**. **So the reference intro is
+  long and ours is short — we are running THROUGH it, not stalling in it.**
+
+  **THIS REVERSES THE DIRECTION OF THE TIMING QUESTION** and fits the disk
+  pacing: if our virtual drive delivers **faster** than a real 1050, every
+  load-gated intro stage completes early and the intro is compressed. Our
+  measured **14.3 sectors/s (~1830 B/s)** is the number to check against a real
+  drive's cadence. See [[sio_virtual_drive_state]] and [[atx_and_fast_loaders]]
+  (BallBlazer bypasses SIOV and drives POKEY/PIA directly).
+
+  **CORRECTION:** the older note that "Altirra reaches gameplay at t~22 s" is
+  **contradicted** by this measurement and should not be relied on.
+
+  **Caveat, stated plainly:** the `$4000-$7FFF` gameplay detector fired on our
+  board but **never fired on Altirra, so it was not validated there**. What is
+  solid is the negative: Altirra executed **no** `$4xxx-$7xxx` code in 60 s
+  while ours was running gameplay at 28 s.
 
   **Sampling caveat:** each `/System/bin/mem` is a process spawn costing
   **~0.56 s**, so a `mem` loop samples at ~1.8 Hz — far slower than the ~14
