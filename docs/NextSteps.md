@@ -626,6 +626,21 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   so the colour path itself is fine) — same luminance, different hue; confirm
   it is not simply a different animation moment before treating it as a bug.
 
+- **ACID `mmu_xlbanking` FAILS — a real regression, NOT from the GTIA work.**
+  `_testFailed $1e0d`, message **"Unable to bank in kernel ROM."** (PORTB
+  kernel-ROM banking). **Attribution is settled without a bisect:** the same test
+  fails **identically** on a `tb_acid2.vvp` built **01:43:50** — which predates
+  both `b0de37fe` (01:46) and `6ef5bab2` (03:33) — and on a binary rebuilt at
+  05:44 containing both. Same trap address, same message, so **the failure
+  exists with and without tonight's changes.**
+
+  This matters because `docs/pokey-timing-handoff.md` records
+  `mmu_xlbanking` among **six failures already cleared** (`35c8faa`) with state
+  **"ACID 55/58 — zero failing tests"**. Either that fix regressed later, or the
+  claim was optimistic. **Next step: bisect `mmu_xlbanking` from `35c8faa`
+  forward** — it is a fast test, so a bisect is cheap. Full rebuilt-suite result
+  is in `scratchpad/acid_par.log`.
+
 - **BallBlazer intro: the remaining symptoms, now MEASURED.** The game PLAYS
   PERFECTLY. (The 4 px left-edge bar is FIXED, `b0de37fe`; the missing man is
   FIXED, `6ef5bab2`.) Full-intro inventory: 72 `graboverlay` grabs ~0.57 s apart
