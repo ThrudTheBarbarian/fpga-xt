@@ -630,6 +630,17 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   it does drive AUDF1/AUDC1/AUDF2/AUDC2 ~1.5x/frame, so silence would be
   downstream of the guest, not a missing write.
 
+  **The mode-10/11 caveat is CLOSED — it is no longer inherited, it is tested**
+  (`caecc15a`, `tb_gtia_stage` T11i-k). BallBlazer only exercises mode 9, so the
+  other two GTIA modes went through the changed line untested. Under PRIOR
+  scheme 2 they are **not alike**, and the tests pin the asymmetry: mode 11
+  classes every playfield pixel as SRC_BK so **the player still wins** (T11i);
+  mode 10 classes a nibble with bit 2 SET as PF0-3, which **outranks the player
+  and hides it** (T11j -> COLPF1), while a background-class nibble does not
+  (T11k -> COLPM0). **Watch `pf_win` when adding cases here:** T11h leaves the
+  playfield window CLOSED, and the first draft of these three ran on the border,
+  where one failed for the wrong reason and two passed for the wrong reason.
+
 - **ACID `mmu_xlbanking` PASSES. The reported failure was MY HARNESS, not the
   design.** `tb_acid.sv:1251-1252` `$readmemh`s **`atari_xl_rom.mem` and
   `atari_basic_rom.mem` relative to the CWD**, exactly as it does `acid.mem`.
