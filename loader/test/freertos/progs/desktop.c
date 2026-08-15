@@ -2463,7 +2463,7 @@ static void close_win(int win) {                             // mirror the WM_CL
     if (e) {
         e->used = 0;
         if (win == g_xlwin) { xl_fullscreen_exit();   // else a black screen outlives the picture
-                              sys_xl_boot(NULL, 0); } // eject the medium, cold-boot to BASIC
+                              sys_xl_eject(); }       // give the 1050 back; the 6502 runs on
     }
     xl_unbind(win);
     wind_close(win);
@@ -2742,7 +2742,7 @@ void _app_entry(int argc, char **argv) {
             if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }
             emuwin *e = emu_of_window(msg[3]);
             if (e) { e->used = 0;
-                     if (msg[3] == g_xlwin) { xl_fullscreen_exit(); sys_xl_boot(NULL, 0); } }
+                     if (msg[3] == g_xlwin) { xl_fullscreen_exit(); sys_xl_eject(); } }
             xl_unbind(msg[3]);
             wind_close(msg[3]);   // gemd drops the window and recomposites the rect it vacated
         }

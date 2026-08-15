@@ -3478,6 +3478,13 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
 #endif
         return 0;
     }
+    case SYS_xl_eject: {                                     /* () -> eject, CPU untouched */
+#ifdef XT_HW
+        extern void xl_eject_live(void);
+        xl_eject_live();
+#endif
+        return 0;
+    }
     case SYS_cursor_autohide: {                              /* (ms) -> auto-hide idle cursor */
 #ifdef XT_HW
         extern void cursor_autohide(int);

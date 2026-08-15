@@ -466,6 +466,10 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * the core HALTS on its result screen instead of soft-resetting
                                 * -- `6502 status` Y then reads 00=pass / 80=fail.
                                 * (docs/OS/app-launch.md.) */
+#define SYS_xl_eject     0x60C /* () -> 0: eject the medium and release the SIO bus IDs
+                                * WITHOUT resetting the 6502. Closing the emulator window
+                                * is not a power switch — the guest keeps running and just
+                                * loses its disk, as if the drive had been switched off. */
 #define SYS_sio_timing   0x60B /* (baud, latency_us) -> 0: how long the PARAVIRTUAL SIOV
                                 * service pretends to take.  baud 0 = answer immediately
                                 * (the default: authentic timing means authentic LOAD

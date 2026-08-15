@@ -494,12 +494,40 @@ static uint8_t atx_read(xl_drive *d, uint32_t sec, uint8_t *out, uint32_t *olen)
     return 0x01;
 }
 
+/* Buffers orphaned by a LIVE eject (below).  They are not freed there because
+ * the SIO service task may be mid-request and would dereference a freed image;
+ * they are freed by xl_unmount_all(), which only ever runs with the 6502 held in
+ * reset and so cannot race it.  Two per drive (image + ATX map) is the ceiling,
+ * and a second live eject orphans nothing because the first nulled the slots. */
+static void *g_orphan[16];
+static int   g_norphan;
+
+/* Eject the medium and give up the bus IDs WITHOUT touching the CPU.  Closing
+ * the emulator window should not be a power switch: the guest keeps running,
+ * it just loses its disk — exactly as if the drive had been switched off.  The
+ * ID release matters as much as the eject (docs/OS/sio-bridge.md 13.8): leave
+ * $31 claimed and we are still pretending to be a drive that is no longer
+ * there, which is the one thing guaranteed to confuse the next probe. */
+void xl_eject_live(void)
+{
+    SIO_OWN_REG = 0; __asm__ volatile("dsb");
+    for (int i = 0; i < 8; i++) {
+        if (g_drv[i].img && g_norphan < 16) g_orphan[g_norphan++] = g_drv[i].img;
+        if (g_drv[i].atx && g_norphan < 16) g_orphan[g_norphan++] = g_drv[i].atx;
+        g_drv[i].img = NULL; g_drv[i].len = 0; g_drv[i].secsz = 0;
+        g_drv[i].atx = NULL; g_drv[i].natx = 0;
+        g_drv[i].kind = IMG_ATR; g_drv[i].fdc = 0xFF;
+    }
+    klog("[xl] media ejected; 6502 left running\r\n");
+}
+
 static void xl_unmount_all(void)
 {
     /* Release the WHOLE ownership table, not one drive: a session must not be
      * able to leave an ID claimed, and the next one should re-decide from clean
      * (docs/OS/sio-bridge.md §13.8). */
     SIO_OWN_REG = 0; __asm__ volatile("dsb");
+    while (g_norphan) frtos_free(g_orphan[--g_norphan], NULL);   /* safe here: reset is held */
     for (int i = 0; i < 8; i++) {
         if (g_drv[i].img) frtos_free(g_drv[i].img, NULL);
         if (g_drv[i].atx) frtos_free(g_drv[i].atx, NULL);
