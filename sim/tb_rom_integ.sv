@@ -87,7 +87,9 @@ module tb_rom_integ;
         c=0; while (!awready && c<300) begin @(posedge clk_sys); c++; end
         if (!awready) begin $display("FAIL: AWREADY hang @%04h", a); nfail++; disable axi_wr; end
         @(negedge clk_sys); awvalid = 0;
-        wdata = {24'd0, d}; wstrb = 4'b0001; wvalid = 1; bready = 1; b = 0;
+        // Byte in its ADDRESS LANE, like a real ARM byte store (the old form
+        // always used lane 0, so the lane path was never exercised).
+        wdata = 32'(d) << (8 * a[1:0]); wstrb = 4'b0001 << a[1:0]; wvalid = 1; bready = 1; b = 0;
         c=0; while (c<300) begin @(posedge clk_sys); if (wready) wvalid = 0; if (bvalid) begin b=1; break; end c++; end
         @(negedge clk_sys); wvalid = 0; bready = 0;
         if (!b) begin $display("FAIL: no BVALID @%04h", a); nfail++; end
@@ -172,6 +174,35 @@ module tb_rom_integ;
         repeat (16) @(posedge clk_sally);
         begin logic [7:0] v;
             cpu_rd(16'hB000, v); chk("T4 B000 after upload (BASIC on)", v, 8'h5A);
+        end
+
+        // T5: WORD-ALIGNED awaddr + lane strobes — the shape an AXI-Lite path
+        // takes if the interconnect aligns byte writes.  sally_rom_loader uses
+        // s_axi_awaddr[15:0] directly as rom_addr, so if the PS ever presents an
+        // aligned address the whole 4-byte group lands on the aligned address,
+        // last-one-wins, and 3 of every 4 bytes are LOST.  The board reads
+        // mem[$BFFC] = $BF, which is exactly img[$BFFF] — the last byte of that
+        // group — so this is the live hypothesis for the self-test bug.
+        $display("[T5] aligned-awaddr probe: is rom_addr taken from the lane or the address?");
+        for (int i = 0; i < 4; i++) begin
+            @(negedge clk_sys); awaddr = {16'h43C0, 16'hB100}; awvalid = 1;   // ALIGNED
+            begin int c=0; while (!awready && c<300) begin @(posedge clk_sys); c++; end end
+            @(negedge clk_sys); awvalid = 0;
+            wdata = 32'(8'hE0 + i[7:0]) << (8*i); wstrb = 4'b0001 << i; wvalid = 1; bready = 1;
+            begin int c=0; while (c<300) begin @(posedge clk_sys); if (wready) wvalid=0; if (bvalid) break; c++; end end
+            @(negedge clk_sys); wvalid = 0; bready = 0;
+        end
+        repeat (16) @(posedge clk_sally);
+        begin logic [7:0] v0, v1, v2, v3;
+            cpu_rd(16'hB100, v0); cpu_rd(16'hB101, v1);
+            cpu_rd(16'hB102, v2); cpu_rd(16'hB103, v3);
+            $display("  aligned-write result: B100=$%02h B101=$%02h B102=$%02h B103=$%02h", v0,v1,v2,v3);
+            if (v0 === 8'hE0 && v1 === 8'hE1 && v2 === 8'hE2 && v3 === 8'hE3)
+                $display("  ok  T5: lanes are decoded into distinct addresses");
+            else if (v0 === 8'hE3)
+                $display("  !!  T5: ALL FOUR LANDED ON THE ALIGNED ADDRESS (last wins) — 3/4 of every group is LOST");
+            else
+                $display("  !!  T5: aligned writes do not reconstruct the group");
         end
 
         if (nfail == 0) $display("*** ROM_INTEG OK ***");
