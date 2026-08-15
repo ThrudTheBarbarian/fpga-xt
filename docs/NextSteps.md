@@ -927,6 +927,26 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   `cc_tick` while moving the nibble: T11 reads `colbk` — **the display window MUST
   ride the nibble's phase.**
 
+  **THE THIN VERTICAL BAR IS THE MAN — IDENTIFIED, AND AUTHENTIC. CORRECTION.**
+  Simon photographed a thin vertical bar under the LUCASFILM GAMES logo with no
+  man visible. Searching the 96-frame capture for tall narrow columns finds it:
+  **2 px wide, 10 rows tall (y=134..143), at x=132 or x=170, in frames 31, 41,
+  44, 88** — each immediately adjacent to a full-man appearance (32-34, 41-44,
+  51-53, 85-87). Its colour is **`$57`/`$37`, the COLPM values**, and in those
+  frames that colour is the ONLY non-logo content (30-46 sampled px against 562
+  for a full man). **It is the man's sprite during fade-in/out.**
+
+  **AND IT IS AUTHENTIC:** Altirra fades the man in through the same stages
+  (100 -> 188 -> 234 -> 472 -> 546 px) and its **narrowest run is 2 px in EVERY
+  frame**, full-size ones included. The sprite simply contains one-colour-clock
+  features.
+
+  **CORRECTION:** an earlier note said "the thin bar is NOT P/M, because our
+  renderer cannot emit a 1-hires-px object". The premise is right — the minimum
+  is 2 px, one colour clock — but the **conclusion was wrong**. The bar is 2 px,
+  which is a legal P/M width, and it IS a player. On an upscaled display 2 px
+  reads as one. **Do not infer "not P/M" from "looks 1 px wide" again.**
+
   **THE MEASUREMENT METHOD IS REUSABLE.** `sim/tb_pm_align.sv` +
   `tools/altirra_gtia_shift_ref.py`. Four passes, {ordinary, GTIA mode 9} x
   {player OFF, player ON} — **the player-OFF pass is ESSENTIAL**, because with the
