@@ -725,6 +725,35 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   also re-run `make -C sim antic_dli_cdc`.
 
   ############################################################################
+  **QUALIFYING THE "36 SECONDS EARLY" CLAIM — THE PROPOSED MECHANISM IS DEAD,
+  AND THE COMPARISON IS CROSS-RUN (2026-08-15).**
+  The gate is `$33A0 iny / $33A1 bne $33D3`, so the $54 setup at $33A3 is reached
+  ONLY when Y wraps to 0. Measured fall-through rates:
+        alt_vlong  iny@$33A0 n=94  Y==0 -> **5  (5.3%)**
+        hw_long2   iny@$33A0 n=31  Y==0 -> **2  (6.5%)**
+        (prior.bin 2/10 = 20% and multi.bin 1/7 = 14.3% are SMALL-n NOISE)
+  **THE RATES MATCH. We are NOT reaching $33AF disproportionately often**, so
+  "we take that branch more" is refuted.
+  **AND THE HEADLINE COMPARISON IS CROSS-RUN.** `alt_vlong.bin` covers t~13-73 s
+  and contains **5 $33AF writes of $54**, while the PRIOR sweep covering t=0-40 s
+  reported **$41 throughout**. Those windows OVERLAP, so both can only be true if
+  they are **DIFFERENT RUNS** -- which they are. **And the intro is POKEY-RANDOM
+  SEEDED ($3000-$303E reads $D20A four times plus `bit RANDOM / bpl`), so separate
+  runs genuinely diverge.**
+  **=> "we run $33AF ~36 s early" rests on ONE Altirra run vs ours. One run may
+  not be representative. DO NOT BUILD ON IT YET.**
+  **RUNNING:** `scratchpad/altrep.py` -> `altrep.log` -- **FIVE independent
+  cold-reset Altirra runs**, each sweeping PRIOR per frame for 1500 frames (30 s)
+  and recording the histogram and the frame at which $54 first appears. If $41
+  persists across most runs while ours is $54 by t=4 s every time, the timing
+  divergence is real; if Altirra's runs vary widely, the whole comparison is
+  seed-noise and must be redone per-run with a shared landmark.
+  **STANDING RULE THIS EXPOSES: NEVER COMPARE TWO CAPTURES FROM DIFFERENT RUNS OF
+  A RANDOM-SEEDED PROGRAM.** Anchor within a single run, or repeat and compare
+  DISTRIBUTIONS.
+  ############################################################################
+
+  ############################################################################
   **RESOLVED TO A TIMING DIVERGENCE: WE RUN $33AF ~36 SECONDS TOO EARLY
   (2026-08-15). THE MAN IS A CASUALTY OF SEQUENCING, NOT OF THE RENDER PATH.**
   **CHANNEL VALIDATED FIRST** (the step that saved this from being wrong):
