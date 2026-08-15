@@ -654,26 +654,42 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   have watched it fail.**
 
   **What T11i-k do NOT settle.** They pin the mapping the RTL *implements* and
-  will catch a regression in it; they are not a reference. The corner without
-  independent evidence is **mode 10 nibbles 0-3**, where the nibble indexes
-  COLPM0-3 (`gtia_special.sv:11`) — the playfield is drawn in a PLAYER's colour,
-  and the fix classes it SRC_BK for priority because `gtia_nib[2]` is clear.
-  Nibbles 4-7 -> PF0-3 is the natural reading; 0-3 rests on the inherited
-  collision rule. **BallBlazer is mode 9 throughout, so nothing here is on the
-  critical path** — but if a mode-10 title ever matters, settle it against
-  Altirra (`PMG` + `RAWSCREEN`), not against these tests.
+  will catch a regression in it; they are not a reference.
 
-  **Both CHEAP oracles were checked and BOTH are dead ends — do not re-tread
-  them.** (a) **The Altirra bridge has `PEEK` but no POKE**, so the scenario
-  (mode 10 + PRIOR scheme 2 + a player) cannot be set up without loading a
-  program. (b) **`emu/` cannot answer it either:** `emu/gtia.c` is collisions
-  and object bookkeeping only — **there is no framebuffer or colour resolver**
-  anywhere in `emu/` (it models registers for ACID, not pixels), and its
-  `gtia_clock(g, hpos, pf, hires_lit)` takes `pf` as "the playfield colour class
-  (0..3, or -1)" from a caller that **does not exist in-tree**. So emu neither
-  confirms nor contradicts the class; **no discrepancy is claimed.** Settling
-  this needs a purpose-built mode-10 XEX run on both — real work, and outside
-  the BallBlazer scope.
+  **THE MODE-10 CLASS RULE IS TEST-COVERED — the earlier "no independent
+  evidence" note was WRONG (corrected 2026-08-15).** `gtia_collision2`
+  ("GTIA: Special modes collision test", Avery Lee) sets `prior = $80` and walks
+  a missile across **all sixteen** mode-10 nibbles, asserting `MxPF` for each:
+
+        $0..$3 -> $00 (no collision)      $4..$7 -> PF0,PF1,PF2,PF3
+        $8..$B -> $00 (no collision)      $C..$F -> PF0,PF1,PF2,PF3
+
+  That is exactly `gtia_nib[2] ? (1 + nib[1:0]) : SRC_BK` — **bit 2 selects
+  playfield, bits 1:0 the class** — and `gtia_collision2` **PASSES on antic2**
+  (`acid2.log:32`). `emu/system.c:234` implements the identical rule
+  independently (`pf = (gmode == GTIA_MODE_10 && (nib & 4)) ? (nib & 3) : -1`),
+  citing the same test. So the class rule is **not inherited folklore**: it is
+  the reference test's own assertion, passing on our chipset and matched by a
+  second implementation.
+
+  **What genuinely remains open is narrower: the class rule is proven for
+  COLLISIONS, not for PRIORITY.** `gtia_collision2` reads only `MxPF`/`PxPF`;
+  it never asserts a COLOUR. The fix reuses the collision class to drive
+  priority, which is the natural reading but is not what the test measures.
+  **BallBlazer is mode 9 throughout, so nothing here is on the critical path.**
+
+  **The cheap oracles cannot close that last gap — do not re-tread them.**
+  (a) The Altirra bridge has `PEEK` but **no POKE**, so the scenario (mode 10 +
+  PRIOR scheme 2 + a player) cannot be set up without loading a program.
+  (b) `emu/` confirms the collision rule (above) but **cannot speak to priority
+  at all**: there is **no framebuffer or colour resolver anywhere in `emu/`** —
+  it models registers for ACID, not pixels. Settling the priority half needs a
+  purpose-built mode-10 XEX compared against Altirra's `RAWSCREEN`.
+
+  **Correction, for the record:** an earlier revision of this section claimed
+  `gtia_clock`'s caller "does not exist in-tree". It does — `emu/system.c:256`.
+  That claim came from grepping only `emu/gtia.*` and generalising to the whole
+  tree. **Scope a search to what you are about to assert about it.**
 
   **The `pf_win` trap is now FIXED, not just noted:** T11h restored `prior` and
   `colbk` but left the playfield window CLOSED, so the first draft of these
