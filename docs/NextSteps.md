@@ -851,8 +851,49 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   the playfield, and our man touches the vehicle where Altirra's does not.
   **GAME FRAMES CANNOT PIN THE SIZE. Stop trying; run the controlled case.**
 
-  **THE BASE COUNTER ALIGNMENT IS PROVEN CORRECT — the suspect is now a single
-  `-1`.** `sim/tb_antic2_pxpos.sv` exists for exactly this hazard (its header:
+  **ROOT CAUSE FOUND AND MEASURED (2026-08-15, `1b5ca7d3`). IN GTIA MODE 9 OUR
+  PLAYFIELD SITS ONE GTIA PIXEL (4 hi-res px = 2 colour clocks) RIGHT OF THE
+  OBJECTS; ALTIRRA SHOWS NO SHIFT.**
+
+                          playfield edge   player
+        ALTIRRA ordinary       px 88        px 88    aligned
+        ALTIRRA GTIA mode 9    px 88        px 88    **aligned, NO shift**
+        OURS    ordinary       px 176       px 176   aligned
+        OURS    GTIA mode 9    px 180       px 176   **edge +4**
+
+  Ruler: ANTIC mode F puts a playfield edge on a KNOWN hi-res pixel (screen of
+  `$00` bytes then `$FF`), with a solid player parked at HPOS 88 so its left edge
+  should land exactly on it. Four passes, {ordinary, mode 9} x {player OFF, ON}.
+  **The player-OFF pass is ESSENTIAL** — with the player drawn it COVERS the
+  edge and the two cases are indistinguishable. Ours: `make -C sim pm_align`
+  (`sim/tb_pm_align.sv`, drives the LIVE `antic2_fabric`). Reference:
+  `tools/altirra_gtia_shift_ref.py`. **Altirra geometry trap: use ~100 mode-F
+  lines and sample y=74; a 40-line list leaves y=120 below the display.**
+
+  **THE DIAGNOSIS IS IN THE MODULE HEADER, AND IT IS ONE SENTENCE WRONG.**
+  `hdl/gtia_stage.sv:41-46` says a GTIA mode costs one more pair of colour clocks
+  and that this is *"causal rather than a choice"* — **correct**, a nibble cannot
+  be displayed before both its colour clocks have delivered their bits. It then
+  concludes *"The shift is uniform within a GTIA mode, so nothing moves relative
+  to anything else while one is selected."* **That is the bug: OBJECTS DO NOT GO
+  THROUGH THE NIBBLE ASSEMBLY, so they never receive that extra pair, and the
+  playfield moves relative to them.**
+
+  **FIX DIRECTION: delay the OBJECTS by one pair while a GTIA mode is active.**
+  Advancing the playfield is causally impossible (the nibble genuinely is not
+  ready), and the reference keeps the two aligned, so the object path must take
+  the same extra pair. **Do NOT touch `cc_pos`** — ordinary modes measure exact
+  on our chip, so `a2_video.sv:216` is right. **The naive fix does NOT work and
+  was tested: flipping the pair-alignment parity at `gtia_stage.sv:231`
+  (`cc_pos[0]` -> `!cc_pos[0]`) leaves the mode-9 edge at 180, unchanged** — the
+  two-register handover costs a full pair either way. Reverted, tree clean.
+
+  **A REAL FIX MUST BE GATED ON:** `make -C sim pm_align` (mode-9 edge must reach
+  176 with the player still at 176), `gtia_stage`, `antic2_pxpos`, the left-edge
+  bar behaviour, and a full ACID sweep (`acid2`, 55 pass / 2 skip / 0 fail of
+  57) — objects feed the collision path too. **Not attempted; Simon's call.**
+
+  **THE BASE COUNTER ALIGNMENT IS PROVEN CORRECT — and it is not the suspect.** `sim/tb_antic2_pxpos.sv` exists for exactly this hazard (its header:
   *"One pixel of skew moves every object comparison a colour clock and silently
   mis-colours the whole line, so it is worth an assertion rather than an
   argument"*). `make antic2_pxpos` **PASSES: 1820 pixels, `px_pos == hcount*4 + k`**,
