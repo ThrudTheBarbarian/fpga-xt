@@ -2326,10 +2326,17 @@ module fpga_xt_top (
         spk_s0 <= consol_spk_sally;
         spk_s1 <= spk_s0;
     end
+    // REGISTERED: clk_sys closes with only ~0.01-0.13 ns of slack, and putting the
+    // 25-bit add + saturation combinationally in front of u_audio_lpf pushed it to
+    // WNS = -0.401 (recovery passes could not claw it back). One flop breaks the
+    // path; a cycle of latency at 100 MHz is nothing against a 48 kHz sample.
     wire [24:0] spk_mix_l = {1'b0, audio_sample_l} + (spk_s1 ? {1'b0, SPK_AMP} : 25'd0);
     wire [24:0] spk_mix_r = {1'b0, audio_sample_r} + (spk_s1 ? {1'b0, SPK_AMP} : 25'd0);
-    wire [23:0] aud_spk_l = spk_mix_l[24] ? 24'hFFFFFF : spk_mix_l[23:0];  // saturate
-    wire [23:0] aud_spk_r = spk_mix_r[24] ? 24'hFFFFFF : spk_mix_r[23:0];
+    reg  [23:0] aud_spk_l = 24'd0, aud_spk_r = 24'd0;
+    always_ff @(posedge clk_sys) begin
+        aud_spk_l <= spk_mix_l[24] ? 24'hFFFFFF : spk_mix_l[23:0];   // saturate
+        aud_spk_r <= spk_mix_r[24] ? 24'hFFFFFF : spk_mix_r[23:0];
+    end
 
     audio_lpf u_audio_lpf (
         .clk   (clk_sys),
