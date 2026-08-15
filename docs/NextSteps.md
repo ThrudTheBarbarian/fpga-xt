@@ -5334,9 +5334,12 @@ per-store mask OVERRIDING VDELAY. VDELAY resets to `$00`, yet T5d reads
 `GRAFM = $0c` from `cur = $CC`, i.e. group 3 took the previous-fetch copy. So
 four of the eight tests need restating against the current contract
 (`grafp[i] = (vdelay & (0x10<<i)) ? pm_prev_p[i] : pm_p[i]`, and `mix_m()` for
-GRAFM), not a rename. Restating them from the implementation would freeze
-whatever it does in as "expected", so the authoritative reference is the ACID
-vector `make -C sim acid2 TEST=gtia_vdelay`.
+GRAFM), not a rename. Restating them from the implementation alone would freeze
+whatever it does in as "expected" — but that objection is now answered:
+**`make -C sim acid2 TEST=gtia_vdelay` PASSES**, and ACID validates VDELAY
+against the real chip's behaviour independently of our RTL. So the current
+behaviour is known-good, and restating the four unit tests against it is safe
+rather than circular. The rewrite is a contained job, not a risky one.
 
 ## TEMP diagnostics still in the RTL (scaffolding from the self-test hunt)
 
