@@ -886,6 +886,14 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   while `cc_pos` still names the previous clock) and T11's sample points were
   re-derived: the GTIA pixel now spans cc1..cc2, still TWO clocks.
 
+  **DEPLOYED TO HARDWARE 2026-08-15 13:48.** Bitstream built on valhalla from
+  `13c03591`; **timing gate PASSED** — `clk_50` WNS 81.346 ns, `clk_pix_unbuf`
+  0.462 ns, `clk_sally_unbuf` 0.168 ns, `clk_sys_unbuf` 0.150 ns, all positive.
+  dap-recover then bare load (never `reset && load`). Board verified up: ping
+  0% loss, `ps` shows **gemd + desktop** on fresh PIDs, `[net] up`, die 49 C.
+  **AWAITING SIMON'S EYES ON THE INTRO — the fix is measured in sim and against
+  Altirra, but not yet confirmed visually on the screen.**
+
   **VALIDATED:** `make -C sim pm_align` (new, drives the LIVE `antic2_fabric`);
   `gtia_stage` all checks incl. the four **TM** man-visibility checks and the
   whole T11 series; `antic2_pxpos` (1820 px); `gtia_obj_walk`; `antic_modes`; and
