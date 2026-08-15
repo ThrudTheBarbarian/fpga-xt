@@ -888,6 +888,32 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
   (`cc_pos[0]` -> `!cc_pos[0]`) leaves the mode-9 edge at 180, unchanged** — the
   two-register handover costs a full pair either way. Reverted, tree clean.
 
+  **FIX ATTEMPT 2 — CORRECT ALIGNMENT, BUT IT RE-BREAKS THE MAN. REVERTED.**
+  Delaying the object presence by one aligned pair for the DISPLAY path only
+  (a `pres_ready`/`pres_pair` handover mirroring `nib_ready`/`gtia_nib`, feeding
+  `u_pri` while `u_col` keeps the un-delayed `pres`) **does produce the right
+  geometry**: mode-9 player moves 176 -> 180, coincident with the edge, and
+  ordinary modes stay bit-identical (176/176). `antic2_pxpos`, `gtia_obj_walk`
+  and `antic_modes` all still pass. **But `tb_gtia_stage` fails 7 checks,
+  including all four `TM: THE MAN IS INVISIBLE`** — the case built from
+  registers peeked off Altirra at the instant the man is on screen, i.e. the
+  test that pins `6ef5bab2`.
+
+  **WHY IT FAILS, and it is instructive:** `pri_start` is driven by
+  `pres_valid`, which was NOT delayed, so the priority network still resolves at
+  the old instant and reads a presence that has not arrived yet. Delaying the
+  DATA without delaying the HANDSHAKE loses the object rather than moving it.
+
+  **AND THE OBVIOUS ALTERNATIVE HAS A CATCH.** Shifting the object match itself
+  (`cc_pos - 2` in `gtia_obj_walk` under a GTIA mode) would move presence and
+  its valid together — but the walk is SHARED with collisions, and collisions
+  are currently correct precisely because they pair the EARLY nibble
+  (`nib_ready`) with un-delayed objects. Shift the walk and the collision path
+  needs `gtia_nib` too, which puts the passing ACID collision tests at risk.
+  **So the fix is a two-sided change (display AND collision phase together), not
+  a one-liner.** Both attempts reverted; tree clean, `gtia_stage` green,
+  `pm_align` back to baseline on a forced rebuild.
+
   **A REAL FIX MUST BE GATED ON:** `make -C sim pm_align` (mode-9 edge must reach
   176 with the player still at 176), `gtia_stage`, `antic2_pxpos`, the left-edge
   bar behaviour, and a full ACID sweep (`acid2`, 55 pass / 2 skip / 0 fail of
