@@ -5313,3 +5313,16 @@ FIX (not done — it is a feature change, Simon's call): latch `wdata[3]` as a
 separate bit (leave `consol_rd` using `[2:0]` so the ACID console-key vectors are
 untouched), route it up through `antic2` → `antic_top` → `fpga_xt_top`, and mix it
 into `audio_sample_l/r` ahead of `u_audio_lpf` as a square wave.
+
+## sim/tb_gtia_reg_file.sv no longer elaborates — stale bench
+
+`make -C sim gtia_reg_file` fails: the bench binds a `pm_mask` port that
+`gtia_reg_file` dropped when VDELAY resolution moved inside the register file
+(the DUT now takes `pm_fetch`). Its T6/T6b also assert the old "VDELAY mask
+merges rather than assigns" contract, which no longer exists, so this is a
+rewrite against the current semantics rather than a port rename. The target is
+NOT in `all`, which is why the rot went unnoticed.
+
+The CONSOL speaker checks that would naturally live there are in
+`sim/tb_consol_spk.sv` (`make -C sim consol_spk`, and it IS in `all`) so the key
+click has coverage regardless.

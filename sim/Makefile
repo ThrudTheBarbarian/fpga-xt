@@ -63,7 +63,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: antic_timing all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes cmp_fetch hscrol hscrol_e2e antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load rom_integ klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal antic_dli antic_dli_cdc
+.PHONY: antic_timing all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes cmp_fetch hscrol hscrol_e2e antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load rom_integ consol_spk klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal antic_dli antic_dli_cdc
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -1492,6 +1492,17 @@ antic_reg_file: build/tb_antic_reg_file.vvp
 build/tb_antic_reg_file.vvp: tb_antic_reg_file.sv $(HDL_DIR)/antic_reg_file.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_reg_file \
 	    $(HDL_DIR)/antic_reg_file.sv tb_antic_reg_file.sv
+
+consol_spk: build/tb_consol_spk.vvp
+	@echo "=== consol_spk (CONSOL bit3 = console speaker / XL key click) ==="
+	@$(VVP) -N $< | tee build/tb_consol_spk.log
+	@grep -q '\*\*\* CONSOL_SPK OK \*\*\*' build/tb_consol_spk.log || \
+	    (echo "FAIL: tb_consol_spk missing CONSOL_SPK OK"; exit 1)
+	@echo "PASS: tb_consol_spk"
+
+build/tb_consol_spk.vvp: tb_consol_spk.sv $(HDL_DIR)/gtia_reg_file.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_consol_spk \
+	    $(HDL_DIR)/gtia_reg_file.sv tb_consol_spk.sv
 
 gtia_reg_file: build/tb_gtia_reg_file.vvp
 	@vvp -N $<
