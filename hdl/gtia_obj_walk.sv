@@ -17,16 +17,28 @@
 //     tested every colour clock whether or not the object is already drawing.  A
 //     positional formula draws once per line and cannot pass.
 //
-// A PLAYER CARRIES TWO CONCURRENT RUNS; A MISSILE CARRIES EXACTLY ONE.  That
+// A PLAYER CARRIES CONCURRENT RUNS; A MISSILE CARRIES EXACTLY ONE.  That
 // asymmetry is emu's, and it is in the data structure rather than in any
 // constant: gtia.h declares p_bit[4][GTIA_RUNS] against a scalar m_bit[4], and
 // obj_step APPENDS on a player match where the missile path reloads.  A second
 // HPOS match while the player is still emitting therefore starts a second run
 // beside the first instead of replacing it, and gtia_pmoverlap fails without it
 // — grafp0 = $81 lights two regions from one run where the hardware lights
-// three.  GTIA_RUNS is 8, but that is a C model's safety cap: instrumenting emu
-// over pmoverlap/pmresize/pmretrigger puts the true peak at TWO (n2 = 4580
-// occurrences, n3 never), so two slots per player is exact, not a truncation.
+// three.
+//
+// HOW MANY RUNS: EIGHT, as emu's GTIA_RUNS.  This module carried TWO, on the
+// strength of instrumenting emu over pmoverlap/pmresize/pmretrigger and finding
+// the peak was two (n2 = 4580 occurrences, n3 never).  That measurement was
+// sound and its conclusion was still wrong, because every one of those tests
+// runs at NORMAL width, where a run is 8 colour clocks and a third overlap needs
+// two rewrites inside 8cc.  At QUAD width a run is 32 colour clocks, and
+// BallBlazer draws its goalposts by MULTIPLEXING one player across the line, so
+// three and more overlap routinely.  The surplus match was dropped, the bar
+// never re-anchored, and it kept drawing at the previous x — a step partway down
+// a goalpost that should have been straight.  tb_gtia_stage's TR pins it, and
+// pins the COUNT: it drives eight overlapping runs and fails naming the slot it
+// ran out at, so dropping NSLOT below 8 is a visible regression rather than a
+// silent one.
 //
 // A MATCH DOES THREE THINGS, NOT ONE (gtia.c, the hpos == hposp[i] block):
 //   1. RE-ANCHOR every run still emitting — phase restarts here and the bit
@@ -60,9 +72,13 @@
 // active-line gate this module has no opinion about.
 //
 // CLOCK BUDGET: 8 clocks per colour clock, out of ~28 available.  One 8:1 input
-// mux, one comparator, two shifters, two small counters — the whole engine.
-// The second run rides in the same step rather than adding four more, because
-// tb_gtia_stage measures the budget and a 12-step walk overruns it (30 of 28).
+// mux, one comparator, and per run a shifter and a small counter — the whole
+// engine.  ALL of a player's runs ride in the SAME step rather than taking one
+// each, and that is what makes the slot count nearly free: the mux, the
+// comparator and the size decode are shared, so a slot costs only its own
+// shifter and 2-bit counter and NO extra clock.  Adding steps instead is the
+// trap — tb_gtia_stage measures the budget and a 12-step walk already overruns
+// it (30 of 28), so the count could never have been raised that way.
 //
 `timescale 1ns/1ps
 
@@ -91,15 +107,32 @@ module gtia_obj_walk (
 );
 
     // ---- per-RUN state ----------------------------------------------------
-    // Twelve run slots, not eight objects: 0-3 are the players' first run, 4-7
-    // the missiles, 8-11 the players' second run.  Only `live` needs clearing at
-    // line start; an append resets the rest, and nothing is read while a run is
-    // not live.
-    logic [7:0]  sr   [0:11];
-    logic [1:0]  cnt  [0:11];
-    logic [3:0]  bits [0:11];
-    logic [11:0] live;
-    logic [11:0] locked;              // 1xalt lockup; see the resize clock below
+    // Slots, not objects.  Only `live` needs clearing at line start; an append
+    // resets the rest, and nothing is read while a run is not live.
+    //
+    // NSLOT runs per PLAYER, one per missile.  Two was not a model of the
+    // hardware, it was a bet that three would never overlap -- and the comment
+    // that justified it says so: "instrumenting it over the P/M tests never sees
+    // a third".  Those tests are NORMAL width, where a run is 8 colour clocks.
+    // At QUAD width a run is 32, and BallBlazer draws its goalposts by
+    // MULTIPLEXING one player across the line -- HPOSP rewritten every few
+    // colour clocks -- so three and more overlap routinely.  The third match was
+    // silently dropped, the bar never re-anchored, and it kept drawing at the
+    // previous x: the offset segment at the tail of a scrolling goalpost.
+    // emu carries eight (GTIA_RUNS, emu/gtia.h) and is the reference here.
+    //
+    // Slots are added IN PARALLEL WITHIN A STEP, never as extra steps: the
+    // object's hpos comparator, size decode and graphics byte are shared, so a
+    // slot costs only its shifter and its 2-bit counter.  Extra steps would cost
+    // a fabric clock each and the stage has two to spare out of 28.
+    localparam int NSLOT      = 8;                 // runs per player
+    localparam int NSLOTS_TOT = 4 * NSLOT + 4;     // players, then one per missile
+
+    logic [7:0]  sr   [0:NSLOTS_TOT-1];
+    logic [1:0]  cnt  [0:NSLOTS_TOT-1];
+    logic [3:0]  bits [0:NSLOTS_TOT-1];
+    logic [NSLOTS_TOT-1:0] live;
+    logic [NSLOTS_TOT-1:0] locked;    // 1xalt lockup; see the resize clock below
 
     // ---- the walk --------------------------------------------------------
     logic [3:0] step;                 // 0..11 walking, 12 = idle
@@ -109,15 +142,23 @@ module gtia_obj_walk (
     wire       is_missile = i[2];
     wire [1:0] mi         = i[1:0];   // which missile
 
-    // Both of a player's runs are stepped in the SAME clock.  They share an
+    // ALL of a player's runs are stepped in the SAME clock.  They share an
     // object, so they share the hpos comparator, the size decode and the
-    // graphics byte; only the shifter and its little counter are duplicated.
-    // Walking them as four extra steps instead costs four clocks and tb_gtia_stage
-    // rejects it outright — the stage then needs 30 of the 28 clocks a colour
-    // clock has.  The arbitration falls out for free here: run A is resolved
-    // combinationally beside run B, so no note has to be carried between steps.
-    wire [3:0] sa = {1'b0, i};                // run A slot: players 0-3, missiles 4-7
-    wire [3:0] sb = {2'b10, mi};              // run B slot: players only, 8-11
+    // graphics byte; only the shifter and its little counter are per run.
+    // Walking them as a step each costs a clock each and tb_gtia_stage rejects it
+    // outright — even 12 steps needs 30 of the 28 clocks a colour clock has.  The
+    // arbitration falls out for free here: every run is resolved combinationally
+    // beside the others, so no note has to be carried between steps.
+    //
+    // Player i owns slots i*NSLOT .. i*NSLOT+NSLOT-1; missile mi owns the single
+    // slot 4*NSLOT+mi.  A missile therefore only ever uses run 0.
+    function automatic int slot_of(input logic [2:0] obj, input int r);
+        slot_of = obj[2] ? (4 * NSLOT + int'(obj[1:0]))
+                         : (int'(obj) * NSLOT + r);
+    endfunction
+
+    // A run index is live logic for this object only if the object owns it:
+    // players own all NSLOT, a missile owns run 0 alone.
 
     // ---- the shared input mux -------------------------------------------
     logic [7:0] obj_hpos;
@@ -215,58 +256,82 @@ module gtia_obj_walk (
 
     // size_max is w-1, so "the low bits are all ones for the new width" is
     // simply (cnt & size_max) == size_max.
-    wire       rz_roll_a  = ((cnt[sa] & size_max) == size_max);
-    wire       rz_roll_b  = ((cnt[sb] & size_max) == size_max);
-    wire       rz_lock_a  = obj_alt && (cnt[sa][1] != cnt[sa][0]);
-    wire       rz_lock_b  = obj_alt && (cnt[sb][1] != cnt[sb][0]);
+    // Per-run, for the object being stepped.  Everything below is indexed by the
+    // RUN number r; slot_of(i, r) turns that into the state array index.
+    logic [NSLOT-1:0] rz_roll, rz_lock, rmoved, rfin, rfree, rhit, rlive_next;
+    logic [7:0]       rsr_next [0:NSLOT-1];
+    logic             obj_lit_c;
 
-    wire       moved_a  = walking && live[sa] && !locked[sa] &&
-                          (match       ? !is_missile
-                         : obj_resize  ? (!rz_lock_a && rz_roll_a)
-                                       : (cnt[sa] >= size_max));
-    wire       moved_b  = walking && !is_missile && live[sb] && !locked[sb] &&
-                          (match       ? 1'b1
-                         : obj_resize  ? (!rz_lock_b && rz_roll_b)
-                                       : (cnt[sb] >= size_max));
+    // Loop scratch.  iverilog does not accept `automatic` locals inside a
+    // procedural block, so these are declared once: c* for the combinational
+    // walk, q* for the clocked update.
+    integer cs, qs;                   // slot index of the run being considered
+    reg     cowned, cearlier, qowned;
 
-    wire       fin_a    = moved_a && (bits[sa] == last_bit);
-    wire       fin_b    = moved_b && (bits[sb] == 4'd7);
+    always_comb begin
+        rz_roll    = '0; rz_lock = '0; rmoved = '0; rfin = '0;
+        rfree      = '0; rhit    = '0; rlive_next = '0;
+        obj_lit_c  = 1'b0;
+        cs = 0; cowned = 1'b0; cearlier = 1'b0;
+        for (int r = 0; r < NSLOT; r++) rsr_next[r] = 8'h00;
 
-    // A slot can take an append if it is empty or retires on this clock.
-    wire       free_a   = !live[sa] || fin_a;
-    wire       free_b   = !live[sb] || fin_b;
+        for (int r = 0; r < NSLOT; r++) begin
+            cs     = slot_of(i, r);
+            cowned = (r == 0) || !is_missile;
+            if (cowned) begin
+                rz_roll[r] = ((cnt[cs] & size_max) == size_max);
+                rz_lock[r] = obj_alt && (cnt[cs][1] != cnt[cs][0]);
 
-    // Missiles reload unconditionally; a player appends into whichever of its
-    // two slots is free, preferring the first.  If both are still emitting the
-    // match is dropped — emu would carry a third run, but instrumenting it over
-    // the P/M tests never sees a third, so the case is unreachable rather than
-    // approximated.
-    wire       hit_a    = match && (is_missile || free_a);
-    wire       hit_b    = match && !is_missile && !free_a && free_b;
+                // A missile does not move on its match clock: the match reloads
+                // it outright.
+                rmoved[r]  = walking && live[cs] && !locked[cs] &&
+                             (match      ? !is_missile
+                            : obj_resize ? (!rz_lock[r] && rz_roll[r])
+                                         : (cnt[cs] >= size_max));
 
-    wire [7:0] sr_next_a = hit_a   ? obj_graf
-                         : moved_a ? {sr[sa][6:0], 1'b0}
-                                   : sr[sa];
-    wire [7:0] sr_next_b = hit_b   ? obj_graf
-                         : moved_b ? {sr[sb][6:0], 1'b0}
-                                   : sr[sb];
+                rfin[r]    = rmoved[r] && (bits[cs] == last_bit);
+                rfree[r]   = !live[cs] || rfin[r];
+            end
+        end
 
-    wire       live_next_a = hit_a ? 1'b1 : (fin_a ? 1'b0 : live[sa]);
-    wire       live_next_b = hit_b ? 1'b1 : (fin_b ? 1'b0 : live[sb]);
+        // A player appends into the FIRST free slot; a missile reloads run 0
+        // unconditionally.  Only when every slot is still emitting is the match
+        // dropped -- with NSLOT of them that is now genuinely unreachable rather
+        // than merely unobserved.
+        for (int r = 0; r < NSLOT; r++) begin
+            cowned   = (r == 0) || !is_missile;
+            cearlier = 1'b0;
+            for (int q = 0; q < NSLOT; q++)
+                if (q < r) cearlier = cearlier | rfree[q];
+            if (cowned)
+                rhit[r] = match && (is_missile || (rfree[r] && !cearlier));
+        end
 
-    // An object is lit if EITHER of its runs is.
-    wire       obj_lit = (live_next_a && sr_next_a[7]) ||
-                         (!is_missile && live_next_b && sr_next_b[7]);
+        for (int r = 0; r < NSLOT; r++) begin
+            cs     = slot_of(i, r);
+            cowned = (r == 0) || !is_missile;
+            if (cowned) begin
+                rsr_next[r]   = rhit[r]   ? obj_graf
+                              : rmoved[r] ? {sr[cs][6:0], 1'b0}
+                                          : sr[cs];
+                rlive_next[r] = rhit[r] ? 1'b1 : (rfin[r] ? 1'b0 : live[cs]);
+                obj_lit_c     = obj_lit_c | (rlive_next[r] && rsr_next[r][7]);
+            end
+        end
+    end
+    // An object is lit if ANY of its runs is; obj_lit_c is that OR-reduction,
+    // built in the always_comb above.
+    wire       obj_lit = obj_lit_c;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             step       <= 4'd8;
-            live       <= 12'h000;
-            locked     <= 12'h000;
+            live       <= '0;
+            locked     <= '0;
             acc        <= 8'h00;
             pres       <= 8'h00;
             pres_valid <= 1'b0;
-            for (int k = 0; k < 12; k++) begin
+            for (int k = 0; k < NSLOTS_TOT; k++) begin
                 sr[k]   <= 8'h00;
                 cnt[k]  <= 2'd0;
                 bits[k] <= 4'd0;
@@ -275,8 +340,8 @@ module gtia_obj_walk (
             pres_valid <= 1'b0;
 
             if (line_start) begin
-                live   <= 12'h000;
-                locked <= 12'h000;
+                live   <= '0;
+                locked <= '0;
                 step <= 4'd8;
                 acc  <= 8'h00;
                 pres <= 8'h00;
@@ -284,31 +349,26 @@ module gtia_obj_walk (
                 step <= 4'd0;
                 acc  <= 8'h00;
             end else if (walking) begin
-                sr[sa]   <= sr_next_a;
-                live[sa] <= live_next_a;
-                // A new run starts unlocked; otherwise the lock latches on the
-                // resize clock and never clears until line start.
-                if (hit_a)           locked[sa] <= 1'b0;
-                else if (obj_resize) locked[sa] <= locked[sa] | rz_lock_a;
-                cnt[sa]  <= (hit_a || moved_a) ? 2'd0
-                          : (live[sa] ? cnt[sa] + 2'd1 : cnt[sa]);
-                bits[sa] <= hit_a   ? 4'd0
-                          : moved_a ? bits[sa] + 4'd1
-                                    : bits[sa];
-
-                // The second run exists for players only; a missile step must
-                // leave slots 8-11 alone rather than write them with a missile's
-                // size and graphics.
-                if (!is_missile) begin
-                    sr[sb]   <= sr_next_b;
-                    live[sb] <= live_next_b;
-                    if (hit_b)           locked[sb] <= 1'b0;
-                    else if (obj_resize) locked[sb] <= locked[sb] | rz_lock_b;
-                    cnt[sb]  <= (hit_b || moved_b) ? 2'd0
-                              : (live[sb] ? cnt[sb] + 2'd1 : cnt[sb]);
-                    bits[sb] <= hit_b   ? 4'd0
-                              : moved_b ? bits[sb] + 4'd1
-                                        : bits[sb];
+                // Every run this object owns, in the same clock.  A missile owns
+                // run 0 alone, so the loop must not write a player's slots with a
+                // missile's size and graphics -- hence the `owned` guard rather
+                // than a bare loop over NSLOT.
+                for (int r = 0; r < NSLOT; r++) begin
+                    qs     = slot_of(i, r);
+                    qowned = (r == 0) || !is_missile;
+                    if (qowned) begin
+                        sr[qs]   <= rsr_next[r];
+                        live[qs] <= rlive_next[r];
+                        // A new run starts unlocked; otherwise the lock latches
+                        // on the resize clock and never clears until line start.
+                        if (rhit[r])         locked[qs] <= 1'b0;
+                        else if (obj_resize) locked[qs] <= locked[qs] | rz_lock[r];
+                        cnt[qs]  <= (rhit[r] || rmoved[r]) ? 2'd0
+                                  : (live[qs] ? cnt[qs] + 2'd1 : cnt[qs]);
+                        bits[qs] <= rhit[r]   ? 4'd0
+                                  : rmoved[r] ? bits[qs] + 4'd1
+                                              : bits[qs];
+                    end
                 end
 
                 // Presence is taken from the state AFTER this colour clock's

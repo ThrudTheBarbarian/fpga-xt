@@ -587,6 +587,51 @@ module tb_gtia_stage;
             grafp0 = 0; grafp1 = 0; grafp2 = 0; grafp3 = 0;
         end
 
+        // TR: a STRETCHED player retriggered faster than its run is long
+        // ================================================================
+        // BallBlazer's goalposts are drawn by MULTIPLEXING one player across
+        // the line: HPOSP is rewritten repeatedly so a single object paints
+        // several vertical bars.  At quad width a run lasts 4 CC/bit * 8 bits
+        // = 32 colour clocks, so writes spaced a few CC apart leave three or
+        // more runs emitting at once.  gtia_obj_walk carries TWO run slots per
+        // player and DROPS the match when both are busy (its comment argues the
+        // third is unreachable, but that was measured at NORMAL width, where a
+        // run is 8 CC and overlap is rare).  A dropped match never re-anchors,
+        // so that bar keeps drawing at the PREVIOUS position -- the offset
+        // segment at the tail of a scrolling goalpost.
+        //
+        // GRAFP $80 is what makes the drop visible: each run lights only its
+        // first bit period, so run N+1 cannot mask the absence of run N+2.
+        // (With $FF every run lights everything and a dropped one is invisible
+        // -- which is exactly why the existing vectors never caught this.)
+        // Matches at cc 4, 8, 12 are 4 CC apart, so all three overlap.
+        begin : tr_retrigger
+            logic is_match;            // iverilog rejects `automatic` locals
+            new_line();
+            sizep0 = 2'b11;            // quad: 4 CC per bit, 32 CC per run
+            grafp0 = 8'h80;            // only bit 7 -- one lit bit period each
+            prior  = 8'h01;
+            hposp0 = 8'd200;           // parked: no match while we walk up
+            // Eight matches, 4 CC apart, at cc 4..32.  A quad run lives 32 CC, so
+            // the first does not retire until cc 36 and ALL EIGHT are emitting at
+            // once by the last one -- the slot count is what is under test, not
+            // merely "more than two".  Run n must light its own 4 CC; if its match
+            // was dropped for want of a slot the pixel falls back to background.
+            for (int c = 0; c < 40; c++) begin
+                is_match = (c >= 4) && (c <= 32) && (c % 4 == 0);
+                if (is_match) hposp0 = 8'(c);
+                step_cc(3'd0, 3'd0);
+                if (is_match) begin
+                    if (got_a !== colpm0) begin
+                        $display("FAIL TR: retrigger %0d of 8 (cc %0d) emitted $%02h, expected COLPM0 $%02h -- RUN DROPPED, only %0d slots usable",
+                                 (c / 4), c, got_a, colpm0, (c / 4) - 1);
+                        fail++;
+                    end
+                end
+            end
+            sizep0 = 2'd0; grafp0 = 8'h00; hposp0 = 8'd200;
+        end
+
         // T1: the schedule fits in a colour clock
         // ================================================================
         // Checked last so it covers every case above, and it is the one that
