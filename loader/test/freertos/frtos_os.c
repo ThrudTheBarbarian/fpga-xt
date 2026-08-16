@@ -3387,6 +3387,9 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return xl_reset((int)a0);
     }
     case SYS_sio_timing: {                                  /* (baud, latency_us) -> 0 */
+#ifdef XT_HW
+        /* The knobs live in the fabric-6502 half of xl_boot.c, so they exist only
+         * on hardware; the qemu build has no SIO to pace and must still link. */
         extern uint32_t g_siov_baud, g_siov_latency_us, g_sio_rot;
         g_siov_baud       = (uint32_t)a0;
         g_siov_latency_us = (uint32_t)a1;
@@ -3395,6 +3398,7 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
          * never calls SIOV, so it needs the serial-bus drive's rotational
          * pacing or it is not paced at all. */
         g_sio_rot         = (uint32_t)(a0 != 0);
+#endif
         return 0;
     }
 
@@ -3482,6 +3486,13 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
 #ifdef XT_HW
         extern void xl_eject_live(void);
         xl_eject_live();
+#endif
+        return 0;
+    }
+    case SYS_xl_park: {                                      /* () -> eject + hold in reset */
+#ifdef XT_HW
+        extern void xl_park(void);
+        xl_park();
 #endif
         return 0;
     }
@@ -3659,6 +3670,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_xl_boot: return 1;                    /* reads the OS ROMs + the ATR off the SD */
     case SYS_xexload: return 1;                    /* reads the OS ROMs + the .xex off the SD */
     case SYS_xl_reset: return 1;                   /* reads the OS ROMs off the SD */
+    case SYS_xl_park:  return 1;                   /* frees the mounted images (frtos_free) */
     case SYS_read: {                               /* stdin + pipes + channels block */
         if (fd_is_con(fd)) return 1;               /* console alias: con_tty_readc path */
         proc_t *q = cur_proc();
