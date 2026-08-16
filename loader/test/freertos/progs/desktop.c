@@ -2509,9 +2509,9 @@ static void menu_dispatch(int to, int io) {
         case 4:                                                                          // Reset 6502 IMPL
             /* A real power-cycle of the fabric 6502, mounted media KEPT — so a
              * disk reboots, exactly as reset does on an XL with the drive on.
-             * This exists because closing the emulator window no longer resets
-             * anything (it ejects and leaves the guest running), which left no
-             * way at all to restart a wedged game. */
+             * This exists because closing the emulator window does not cold-boot:
+             * it PARKS (ejects and holds the 6502 in reset, silently), which left
+             * no way at all to restart a wedged game. */
             if (form_alert(2, "[2][Reset the 6502?|Anything running is lost.][Reset|Cancel]") == 1)
                 sys_xl_reset(1);                                                         // BASIC on
             break;
@@ -2751,7 +2751,14 @@ void _app_entry(int argc, char **argv) {
             if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }
             emuwin *e = emu_of_window(msg[3]);
             if (e) { e->used = 0;
-                     if (msg[3] == g_xlwin) { xl_fullscreen_exit(); sys_xl_boot(NULL, 0); } }
+                     /* PARK, don't cold-boot.  sys_xl_boot(NULL,0) also stops the
+                      * guest, but it gets there by cold-booting with nothing
+                      * mounted, and the XL OS then spends its D1: boot-poll
+                      * timeout buzzing at a drive that will never answer -- ten
+                      * seconds of disk-not-there noise AFTER the window has gone.
+                      * The poll itself is authentic; it belongs on open, where it
+                      * reads as the machine starting up. */
+                     if (msg[3] == g_xlwin) { xl_fullscreen_exit(); sys_xl_park(); } }
             xl_unbind(msg[3]);
             wind_close(msg[3]);   // gemd drops the window and recomposites the rect it vacated
         }

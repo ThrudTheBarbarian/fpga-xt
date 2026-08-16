@@ -470,6 +470,14 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * WITHOUT resetting the 6502. Closing the emulator window
                                 * is not a power switch — the guest keeps running and just
                                 * loses its disk, as if the drive had been switched off. */
+#define SYS_xl_park      0x60D /* () -> 0: eject the medium AND hold the 6502 in reset.
+                                * The close-window counterpart to SYS_xl_boot: it stops
+                                * whatever was running without cold-booting, so no SIO
+                                * boot poll runs and the close is silent.  A coldstart
+                                * with no media is not wrong -- a real XL buzzes its way
+                                * through the D1: poll before dropping to BASIC -- but it
+                                * belongs on OPEN, where it reads as the machine starting
+                                * up, not on close.  The next open releases the hold. */
 #define SYS_sio_timing   0x60B /* (baud, latency_us) -> 0: how long the PARAVIRTUAL SIOV
                                 * service pretends to take.  baud 0 = answer immediately
                                 * (the default: authentic timing means authentic LOAD

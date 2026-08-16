@@ -521,6 +521,25 @@ void xl_eject_live(void)
     klog("[xl] media ejected; 6502 left running\r\n");
 }
 
+/* Eject AND park: hold the 6502 in reset, then drop the media.  This is what
+ * closing the emulator window wants and neither neighbour provides.
+ * xl_eject_live() leaves the guest running (it keeps burning cycles and can keep
+ * making sound with no window to show for it); xl_boot(NULL,0) stops it but
+ * COLD-BOOTS to get there, and a coldstart with nothing mounted spends the guest
+ * OS's own D1: boot-poll timeout buzzing before it reaches BASIC.  That poll is
+ * authentic -- a real XL does it at switch-on -- but it belongs on OPEN, where it
+ * reads as the machine starting up.  On close it is just noise after the window
+ * has gone.  Parking is silent because no 6502 code runs at all: the next open
+ * clears the hold (xl_boot/xl_reset both manage SALLYRST bit0). */
+static void xl_unmount_all(void);
+
+void xl_park(void)
+{
+    GP0_SALLYRST = (GP0_SALLYRST & ~1u) | 1u; __asm__ volatile("dsb");
+    xl_unmount_all();
+    klog("[xl] parked; media ejected, 6502 held in reset\r\n");
+}
+
 static void xl_unmount_all(void)
 {
     /* Release the WHOLE ownership table, not one drive: a session must not be

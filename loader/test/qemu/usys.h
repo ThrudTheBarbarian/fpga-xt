@@ -292,6 +292,10 @@ static inline long sys_input(struct os_event *ev, int timeout_ms, int raw) { ret
 static inline long sys_kbd_6502(int c) { return __syscall(SYS_kbd_6502, c, 0, 0); }
 static inline long sys_cursor_shape(int n) { return __syscall(SYS_cursor_shape, n, 0, 0); }
 static inline long sys_xl_eject(void) { return __syscall(SYS_xl_eject, 0, 0, 0); }
+/* Eject AND hold the 6502 in reset — the silent close-window stop.  Unlike
+ * sys_xl_boot(NULL,0) it does not cold-boot, so the guest OS never runs its D1:
+ * boot poll and the close makes no noise; the coldstart happens on the next open. */
+static inline long sys_xl_park(void) { return __syscall(SYS_xl_park, 0, 0, 0); }
 static inline long sys_cursor_autohide(int ms) { return __syscall(SYS_cursor_autohide, ms, 0, 0); }
 
 #endif
