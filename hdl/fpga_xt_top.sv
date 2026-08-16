@@ -2974,64 +2974,14 @@ module fpga_xt_top (
     wire [31:0] diag6_word = {xl_abort_cnt, desk_abort_cnt};
     wire [31:0] diag7_word = {overlay_base[15:0], 8'h00, scrn_shadow_rdata}; // TEMP: peek addr echo + byte@mem[addr]
 
-    // ---- ROM-window upload diagnostic (TEMP, localises the dead-upload bug) --
-    // The upload logic is sim-clean (tb_rom_integ) but the board's 6502 never
-    // sees the patched OS.  Count where it breaks on silicon:
-    //   romdiag_axi  (clk_sys)   = window AWs the loader ACCEPTED
-    //   romdiag_we   (clk_sally) = rom_we pulses the loader EMITTED to sally_mem
-    // axi>0 & we=0 -> loader gets AXI but never drains rom_we (FIFO on silicon).
-    // axi=0        -> the PS write never reaches the loader (decode/delivery).
-    wire [31:0] diag8_word, diag9_word;
-`ifdef USE_PS_BD
-    (* keep = "true" *) reg [15:0] romdiag_we   = 16'd0;
-    (* keep = "true" *) reg [15:0] romdiag_addr = 16'd0;
-    (* keep = "true" *) reg  [7:0] romdiag_data = 8'd0;
-    always_ff @(posedge clk_sally) if (rom_load_we) begin
-        romdiag_we   <= romdiag_we + 16'd1;
-        romdiag_addr <= rom_load_addr;
-        romdiag_data <= rom_load_data;
-    end
-    // WATCH one address: the counters prove pulses happened but say nothing about
-    // the DATA or the intermediate addresses.  $BFFC is the XL cartridge flag the
-    // coldstart tests; the upload writes $00 there, yet the CPU reads $BF right
-    // after the upload completes.  Latch what the loader actually delivers for it,
-    // and count how many times that address is written per upload (must be 1).
-    localparam logic [15:0] ROMDIAG_WATCH = 16'hBFFC;
-    (* keep = "true" *) reg  [7:0] romdiag_wdata = 8'd0;   // data written to the watched addr
-    (* keep = "true" *) reg  [7:0] romdiag_wcnt  = 8'd0;   // writes seen to it
-    always_ff @(posedge clk_sally)
-        if (rom_load_we && rom_load_addr == ROMDIAG_WATCH) begin
-            romdiag_wdata <= rom_load_data;
-            romdiag_wcnt  <= romdiag_wcnt + 8'd1;
-        end
-    (* keep = "true" *) reg [15:0] romdiag_axi = 16'd0;
-    always_ff @(posedge clk_sys) if (gp0_awvalid && rom_awready)
-        romdiag_axi <= romdiag_axi + 16'd1;
-    // static after an upload; plain 2-FF sync of the clk_sally fields is fine here
-    (* ASYNC_REG = "TRUE" *) reg [15:0] we_s0, we_s1, ad_s0, ad_s1;
-    (* ASYNC_REG = "TRUE" *) reg  [7:0] da_s0, da_s1;
-    (* ASYNC_REG = "TRUE" *) reg  [7:0] wd_s0, wd_s1, wc_s0, wc_s1;
-    always_ff @(posedge clk_sys) begin
-        we_s0 <= romdiag_we;   we_s1 <= we_s0;
-        ad_s0 <= romdiag_addr; ad_s1 <= ad_s0;
-        da_s0 <= romdiag_data; da_s1 <= da_s0;
-        wd_s0 <= romdiag_wdata; wd_s1 <= wd_s0;
-        wc_s0 <= romdiag_wcnt;  wc_s1 <= wc_s0;
-    end
-    // DIAG8/DIAG9 carry the ROM-WINDOW UPLOAD counters, which is what
-    // hdl/xt_gp0_pkg.sv documents them as.  They had been borrowed for the ACID
-    // DLI-delivery investigation and the romdiag registers above were left
-    // computed-but-unconnected, so /OS/proc/romdiag read the DLI word instead and
-    // reported "rom_we_pulses: 0" on a board whose OS upload demonstrably works.
-    // The DLI cluster passes now; the upload path is the live question.
-    assign diag8_word = {romdiag_axi, we_s1};        // [31:16]=AXI accepted, [15:0]=rom_we emitted
-    // [31:24]=writes seen to $BFFC (must be 1 per upload), [23:16]=the DATA the
-    // loader delivered for it (must be $00), [15:0]=last rom_addr (must be $FFFF).
-    assign diag9_word = {wc_s1, wd_s1, ad_s1};
-`else
-    assign diag8_word = antic_dbg_antic;
-    assign diag9_word = dli_diag_word;
-`endif
+    // DIAG8/DIAG9 are the ANTIC and DLI-delivery words on BOTH build paths.  The
+    // hardware branch had borrowed them for ROM-window upload counters while the
+    // dead-upload bug was open; that bug is closed (b2e5d9c5 — the reset stub was
+    // filling RAM with page numbers and wiping the BASIC image, the upload was
+    // never at fault), so the counters and their $BFFC watch tap are gone and the
+    // two paths agree again.
+    wire [31:0] diag8_word = antic_dbg_antic;
+    wire [31:0] diag9_word = dli_diag_word;
 
     // ---- TEMP DLI-delivery diagnostic (clk_sally) ------------------------
     // The ACID800 DLI cluster fails "DLIs did not fire" even though the DLI

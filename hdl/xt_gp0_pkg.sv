@@ -58,8 +58,8 @@ package xt_gp0_pkg;
     localparam logic [7:0] DIAG5            = 8'h10;  // R HP0 (desktop) first-AR address
     localparam logic [7:0] DIAG6            = 8'h14;  // R HP2 read-probe status
     localparam logic [7:0] DIAG7            = 8'h18;  // R HP2 read-probe last rdata
-    localparam logic [7:0] DIAG8            = 8'h1C;  // R TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem
-    localparam logic [7:0] DIAG9            = 8'h20;  // R TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data
+    localparam logic [7:0] DIAG8            = 8'h1C;  // R ANTIC debug word (antic_dbg_antic)
+    localparam logic [7:0] DIAG9            = 8'h20;  // R DLI-delivery diagnostic word (dli_diag_word)
     // XLCTL
     localparam logic [7:0] XL_WIN_X         = 8'h00;  // W plane origin X on screen (12-bit)
     localparam logic [7:0] XL_WIN_Y         = 8'h04;  // W plane origin Y on screen (12-bit)
