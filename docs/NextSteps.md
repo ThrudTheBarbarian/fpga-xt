@@ -34,11 +34,50 @@ discriminating, not a stuck zero — mod_disp80 returns Y = $30 on the same
 bitstream.  NSLOT = 4 remains a one-line fallback if a later build ever loses
 timing on the allocation ripple (lower TR's match count to match).
 
-OPEN:
-- Simon has not yet confirmed by eye that the goalposts render straight.  ACID
-  covers presence, collision, resize and retrigger, but nothing in the suite
-  draws a multiplexed quad-width bar and checks its edge alignment, so the
-  intro is still the only test for the symptom that started this.
+OPEN — the goalposts are STILL WRONG when they appear (2026-08-17).
+Simon ran the intro three times; the goalpost animation came up only on the
+third, and it was wrong.  Measured off his capture (screenshot plus all 73
+frames of IMG_1542.MOV), each post is TWO BANDS, not one bar:
+
+  upper band   left 75 px   right 74 px
+  lower band   left 89 px   right 86 px
+
+so the lower band is ~18% WIDER as well as displaced — left edge moves 23 px,
+right edge only 9 px.  Two further facts from the frame sweep:
+- The split sits at a FIXED SCANLINE in all 73 frames while the posts scroll
+  horizontally past it.  It is tied to a vertical position, not to a per-frame
+  timing wobble.
+- The right post changes ~1 scanline BEFORE the left one, every frame.  That
+  part is probably correct: the left post is drawn earlier in the line, so a
+  DLI writing HPOSP/SIZEP partway along catches the right post on line N and
+  the left only on line N+1.  A real XL would stagger it the same way.
+
+NOT a boot lottery.  The intro picks one of several animations at random and
+keeps cycling while the disk loads, so "two good runs" only means the
+goalposts were never chosen.  The fault may be present EVERY time they play.
+
+Ruled out so far:
+- DLI/CPU timing, as far as ACID can see it: antic_dlitiming, antic_nmist,
+  antic_blockednmi, antic_wsync, antic_vscroldli, cpu_timing, cpu_insn and
+  antic_dmapattern all return Y=$00 on this bitstream.  Not exoneration --
+  ACID probes specific hard cases, and a game can be harder.
+
+Blocked on getting a REFERENCE image, and on capture:
+- fbgrab streams the whole 1920x1080 plane through the kernel one row at a
+  time (8.3 MB read, 6.2 MB written, no crop, no early stop), so a grab takes
+  seconds and smears across time.  Too slow to catch a few-second animation.
+- Altirra never showed the goalposts in a 55 s boot (2658 frames captured, 565
+  analysed, zero with two vertical bars).  It also runs its SUBSTITUTE OS ROM,
+  not a real XL ROM -- use rsrc/atari-xl.rom + rsrc/atari-basic.rom, the same
+  images the board uses -- and "Devices: Accelerate with SIO patch" is on, which
+  shortens the load and so cycles fewer animations.
+
+NEXT: find what selects the animation (it is random, so something reads RANDOM
+$D20A or a frame counter and branches -- Altirra's instruction history will show
+the dispatch) and FORCE it to the goalposts.  Then the picture holds still, on
+both Altirra and the board, fbgrab's latency stops mattering, and the two can be
+diffed pixel-exact.  Do not settle for a synthetic stand-in: a hand-written
+vector can only contain the bug we already imagined.
 
 ## Closing the 6502 window parks instead of cold-booting
 Closing the window called `sys_xl_boot(NULL, 0)` — a full coldstart with no
