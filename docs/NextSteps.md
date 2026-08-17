@@ -81,6 +81,32 @@ post SEPARATION and the width fell on the reference value by itself.  So the top
 of the post is pixel-correct and THE LOWER BAND IS ENTIRELY SPURIOUS: the
 reference has no band structure anywhere down the post.
 
+HOW THE POSTS ARE ACTUALLY DRAWN (read out of a saved Altirra state,
+/tmp/gp.astate, which reproduces the goalpost moment on demand):
+- **No DLIs at all.**  All 96 display-list entries are mode 15 with dli=False,
+  and VDSLST points into ROM ($c055).  The posts are painted by a VCOUNT-driven,
+  WSYNC-synchronised kernel at $3307:
+        $3307 sta WSYNC / $330f ldx VCOUNT / $3315 cpx #$3B / $3319 cpx #$74
+        $331d sta WSYNC / $3322 sta COLBK  / $332d lda $32E3,X
+  It BRANCHES ON FIXED VCOUNT VALUES ($3B, $74) -- the same shape as a fault
+  that appears at a fixed scanline.
+- Setup at $33F2 writes COLPM0-3, SIZEP0-3, HPOSP0-3 and HPOSM0-3, each from a
+  table plus a common scroll offset ($92).  So the scene uses ALL FOUR PLAYERS
+  AND ALL FOUR MISSILES -- not one player multiplexed, which is what the
+  original slot diagnosis assumed.  (The slot fix is still right for retrigger,
+  it just is not the whole story here.)
+- **PRIOR = $54**: bits 6-7 = 01 -> GTIA MODE 9, bit 4 -> FIFTH PLAYER (missiles
+  in COLPF3), priority select 4.  That is the configuration behind three earlier
+  fixes -- players hidden in mode 9 (6ef5bab2), the left-edge bar (b0de37fe),
+  and THE PLAYFIELD RUNNING 2 COLOUR CLOCKS LATE AGAINST P/M (13c03591).  Our
+  lower band is ~2 CC too wide, which is a resonance worth chasing first.
+
+Altirra harness traps, all silent, all hit at once: "Pause when inactive" leaves
+the emulator paused so resume() does nothing (step with frame()); mount() is
+0-based so mount(1,...) is D2; a previously boot()ed XEX re-runs on every cold
+reset; history(30000) CRASHES the emulator and frame() after enabling history
+DEADLOCKS -- so read state statically (dlist/disasm/peek) instead of tracing.
+
 Blocked on capture (the reference itself is no longer blocked):
 - fbgrab streams the whole 1920x1080 plane through the kernel one row at a
   time (8.3 MB read, 6.2 MB written, no crop, no early stop), so a grab takes
