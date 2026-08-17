@@ -251,6 +251,53 @@ in lockstep with the CPU: mid-frame register writes / DLIs land on the correct
 scanline.  ANTIC native raster is now fully done (heartbeat + dead-chain
 deletion + sequencer).
 
+### 5.2 Publish the frame on the WRITEBACK'S ROW WRAP, never on ANTIC's vbi
+
+The triple buffer only decouples producer from consumer if the rows landing in a
+slot between two publishes are **one contiguous top-to-bottom pass**.  ANTIC's
+vbi does NOT give you that: it fires when the **display list ends**, while the
+writeback's row index comes from the raster timer and wraps independently.  Any
+display list shorter than the nominal 192-line window makes the two diverge, so
+the 192 rows written between publishes span two frames — rows `first..191` from
+one and `0..first-1` from the next — and the published slot is torn at `first`,
+by exactly one frame of motion, with the top band newer.
+
+That was a real bug (fixed 89d143ad).  On hardware every moving object in the XL
+plane split at one screen row; the row was constant within a run and different on
+every Atari cold start, because it is the wrap phase and that is re-rolled each
+time the Atari starts.  BallBlazer's display list is ~144 lines, a test probe's
+120, and BASIC's happens to align — which is why the machine looked clean at idle
+and tore differently on every launch.
+
+`fpga_xt_top` therefore derives `frame_done` from the writeback's own wrap
+(`xl_row_wrap = (wb_row_live < xl_row_q)`), which makes a slot a contiguous pass
+by construction whatever the display list does.  `sim/tb_xl_publish.sv` pins it,
+and deliberately runs both anchors side by side so it fails if the vbi anchor
+ever looks clean.
+
+**When the m68k plane lands it needs the same treatment** — anchor its publish to
+its own writeback row wrap, not to any end-of-frame signal from the source
+machine.  Nothing in the RTL wires a second plane's publish yet.
+
+### 5.3 Two display probes worth knowing about
+
+Both build a standalone `.xex` and are the reliable way to ask a display question
+on hardware, because they hold still or carry their own ruler:
+
+* `tools/tear_probe_scene.py` — one full-height quad-width player on a black
+  field whose HPOS advances by a **known** step each frame.  No tear → one
+  unbroken bar; tear → segments offset by exactly the step.  Self-calibrating,
+  which is what made the tear measurable at all: in the game the offset has to be
+  recovered from consecutive frames, and every single-frame detector is fooled by
+  the intro's slanted ramp edges.
+* `tools/mode9_fifthplayer_scene.py` — a **still** scene in BallBlazer's own
+  configuration (PRIOR `$54` = GTIA mode 9 + fifth player, quad players, missiles
+  packed), with PRIOR overridable so the two features can be bisected against each
+  other.  That bisect found the fifth player being dropped in mode 9 (59395858).
+
+Grab them with `graboverlay`, never `fbgrab`: fbgrab reads the DESKTOP plane and
+the emulator window is an alpha=0 hole in it, so it comes out black at any speed.
+
 ## 6. Unified sprite engine
 
 One scalable engine; sprites live in their **owning window's native
