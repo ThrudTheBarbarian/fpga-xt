@@ -62,7 +62,26 @@ Ruled out so far:
   antic_dmapattern all return Y=$00 on this bitstream.  Not exoneration --
   ACID probes specific hard cases, and a game can be harder.
 
-Blocked on getting a REFERENCE image, and on capture:
+REFERENCE OBTAINED (2026-08-17).  Caught the goalpost animation in Altirra by
+cold-booting repeatedly (randmem varies the animation choice) and frame-stepping
+with a screenshot each step.  Each reference post is **exactly 48 px wide in the
+672-wide frame and CONSTANT from y=121 to y=216** -- no band, no step, no taper.
+672 px = 168 colour clocks, so 4 px/CC: the post is **12 CC wide** and the posts
+are **48 CC apart**.
+
+Scaling Simon's video by that separation (299 px for 48 CC = 6.23 px/CC):
+
+    upper band   75 px = 12.0 CC   <- MATCHES the reference exactly
+    lower band   88 px = 14.1 CC   <- ~2 CC too wide
+    left edge     23 px = 3.7 CC left    spurious
+    right edge     9 px = 1.4 CC left    spurious
+
+The upper band landing on 12.04 CC is a check, not a fit -- the scale came from
+post SEPARATION and the width fell on the reference value by itself.  So the top
+of the post is pixel-correct and THE LOWER BAND IS ENTIRELY SPURIOUS: the
+reference has no band structure anywhere down the post.
+
+Blocked on capture (the reference itself is no longer blocked):
 - fbgrab streams the whole 1920x1080 plane through the kernel one row at a
   time (8.3 MB read, 6.2 MB written, no crop, no early stop), so a grab takes
   seconds and smears across time.  Too slow to catch a few-second animation.
