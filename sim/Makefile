@@ -74,7 +74,7 @@ BUILD_DIR := build
 # deleted too).  They drove ANTIC through the old serial-link mocks, superseded
 # by the compositor model.  Removed from the build rather than reviving
 # intentionally-deleted RTL.
-all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat pia_regs pia_irq peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes xt6502 cdc_flag_data hwreg_rd_cdc
+all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat pia_regs pia_irq peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes xt6502 cdc_flag_data hwreg_rd_cdc xl_publish
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -1392,6 +1392,14 @@ build/tb_gtia_stage.vvp: tb_gtia_stage.sv $(HDL_DIR)/gtia_stage.sv \
 	    $(HDL_DIR)/gtia_priority.sv $(HDL_DIR)/gtia_collide.sv \
 	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/gtia_special.sv \
 	    tb_gtia_stage.sv
+
+xl_publish: build/tb_xl_publish.vvp
+	@vvp -N $<
+
+build/tb_xl_publish.vvp: tb_xl_publish.sv $(HDL_DIR)/xl_buffer_ctrl.sv \
+	    $(HDL_DIR)/cdc_sync_bit.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_xl_publish \
+	    $(HDL_DIR)/xl_buffer_ctrl.sv $(HDL_DIR)/cdc_sync_bit.sv tb_xl_publish.sv
 
 gtia_special: build/tb_gtia_special.vvp
 	@vvp -N $<
