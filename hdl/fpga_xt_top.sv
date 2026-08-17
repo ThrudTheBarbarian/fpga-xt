@@ -2945,7 +2945,27 @@ module fpga_xt_top (
             hp0_first_araddr <= hp0_araddr; hp0_ar_seen <= 1'b1;
         end
     end
-    wire [31:0] diag4_word = hp3_first_araddr;   // XL plane first read address
+    // DIAG4 is the XL plane's DISPLAYED SLOT BASE, not the first AR address.
+    //
+    // It used to latch the first AR only ("reads currently hang after one AR"),
+    // which stopped being true long ago -- and SYS_plane_grab reads this register
+    // believing it to be the LIVE compositor read address, snapping it to the slot
+    // grid to copy "the exact displayed frame (tear-free)".  With the first-AR
+    // latch it always read 0x31000000, so every graboverlay copied SLOT 0 whatever
+    // was on screen; when slot 0 was the one the writeback was filling, the copy
+    // came out TORN -- rows already written new, the rest stale -- which is
+    // indistinguishable from a real display tear and cost a chunk of the
+    // BallBlazer hunt.  The displayed slot is what the grab actually wants, it is
+    // provably never the slot being written (xl_buffer_ctrl's invariant), and it
+    // is stable for a whole frame.
+    logic [31:0] diag4_word;
+    always_comb begin
+        unique case (xl_display_idx)
+            2'd0:    diag4_word = XL_BASE_0;
+            2'd1:    diag4_word = XL_BASE_1;
+            default: diag4_word = XL_BASE_2;
+        endcase
+    end
     wire [31:0] diag5_word = hp0_first_araddr;   // desktop plane first read address
 
     // ---- plane_fetch read-abort counters (clk_sys) — diag6/7 @ GP0 0x04/0x08 -
@@ -2980,7 +3000,22 @@ module fpga_xt_top (
     // filling RAM with page numbers and wiping the BASIC image, the upload was
     // never at fault), so the counters and their $BFFC watch tap are gone and the
     // two paths agree again.
-    wire [31:0] diag8_word = antic_dbg_antic;
+    // TEMPORARY (BallBlazer tear hunt): the XL surface shows a one-frame tear --
+    // the split offset measures 0.91 frames of scroll and the TOP band is the
+    // NEWER one, which is what scan-out reading the buffer the writeback is
+    // filling looks like when the two cross.  xl_buffer_ctrl's write_idx !=
+    // display_idx invariant appears to hold by inspection, and DIAG4 is a
+    // first-AR LATCH so it cannot test it.  This measures the invariant instead
+    // of arguing about it: a STICKY count of clk_sys cycles where the writeback
+    // slot and the displayed slot are the same.  Zero means the buffers are not
+    // the mechanism and the tear is elsewhere.
+    reg [23:0] xl_collide_cnt = 24'd0;
+    always_ff @(posedge clk_sys) begin
+        if (rst_sys)                                xl_collide_cnt <= 24'd0;
+        else if (xl_write_idx == xl_display_idx &&
+                 xl_collide_cnt != 24'hFFFFFF)      xl_collide_cnt <= xl_collide_cnt + 24'd1;
+    end
+    wire [31:0] diag8_word = {4'h5, xl_write_idx, xl_display_idx, xl_collide_cnt};
     wire [31:0] diag9_word = dli_diag_word;
 
     // ---- TEMP DLI-delivery diagnostic (clk_sally) ------------------------

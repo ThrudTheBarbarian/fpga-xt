@@ -74,7 +74,7 @@
 #define XT_DIAG0             (XT_BLK_DIAG + 0x00u)        /* R MMCM locks / clk_pix-alive / frame count */
 #define XT_DIAG2             (XT_BLK_DIAG + 0x04u)        /* R production-chain counters */
 #define XT_DIAG3             (XT_BLK_DIAG + 0x08u)        /* R read-path activity */
-#define XT_DIAG4             (XT_BLK_DIAG + 0x0Cu)        /* R HP3 (XL) first-AR address */
+#define XT_DIAG4             (XT_BLK_DIAG + 0x0Cu)        /* R XL plane DISPLAYED slot base (live; SYS_plane_grab reads this) */
 #define XT_DIAG5             (XT_BLK_DIAG + 0x10u)        /* R HP0 (desktop) first-AR address */
 #define XT_DIAG6             (XT_BLK_DIAG + 0x14u)        /* R HP2 read-probe status */
 #define XT_DIAG7             (XT_BLK_DIAG + 0x18u)        /* R HP2 read-probe last rdata */

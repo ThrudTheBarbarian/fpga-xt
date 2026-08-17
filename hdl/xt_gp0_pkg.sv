@@ -54,7 +54,7 @@ package xt_gp0_pkg;
     localparam logic [7:0] DIAG0            = 8'h00;  // R MMCM locks / clk_pix-alive / frame count
     localparam logic [7:0] DIAG2            = 8'h04;  // R production-chain counters
     localparam logic [7:0] DIAG3            = 8'h08;  // R read-path activity
-    localparam logic [7:0] DIAG4            = 8'h0C;  // R HP3 (XL) first-AR address
+    localparam logic [7:0] DIAG4            = 8'h0C;  // R XL plane DISPLAYED slot base (live; SYS_plane_grab reads this)
     localparam logic [7:0] DIAG5            = 8'h10;  // R HP0 (desktop) first-AR address
     localparam logic [7:0] DIAG6            = 8'h14;  // R HP2 read-probe status
     localparam logic [7:0] DIAG7            = 8'h18;  // R HP2 read-probe last rdata

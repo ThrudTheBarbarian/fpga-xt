@@ -290,7 +290,7 @@
      "width": 32,
      "c": "XT_DIAG4",
      "sv": "DIAG4",
-     "desc": "HP3 (XL) first-AR address"
+     "desc": "XL plane DISPLAYED slot base (live; SYS_plane_grab reads this)"
     },
     {
      "off": "0x10",

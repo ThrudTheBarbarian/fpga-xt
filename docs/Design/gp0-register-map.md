@@ -68,7 +68,7 @@ PL diagnostic words (A9-only, read-only, word-aligned)
 | 0x00 | R | 32 | `XT_DIAG0` | `DIAG0` | MMCM locks / clk_pix-alive / frame count |
 | 0x04 | R | 32 | `XT_DIAG2` | `DIAG2` | production-chain counters |
 | 0x08 | R | 32 | `XT_DIAG3` | `DIAG3` | read-path activity |
-| 0x0C | R | 32 | `XT_DIAG4` | `DIAG4` | HP3 (XL) first-AR address |
+| 0x0C | R | 32 | `XT_DIAG4` | `DIAG4` | XL plane DISPLAYED slot base (live; SYS_plane_grab reads this) |
 | 0x10 | R | 32 | `XT_DIAG5` | `DIAG5` | HP0 (desktop) first-AR address |
 | 0x14 | R | 32 | `XT_DIAG6` | `DIAG6` | HP2 read-probe status |
 | 0x18 | R | 32 | `XT_DIAG7` | `DIAG7` | HP2 read-probe last rdata |
