@@ -2415,11 +2415,34 @@ module fpga_xt_top (
     wire [1:0] xl_write_idx;     // slot the writeback fills
     wire [1:0] xl_display_idx;   // slot the compositor reads (clk_sys)
 
+    // PUBLISH ON THE WRITEBACK'S OWN WRAP, NOT ON ANTIC'S VBI.
+    //
+    // frame_done used to be the ANTIC vbi, which fires when the DISPLAY LIST
+    // ends.  The writeback's row index comes from the raster timer and wraps
+    // independently, so whenever a program's display list does not fill the
+    // nominal 192-line window the two diverge and the 192 rows written between
+    // two publishes SPAN TWO FRAMES: rows first..191 from one, rows 0..first-1
+    // from the next.  The published slot is then torn at `first`, by exactly one
+    // frame of motion, with the top band newer -- and the offset is re-rolled at
+    // each Atari cold start, which is precisely the reported symptom.
+    //
+    // Measured: idle under BASIC read first_row=0/last=191 (aligned, no tear),
+    // while a 120-line display list read first_row=22/last=21 and the captured
+    // frame tore at row 21 -- the diagnostic predicted the tear row before the
+    // picture was looked at.
+    //
+    // Publishing on the wrap makes the slot a contiguous top-to-bottom pass by
+    // construction, whatever the display list does.
+    wire [7:0] wb_row_live = (rw_auth_sys ? rw_wb_atari_row : antic_wb_atari_row);
+    reg  [7:0] xl_row_q = 8'd0;
+    always_ff @(posedge clk_sys) xl_row_q <= wb_row_live;
+    wire xl_row_wrap = (wb_row_live < xl_row_q);   // 191 -> 0, or any wrap
+
     // Triple-buffer rotation + clk_pix-vblank adopt (decouples producer/consumer).
     xl_buffer_ctrl u_xl_buf_ctrl (
         .clk_sys     (clk_sys),
         .rst_sys     (rst_sys),
-        .frame_done  (antic_wb_frame_done),   // ANTIC vbi: publish + advance
+        .frame_done  (xl_row_wrap),           // writeback finished a full pass
         .write_idx   (xl_write_idx),
         .display_idx (xl_display_idx),
         .clk_pix     (clk_pix),
@@ -3015,7 +3038,81 @@ module fpga_xt_top (
         else if (xl_write_idx == xl_display_idx &&
                  xl_collide_cnt != 24'hFFFFFF)      xl_collide_cnt <= xl_collide_cnt + 24'd1;
     end
-    wire [31:0] diag8_word = {4'h5, xl_write_idx, xl_display_idx, xl_collide_cnt};
+    // ...and HOW MANY ROWS the writeback actually flushed before frame_done
+    // published the frame.  The tear sits at a FIXED row (155 of 192, measured
+    // over 20 grabs with zero spread), the collision counter is zero, and the
+    // grab reads the displayed slot -- so the published frame is already torn.
+    // The invariant xl_buffer_ctrl enforces is on INDICES; it cannot see row
+    // DMAs that are still outstanding, or never issued, when the ANTIC vbi
+    // publishes.  If this reads ~155 rather than 192, the tail of every frame is
+    // stale and that is the bug.
+    // row_flush is LINE START, so counting it gives 262 (the whole NTSC frame),
+    // not the rows that reached DDR.  Count the actual HP2 write bursts instead,
+    // and -- the real question -- how many are STILL OUTSTANDING when frame_done
+    // publishes the slot.  A published frame with writes in flight is a torn
+    // frame, and no index invariant can see it.
+    //   aw_per_frame  should be 192 (one burst per visible row)
+    //   outstanding   should be 0 at publish; non-zero names the bug
+    reg [8:0] wb_aw_now = 9'd0, wb_aw_at_done = 9'd0;
+    reg [7:0] wb_outst = 8'd0, wb_outst_at_done = 8'd0, wb_outst_max = 8'd0;
+    wire wb_aw_fire = hp2_awvalid & hp2_awready;
+    wire wb_b_fire  = hp2_bvalid  & hp2_bready;
+    always_ff @(posedge clk_sys) begin
+        if (rst_sys) begin
+            wb_aw_now <= 9'd0; wb_aw_at_done <= 9'd0;
+            wb_outst  <= 8'd0; wb_outst_at_done <= 8'd0; wb_outst_max <= 8'd0;
+        end else begin
+            if (wb_aw_fire & ~wb_b_fire)      wb_outst <= wb_outst + 8'd1;
+            else if (~wb_aw_fire & wb_b_fire) wb_outst <= wb_outst - 8'd1;
+            if (wb_outst > wb_outst_max)      wb_outst_max <= wb_outst;
+
+            if (antic_wb_frame_done) begin
+                wb_aw_at_done    <= wb_aw_now + (wb_aw_fire ? 9'd1 : 9'd0);
+                wb_outst_at_done <= wb_outst;
+                wb_aw_now        <= 9'd0;
+            end else if (wb_aw_fire) begin
+                wb_aw_now <= wb_aw_now + 9'd1;
+            end
+        end
+    end
+    // WHERE IS THE RASTER WHEN THE FRAME IS PUBLISHED?
+    // The writeback fills surface rows in raster order and frame_done (ANTIC vbi)
+    // publishes the slot.  If the publish fires while the raster is at row R, the
+    // published slot holds rows 0..R-1 from THIS frame and rows R..191 still from
+    // the PREVIOUS one -- a tear at row R, exactly one frame of offset, top band
+    // newer.  That fits every measurement: 192 rows written per frame, nothing
+    // outstanding at publish, no slot collision, tear row fixed within a run and
+    // re-rolled at each Atari cold start.
+    //   row_at_done == 0 or 191  -> publish is aligned, hypothesis WRONG
+    //   row_at_done == ~155/184/144 (the measured tear rows) -> that IS the bug
+    reg [7:0] wb_row_at_done = 8'd0;
+    always_ff @(posedge clk_sys) begin
+        if (rst_sys)                 wb_row_at_done <= 8'd0;
+        else if (antic_wb_frame_done) wb_row_at_done <=
+                     (rw_auth_sys ? rw_wb_atari_row : antic_wb_atari_row);
+    end
+    // Everything else measured correct (192 rows written, nothing outstanding,
+    // publish at row 191, no slot collision, adopt at a true vblank) yet the
+    // published frame is torn and the capture puts the tear at the SAME row all
+    // run, which rules out a copy race.  The last standing assumption is that the
+    // writeback fills rows 0..191 MONOTONICALLY.  If atari_row wraps somewhere
+    // else, the 192 writes between publishes span TWO frames while still counting
+    // 192 and still finishing at 191 -- exactly the observed tear.
+    //   first_row == 0   -> monotonic, assumption holds
+    //   first_row == ~155/184/144 (the measured tear rows) -> THAT is the wrap
+    reg       wb_first_seen = 1'b0;
+    reg [7:0] wb_first_row  = 8'd0;
+    always_ff @(posedge clk_sys) begin
+        if (rst_sys) begin
+            wb_first_seen <= 1'b0; wb_first_row <= 8'd0;
+        end else if (antic_wb_frame_done) begin
+            wb_first_seen <= 1'b0;
+        end else if (wb_aw_fire && !wb_first_seen) begin
+            wb_first_seen <= 1'b1; wb_first_row <= wb_row_live;
+        end
+    end
+    wire [31:0] diag8_word = {4'h9, xl_write_idx, xl_display_idx,
+                              wb_first_row, wb_row_at_done, wb_aw_at_done[7:0]};
     wire [31:0] diag9_word = dli_diag_word;
 
     // ---- TEMP DLI-delivery diagnostic (clk_sally) ------------------------
