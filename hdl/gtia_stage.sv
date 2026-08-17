@@ -135,6 +135,7 @@ module gtia_stage (
     wire  [2:0] cur_pf = (state == S_A) ? pf_a_q : pf_b_q;
 
     wire [3:0] win_src;
+    wire       win_pm5;              // winner is a fifth-player missile
     wire       win_black, win_multi01, win_multi23, pri_valid;
 
     // Combinational, not registered: a registered strobe would cost a clock at
@@ -165,6 +166,7 @@ module gtia_stage (
         .start(pri_start), .pres(pres), .pf_src(pri_pf), .prior(prior),
         .win_src(win_src), .win_black(win_black),
         .win_multi01(win_multi01), .win_multi23(win_multi23),
+        .win_pm5(win_pm5),
         .valid(pri_valid)
     );
 
@@ -389,7 +391,16 @@ module gtia_stage (
 
     // Players win as normal and keep their own colour; a playfield or
     // background win inside the window is recoloured by the GTIA mode.
-    wire win_is_object = (win_src >= 4'd6);
+    //
+    // A FIFTH-PLAYER MISSILE COUNTS AS AN OBJECT HERE.  With PRIOR[4] set the
+    // missiles leave gtia_priority as PF3 -- that is the colour they take -- so
+    // by win_src alone they are indistinguishable from a real playfield and the
+    // GTIA recolour below repaints them out of existence.  Measured: with
+    // PRIOR $54 (mode 9 + fifth player), which is what BallBlazer's intro sets,
+    // the missiles vanished on hardware while $04/$14/$44 all drew them, and
+    // Altirra draws them in all four.  They are P/M objects; the mode nibble has
+    // no claim on their colour.
+    wire win_is_object = (win_src >= 4'd6) || win_pm5;
 
     // A GTIA mode has NO ORDINARY PLAYFIELD COLOUR.  ANTIC is sending luminance
     // or index data, not a playfield source, so COLPF0-3 mean nothing while one

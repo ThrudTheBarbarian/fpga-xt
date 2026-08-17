@@ -72,6 +72,12 @@ module gtia_priority (
     output logic       win_black,     // orderings disagreed: emit black
     output logic       win_multi01,   // P0/P1 multi-colour applies
     output logic       win_multi23,   // P2/P3 multi-colour applies
+    // The winner is a FIFTH-PLAYER MISSILE rather than a real playfield.  Both
+    // leave here as PF3 (win_src 4) because that is the colour they take, so the
+    // encoding alone cannot tell them apart -- and a GTIA mode must, because it
+    // recolours playfield wins from the mode nibble and would repaint the missile
+    // out of existence.  A missile is an OBJECT: it keeps COLPF3 in every mode.
+    output logic       win_pm5,
     output logic       valid          // 1-clk
 );
 
@@ -152,6 +158,12 @@ module gtia_priority (
     logic [3:0] step;                  // 0..5 walking, 6 = compare, 7 = idle
     logic [3:0] best_rank [0:3];
     logic [3:0] best_src  [0:3];
+    // Whether each ordering's current best came from step 5 (the fifth player)
+    // rather than step 4 (a real playfield).  Step 4 is walked FIRST and the
+    // comparison below is strictly-better, so when a genuine PF3 playfield and a
+    // fifth-player missile tie on rank the playfield keeps the slot -- which is
+    // what should happen, and in a GTIA mode there is no real PF3 to tie with.
+    logic       best_m5   [0:3];
 
     wire walking = (step < 4'd6);
 
@@ -181,11 +193,13 @@ module gtia_priority (
     // An ordering that found nothing has the background as its winner, since the
     // background is always present and always ranks last.
     logic [3:0] won;
+    logic       won_m5;
     logic       disagree;
     logic       pri_first;
     logic [3:0] pri_w;
     always_comb begin
         won       = 4'd8;
+        won_m5    = 1'b0;
         disagree  = 1'b0;
         pri_first = 1'b1;
         for (int k = 0; k < 4; k++) begin
@@ -193,6 +207,11 @@ module gtia_priority (
                 pri_w = (best_src[k] == 4'd15) ? 4'd8 : best_src[k];
                 if (pri_first) begin
                     won       = pri_w;
+                    // Taken from the SAME ordering the winner came from, not
+                    // OR-reduced across all four: with the orderings in
+                    // disagreement the pixel goes black anyway, and where they
+                    // agree they agree on this too.
+                    won_m5    = (best_src[k] != 4'd15) && best_m5[k];
                     pri_first = 1'b0;
                 end else if (pri_w != won) begin
                     disagree = 1'b1;
@@ -228,7 +247,9 @@ module gtia_priority (
             for (int k = 0; k < 4; k++) begin
                 best_rank[k] <= 4'd15;
                 best_src[k]  <= 4'd15;
+                best_m5[k]   <= 1'b0;
             end
+            win_pm5 <= 1'b0;
         end else begin
             valid <= 1'b0;
 
@@ -237,6 +258,7 @@ module gtia_priority (
                 for (int k = 0; k < 4; k++) begin
                     best_rank[k] <= 4'd15;
                     best_src[k]  <= 4'd15;
+                    best_m5[k]   <= 1'b0;
                 end
             end else if (walking) begin
                 if (s_present) begin
@@ -244,6 +266,7 @@ module gtia_priority (
                         if (rank_of(k, int'(s)) < best_rank[k]) begin
                             best_rank[k] <= rank_of(k, int'(s));
                             best_src[k]  <= s;
+                            best_m5[k]   <= (step == 4'd5);
                         end
                     end
                 end
@@ -255,6 +278,7 @@ module gtia_priority (
                 step        <= 4'd7;
                 win_black   <= disagree;
                 win_src     <= mapped;
+                win_pm5     <= won_m5;
                 // Multi-colour applies where BOTH of a pair are present and the
                 // winner is one of them; it recolours, it does not re-rank.
                 win_multi01 <= multi && p_present[0] && p_present[1] &&
