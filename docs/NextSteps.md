@@ -147,11 +147,26 @@ missile and a real playfield both leave it as PF3 and the encoding alone cannot
 tell them apart; gtia_stage counts the missile as an object so the GTIA mode
 does not recolour it.
 
-STILL OPEN: whether this is the goalpost artifact.  Missing missiles REMOVE
-content, while the reported artifact had EXTRA width, so the two may be
-unrelated.  Chasing it now with `xlboot -a` (authentic drive timing gives the
-VBI-paced intro its animation budget, so more animations cycle) plus repeated
-`graboverlay` grabs classified for the two-post signature.
+THE GOALPOSTS ARE FIXED.  Caught the animation on hardware after the fix and
+measured it off the XL surface (320x192 = 2 px per colour clock):
+
+    posts 24 px = 12 CC wide, 96 px = 48 CC apart, and the geometry does not
+    change over 86 scanlines (y=105..190) -- ONE distinct (w0,w1,sep) triple
+
+which is exactly Altirra's reference, and a second frame from the same boot at a
+different scroll position is equally uniform.  No band, no step, no offset.
+
+I expected this fix NOT to be the artifact -- missing missiles remove content
+whereas the reported symptom was extra width -- and that reasoning was wrong.
+Recorded as a caution: "the symptom has the opposite sign" is weak evidence
+about a rendering path where an object can be dropped from one layer and
+repainted by another.
+
+Method that made it catchable: `xlboot -a` (authentic drive timing -- the intro
+animates from the VBI while sectors stream, so its animation budget comes from
+how long each SIO call takes; plain xlboot loads too fast to cycle animations)
+plus repeated `graboverlay` grabs classified automatically for the two-post
+signature.  Hit on the second boot.
 
 Capture was never the real obstacle: `graboverlay` already grabs the XL plane
 tear-free.  The obstacle was that the goalpost animation lasts seconds, and no
