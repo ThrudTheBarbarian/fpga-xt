@@ -50,33 +50,6 @@ static long dv_fb0_rd(vfs_file *f, void *buf, uint32_t n)
     return (long)n;
 }
 
-/* /dev/fb1 — the XL (Atari) surface, READ-ONLY. /dev/fb0 is the DESKTOP plane, and the
- * desktop composites ON TOP with alpha=0 punched out where a plane-window sits, so a
- * grab of fb0 shows the emulator window as a BLACK HOLE — it cannot see the Atari image
- * at any speed. The pixels the compositor actually blends come from ANTIC's DDR3
- * writeback surface, which is what this streams: RGBA8888, 320x192, stride 1280.
- *
- * Geometry and base are the RTL's (fpga_xt_top.sv XL_BASE_0/XL_SRC_W/XL_SRC_H). The
- * surface is TRIPLE-buffered at 1 MB spacing and the writeback rotates through all
- * three, so a moving picture read from slot 0 is up to three frames stale — fine for
- * the still test scenes this exists for, and the reason to prefer a static scene over
- * racing an animation. 320 px = 160 colour clocks, i.e. 2 px per colour clock, which is
- * the same convention Altirra reports, so reference and board are directly comparable. */
-#define XL_FB_BASE   0x31000000u
-#define XL_FB_W      320u
-#define XL_FB_H      192u
-#define XL_FB_STRIDE (XL_FB_W * 4u)
-
-static long dv_fb1_rd(vfs_file *f, void *buf, uint32_t n)
-{
-    uint32_t total = XL_FB_STRIDE * XL_FB_H;
-    if (f->pos >= total) return 0;
-    if (n > total - f->pos) n = total - f->pos;
-    memcpy(buf, (const void *)(uintptr_t)(XL_FB_BASE + f->pos), n);
-    f->pos += n;
-    return (long)n;
-}
-
 /* One shared CSPRNG, not a per-open stream. The old per-open xorshift emitted
  * its own state as output, so a few bytes gave you the state and every byte
  * before and after it; and two opens in the same microsecond got near-identical
@@ -319,7 +292,6 @@ static const devnode g_nodes[] = {
     { "/zero",    VFS_CHR_DEV, dv_zero_rd, dv_sink_wr, 0, 0 },
     { "/urandom", VFS_CHR_DEV, dv_rand_rd, dv_sink_wr, 0, 0 },
     { "/fb0",     VFS_CHR_DEV, dv_fb0_rd,  0,          0, 0 },   /* plane pixels, read-only (M7) */
-    { "/fb1",     VFS_CHR_DEV, dv_fb1_rd,  0,          0, 0 },   /* XL surface, read-only */
     { "/random",  VFS_CHR_DEV, dv_rand_rd, dv_sink_wr, 0, 0 },
     { "/tty",     VFS_CHR_TTY, 0, 0, 0, 0 },
     { "/console", VFS_CHR_TTY, 0, 0, 0, 0 },

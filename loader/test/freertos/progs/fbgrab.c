@@ -29,25 +29,15 @@ static char *u32d(char *p, unsigned v)          /* decimal, no libc */
 
 int main(int argc, char **argv)
 {
-    /* -xl grabs the ATARI surface instead of the desktop. It is not a convenience:
-     * the desktop composites on top with alpha=0 punched out where the emulator
-     * window sits, so a plain grab shows that window as a BLACK HOLE and can never
-     * capture the Atari image, however long it is given. The XL surface is ANTIC's
-     * DDR3 writeback, fixed 320x192 RGBA8888 = 2 px per colour clock. */
-    int xl = (argc > 1 && argv[1][0] == '-' && argv[1][1] == 'x' && argv[1][2] == 'l'
-              && argv[1][3] == 0);
-    if (xl) { argc--; argv++; }
-
     struct os_fbinfo fb;
-    if (xl) { fb.w = 320; fb.h = 192; fb.stride = 320; }
-    else if (sys_fb_info(&fb) != 0) {
+    if (sys_fb_info(&fb) != 0) {
         static const char e[] = "fbgrab: no display plane\n";
         sys_write(2, e, sizeof e - 1);
         return 1;
     }
     const char *out = (argc > 1) ? argv[1] : "/tmp/screen.ppm";
 
-    int pfd = (int)sys_open(xl ? "/OS/dev/fb1" : "/OS/dev/fb0", 0 /* O_RDONLY */);
+    int pfd = (int)sys_open("/OS/dev/fb0", 0 /* O_RDONLY */);
     if (pfd < 0) {
         static const char e[] = "fbgrab: /OS/dev/fb0 not there (pre-M7 kernel?)\n";
         sys_write(2, e, sizeof e - 1);
