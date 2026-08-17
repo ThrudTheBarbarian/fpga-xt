@@ -1,206 +1,27 @@
 # Next Steps / Open Work — consolidated
 
-## P/M run slots 2 -> 8: on hardware, awaiting Simon's eye
-BallBlazer's goalposts showed a step partway down a bar that should have been
-straight — usually leftward, not every frame.  Cause: the goalposts are drawn by
-MULTIPLEXING one player (HPOSP rewritten every few colour clocks so one object
-paints several vertical bars).  At QUAD width a run lives 4 CC/bit x 8 bits = 32
-colour clocks, so three and more runs overlap routinely; `gtia_obj_walk` carried
-TWO slots per player and silently DROPPED the surplus match, leaving that bar
-anchored at the previous x.  Now NSLOT = 8, matching emu's GTIA_RUNS.
+## BallBlazer: goalposts + close-window — FIXED, awaiting Simon's eye
+Both landed on hardware 2026-08-17 and both measure correct; neither has been
+confirmed by the one person who has actually seen the faults.
 
-The old two-slot bound was not careless: it came from instrumenting emu over
-pmoverlap/pmresize/pmretrigger and measuring a peak of two (n2 = 4580, n3
-never).  The measurement was sound; the conclusion was width-limited, because
-every one of those tests runs at NORMAL width where a run is 8 CC.  Worth
-remembering as a failure mode — an empirical bound is only as wide as the
-configurations that produced it.
+- **Goalposts.** Two bugs, both fixed: `gtia_obj_walk` carried two run slots per
+  player and dropped the third match at quad width (26c6f1dd, NSLOT = 8), and in
+  GTIA mode 9 the fifth player was never drawn — a PM5 missile leaves
+  gtia_priority as PF3, gtia_stage classed that as playfield and let the GTIA
+  mode recolour it out of existence (59395858, `win_pm5`).  Measured off the XL
+  surface across three independent boots: posts 24 px = 12 CC wide, 96 px =
+  48 CC apart, geometry unchanged down the whole post — Altirra's reference
+  exactly.  ASK SIMON to run the intro once and confirm by eye.
+- **Close-window.** Closing the emulator window parks the 6502 instead of
+  cold-booting it (f06f9da2), so the disk-seek noise no longer outlives the
+  window.  Never exercised interactively — it is a GUI action, not scriptable.
 
-Slots are parallel WITHIN a step (the object's hpos comparator, size decode and
-graphics byte are shared, so a slot is just a shifter and a 2-bit counter), so
-the walk still costs 8 clocks and tb_gtia_stage still measures 26 of 28.  Adding
-steps instead would have cost a clock each and overrun the budget — that route
-is a dead end, recorded in the module header.
-
-Verified in sim: tb_gtia_stage TR drives EIGHT overlapping runs and passes, and
-FAILS naming the slot it ran out at if NSLOT is lowered; all eleven gtia_* ACID
-vectors PASS; pm_collide PASS; pm_align byte-identical to a HEAD baseline.
-
-On hardware (build 2026-08-17, WNS clk_pix +0.235 / clk_sally +0.218 / clk_sys
-+0.085, hold +0.035): all eleven gtia_* vectors and antic_pmdma return Y = $00
-with the completion signature PC = $1DAx, A = $40, X = $FF, SP = $0FF, run from
-the board shell as `6502 run /OS/share/acid800/<test>.xex`.  The reading is
-discriminating, not a stuck zero — mod_disp80 returns Y = $30 on the same
-bitstream.  NSLOT = 4 remains a one-line fallback if a later build ever loses
-timing on the allocation ripple (lower TR's match count to match).
-
-OPEN — the goalposts are STILL WRONG when they appear (2026-08-17).
-Simon ran the intro three times; the goalpost animation came up only on the
-third, and it was wrong.  Measured off his capture (screenshot plus all 73
-frames of IMG_1542.MOV), each post is TWO BANDS, not one bar:
-
-  upper band   left 75 px   right 74 px
-  lower band   left 89 px   right 86 px
-
-so the lower band is ~18% WIDER as well as displaced — left edge moves 23 px,
-right edge only 9 px.  Two further facts from the frame sweep:
-- The split sits at a FIXED SCANLINE in all 73 frames while the posts scroll
-  horizontally past it.  It is tied to a vertical position, not to a per-frame
-  timing wobble.
-- The right post changes ~1 scanline BEFORE the left one, every frame.  That
-  part is probably correct: the left post is drawn earlier in the line, so a
-  DLI writing HPOSP/SIZEP partway along catches the right post on line N and
-  the left only on line N+1.  A real XL would stagger it the same way.
-
-NOT a boot lottery.  The intro picks one of several animations at random and
-keeps cycling while the disk loads, so "two good runs" only means the
-goalposts were never chosen.  The fault may be present EVERY time they play.
-
-Ruled out so far:
-- DLI/CPU timing, as far as ACID can see it: antic_dlitiming, antic_nmist,
-  antic_blockednmi, antic_wsync, antic_vscroldli, cpu_timing, cpu_insn and
-  antic_dmapattern all return Y=$00 on this bitstream.  Not exoneration --
-  ACID probes specific hard cases, and a game can be harder.
-
-REFERENCE OBTAINED (2026-08-17).  Caught the goalpost animation in Altirra by
-cold-booting repeatedly (randmem varies the animation choice) and frame-stepping
-with a screenshot each step.  Each reference post is **exactly 48 px wide in the
-672-wide frame and CONSTANT from y=121 to y=216** -- no band, no step, no taper.
-672 px = 168 colour clocks, so 4 px/CC: the post is **12 CC wide** and the posts
-are **48 CC apart**.
-
-Scaling Simon's video by that separation (299 px for 48 CC = 6.23 px/CC):
-
-    upper band   75 px = 12.0 CC   <- MATCHES the reference exactly
-    lower band   88 px = 14.1 CC   <- ~2 CC too wide
-    left edge     23 px = 3.7 CC left    spurious
-    right edge     9 px = 1.4 CC left    spurious
-
-The upper band landing on 12.04 CC is a check, not a fit -- the scale came from
-post SEPARATION and the width fell on the reference value by itself.  So the top
-of the post is pixel-correct and THE LOWER BAND IS ENTIRELY SPURIOUS: the
-reference has no band structure anywhere down the post.
-
-HOW THE POSTS ARE ACTUALLY DRAWN (read out of a saved Altirra state,
-/tmp/gp.astate, which reproduces the goalpost moment on demand):
-- **No DLIs at all.**  All 96 display-list entries are mode 15 with dli=False,
-  and VDSLST points into ROM ($c055).  The posts are painted by a VCOUNT-driven,
-  WSYNC-synchronised kernel at $3307:
-        $3307 sta WSYNC / $330f ldx VCOUNT / $3315 cpx #$3B / $3319 cpx #$74
-        $331d sta WSYNC / $3322 sta COLBK  / $332d lda $32E3,X
-  It BRANCHES ON FIXED VCOUNT VALUES ($3B, $74) -- the same shape as a fault
-  that appears at a fixed scanline.
-- Setup at $33F2 writes COLPM0-3, SIZEP0-3, HPOSP0-3 and HPOSM0-3, each from a
-  table plus a common scroll offset ($92).  So the scene uses ALL FOUR PLAYERS
-  AND ALL FOUR MISSILES -- not one player multiplexed, which is what the
-  original slot diagnosis assumed.  (The slot fix is still right for retrigger,
-  it just is not the whole story here.)
-- **PRIOR = $54**: bits 6-7 = 01 -> GTIA MODE 9, bit 4 -> FIFTH PLAYER (missiles
-  in COLPF3), priority select 4.  That is the configuration behind three earlier
-  fixes -- players hidden in mode 9 (6ef5bab2), the left-edge bar (b0de37fe),
-  and THE PLAYFIELD RUNNING 2 COLOUR CLOCKS LATE AGAINST P/M (13c03591).  Our
-  lower band is ~2 CC too wide, which is a resonance worth chasing first.
-
-Altirra harness traps, all silent, all hit at once: "Pause when inactive" leaves
-the emulator paused so resume() does nothing (step with frame()); mount() is
-0-based so mount(1,...) is D2; a previously boot()ed XEX re-runs on every cold
-reset; history(30000) CRASHES the emulator and frame() after enabling history
-DEADLOCKS -- so read state statically (dlist/disasm/peek) instead of tracing.
-
-**BUG FOUND, FIXED AND HW-VERIFIED (2026-08-17): in GTIA mode 9 the FIFTH
-PLAYER was not drawn.**  Fix 59395858, bitstream 2026-08-17 (timing gate PASS:
-clk_pix +0.134, clk_sally +0.524, clk_sys +0.280).  After the fix PRIOR $54
-draws the missiles at x 224..239 (16 px = 8 CC, COLPF3), identical to the $14
-control and to Altirra; $04/$14/$44 are unchanged; all eleven gtia_* ACID
-vectors plus antic_pmdma still return Y=$00 on the new bitstream.  Original
-evidence:  tools/mode9_fifthplayer_scene.py builds a still scene in BallBlazer's
-own configuration; captured off the board with `graboverlay` (SYS_plane_grab --
-the DESKTOP plane cannot show the Atari image at all, because the desktop
-composites on top with an alpha=0 hole where the emulator window sits) and
-bisected on PRIOR:
-
-    PRIOR $04  normal, no 5th player   missiles drawn  8 px white   OK
-    PRIOR $14  normal, 5th player      missiles drawn 16 px COLPF3  OK
-    PRIOR $44  mode 9, no 5th player   missiles drawn  8 px white   OK
-    PRIOR $54  mode 9, 5th player      MISSILES ABSENT              BUG
-
-$54 is exactly what the game uses.  Altirra draws the missiles in all four.
-The posts themselves are pixel-correct on the board (24 px = 12 CC, 96 px = 48 CC
-apart, matching the reference), so the player path is fine.
-
-Cause, hdl/color_resolver.sv: the fifth player's missiles are injected as
-`pf3_eff` into the PF-lo group --
-
-    pf_lo_present_normal = pf2 | pf3_eff;          // PM5 missile joins pf_lo
-    pf_lo_present = gtia_active ? 1'b0 : pf_lo_present_normal;
-
--- and GTIA mode forces `pf_lo_present` to 0, so the injection is discarded.
-`pf_present` is likewise forced to 1 with the GTIA colour.  Meanwhile p0..p3 are
-masked `& ~m0..~m3` when PM5 is active (correct: the missile should paint COLPF3
-instead), so in GTIA mode the missiles are dropped from BOTH paths and vanish.
-Same class as 6ef5bab2, which fixed the PLAYERS in mode 9 and left the fifth
-player behind.
-
-The fix is in the LIVE path, not color_resolver.sv (which is dead code --
-antic_top.sv:1742).  gtia_priority now reports `win_pm5`, because a fifth-player
-missile and a real playfield both leave it as PF3 and the encoding alone cannot
-tell them apart; gtia_stage counts the missile as an object so the GTIA mode
-does not recolour it.
-
-THE GOALPOSTS ARE FIXED.  Caught the animation on hardware after the fix and
-measured it off the XL surface (320x192 = 2 px per colour clock):
-
-    posts 24 px = 12 CC wide, 96 px = 48 CC apart, and the geometry does not
-    change over 86 scanlines (y=105..190) -- ONE distinct (w0,w1,sep) triple
-
-which is exactly Altirra's reference, and a second frame from the same boot at a
-different scroll position is equally uniform.  No band, no step, no offset.
-
-I expected this fix NOT to be the artifact -- missing missiles remove content
-whereas the reported symptom was extra width -- and that reasoning was wrong.
-Recorded as a caution: "the symptom has the opposite sign" is weak evidence
-about a rendering path where an object can be dropped from one layer and
-repainted by another.
-
-Method that made it catchable: `xlboot -a` (authentic drive timing -- the intro
-animates from the VBI while sectors stream, so its animation budget comes from
-how long each SIO call takes; plain xlboot loads too fast to cycle animations)
-plus repeated `graboverlay` grabs classified automatically for the two-post
-signature.  Hit on the second boot.
-
-Capture was never the real obstacle: `graboverlay` already grabs the XL plane
-tear-free.  The obstacle was that the goalpost animation lasts seconds, and no
-grab with seconds of latency can catch it -- which the STILL scene sidesteps.
-Historical note:
-- fbgrab streams the whole 1920x1080 plane through the kernel one row at a
-  time (8.3 MB read, 6.2 MB written, no crop, no early stop), so a grab takes
-  seconds and smears across time.  Too slow to catch a few-second animation.
-- Altirra never showed the goalposts in a 55 s boot (2658 frames captured, 565
-  analysed, zero with two vertical bars).  It also runs its SUBSTITUTE OS ROM,
-  not a real XL ROM -- use rsrc/atari-xl.rom + rsrc/atari-basic.rom, the same
-  images the board uses -- and "Devices: Accelerate with SIO patch" is on, which
-  shortens the load and so cycles fewer animations.
-
-NEXT: find what selects the animation (it is random, so something reads RANDOM
-$D20A or a frame counter and branches -- Altirra's instruction history will show
-the dispatch) and FORCE it to the goalposts.  Then the picture holds still, on
-both Altirra and the board, fbgrab's latency stops mattering, and the two can be
-diffed pixel-exact.  Do not settle for a synthetic stand-in: a hand-written
-vector can only contain the bug we already imagined.
-
-## Closing the 6502 window parks instead of cold-booting
-Closing the window called `sys_xl_boot(NULL, 0)` — a full coldstart with no
-media, so the XL OS spent the next ten seconds buzzing through its D1: boot
-poll.  An effect that outlives the window it came from.  It now calls
-`sys_xl_park` (SYS_xl_park 0x60D): assert SALLYRST, then unmount, in that order
-so `xl_unmount_all`'s "safe here, reset is held" invariant holds.  The coldstart
-belongs to OPEN, where the disk-seek noise is what a real XL does at switch-on.
-
-OPEN:
-- Deployed (desktop rebuilt, staged and pushed to /OS/bin/desktop; previous
-  binary kept as desktop.bak) but Simon has not yet opened and closed the window
-  to confirm the machine goes quiet.  Not scriptable — the close is a GUI action.
-
+Method worth reusing for any Atari-display question: `xlboot -a` (authentic
+drive timing — a VBI-paced intro gets its animation budget from how long each
+SIO call takes, and plain xlboot loads too fast to cycle animations) plus
+repeated `graboverlay` grabs classified automatically.  `graboverlay`, never
+`fbgrab`: fbgrab reads the DESKTOP plane, and the emulator window is an alpha=0
+hole in it, so it is black at any speed.
 ## antic-sally-interop — phase 6 (one clock domain) landed; residuals
 The Atari realm (antic2 + GTIA + both POKEYs) runs NATIVE on clk_sally
 beside the fid core — unification phase 6, chunks 1+2 + the SUB_DATA strobe
