@@ -1,54 +1,44 @@
 # Next Steps / Open Work — consolidated
 
-## BallBlazer: an object is DISPLACED for part of its height — STILL OPEN
-Simon, 2026-08-17 18:36: "the top part of the ball is offset from the lower
-section".  The same fault the goalposts showed, on a different object, and it
-SURVIVES both fixes below -- the goalpost frames that measured clean were simply
-clean frames, not proof the fault was gone.
+## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
+All on hardware 2026-08-17.  The one that produced the reported symptom was the
+LAST one; the first two are real defects found on the way to it.
 
-CAUGHT ON THE BOARD AND MEASURED (hunt_101_05.bmp, kept):
+- **XL plane TEAR (89d143ad) — the reported fault.**  Every moving object split
+  at one screen row, offset by exactly one frame of motion, top band newer, the
+  row constant within a run and different on every launch.  `frame_done` fed to
+  `xl_buffer_ctrl` was ANTIC's VBI, which fires when the DISPLAY LIST ENDS, while
+  the writeback's row index comes from the raster timer and wraps independently.
+  Any display list short of the nominal 192 lines makes the 192 rows between two
+  publishes span TWO frames -- rows first..191 from one, 0..first-1 from the next
+  -- so the published slot is torn at `first`.  BallBlazer's list is ~144 lines,
+  the probe's 120, BASIC's happens to align, which is why the machine looked
+  clean at idle and tore differently on each launch.  Fix: publish on the
+  writeback's own row wrap, so each slot is a contiguous pass by construction.
+- **GTIA mode 9 dropped the fifth player (59395858).**  A PM5 missile leaves
+  gtia_priority as PF3; gtia_stage classed that as playfield and let the GTIA
+  mode recolour it out of existence.  Bisect: PRIOR $04/$14/$44 all drew the
+  missiles, only $54 -- what the game sets -- failed.
+- **Two run slots per player (26c6f1dd).**  gtia_obj_walk dropped the third
+  concurrent match at quad width.  NSLOT = 8.
+- **Close-window parks (f06f9da2)** instead of cold-booting, so the disk-seek
+  noise no longer outlives the window.
 
-    y=114   (68, 91)    upper sliver
-    y=115   (28, 51)    body -- SAME WIDTH, centre moved -40 px = -20 CC
+OPEN: none of it confirmed by eye.  The tear is verified with
+tools/tear_probe_scene.py -- one full-height player whose HPOS advances by a
+KNOWN step per frame, so the offset is self-calibrating -- which now measures the
+bar IDENTICAL either side of the boundary at four different positions, where it
+used to be offset by exactly the step.  But an automated detector CANNOT verify
+the game's own intro: its slanted ramp edges trip every single-frame edge/width
+filter at the same rate before and after a fix.  The probe is the automated test;
+the intro needs a human.
 
-Same width, so it is pure horizontal DISPLACEMENT, not the perspective growth
-that explains every other step in this animation.  The discriminator that
-finally separated the two: an object whose width is unchanged (+/-2 px) but
-whose CENTRE moves between ADJACENT scanlines.  Legitimate steps in this intro
-are symmetric growth -- e.g. Altirra (312,327) -> (280,359), centre 319.5 both
-sides.  **Across 400 Altirra frames that filter finds ZERO; on the board it
-finds it.**  Do not use "an edge jumped" as the test: both sides do that
-constantly and it proves nothing.
+Instrument notes worth keeping: use `graboverlay`, never `fbgrab` (that reads the
+DESKTOP plane and the emulator window is an alpha=0 hole in it, so it is black at
+any speed); `xlboot -a` for authentic drive timing, without which the intro loads
+too fast to cycle its animations; and always run a positive control before
+trusting a detector.
 
-Working hypothesis: the object's HPOSP is rewritten per scanline by the
-VCOUNT-driven WSYNC kernel at $3307, and on some line our chipset draws the
-object at the PREVIOUS x -- i.e. the write lands late relative to the beam, or
-our beam position differs by enough that the object has already been emitted.
-That fits "top part offset from lower section" exactly.  Next: find which
-scanline, and compare the write's colour-clock position against Altirra.
-
-## BallBlazer: two fixes that ARE landed and verified
-Both on hardware 2026-08-17 and both measure correct; neither is the fault
-above.
-
-- **Goalposts.** Two bugs, both fixed: `gtia_obj_walk` carried two run slots per
-  player and dropped the third match at quad width (26c6f1dd, NSLOT = 8), and in
-  GTIA mode 9 the fifth player was never drawn — a PM5 missile leaves
-  gtia_priority as PF3, gtia_stage classed that as playfield and let the GTIA
-  mode recolour it out of existence (59395858, `win_pm5`).  Measured off the XL
-  surface across three independent boots: posts 24 px = 12 CC wide, 96 px =
-  48 CC apart, geometry unchanged down the whole post — Altirra's reference
-  exactly.  ASK SIMON to run the intro once and confirm by eye.
-- **Close-window.** Closing the emulator window parks the 6502 instead of
-  cold-booting it (f06f9da2), so the disk-seek noise no longer outlives the
-  window.  Never exercised interactively — it is a GUI action, not scriptable.
-
-Method worth reusing for any Atari-display question: `xlboot -a` (authentic
-drive timing — a VBI-paced intro gets its animation budget from how long each
-SIO call takes, and plain xlboot loads too fast to cycle animations) plus
-repeated `graboverlay` grabs classified automatically.  `graboverlay`, never
-`fbgrab`: fbgrab reads the DESKTOP plane, and the emulator window is an alpha=0
-hole in it, so it is black at any speed.
 ## antic-sally-interop — phase 6 (one clock domain) landed; residuals
 The Atari realm (antic2 + GTIA + both POKEYs) runs NATIVE on clk_sally
 beside the fid core — unification phase 6, chunks 1+2 + the SUB_DATA strobe
