@@ -109,8 +109,10 @@ DEADLOCKS -- so read state statically (dlist/disasm/peek) instead of tracing.
 
 **BUG FOUND AND ISOLATED (2026-08-17): in GTIA mode 9 the FIFTH PLAYER is not
 drawn.**  tools/mode9_fifthplayer_scene.py builds a still scene in BallBlazer's
-own configuration; captured off the board with `fbgrab -xl` and bisected on
-PRIOR:
+own configuration; captured off the board with `graboverlay` (SYS_plane_grab --
+the DESKTOP plane cannot show the Atari image at all, because the desktop
+composites on top with an alpha=0 hole where the emulator window sits) and
+bisected on PRIOR:
 
     PRIOR $04  normal, no 5th player   missiles drawn  8 px white   OK
     PRIOR $14  normal, 5th player      missiles drawn 16 px COLPF3  OK
@@ -137,7 +139,10 @@ player behind.
 NEXT: fix the resolver so a PM5 missile still paints COLPF3 at PF3 priority when
 gtia_active, re-run the four PRIOR variants, then re-check the goalposts.
 
-Blocked on capture -- RESOLVED, see above.  Historical note:
+Capture was never the real obstacle: `graboverlay` already grabs the XL plane
+tear-free.  The obstacle was that the goalpost animation lasts seconds, and no
+grab with seconds of latency can catch it -- which the STILL scene sidesteps.
+Historical note:
 - fbgrab streams the whole 1920x1080 plane through the kernel one row at a
   time (8.3 MB read, 6.2 MB written, no crop, no early stop), so a grab takes
   seconds and smears across time.  Too slow to catch a few-second animation.
