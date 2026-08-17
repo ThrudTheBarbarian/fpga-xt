@@ -107,7 +107,37 @@ the emulator paused so resume() does nothing (step with frame()); mount() is
 reset; history(30000) CRASHES the emulator and frame() after enabling history
 DEADLOCKS -- so read state statically (dlist/disasm/peek) instead of tracing.
 
-Blocked on capture (the reference itself is no longer blocked):
+**BUG FOUND AND ISOLATED (2026-08-17): in GTIA mode 9 the FIFTH PLAYER is not
+drawn.**  tools/mode9_fifthplayer_scene.py builds a still scene in BallBlazer's
+own configuration; captured off the board with `fbgrab -xl` and bisected on
+PRIOR:
+
+    PRIOR $04  normal, no 5th player   missiles drawn  8 px white   OK
+    PRIOR $14  normal, 5th player      missiles drawn 16 px COLPF3  OK
+    PRIOR $44  mode 9, no 5th player   missiles drawn  8 px white   OK
+    PRIOR $54  mode 9, 5th player      MISSILES ABSENT              BUG
+
+$54 is exactly what the game uses.  Altirra draws the missiles in all four.
+The posts themselves are pixel-correct on the board (24 px = 12 CC, 96 px = 48 CC
+apart, matching the reference), so the player path is fine.
+
+Cause, hdl/color_resolver.sv: the fifth player's missiles are injected as
+`pf3_eff` into the PF-lo group --
+
+    pf_lo_present_normal = pf2 | pf3_eff;          // PM5 missile joins pf_lo
+    pf_lo_present = gtia_active ? 1'b0 : pf_lo_present_normal;
+
+-- and GTIA mode forces `pf_lo_present` to 0, so the injection is discarded.
+`pf_present` is likewise forced to 1 with the GTIA colour.  Meanwhile p0..p3 are
+masked `& ~m0..~m3` when PM5 is active (correct: the missile should paint COLPF3
+instead), so in GTIA mode the missiles are dropped from BOTH paths and vanish.
+Same class as 6ef5bab2, which fixed the PLAYERS in mode 9 and left the fifth
+player behind.
+
+NEXT: fix the resolver so a PM5 missile still paints COLPF3 at PF3 priority when
+gtia_active, re-run the four PRIOR variants, then re-check the goalposts.
+
+Blocked on capture -- RESOLVED, see above.  Historical note:
 - fbgrab streams the whole 1920x1080 plane through the kernel one row at a
   time (8.3 MB read, 6.2 MB written, no crop, no early stop), so a grab takes
   seconds and smears across time.  Too slow to catch a few-second animation.
