@@ -1,8 +1,35 @@
 # Next Steps / Open Work — consolidated
 
-## BallBlazer: goalposts + close-window — FIXED, awaiting Simon's eye
-Both landed on hardware 2026-08-17 and both measure correct; neither has been
-confirmed by the one person who has actually seen the faults.
+## BallBlazer: an object is DISPLACED for part of its height — STILL OPEN
+Simon, 2026-08-17 18:36: "the top part of the ball is offset from the lower
+section".  The same fault the goalposts showed, on a different object, and it
+SURVIVES both fixes below -- the goalpost frames that measured clean were simply
+clean frames, not proof the fault was gone.
+
+CAUGHT ON THE BOARD AND MEASURED (hunt_101_05.bmp, kept):
+
+    y=114   (68, 91)    upper sliver
+    y=115   (28, 51)    body -- SAME WIDTH, centre moved -40 px = -20 CC
+
+Same width, so it is pure horizontal DISPLACEMENT, not the perspective growth
+that explains every other step in this animation.  The discriminator that
+finally separated the two: an object whose width is unchanged (+/-2 px) but
+whose CENTRE moves between ADJACENT scanlines.  Legitimate steps in this intro
+are symmetric growth -- e.g. Altirra (312,327) -> (280,359), centre 319.5 both
+sides.  **Across 400 Altirra frames that filter finds ZERO; on the board it
+finds it.**  Do not use "an edge jumped" as the test: both sides do that
+constantly and it proves nothing.
+
+Working hypothesis: the object's HPOSP is rewritten per scanline by the
+VCOUNT-driven WSYNC kernel at $3307, and on some line our chipset draws the
+object at the PREVIOUS x -- i.e. the write lands late relative to the beam, or
+our beam position differs by enough that the object has already been emitted.
+That fits "top part offset from lower section" exactly.  Next: find which
+scanline, and compare the write's colour-clock position against Altirra.
+
+## BallBlazer: two fixes that ARE landed and verified
+Both on hardware 2026-08-17 and both measure correct; neither is the fault
+above.
 
 - **Goalposts.** Two bugs, both fixed: `gtia_obj_walk` carried two run slots per
   player and dropped the third match at quad width (26c6f1dd, NSLOT = 8), and in
