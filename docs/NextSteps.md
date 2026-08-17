@@ -107,8 +107,13 @@ the emulator paused so resume() does nothing (step with frame()); mount() is
 reset; history(30000) CRASHES the emulator and frame() after enabling history
 DEADLOCKS -- so read state statically (dlist/disasm/peek) instead of tracing.
 
-**BUG FOUND AND ISOLATED (2026-08-17): in GTIA mode 9 the FIFTH PLAYER is not
-drawn.**  tools/mode9_fifthplayer_scene.py builds a still scene in BallBlazer's
+**BUG FOUND, FIXED AND HW-VERIFIED (2026-08-17): in GTIA mode 9 the FIFTH
+PLAYER was not drawn.**  Fix 59395858, bitstream 2026-08-17 (timing gate PASS:
+clk_pix +0.134, clk_sally +0.524, clk_sys +0.280).  After the fix PRIOR $54
+draws the missiles at x 224..239 (16 px = 8 CC, COLPF3), identical to the $14
+control and to Altirra; $04/$14/$44 are unchanged; all eleven gtia_* ACID
+vectors plus antic_pmdma still return Y=$00 on the new bitstream.  Original
+evidence:  tools/mode9_fifthplayer_scene.py builds a still scene in BallBlazer's
 own configuration; captured off the board with `graboverlay` (SYS_plane_grab --
 the DESKTOP plane cannot show the Atari image at all, because the desktop
 composites on top with an alpha=0 hole where the emulator window sits) and
@@ -136,8 +141,17 @@ instead), so in GTIA mode the missiles are dropped from BOTH paths and vanish.
 Same class as 6ef5bab2, which fixed the PLAYERS in mode 9 and left the fifth
 player behind.
 
-NEXT: fix the resolver so a PM5 missile still paints COLPF3 at PF3 priority when
-gtia_active, re-run the four PRIOR variants, then re-check the goalposts.
+The fix is in the LIVE path, not color_resolver.sv (which is dead code --
+antic_top.sv:1742).  gtia_priority now reports `win_pm5`, because a fifth-player
+missile and a real playfield both leave it as PF3 and the encoding alone cannot
+tell them apart; gtia_stage counts the missile as an object so the GTIA mode
+does not recolour it.
+
+STILL OPEN: whether this is the goalpost artifact.  Missing missiles REMOVE
+content, while the reported artifact had EXTRA width, so the two may be
+unrelated.  Chasing it now with `xlboot -a` (authentic drive timing gives the
+VBI-paced intro its animation budget, so more animations cycle) plus repeated
+`graboverlay` grabs classified for the two-post signature.
 
 Capture was never the real obstacle: `graboverlay` already grabs the XL plane
 tear-free.  The obstacle was that the goalpost animation lasts seconds, and no
