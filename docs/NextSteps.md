@@ -70,67 +70,44 @@ happen to show did not occur in 170 sampled frames of that run, so the two runs
 are not picking the same animations. A frame-matched comparison needs the state
 forced, not waited for.
 
-## BallBlazer windscreen — the animation is P/M-driven, and PRIOR $54 MATCHES
+## BallBlazer windscreen — P/M table located; a method limit, and a new hypothesis
 Simon (authoritative): "Ours doesn't have the windscreen.  On the animation where
 the man waves, Altirra DOES have the windscreen, then removes it to let the man
-wave" -- present again before and after.  A MISSING object.
+wave" -- present again before and after.
 
-**How the animation actually works** (measured by walking the reference frame by
-frame and hashing the picture, the screen RAM and the registers together, so
-nothing is assumed about frame numbers):
+**P/M table located BY CONTENT** (write-only registers read back unreliably, so
+sparsity was the discriminator -- a sprite table is mostly zero, code is dense):
+PMBASE = **$00**, i.e. the table is at $0000 with P0 data at $0400 and P1 at
+$0500, 128 non-zero bytes each; **missiles, P2 and P3 are entirely EMPTY**.  The
+$0400/$0500 cassette-buffer scratch area, which is a normal thing for a game
+that has taken the machine over.  (peek($D407) said $FF -> $F800, which is OS
+ROM and dumps as 6502 code; `antic()` said $00 and was right.)
 
-    f776..f868   picture hash changes every 4 frames
-                 SCREEN RAM HASH CONSTANT (db62448d76)
-                 PRIOR=$54  COLBK=$10  GRAFP0=GRAFP1=$FF  GRACTL=$03
+**RETRACTED, a third phase mistake:** "our man is hue 5 where the reference is
+hue 3".  The REFERENCE ITSELF renders him hue 5 at f1200 and hue 3 at f2200 --
+the game recolours him through the animation.  At the matching phase we agree
+EXACTLY: 562 px of hue 5 in a 62x26 box, same as our board frame.  That is also
+the first genuinely FRAME-MATCHED pair obtained, found by walking for a frame
+whose hue populations match ours rather than by guessing a frame number.
 
-So the bitmap is STATIC and the whole animation is P/M -- players moved per
-frame over a fixed mode-9 playfield.  The display list and LMS never change
-either ($BA00 / $B050 throughout, DMACTL $3E = NORMAL width, 40 bytes -- not
-wide, so nothing is being clipped by our 320 px window).
+**METHOD LIMIT, important:** Altirra's GTIA-mode fringing changes a pixel's
+LUMINANCE while preserving its HUE (mode 9 takes hue from COLBK).  Therefore:
+  * HUE populations and hue-level geometry are SAFE to compare -- and they match.
+  * PER-CODE (luminance) populations are NOT safe, and neither are run widths.
+So **an object that is the same hue as its surroundings -- which the windscreen is,
+hue 1 like the whole picture -- CANNOT be compared against Altirra through
+rendered pixels at all.**  Only content comparison can settle it.
 
-**AND AT PRIOR $54 WE AGREE WITH THE REFERENCE.**  Ran
-`tools/mode9_fifthplayer_scene.py` -- static, lit mode-9 playfield, quad-width
-players, fifth player -- on BOTH sides and compared colour-code populations.
-Scale by 224/192 for the capture windows (players fill the window; the playfield
-is bounded by the display list so it does not scale):
-
-    PRIOR $54   $08 playfield  18108 = 18108        MATCH
-                $0E players     9228 -> 10766 vs 10762   MATCH
-                $3A 5th player  3072 ->  3584 vs 3568    MATCH
-    PRIOR $44   $0E players    10764 -> 12558 vs 12554   MATCH
-
-So the mode-9 + fifth-player + playfield-priority configuration the game uses is
-now verified equivalent on a static scene.  The windscreen is NOT a mode-9
-priority bug, and this scene does not reproduce it.
-
-**A SEPARATE REAL DEFECT FOUND ON THE WAY** (not BallBlazer's configuration, its
-own investigation): the two NON-GTIA priority cases disagree.
-
-    PRIOR $14   $0E players     4608 ->  5376 vs 6144   MISMATCH
-                $3A 5th player  1536 ->  1792 vs 3584   MISMATCH (exactly 2x)
-    PRIOR $04   $0E players     5376 ->  6272 vs 7168   MISMATCH
-
-Per-row spans at $14: the reference draws $3A on rows 0..223; we draw it only on
-rows 96..191 -- half the vertical extent.  Same .xex, same registers.  Worth
-pinning with a dedicated probe.
-
-CAUTION MEASURED 2026-08-18: **the write-only ANTIC/GTIA registers read back
-unreliably through the bridge.**  `peek($D407)` (PMBASE) returned $FF -- which
-would put the player table at $F800, inside the OS ROM, and a dump there is
-plainly 6502 CODE (`a4 54 84 51 20 7e f9` = LDY $54 / STY $51 / JSR $F97E), not
-sprite data -- while `antic()` reported PMBASE $00 at another moment.  Likewise
-GRAFP0-3/GRAFM read whatever the last DMA cycle left at the sampled beam
-position, NOT the shapes: with DMACTL $3E (single-line P/M DMA) ANTIC rewrites
-them every scanline from the table.  So do NOT build a scene from those reads.
-Locate the table by CONTENT instead -- memsearch RAM for the man's bit pattern
-(he is 62 px = ~8 bits at quad width, 26 scanlines) and work back to the 2K
-boundary.
-
-NEXT for the windscreen: the static scene needs to match the GAME's P/M setup,
-not a generic one -- pull the actual HPOSP/SIZEP/GRAFP/PMBASE table and the
-per-scanline writes at a windscreen-present frame and rebuild THAT.  Anchor on
-the picture-hash walk above (/tmp/anim.py), which is self-anchoring and does not
-depend on frame numbers.
+**NEW HYPOTHESIS, and the probe for it.**  PRIOR $54 selects priority mode 4:
+PF0/PF1 ABOVE the players, players above PF2/PF3.  The bitmap is static and the
+craft is P0+P1 sweeping across it, so a playfield feature that ranks above the
+players shows THROUGH the craft, and one that ranks below is covered -- which is
+exactly "the windscreen is there, then it goes away, then it comes back".  Our
+existing static scene used ONE uniform nibble ($8) and so never exercised which
+PRIORITY CLASS each mode-9 nibble maps to.
+  NEXT: a scene with a mode-9 playfield of SEVERAL nibble values crossed by a
+  quad-width player at PRIOR $54, and compare -- per nibble -- which side wins.
+  If our nibble-to-priority-class mapping differs for any value, that is the bug.
 
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the
