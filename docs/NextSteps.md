@@ -49,24 +49,26 @@ VERIFIED ON HARDWARE 2026-08-18: the ramp probe now reads 15 distinct colours of
 and the BallBlazer pre-title screen's two OUTER pillars now match Altirra
 run-for-run -- identical starts and widths across the whole row.
 
-STILL OPEN, one object: the MIDDLE feature is one GTIA pixel wider at each end
-(ours x140..179, reference x144..175) and shows the ramp's DIMMEST shade at its
-centre where the reference shows the PEAK.  Delete the two centre pixels from
-ours and the sequence is exactly the reference's, so it reads as two halves
-pushed 2 CC apart with something dim showing through the gap.  Next: match the
-frame under the bridge server and compare P/M state at a KNOWN SCANLINE (a
-one-shot register dump is useless here -- see below).
+RETRACTED 2026-08-18: the "middle object is wrong" finding does NOT hold up.
+It came from comparing our `/tmp/bb4/d20` against Altirra's `/tmp/as/a051` --
+two captures from DIFFERENT RUNS of a randomly-chosen, animating sequence. The
+oracle then showed the same screen at frame 3160 with a completely different
+middle (a full triangle where both captures had a narrow apex), so the middle
+feature's width is a function of ANIMATION PHASE. Ours 10 GTIA px vs the
+reference's 8 is very likely one animation step apart, and nothing about it is
+established as a defect. This is exactly the phase-mismatch trap the trace notes
+warn about, and I walked into it.
 
-Two suspects ELIMINATED by measurement, do not re-open:
-- It is not P/M.  Every run on that screen is a multiple of 4 px = one GTIA-mode
-  pixel (2 CC); a player or missile would land on 2-px colour-clock boundaries.
-  The whole picture is GTIA-mode PLAYFIELD.
-- It is not the GTIA-mode playfield phase.  `tools/altirra_gtia_shift_ref.py`
-  finally ran (it needed the headless server) and the reference does NOT move
-  the playfield edge between PRIOR $01 and $41 -- and neither do we: both put
-  the player exactly ON the edge with the playfield resuming right after it.
-  The script's docstring claimed otherwise; that note was stale since 13c03591
-  and has been corrected in place.
+What IS meaningful is the OUTER pillars, which are static within the animation
+and now match run-for-run. Do not re-open the middle object without a
+FRAME-MATCHED pair -- anchor on a code landmark, not on "it looks like the same
+screen".
+
+Reaching the pillar animation in the oracle: it is reachable (deterministic run,
+randmem off, ~frame 3160 during the load) but the WIDE-GAP phase both captures
+happen to show did not occur in 170 sampled frames of that run, so the two runs
+are not picking the same animations. A frame-matched comparison needs the state
+forced, not waited for.
 
 ## BallBlazer windscreen — still open, but the oracle is back
 Altirra shows a windscreen on the vehicles in every animation, opening when the
@@ -74,6 +76,14 @@ man waves; we show it in one sub-animation only and it never opens.  Likely
 another object dropped in a specific configuration, as the mode-9 fifth player
 was (59395858).  Method that worked there: reproduce the configuration in a
 STATIC scene and bisect PRIOR.
+
+**The oracle now reaches the intro animations** (deterministic, randmem off,
+frames ~900-3200 during the load; `/tmp/vscan.py` keeps every frame with
+structure in the lower half). The windscreen is the RIGHT target for it, because
+Simon's claim is PERSISTENT -- "Altirra shows one in every animation, ours in
+one sub-animation and it never opens" -- so it can be tested statistically over
+many frames instead of needing a frame-matched pair, which is what defeated the
+middle-object comparison above.
 
 **AltirraBridgeServer is now built** (`cmake -DALTIRRA_BRIDGE_SERVER=ON` in
 `~/src/AltirraSDL/build/macos-release`), which is what makes this tractable --
