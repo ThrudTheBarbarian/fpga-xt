@@ -70,41 +70,55 @@ happen to show did not occur in 170 sampled frames of that run, so the two runs
 are not picking the same animations. A frame-matched comparison needs the state
 forced, not waited for.
 
-## BallBlazer windscreen — still open; my granularity finding was WRONG
-Simon's description (authoritative): **on the animation where the man waves,
-Altirra HAS the windscreen and removes it to let him wave, and has it again
-before and after.  Ours does not have it at all.**  A MISSING object.
+## BallBlazer windscreen — the animation is P/M-driven, and PRIOR $54 MATCHES
+Simon (authoritative): "Ours doesn't have the windscreen.  On the animation where
+the man waves, Altirra DOES have the windscreen, then removes it to let the man
+wave" -- present again before and after.  A MISSING object.
 
-**RETRACTED: "the reference resolves one-colour-clock detail and we do not."**
-That measurement (69-80% of reference craft-band runs 2 px, vs our 0-9%) was
-measuring ALTIRRA'S RENDERER, not the Atari's picture.
+**How the animation actually works** (measured by walking the reference frame by
+frame and hashing the picture, the screen RAM and the registers together, so
+nothing is assumed about frame numbers):
 
-The control that caught it: run our OWN `tools/gtia_ramp_scene.py` .xex -- whose
-content is known to be uniform 4 px mode-9 pixels -- through the oracle. It comes
-back as 2 px of the true colour plus a 2 px FRINGE whose value depends on the
-neighbouring pixel ($61 then $65, $62 then $6A, $63 then $6F ...), while our
-board renders the same file as clean 4 px pixels. `rawscreen()` shows the same
-fringing as `screenshot()`, so it is in Altirra's GTIA model, not a display
-filter, and `artifact: none` does not disable it.
+    f776..f868   picture hash changes every 4 frames
+                 SCREEN RAM HASH CONSTANT (db62448d76)
+                 PRIOR=$54  COLBK=$10  GRAFP0=GRAFP1=$FF  GRACTL=$03
 
-So EVERY "we are 4x too coarse" number is void, and any pixel-level width
-comparison against Altirra in a GTIA mode is invalid unless this is accounted
-for.  Same family as the closed green-vs-gold issue: compare CONTENT, not a
-rendering model.
+So the bitmap is STATIC and the whole animation is P/M -- players moved per
+frame over a fixed mode-9 playfield.  The display list and LMS never change
+either ($BA00 / $B050 throughout, DMACTL $3E = NORMAL width, 40 bytes -- not
+wide, so nothing is being clipped by our 320 px window).
 
-OPEN QUESTION worth its own investigation (not the windscreen): does REAL GTIA
-fringe like that?  If it does, we are missing a genuine hardware behaviour --
-sub-pixel colour transitions in GTIA modes.  ACID800 would be the place to look
-for a test that pins it.
+**AND AT PRIOR $54 WE AGREE WITH THE REFERENCE.**  Ran
+`tools/mode9_fifthplayer_scene.py` -- static, lit mode-9 playfield, quad-width
+players, fifth player -- on BOTH sides and compared colour-code populations.
+Scale by 224/192 for the capture windows (players fill the window; the playfield
+is bounded by the display list so it does not scale):
 
-WHAT THE WINDSCREEN NEEDS NEXT: a CONTENT comparison, not a pixel one.  Dump the
-guest's SCREEN RAM (the mode-9 nibbles) on both sides at the same point in the
-animation and diff those.  If the nibbles match, the object is being lost in our
-render; if they differ, the game computed a different picture and the cause is
-CPU/timing.  Board-side 6502 RAM is readable with
-`mem -w 0x43C00204 0x8000AAAA; mem 0x43C00418` (clear with `mem -w 0x43C00204 0`);
-oracle-side with `memdump`.  Anchor the two on a code landmark, never on "the
-screen looks the same".
+    PRIOR $54   $08 playfield  18108 = 18108        MATCH
+                $0E players     9228 -> 10766 vs 10762   MATCH
+                $3A 5th player  3072 ->  3584 vs 3568    MATCH
+    PRIOR $44   $0E players    10764 -> 12558 vs 12554   MATCH
+
+So the mode-9 + fifth-player + playfield-priority configuration the game uses is
+now verified equivalent on a static scene.  The windscreen is NOT a mode-9
+priority bug, and this scene does not reproduce it.
+
+**A SEPARATE REAL DEFECT FOUND ON THE WAY** (not BallBlazer's configuration, its
+own investigation): the two NON-GTIA priority cases disagree.
+
+    PRIOR $14   $0E players     4608 ->  5376 vs 6144   MISMATCH
+                $3A 5th player  1536 ->  1792 vs 3584   MISMATCH (exactly 2x)
+    PRIOR $04   $0E players     5376 ->  6272 vs 7168   MISMATCH
+
+Per-row spans at $14: the reference draws $3A on rows 0..223; we draw it only on
+rows 96..191 -- half the vertical extent.  Same .xex, same registers.  Worth
+pinning with a dedicated probe.
+
+NEXT for the windscreen: the static scene needs to match the GAME's P/M setup,
+not a generic one -- pull the actual HPOSP/SIZEP/GRAFP/PMBASE table and the
+per-scanline writes at a windscreen-present frame and rebuild THAT.  Anchor on
+the picture-hash walk above (/tmp/anim.py), which is self-anchoring and does not
+depend on frame numbers.
 
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the
