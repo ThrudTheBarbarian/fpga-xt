@@ -71,10 +71,17 @@ are not picking the same animations. A frame-matched comparison needs the state
 forced, not waited for.
 
 ## BallBlazer windscreen — SHARPENED (Simon corrected the symptom)
-Simon, 2026-08-18: "the man has been waving for a while.  The difference is that
-the windscreen is UP, and lowers/removes itself on Altirra, but doesn't on ours."
-So it is a PERSISTENCE bug -- an object we fail to remove -- not a missing one.
-The earlier reading ("we never open it") was wrong.
+Simon's exact description (2026-08-18, after two corrections -- take THIS one):
+**on the animation where the man waves, Altirra HAS the windscreen and then
+REMOVES it to let him wave, and has it again afterwards.  Ours does not have the
+windscreen at all.**  So it is a MISSING object, and the thing to hunt is why we
+never draw it -- not why we fail to remove it.
+
+Seen in the reference at frame 2400 (before the wave): the windscreen is a tall
+finely-striped trapezoid panel rising from the craft body.  At 2560 (mid-wave)
+it is gone.  THAT SHAPE IS BUILT FROM ONE-COLOUR-CLOCK DETAIL -- which is exactly
+the detail we are measurably losing, so the granularity defect below is the
+prime candidate for the cause rather than a separate issue.
 
 Measured by inverting BOTH renders to Atari colour CODES (exact both sides, 0
 unmapped px), which makes structure comparable without comparing colour:
