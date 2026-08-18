@@ -42,13 +42,17 @@ SIZEP0, SIZEM  = 0xD008, 0xD00C
 PRIOR, GRACTL  = 0xD01B, 0xD01D
 DMACTL, PMBASE = 0xD400, 0xD407
 SDMCTL, SDLSTL, GPRIOR = 0x022F, 0x0230, 0x026F
-PCOLR0, COLOR3, COLOR4 = 0x02C0, 0x02C7, 0x02C8
-COLPM0, COLPF3, COLBK  = 0xD012, 0xD019, 0xD01A
+PCOLR0, COLOR2, COLOR3, COLOR4 = 0x02C0, 0x02C6, 0x02C7, 0x02C8
+COLPM0, COLPF2, COLPF3, COLBK  = 0xD012, 0xD018, 0xD019, 0xD01A
 
 HP0, HM0  = 0x50, 0x70
 C_PLAYER  = 0x3A                         # hue 3
 C_FIFTH   = 0x5A                         # hue 5 (COLPF3 = the fifth player)
 C_BK      = 0x00
+# PFCOL=1 in the environment gives the playfield a NON-BLACK colour (hue 7).
+# With a black playfield "the fifth player wins outright" and "GTIA ORs the two
+# colour registers together" produce the SAME pixel; a lit playfield tells them
+# apart, and the fix depends on which it is.
 BLOCK     = 16                           # lit rows per block
 PRIOR_VAL = 0x14
 
@@ -59,6 +63,8 @@ def jmp(a): return bytes([0x4C, a & 0xFF, a >> 8])
 
 
 def program(prior):
+    import os
+    c_pf = 0x76 if os.environ.get("PFCOL") == "1" else C_BK
     c = b""
     c += lda(DL & 0xFF) + sta(SDLSTL) + lda(DL >> 8) + sta(SDLSTL + 1)
     # $3E: normal playfield + missile DMA + player DMA + SINGLE-LINE + DL DMA
@@ -74,7 +80,11 @@ def program(prior):
     # to render nothing and be believed.
     c += lda(C_PLAYER) + sta(PCOLR0) + sta(COLPM0)
     c += lda(C_FIFTH) + sta(COLOR3) + sta(COLPF3)
+    # COLPF2, not just COLBK: in ANTIC mode $F a ZERO pixel takes COLPF2, so
+    # leaving it at the OS default painted the playfield band bright blue and
+    # made "is the object drawn OVER the playfield?" unreadable.
     c += lda(C_BK) + sta(COLOR4) + sta(COLBK)
+    c += lda(c_pf) + sta(COLOR2) + sta(COLPF2)
     c += jmp(PROG + len(c))
     return c
 
@@ -117,11 +127,9 @@ def main():
     x = b"\xff\xff"
     x += seg(PROG, program(prior))
     x += seg(DL, dlist())
-    # NOT a black playfield: in ANTIC mode $F a ZERO pixel takes COLPF2, not
-    # COLBK, so the screen shows COLPF2's colour whatever COLBK says.  The probe
-    # set COLBK and left COLPF2 at the OS default, which painted the playfield
-    # band bright blue and made "objects over the playfield" hard to read.  Set
-    # COLPF2 in program() if a dark band is wanted.
+    # All-zero screen data: in ANTIC mode $F a zero pixel takes COLPF2, which
+    # program() sets black, so the playfield band is dark and an object drawn
+    # over it is unmistakable.
     x += seg(SCR, b"\x00" * (40 * NLINES))
     x += seg(MISSD, ms)
     x += seg(P0DAT, p0)
