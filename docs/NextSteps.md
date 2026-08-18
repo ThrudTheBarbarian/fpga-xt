@@ -44,15 +44,34 @@ all 16 levels, and every EVEN entry is byte-identical so the gold calibration is
 untouched.  `sim/tb_gtia_lum16` pins both halves and is verified to fail on the
 old hex.
 
-OPEN: re-run `tools/gtia_ramp_scene.py` on hardware after the bitstream lands
-(want 16 colours of 4 px), then look at the pillars again.
+VERIFIED ON HARDWARE 2026-08-18: the ramp probe now reads 15 distinct colours of
+4 px plus one 8-px run (the designed $xE/$xF clamp), where it read 8 of 8 before,
+and the BallBlazer pre-title screen's two OUTER pillars now match Altirra
+run-for-run -- identical starts and widths across the whole row.
 
-## BallBlazer windscreen — still open
+STILL OPEN, one object: the MIDDLE feature is one GTIA pixel wider at each end
+(ours x140..179, reference x144..175) and shows the ramp's DIMMEST shade at its
+centre where the reference shows the PEAK.  Delete the two centre pixels from
+ours and the sequence is exactly the reference's, so it reads as two halves
+pushed 2 CC apart with something dim showing through the gap.  Next: match the
+frame under the bridge server and compare P/M state at a KNOWN SCANLINE (a
+one-shot register dump is useless here -- see below).
+
+## BallBlazer windscreen — still open, but the oracle is back
 Altirra shows a windscreen on the vehicles in every animation, opening when the
 man waves; we show it in one sub-animation only and it never opens.  Likely
 another object dropped in a specific configuration, as the mode-9 fifth player
 was (59395858).  Method that worked there: reproduce the configuration in a
 STATIC scene and bisect PRIOR.
+
+**AltirraBridgeServer is now built** (`cmake -DALTIRRA_BRIDGE_SERVER=ON` in
+`~/src/AltirraSDL/build/macos-release`), which is what makes this tractable --
+the GUI never opened a bridge port.  BallBlazer boots under it headless and the
+windscreen is plainly visible around frame 1200.  Two traps measured: 
+`screenshot()` returns PNG bytes, not pixels; and a one-shot `gtia()`/`pmg()`
+dump reads `GRAFP*=$00, COLBK=$00` on a screen that is plainly not blank,
+because the game drives P/M and COLBK from a per-scanline kernel.  Break at a
+known scanline, or compare rendered geometry.
 
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the
