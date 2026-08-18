@@ -1,5 +1,59 @@
 # Next Steps / Open Work — consolidated
 
+## Per-application preferences — LANDED, one step needs a mouse
+Right-click an item -> "Preferences..." opens `/OS/bin/prefs` with that item's
+leaf name as the settings DOMAIN, and the choice lands in the desktop's own
+registry (`settings` table, created on first write by registry.c).  First
+setting is **launch speed**: `authentic` is real 1050 timing, which BallBlazer's
+intro needs because it animates from the VBI while its sectors stream, and
+`snappy` is everything else.  The desktop applies it explicitly at both launch
+sites, so a launch no longer inherits whatever the last `xlboot -a` left in the
+kernel globals.
+
+`prefs` also runs headless (`prefs <name> <key> <value>`, `prefs -l <name>`) so a
+title can be seeded from a shell through the same API the dialog uses.
+BallBlazer.atx is seeded to authentic on the board.
+
+OPEN: the right-click -> Preferences path itself is untested -- it needs a mouse.
+The window, the registry round-trip and the dispatch code are all verified; the
+menu row is in `contextMenu` (scope 4) on the board and in Registry.sql.
+
+## SIO load beeps — LANDED, needs an ear
+The stub holds a POKEY tone for exactly as long as a transfer is in flight, so an
+authentic-speed load bleeps per sector and a snappy one is silent.  Pitch tracks
+the modelled serial rate (the A9 computes AUDF4 into mailbox $06), so a US
+Doubler sounds higher, as it does on real hardware where the noise IS the data.
+Gated on SOUNDR both ways, so a title that scores its own loading screen keeps
+all four voices.
+
+OPEN: nobody has listened to it yet.  ElektraGlide with `xlboot -a` is the case
+Simon reported as a silent 60-second hang.
+
+## BallBlazer pre-title screen — root cause FOUND and FIXED, awaiting a bitstream
+The ~2 s screen of three vertical pillars did not match the reference: the
+outermost stripe of each outer pillar rendered as the value-0 background, and the
+middle pillar collapsed from four shades into two, in pairs.
+
+`tools/gtia_ramp_scene.py` turned that moving target into a still one -- every
+GTIA nibble value 0..15 in order across the line -- and hardware answered with
+EIGHT colours of 8 px where the mode promises sixteen of 4.  The palette was
+folding bit 0 away: right for a colour REGISTER, which has no bit 0, and wrong
+for GTIA mode 9, whose nibble bypasses the registers entirely.  Fixed 72040fe4 --
+the drop moves to `gtia_reg_file` where the hardware does it, the palette carries
+all 16 levels, and every EVEN entry is byte-identical so the gold calibration is
+untouched.  `sim/tb_gtia_lum16` pins both halves and is verified to fail on the
+old hex.
+
+OPEN: re-run `tools/gtia_ramp_scene.py` on hardware after the bitstream lands
+(want 16 colours of 4 px), then look at the pillars again.
+
+## BallBlazer windscreen — still open
+Altirra shows a windscreen on the vehicles in every animation, opening when the
+man waves; we show it in one sub-animation only and it never opens.  Likely
+another object dropped in a specific configuration, as the mode-9 fifth player
+was (59395858).  Method that worked there: reproduce the configuration in a
+STATIC scene and bisect PRIOR.
+
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the
 LAST one; the first two are real defects found on the way to it.
