@@ -1,4 +1,19 @@
 # Next Steps / Open Work — consolidated
+
+## STATUS AT 2026-08-19 (overnight) — nothing outstanding
+Everything reported is fixed and verified on hardware:
+  * five BallBlazer bugs, the last of them the windscreen (= the mode-9
+    16-luminance fix 72040fe4);
+  * SIO load beeps (confirmed by Simon);
+  * per-application preferences and the right-click that opens them, driven and
+    checked with `tools/xtinject.py` rather than handed over untested;
+  * the fifth player vs the playfield (3456200a), which was the last open defect.
+Sim suite green from a clean rebuild; bitstream timing gate ok; board left with
+the new bitstream loaded, desktop + gemd running, 6502 disarmed.
+
+Nothing here needs Simon's attention to proceed.  The sections below are the
+detail, newest first.
+
 ## Per-application preferences — DONE AND VERIFIED END TO END
 Right-click an item -> "Preferences..." -> a per-title launch-speed setting kept
 in the desktop's registry (`settings` table, created on first write).  `authentic`
