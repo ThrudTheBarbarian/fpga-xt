@@ -114,6 +114,18 @@ Per-row spans at $14: the reference draws $3A on rows 0..223; we draw it only on
 rows 96..191 -- half the vertical extent.  Same .xex, same registers.  Worth
 pinning with a dedicated probe.
 
+CAUTION MEASURED 2026-08-18: **the write-only ANTIC/GTIA registers read back
+unreliably through the bridge.**  `peek($D407)` (PMBASE) returned $FF -- which
+would put the player table at $F800, inside the OS ROM, and a dump there is
+plainly 6502 CODE (`a4 54 84 51 20 7e f9` = LDY $54 / STY $51 / JSR $F97E), not
+sprite data -- while `antic()` reported PMBASE $00 at another moment.  Likewise
+GRAFP0-3/GRAFM read whatever the last DMA cycle left at the sampled beam
+position, NOT the shapes: with DMACTL $3E (single-line P/M DMA) ANTIC rewrites
+them every scanline from the table.  So do NOT build a scene from those reads.
+Locate the table by CONTENT instead -- memsearch RAM for the man's bit pattern
+(he is 62 px = ~8 bits at quad width, 26 scanlines) and work back to the 2K
+boundary.
+
 NEXT for the windscreen: the static scene needs to match the GAME's P/M setup,
 not a generic one -- pull the actual HPOSP/SIZEP/GRAFP/PMBASE table and the
 per-scanline writes at a windscreen-present frame and rebuild THAT.  Anchor on
