@@ -2424,13 +2424,14 @@ static void ctx_menu_at(int mx, int my) {
     browser *b; int tentry, tdeskobj;
     int scope = ctx_resolve(mx, my, &b, &tentry, &tdeskobj);
     if (b && tentry >= 0 && (b->sel != tentry || b->selall)) { b->sel = tentry; b->selall = 0; wind_redraw_win(b->win); }
-    int sx = mx, sy = my;
-    int wh = aes_event_win();
-    if (wh) {                                            // 0 = already screen space
-        int wx, wy, ww, whh;
-        wind_get(wh, WF_WORKXYWH, &wx, &wy, &ww, &whh);
-        sx += wx; sy += wy;                              // the desktop window sits at 0,0: a no-op there
-    }
+    /* menu_popup grabs input and therefore lays out and hit-tests in SCREEN
+     * space, but this click arrived WINDOW-LOCAL and a client has no screen
+     * coordinates of its own -- WF_WORKXYWH answers 0,0 by design, so translating
+     * with it was a no-op and the menu opened a window-origin away.  gemd knows
+     * the screen position and now sends it alongside; aes_event_screen() is it. */
+    int sx, sy;
+    aes_event_screen(&sx, &sy);
+    if (!sx && !sy) { sx = mx; sy = my; }                 // pre-screen-coords gemd: degrade to local
     g_ctx_mx = sx; g_ctx_my = sy;                        // browse popups open at the right-click point
     ctxrow crows[24]; menu_item items[24], show[12]; int nshow;
     int n = ctx_build_items(scope, crows, 24, items, show, &nshow, b);

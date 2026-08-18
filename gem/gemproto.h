@@ -95,7 +95,8 @@
  * Chrome events never reach a client: a click on the closer, the title bar or the sizer is
  * gemd's, and the client hears only the CONSEQUENCE (MSG_CLOSED, MSG_MOVED, MSG_SIZED). */
 #define GEM_EV_KEY       12         /* w[1]=wh w[2]=key w[3]=shift */
-#define GEM_EV_BUTTON    13         /* w[1]=wh w[2]=x w[3]=y w[4]=button (0 = release) w[5]=shift */
+#define GEM_EV_BUTTON    13         /* w[1]=wh w[2]=x w[3]=y (WINDOW-LOCAL) w[4]=button (0 = release)
+                                    * w[5]=shift w[6]=sx w[7]=sy (SCREEN, for popups) */
 #define GEM_EV_MOTION    14         /* w[1]=wh w[2]=x w[3]=y w[4]=button (buttons held) */
 
 #define GEM_MSG_CLOSED   15         /* w[1]=wh — the CLOSER was clicked. gemd does NOT close the

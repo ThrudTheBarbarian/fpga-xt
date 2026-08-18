@@ -1010,11 +1010,17 @@ static void client_paint(int hd,int x,int y,int w,int h){
 
 static int g_pmx, g_pmy, g_pbtn;             // pointer state, as last reported by gemd
 static int g_evwin;                          // WHICH of our windows the last input event was for.
+static int g_evsx, g_evsy;      // last button event, SCREEN space (popups)
 // A client cannot work this out for itself: coordinates are window-LOCAL, so two windows both
 // see a click at (10,10). gemd knows — it hit-tested the z-order — so it says, and this is where
 // the app reads the answer (wind_find() cannot help: a client has no z-order and no geometry).
 int wind_gem_fd(void){ return g_gemfd; }        // menu.c: the strip/grab channel
 int aes_event_win(void){ return g_evwin; }
+/* The last button event's SCREEN position.  A client has no screen coordinate
+ * system of its own (WF_WORKXYWH is 0,0 by design), so this is the only way to
+ * place something that is laid out in screen space -- menu_popup, which takes the
+ * input grab and therefore hit-tests in screen coordinates. */
+void aes_event_screen(int *sx, int *sy){ if(sx)*sx=g_evsx; if(sy)*sy=g_evsy; }
 
 // gem_await() (used inside wind_open/wind_create) has to skip messages it is not waiting for.
 // It must not DROP input while it does — a swallowed button-up is a stuck drag. So strays are
@@ -1125,6 +1131,7 @@ static int client_dispatch(const gem_msg *m, aes_event *ev){
     case GEM_EV_BUTTON:
         g_evwin=m->w[1];
         g_pmx=m->w[2]; g_pmy=m->w[3]; g_pbtn=m->w[4];
+        g_evsx=m->w[6]; g_evsy=m->w[7];              // screen position, for popups
         ev->mx=g_pmx; ev->my=g_pmy; ev->button=g_pbtn; ev->shift=m->w[5];
         ev->type = m->w[4] ? AES_BTN_DOWN : AES_BTN_UP; return ev->type;
     case GEM_EV_MOTION:
@@ -1303,6 +1310,7 @@ static int client_events(aes_event *ev,int timeout_ms){
 void wind_client_attach(void){}                     // SDL host: there is no gemd, and no usys.h
 void wind_client_detach(void){}
 int  aes_event_win(void){ return 0; }               // single process: nobody routed anything to us
+void aes_event_screen(int *sx, int *sy){ if(sx)*sx=g_pmx; if(sy)*sy=g_pmy; }  // already screen space here
 static void client_paint(int hd,int x,int y,int w,int h){ (void)hd;(void)x;(void)y;(void)w;(void)h; }
 #endif
 

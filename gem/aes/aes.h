@@ -152,6 +152,10 @@ void gem_connect_set_wait(int ms);
 // at (10,10) — and it must not try: wind_find() needs a z-order and a geometry, and a client is
 // entitled to neither. gemd hit-tested it and says so on the wire.
 int  aes_event_win(void);
+// The last button event's SCREEN position.  A client's own space starts at 0,0
+// (WF_WORKXYWH), so this is what anything laid out in screen space -- menu_popup,
+// which grabs input and hit-tests in screen coordinates -- must be placed with.
+void aes_event_screen(int *sx, int *sy);
 
 // Absolute position of object `obj` in `tree` (walks from the root).
 void objc_offset(OBJECT *tree, int obj, int *x, int *y);

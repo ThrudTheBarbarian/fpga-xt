@@ -133,6 +133,14 @@ static void send_button(int hd, int x, int y, int button, int shift)
     m.w[0] = GEM_EV_BUTTON; m.w[1] = (int16_t)hd;
     m.w[2] = (int16_t)lx; m.w[3] = (int16_t)ly;
     m.w[4] = (int16_t)button; m.w[5] = (int16_t)shift;
+    /* ...and the SCREEN position in the two spare words.  A client is otherwise
+     * given no screen coordinates at all -- deliberately (§5: no chrome model,
+     * WF_WORKXYWH returns 0,0 in client mode) -- but anything that opens a POPUP
+     * needs them, because menu_popup takes the input grab and grab events are in
+     * screen space.  Without this a context menu can only be positioned in
+     * window-local coordinates, which puts it a window-origin away from the
+     * click.  Advisory and additive: readers that ignore w[6]/w[7] are unaffected. */
+    m.w[6] = (int16_t)x; m.w[7] = (int16_t)y;
     send_win(hd, &m);
 }
 
