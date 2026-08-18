@@ -1,170 +1,89 @@
 # Next Steps / Open Work — consolidated
-
 ## Per-application preferences — DONE AND VERIFIED END TO END
-Right-click an item -> "Preferences..." -> a per-title launch-speed setting in
-the desktop's registry.  Verified on hardware by driving the pointer with
-`tools/xtinject.py` and reading screen grabs: right-click an ATR opens the menu
-AT THE ICON, Info... reports the right file, Preferences... spawns prefs for that
-title, and clicking "authentic" writes `acid800.atr|launchSpeed|authentic`.
+Right-click an item -> "Preferences..." -> a per-title launch-speed setting kept
+in the desktop's registry (`settings` table, created on first write).  `authentic`
+is real 1050 timing, which BallBlazer's intro needs; `snappy` is everything else.
+The desktop applies it explicitly at both launch sites, so a launch no longer
+inherits whatever the last `xlboot -a` left in the kernel globals.
 
-**The right-click was broken in FOUR layers**, none of which was xtmouse (it maps
+VERIFIED ON HARDWARE by driving the pointer with `tools/xtinject.py` and reading
+grabs: right-click an ATR opens the menu AT THE ICON, Info... reports the right
+file, Preferences... spawns prefs for that title, and clicking "authentic" writes
+`acid800.atr|launchSpeed|authentic`.
+
+**The right-click was broken in FOUR layers**, none of them xtmouse (which maps
 SDL_BUTTON_RIGHT to bit 1 and always sent it):
-  1. **kernel UDP input (967e8764)** -- `input_udp.c` fired only on a LEFT-button
-     edge and reported `bt & 1`, so a right press produced no event at all.  Any
-     edge on any of the three bits now injects an event carrying the full state.
-     (Motion/wheel still report the left bit only: they drive drag/hover.)
-  2. **the AES request (97f72cbd)** -- bmask/bstate 1/1 is left-down-only, so the
-     event was filtered out before any handler.  Now 0/0 (any state), with an
-     `&& mb` guard since that also delivers releases.
-  3. **dispatch (97f72cbd)** -- `ctx_menu_at()` had NO CALLER.  The host twin has
-     the wiring; the board version threw the button away with `(void)mb`.
-  4. **position (2b56e2b8 + the screen-coords change)** -- gemd delivers
-     WINDOW-LOCAL coordinates but menu_popup takes the input grab and therefore
-     lays out in SCREEN space, so the menu opened one window-origin away.  A
-     client has NO screen coordinates of its own -- `WF_WORKXYWH` answers 0,0 by
-     design -- so gemd now sends the screen position in the two spare words of
-     the button message (`w[6]`/`w[7]`) and `aes_event_screen()` exposes it.
+  1. kernel UDP input (967e8764) -- fired only on a LEFT-button edge and reported
+     `bt & 1`, so a right press produced no event at all.
+  2. the AES request (97f72cbd) -- bmask/bstate 1/1 is left-down-only.
+  3. dispatch (97f72cbd) -- `ctx_menu_at()` had NO CALLER.
+  4. position -- gemd delivers WINDOW-LOCAL coordinates but menu_popup grabs
+     input and lays out in SCREEN space, and a client has no screen coordinates
+     (`WF_WORKXYWH` answers 0,0 by design).  gemd now sends the screen position
+     in the button message's spare words w[6]/w[7]; `aes_event_screen()` reads it.
 
-**Deployment trap worth remembering:** replacing `/OS/library/libGEM.so` does NOT
-affect copies already RESIDENT, and a new binary needing a new symbol from it
-fails with a bare "No such file or directory" and no loader message.  gemd
-started fine (it does not use the new symbol) while the desktop would not start
-at all.  A JTAG load (reboot) clears it.
+DEPLOYMENT TRAP: replacing `/OS/library/libGEM.so` does NOT affect copies already
+RESIDENT.  A new binary needing a new symbol from it fails to exec with a bare
+"No such file or directory" and nothing in dmesg -- gemd started fine (it does not
+use the symbol) while the desktop would not start at all.  A JTAG load clears it.
+Board `/tmp` is a 1 MB ramfs: copy big files straight to /OS/..., and never hide
+scp errors behind >/dev/null.
 
-## Per-application preferences — LANDED, one step needs a mouse
-Right-click an item -> "Preferences..." opens `/OS/bin/prefs` with that item's
-leaf name as the settings DOMAIN, and the choice lands in the desktop's own
-registry (`settings` table, created on first write by registry.c).  First
-setting is **launch speed**: `authentic` is real 1050 timing, which BallBlazer's
-intro needs because it animates from the VBI while its sectors stream, and
-`snappy` is everything else.  The desktop applies it explicitly at both launch
-sites, so a launch no longer inherits whatever the last `xlboot -a` left in the
-kernel globals.
-
-`prefs` also runs headless (`prefs <name> <key> <value>`, `prefs -l <name>`) so a
-title can be seeded from a shell through the same API the dialog uses.
-BallBlazer.atx is seeded to authentic on the board.
-
-OPEN: the right-click -> Preferences path itself is untested -- it needs a mouse.
-The window, the registry round-trip and the dispatch code are all verified; the
-menu row is in `contextMenu` (scope 4) on the board and in Registry.sql.
-
-## SIO load beeps — LANDED, needs an ear
+## SIO load beeps — DONE, confirmed by Simon
 The stub holds a POKEY tone for exactly as long as a transfer is in flight, so an
 authentic-speed load bleeps per sector and a snappy one is silent.  Pitch tracks
 the modelled serial rate (the A9 computes AUDF4 into mailbox $06), so a US
-Doubler sounds higher, as it does on real hardware where the noise IS the data.
-Gated on SOUNDR both ways, so a title that scores its own loading screen keeps
-all four voices.
+Doubler sounds higher.  SOUNDR gates both the tone and the silencing, so a title
+that scores its own loading screen keeps all four voices.
 
-OPEN: nobody has listened to it yet.  ElektraGlide with `xlboot -a` is the case
-Simon reported as a silent 60-second hang.
+## BallBlazer — ALL FIVE BUGS CLOSED
+XL plane tear (89d143ad), GTIA mode-9 fifth player (59395858), two run slots
+(26c6f1dd), close-window park (318e7183), and the windscreen (69cba904).
 
-## BallBlazer pre-title screen — root cause FOUND and FIXED, awaiting a bitstream
-The ~2 s screen of three vertical pillars did not match the reference: the
-outermost stripe of each outer pillar rendered as the value-0 background, and the
-middle pillar collapsed from four shades into two, in pairs.
+The windscreen was fixed by **72040fe4, the mode-9 16-luminance fix** -- the panel
+is finely luminance-shaded, and while the palette folded bit 0 away its adjacent
+shades collapsed in pairs and it merged into the craft.  I kept hunting it for six
+loop ticks AFTER that fix was already in the bitstream; everything matched on
+every axis, which was evidence the bug was GONE rather than that the instruments
+were blunt.  **After a fix lands, re-check the other open symptoms against it.**
+## Fifth player vs the playfield — MEASURED, rule NOT settled, RTL untouched
+A real, reproducible defect, but the correct rule is NOT a simple rank and I have
+deliberately NOT changed the RTL on a model I cannot explain.  BallBlazer is
+unaffected: it uses PRIOR $54, a GTIA mode, where we already match.
 
-`tools/gtia_ramp_scene.py` turned that moving target into a still one -- every
-GTIA nibble value 0..15 in order across the line -- and hardware answered with
-EIGHT colours of 8 px where the mode promises sixteen of 4.  The palette was
-folding bit 0 away: right for a colour REGISTER, which has no bit 0, and wrong
-for GTIA mode 9, whose nibble bypasses the registers entirely.  Fixed 72040fe4 --
-the drop moves to `gtia_reg_file` where the hardware does it, the palette carries
-all 16 levels, and every EVEN entry is byte-identical so the gold calibration is
-untouched.  `sim/tb_gtia_lum16` pins both halves and is verified to fail on the
-old hex.
+THE DEFECT (`tools/pm_vertical_probe.py`, PRIOR $14, same .xex both sides): the
+reference draws the fifth player straight over a playfield that correctly hides
+ordinary players; we let the playfield hide it too.  It wins OUTRIGHT, not by
+colour-OR -- with the playfield lit to $76 the reference shows $5A exactly, not
+$76|$5A = $7E.
 
-VERIFIED ON HARDWARE 2026-08-18: the ramp probe now reads 15 distinct colours of
-4 px plus one 8-px run (the designed $xE/$xF clamp), where it read 8 of 8 before,
-and the BallBlazer pre-title screen's two OUTER pillars now match Altirra
-run-for-run -- identical starts and widths across the whole row.
+THE TRUTH TABLE (`tools/gtia_fifth_truth.py`: ANTIC mode E bands of
+BAK/PF0/PF1/PF2, four missiles as the fifth player, a player as control; read by
+HUE, the only channel safe against Altirra's GTIA-mode fringing):
 
-RETRACTED 2026-08-18: the "middle object is wrong" finding does NOT hold up.
-It came from comparing our `/tmp/bb4/d20` against Altirra's `/tmp/as/a051` --
-two captures from DIFFERENT RUNS of a randomly-chosen, animating sequence. The
-oracle then showed the same screen at frame 3160 with a completely different
-middle (a full triangle where both captures had a narrow apex), so the middle
-feature's width is a function of ANIMATION PHASE. Ours 10 GTIA px vs the
-reference's 8 is very likely one animation step apart, and nothing about it is
-established as a defect. This is exactly the phase-mismatch trap the trace notes
-warn about, and I walked into it.
+    fifth OVER THE PLAYFIELD (own column)      fifth ON TOP OF A PLAYER
+    PRIOR  BAK   PF0   PF1   PF2               BAK     PF0     PF1     PF2
+    $10    FIFTH FIFTH FIFTH FIFTH             player  player  ?       player
+    $11    FIFTH FIFTH FIFTH FIFTH             player  player  player  player
+    $12    FIFTH FIFTH FIFTH FIFTH             player  player  player  player
+    $14    FIFTH FIFTH FIFTH FIFTH             FIFTH   FIFTH   FIFTH   FIFTH
+    $18    FIFTH FIFTH FIFTH FIFTH             player  PF0     PF1     player
 
-What IS meaningful is the OUTER pillars, which are static within the animation
-and now match run-for-run. Do not re-open the middle object without a
-FRAME-MATCHED pair -- anchor on a code landmark, not on "it looks like the same
-screen".
+Confirmed BY EYE on the $18 frame (not just by detector): the violet fifth-player
+column runs unbroken through PF0 and PF1 while the blue player column is cut by
+them.
 
-Reaching the pillar animation in the oracle: it is reachable (deterministic run,
-randmem off, ~frame 3160 during the load) but the WIDE-GAP phase both captures
-happen to show did not occur in 170 sampled frames of that run, so the two runs
-are not picking the same animations. A frame-matched comparison needs the state
-forced, not waited for.
+**THE UNRESOLVED CONTRADICTION.**  In scheme $08: fifth beats PF0 when alone,
+PF0 beats the player, and the player beats fifth -- a cycle no per-source rank can
+express.  Either a player's presence changes the fifth-player arbitration in real
+GTIA, or one of those two columns measures something subtler than I think.
+RESOLVE THIS BEFORE TOUCHING hdl/gtia_priority.sv (where step 5 walks the fifth
+player as src 7 = PF3, which is what makes it lose to PF2 in scheme $04).
 
-## BallBlazer windscreen — FIXED (Simon confirmed 2026-08-18)
-Fixed by **72040fe4, the GTIA mode-9 16-luminance fix** -- not by anything found
-in the long hunt that followed it.  The windscreen is a finely luminance-shaded
-object on a mode-9 screen; while the palette folded bit 0 away, adjacent
-luminances collapsed in pairs and the panel merged into the craft around it.
-Restoring all sixteen levels brought it back.
-
-**The lesson, which cost most of a day: after landing a fix, RE-CHECK THE OPEN
-SYMPTOMS AGAINST IT BEFORE HUNTING FURTHER.**  The luminance fix went into the
-bitstream, and every subsequent measurement was made against that already-fixed
-board -- which is exactly why the man, the P/M content, the mode-9 priority and
-the playfield all matched on every axis.  Matching everywhere is evidence the bug
-is already gone, not evidence the instruments are too blunt.  I read it the
-second way for six ticks.
-
-What the hunt did leave behind, all of it useful and kept:
-  * `6502 dump $ADDR [N]` (d23e0a04) -- bulk guest-memory dump; content comparison
-    against the reference is now cheap.
-  * `tools/gtia_ramp_scene.py`, `gr8_hires_probe.py`, `gtia_prior_probe.py`,
-    `pm_vertical_probe.py` -- static probes for mode-9 luminance, GR.8 hi-res,
-    per-nibble priority and P/M vertical extent.
-  * The measured method limits: Altirra fringes GTIA-mode pixels (hue is safe,
-    luminance and run widths are not); write-only registers read back
-    unreliably; frame numbers are not reproducible, anchor by hue populations.
-  * A frame-matched comparison technique that actually works.
-
-## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
-All on hardware 2026-08-17.  The one that produced the reported symptom was the
-LAST one; the first two are real defects found on the way to it.
-
-- **XL plane TEAR (89d143ad) — the reported fault.**  Every moving object split
-  at one screen row, offset by exactly one frame of motion, top band newer, the
-  row constant within a run and different on every launch.  `frame_done` fed to
-  `xl_buffer_ctrl` was ANTIC's VBI, which fires when the DISPLAY LIST ENDS, while
-  the writeback's row index comes from the raster timer and wraps independently.
-  Any display list short of the nominal 192 lines makes the 192 rows between two
-  publishes span TWO frames -- rows first..191 from one, 0..first-1 from the next
-  -- so the published slot is torn at `first`.  BallBlazer's list is ~144 lines,
-  the probe's 120, BASIC's happens to align, which is why the machine looked
-  clean at idle and tore differently on each launch.  Fix: publish on the
-  writeback's own row wrap, so each slot is a contiguous pass by construction.
-- **GTIA mode 9 dropped the fifth player (59395858).**  A PM5 missile leaves
-  gtia_priority as PF3; gtia_stage classed that as playfield and let the GTIA
-  mode recolour it out of existence.  Bisect: PRIOR $04/$14/$44 all drew the
-  missiles, only $54 -- what the game sets -- failed.
-- **Two run slots per player (26c6f1dd).**  gtia_obj_walk dropped the third
-  concurrent match at quad width.  NSLOT = 8.
-- **Close-window parks (f06f9da2)** instead of cold-booting, so the disk-seek
-  noise no longer outlives the window.
-
-OPEN: none of it confirmed by eye.  The tear is verified with
-tools/tear_probe_scene.py -- one full-height player whose HPOS advances by a
-KNOWN step per frame, so the offset is self-calibrating -- which now measures the
-bar IDENTICAL either side of the boundary at four different positions, where it
-used to be offset by exactly the step.  But an automated detector CANNOT verify
-the game's own intro: its slanted ramp edges trip every single-frame edge/width
-filter at the same rate before and after a fix.  The probe is the automated test;
-the intro needs a human.
-
-Instrument notes worth keeping: use `graboverlay`, never `fbgrab` (that reads the
-DESKTOP plane and the emulator window is an alpha=0 hole in it, so it is black at
-any speed); `xlboot -a` for authentic drive timing, without which the intro loads
-too fast to cycle its animations; and always run a positive control before
-trusting a detector.
+NEXT: sweep both columns for every scheme, add a PF3 playfield source (needs a
+text mode; mode E cannot produce one), find a rule that explains every cell, add
+a sim test asserting the whole table, fix, run the ACID800 sim suite, then a
+bitstream gated on WNS >= 0 and re-run the probe on hardware.
 
 ## antic-sally-interop — phase 6 (one clock domain) landed; residuals
 The Atari realm (antic2 + GTIA + both POKEYs) runs NATIVE on clk_sally
