@@ -524,20 +524,61 @@ void xl_eject_live(void)
 /* Eject AND park: hold the 6502 in reset, then drop the media.  This is what
  * closing the emulator window wants and neither neighbour provides.
  * xl_eject_live() leaves the guest running (it keeps burning cycles and can keep
- * making sound with no window to show for it); xl_boot(NULL,0) stops it but
- * COLD-BOOTS to get there, and a coldstart with nothing mounted spends the guest
- * OS's own D1: boot-poll timeout buzzing before it reaches BASIC.  That poll is
- * authentic -- a real XL does it at switch-on -- but it belongs on OPEN, where it
- * reads as the machine starting up.  On close it is just noise after the window
- * has gone.  Parking is silent because no 6502 code runs at all: the next open
- * clears the hold (xl_boot/xl_reset both manage SALLYRST bit0). */
+ * making sound with no window to show for it); a plain xl_boot(NULL,0) stops it
+ * but spends the guest OS's own D1: boot-poll timeout buzzing before it reaches
+ * BASIC.  That poll is authentic -- a real XL does it at switch-on -- but it
+ * belongs on OPEN, where it reads as the machine starting up.
+ *
+ * IT MUST STILL COLD RESET, and an earlier version of this that merely held the
+ * CPU in reset was WRONG.  upload_image scrubs $1000-$CFFF and $D800-$FFFF, but
+ * it CANNOT touch $0000-$0FFF: sally_rom_loader only claims awaddr[15:12] != 0,
+ * because the low 4K of the GP0 aperture is the register file.  So the OS
+ * variable page -- the power-up signature $033D-$033F, the interrupt vectors,
+ * COLDST -- survives every launch.  Holding the CPU in reset left the previous
+ * game's vectors there ALONGSIDE a valid signature (measured on hardware:
+ * $5C/$93/$25), so the next launch WARM-started and ran the old game's code:
+ * launching Despatch Rider after BallBlazer started DR and then fell back into
+ * BallBlazer.  Cold-resetting here is what makes the next launch safe, because
+ * the guest OS's own coldstart is the only thing that rewrites that page.
+ *
+ * The buzz is avoided WITHOUT skipping the reset: claim D1: for the poll.  With
+ * no image mounted xl_sio_bus_poll answers 0x8A, "device does not respond",
+ * which is what an empty bus says -- the OS abandons the disk boot at once and
+ * drops into BASIC.  0x8B would be exactly wrong: that says a drive IS there and
+ * refused, so the OS retries, and the retries ARE the noise. */
 static void xl_unmount_all(void);
+static void xl_sio_bus_claim(uint8_t mask);
+int         xl_reset(int basic);
+static void xl_sio_bus_task(void *arg);
+static int  g_bus_task_started;
+
+/* Cold reset to BASIC with nothing mounted, WITHOUT the boot-poll noise.
+ * Shared by xl_park() and xl_boot(NULL,0): both mean "stop the guest and go back
+ * to BASIC", and neither is a switch-on, so neither should sound like one. */
+static void xl_quiet_reset_to_basic(void)
+{
+    /* Answer D1: ourselves so the poll fails fast instead of timing out on a bus
+     * with nothing on it.  An unmounted drive answers 0x8A, "device does not
+     * respond" -- what an empty bus says -- and the OS abandons the disk boot at
+     * once.  0x8B would be exactly wrong: that says a drive IS there and refused,
+     * so the OS retries, and the retries ARE the noise.  The claim is transient:
+     * the next mount clears the whole ownership table before claiming its own. */
+    if (!g_bus_task_started) {
+        g_bus_task_started = 1;
+        xTaskCreate(xl_sio_bus_task, "siobus", 512, NULL,
+                    configMAX_PRIORITIES - 2, NULL);
+    }
+    xl_sio_bus_claim(0x01);
+    xl_reset(1);        /* the reset stub wipes RAM, so the next launch is clean */
+}
 
 void xl_park(void)
 {
-    GP0_SALLYRST = (GP0_SALLYRST & ~1u) | 1u; __asm__ volatile("dsb");
+    uint32_t sel = GP0_SALLYRST & ~1u;
+    GP0_SALLYRST = sel | 1u; __asm__ volatile("dsb");
     xl_unmount_all();
-    klog("[xl] parked; media ejected, 6502 held in reset\r\n");
+    xl_quiet_reset_to_basic();
+    klog("[xl] parked; media ejected, quiet cold reset to BASIC\r\n");
 }
 
 static void xl_unmount_all(void)
@@ -1166,9 +1207,9 @@ int xl_boot(const char *path, int drive)
     if (!path) {                        /* eject everything, back to BASIC */
         GP0_SALLYRST = sel | 1u; __asm__ volatile("dsb");
         xl_unmount_all();
-        int rc = xl_reset(1);           /* fresh image, OPTION released -> READY */
-        if (rc == 0) klog("[xl] cold boot, no media\r\n");
-        return rc;
+        xl_quiet_reset_to_basic();      /* fresh image, OPTION released -> READY */
+        klog("[xl] cold boot, no media\r\n");
+        return 0;
     }
 
     if (drive < 1 || drive > 8) return -22;
@@ -1215,9 +1256,8 @@ int xl_boot(const char *path, int drive)
      * first 17 sectors THROUGH the OS (and so through the SIOV stub) and only
      * then switches to the bus, so disabling one would break it. */
     xl_sio_bus_claim((uint8_t)(1u << (drive - 1)));
-    { static int bus_task_started;
-      if (!bus_task_started) {
-          bus_task_started = 1;
+    { if (!g_bus_task_started) {
+          g_bus_task_started = 1;
           xTaskCreate(xl_sio_bus_task, "siobus", 512, NULL,
                       configMAX_PRIORITIES - 2, NULL);
       } }
