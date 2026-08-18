@@ -1,5 +1,18 @@
 # Next Steps / Open Work — consolidated
 
+## Per-application preferences — LANDED; right-click now works too (97f72cbd)
+The right-click that opens the context menu had NEVER worked on the board, which
+is why "Preferences..." looked missing.  Not xtmouse -- it maps SDL_BUTTON_RIGHT
+to bit 1 and sends it.  Two breaks in the board desktop, both fixed:
+  * the AES request was `bmask/bstate = 1/1`, i.e. LEFT-button-down only, so a
+    right-click failed `(ev.button & 1) == 1` and was dropped before any handler;
+  * `ctx_menu_at()` had **no caller** -- the host twin has the wiring via a side
+    flag its SDL layer sets, the board version never got the equivalent and threw
+    the button away with `(void)mb`.
+Now: ask for any button state and dispatch on the button gemd actually reports
+(`mb & 2` -> context menu).  Matching any state also delivers releases, hence the
+`&& mb` guard.  Deployed; the desktop restarted cleanly.
+
 ## Per-application preferences — LANDED, one step needs a mouse
 Right-click an item -> "Preferences..." opens `/OS/bin/prefs` with that item's
 leaf name as the settings DOMAIN, and the choice lands in the desktop's own
