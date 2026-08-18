@@ -115,6 +115,39 @@ which is buildable but awkward: the screen bitmap at $B050 runs 6320 bytes to
 $C8FF, crossing $C000, so a .xex cannot write all of it without banking the ROM
 out first.
 
+## P/M vertical extent — a promising lead, and a probe flaw to fix first
+Found while clearing the windscreen: the non-GTIA priority modes disagree.
+`tools/pm_vertical_probe.py` (new) makes the vertical structure KNOWN -- P0 lit
+in 16-row blocks from table row 0, missiles in the same blocks shifted down 8, so
+the two interleave and cannot be confused -- and `SOLID=1` fills all 256 table
+rows to measure the coverage window directly.
+
+Same .xex, PRIOR $14, read by HUE:
+
+    ORACLE  solid player   rows 0..223  (128 of 224)
+            solid missiles rows 0..223  (224 of 224)
+    BOARD   solid player   rows 96..183 ( 72 of 192)
+            solid missiles none at all
+
+Looking at the board capture explains the shape of it: our objects appear ONLY
+BELOW the playfield band, never over it.  The reference draws them across the
+whole frame, playfield included.  With PRIOR $14 (priority select 4) players
+outrank PF2, so they should show over it.
+
+**BUT FIX THE PROBE BEFORE TRUSTING THE NUMBERS.**  In ANTIC mode $F a ZERO pixel
+takes **COLPF2**, not COLBK -- the probe set COLBK/COLOR4 and left COLPF2 at the
+OS default, so the "black playfield" came out bright blue and objects over it are
+hard to read.  The docstring's premise was wrong; the file now says so.  Next:
+set COLPF2 explicitly, re-run both sides, and only then decide whether "no
+objects over the playfield" is real.  (The probe already writes hardware
+registers as well as OS shadows -- shadow-only is a silent way for a probe to
+render nothing and be believed.)
+
+Also unexplained and worth keeping: with the STRIPED pattern the board DID render
+missiles (blocks at 104/136/168) while with SOLID data it renders none.  That is
+internally inconsistent, so at least one of the two measurements is being
+misread.  Resolve it before calling anything a defect.
+
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the
 LAST one; the first two are real defects found on the way to it.
