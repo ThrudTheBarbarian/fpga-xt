@@ -70,54 +70,50 @@ happen to show did not occur in 170 sampled frames of that run, so the two runs
 are not picking the same animations. A frame-matched comparison needs the state
 forced, not waited for.
 
-## BallBlazer windscreen — every hypothesis so far is dead; next is a state transplant
+## BallBlazer windscreen — we match on EVERY axis I can measure
 Simon (authoritative): "Ours doesn't have the windscreen.  On the animation where
 the man waves, Altirra DOES have the windscreen, then removes it to let the man
 wave" -- present again before and after.
 
-WHAT IS ESTABLISHED (all measured, all frame-matched or static):
-- The bitmap is STATIC (screen-RAM hash constant, DL $BA00, LMS $B050 fixed).
-  The whole animation is P/M motion.
-- P/M table located BY CONTENT (sparsity scan over every 2K boundary -- sprite
-  tables are mostly zero, code is dense): **PMBASE = $00**, P0 data at $0400 and
-  P1 at $0500, 128 non-zero bytes each, **missiles/P2/P3 entirely EMPTY**.
-  peek($D407) lied ($FF -> $F800, which dumps as 6502 code); antic() was right.
-- The man matches EXACTLY at a frame-matched phase: 562 px of hue 5 in a 62x26
-  box on both sides.
-- PRIOR $54 with a uniform nibble matches (playfield/players/fifth player all
-  within 0.2% after scaling for the capture windows).
+**New tool: `6502 dump $ADDR [N]`** (dbg6502.c) -- bulk hex dump of GUEST memory
+through the ANTIC DMA peek port.  The one-byte `mem 43C00204 8000xxxx; mem
+43C00418` recipe costs an ssh round trip and a process spawn PER BYTE, which made
+content comparison impractical; the loop now lives in the tool.  It flushes every
+line (the output buffer silently truncated a 256-byte dump at ~57 bytes before
+that), and always clears OVL_BASE, since the peek hijacks ANTIC's DMA and glitches
+the picture while it runs.  Put the sampling loop on the BOARD (`sh /tmp/x.sh`)
+to drop the per-sample ssh latency too.
 
-**HYPOTHESIS DISPROVEN THIS TICK.**  PRIOR $54 is priority select 4 (PF0/PF1
-above players), so a playfield feature might have shown through the sweeping
-craft on one side and not the other.  `tools/gtia_prior_probe.py` (new) tests it
-properly -- 16 horizontal bands, one nibble value each, crossed by a quad-width
-solid player, read by HUE (playfield hue 6 from COLBK, player hue 3) so the
-fringing cannot corrupt it.  Result, same .xex on both sides:
+**RESULT: the player/missile CONTENT is byte-identical.**  Sampled the board's
+P0/P1 strips ($0400/$0500) 60 times across the intro and the oracle's across
+3200 frames, then compared SETS of SHA1s -- phase-robust, no frame matching
+needed.  TEN distinct shapes appear on both sides with identical hashes:
 
-    PRIOR $54   player wins on ALL 16 nibbles, no playfield under the bar   BOTH
-    PRIOR $44   player wins on ALL 16 nibbles                              BOTH
+    1c70571e  24a2c0a0  33e1d04f  731ed34a  aea6b1b7
+    b376885a  eb2839bb  f65cfda2  f9bf26b6  ff53a40a
 
-Identical.  In GTIA mode 9 the player is above the playfield for every nibble on
-both sides, so the windscreen is NOT a playfield feature differently occluded by
-the craft.
+So our 6502 computes the same sprite data the reference does, and the remaining
+per-side shapes are sampling artefacts (each side sees a few the other's sampling
+missed).
 
-**NO LIVE HYPOTHESIS REMAINS.**  Given only P0/P1 carry data, the windscreen must
-be drawn by P0 or P1 at some point in the animation -- and our P/M rendering
-matches for the man.
+**Everything measurable now matches:**
+  * P/M table content -- 10 shapes byte-identical (above)
+  * P/M rendering -- the man is 562 px in a 62x26 box on both, frame-matched
+  * mode-9 playfield priority -- player wins all 16 nibbles, both sides (330ee374)
+  * screen bitmap -- static, same address, same display list
+  * mode-9 luminance -- fixed and verified on hardware (72040fe4)
 
-NEXT, and it is the definitive experiment: **TRANSPLANT THE WHOLE MACHINE STATE.**
-Dump the oracle's 64K of RAM at a windscreen-present moment plus the register set
-(PMBASE $00, DMACTL $3E, GRACTL $03, PRIOR $54, COLBK, COLPM0/1, COLPF0-3,
-HPOSP0/1, SIZEP0/1, SDLSTL), emit a .xex that loads that RAM, sets those
-registers and parks the CPU, then render the SAME file on both sides.  Identical
-input means any difference is ours, with no animation phase, no timing and no
-fringing in the way (hue-level comparison only).  GRAFP does not need
-transplanting -- with single-line P/M DMA it comes from the table, which is in the
-RAM image.
-
-Worth asking Simon for: which sub-animation, and whether a photo of the
-windscreen-present frame on the board exists -- his eye is the only oracle for
-"windscreen present" and my three phase errors all came from guessing it.
+**I cannot localise this further with the instruments I have.**  What would help,
+in order of value:
+  1. A PHOTO of the board showing the animation where the windscreen should be --
+     his eye is the only oracle for "windscreen present", and all three phase
+     errors in this hunt came from me guessing which frame that was.
+  2. Which sub-animation, so the search is not over the whole intro.
+Without one of those, the next step is the whole-state transplant (dump the
+oracle's 64K + register set into a .xex, park the CPU, render on both sides),
+which is buildable but awkward: the screen bitmap at $B050 runs 6320 bytes to
+$C8FF, crossing $C000, so a .xex cannot write all of it without banking the ROM
+out first.
 
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the

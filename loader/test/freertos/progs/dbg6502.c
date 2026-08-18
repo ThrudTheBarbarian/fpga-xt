@@ -54,6 +54,12 @@
 #define DBG_STRM_RDLO  (DBG + 0x70)     /* R: entry[31:0]  = PC(0..15) | A<<16 | X<<24 */
 #define DBG_STRM_RDHI  (DBG + 0x74)     /* R: entry[63:32] = Y | SP<<8 | P<<16 | IR<<24 */
 #define CTRL_SALLYRST  (GP0 + 0x31Cul)
+/* 6502 RAM peek through the ANTIC DMA BRAM port (no extra port, no CDC -- see
+ * fpga_xt_top.sv).  OVL_BASE = {en, 15'b0, addr16}; while en=1 the DMA port
+ * reads mem[addr] instead of ANTIC's fetch, so THE XL PLANE GLITCHES for the
+ * duration and OVL_BASE must be cleared afterwards. */
+#define OVL_BASE       (GP0 + 0x204ul)
+#define OVL_DATA       (GP0 + 0x418ul)   /* [7:0] = byte, [31:16] = addr echo */
 
 static unsigned long rd(unsigned long a)            { return (unsigned long)sys_devmem(a, 0, 0); }
 static void          wr(unsigned long a, unsigned long v) { sys_devmem(a, v, 1); }
@@ -361,6 +367,8 @@ static void help(void)
     line("  6502 trace dump [N]     dump the last N ring entries oldest->newest (default 32)");
     line("  6502 trace <secs> [path]  stream a stop-the-world per-instruction trace to a file");
     line("                          (fidelity core; up to 128 MB ring keeps the crash tail; default /6502trace.bin)");
+    line("  6502 dump $A [N]        hex-dump N bytes of GUEST memory (default 256)");
+    line("                          (peeks via ANTIC's DMA port: the picture glitches while it runs)");
     line("  6502 diag               debug-block self-observability");
     line("  6502 PC=$A A=.. X=.. Y=.. SP=.. P=.. [go]   inject registers");
     line("");
@@ -539,6 +547,39 @@ void _app_entry(int argc, char **argv)
         sys_exit(0);
     }
 
+    /* 6502 dump $ADDR [N] -- bulk read of GUEST memory.
+     *
+     * The one-byte-at-a-time `mem 43C00204 8000xxxx; mem 43C00418` recipe is
+     * fine for a couple of bytes and useless for a couple of hundred: every
+     * byte costs an ssh round trip and a process spawn.  Comparing CONTENT
+     * against a reference emulator -- a player/missile table, a screen bitmap --
+     * needs hundreds of bytes at once, so the loop belongs here.
+     *
+     * The peek hijacks ANTIC's DMA port, so the picture glitches while this
+     * runs and OVL_BASE is ALWAYS cleared before returning, on every path. */
+    if (streq(cmd, "dump")) {
+        if (argc < 3) { on = 0; os("usage: 6502 dump $ADDR [N]\n"); flush(2); sys_exit(2); }
+        unsigned long a0 = parse_num(argv[2]) & 0xFFFF;
+        unsigned long n  = (argc >= 4) ? parse_num(argv[3]) : 256;
+        if (!n) n = 1;
+        if (n > 0x10000) n = 0x10000;
+        on = 0;
+        for (unsigned long i = 0; i < n; i++) {
+            unsigned long a = (a0 + i) & 0xFFFF;
+            if ((i & 15) == 0) { ohex(a, 4); os(": "); }
+            wr(OVL_BASE, 0x80000000ul | a);
+            unsigned long d = rd(OVL_DATA);
+            ohex(d & 0xFF, 2);
+            /* Flush EVERY line: the output buffer is small, and a 256-byte dump
+             * silently lost everything past ~57 bytes before this. */
+            if ((i & 15) == 15) { oc('\n'); flush(1); } else oc(' ');
+        }
+        if (n & 15) { oc('\n'); flush(1); }
+        wr(OVL_BASE, 0);                 /* release the DMA port */
+        flush(1);
+        sys_exit(0);
+    }
+
     if (streq(cmd, "diag")) {
         unsigned long d = rd(DBG_DIAG);
         on = 0;
@@ -583,7 +624,7 @@ void _app_entry(int argc, char **argv)
         }
         if (!did_assign) {
             on = 0; os("usage: 6502 status|core [turbo|fid]|halt|go|step [N]|break $A|break off|"
-                       "breakreset on|off|reset|basic|nobasic|watch $A [r|w|rw]|watch off|diag|"
+                       "breakreset on|off|reset|basic|nobasic|watch $A [r|w|rw]|watch off|dump $A [N]|diag|"
                        "trace on|off|dump [N]|<secs> [path]|"
                        "REG=VAL...   (6502 -h for details)\n");
             flush(2); sys_exit(2);
