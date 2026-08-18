@@ -70,83 +70,31 @@ happen to show did not occur in 170 sampled frames of that run, so the two runs
 are not picking the same animations. A frame-matched comparison needs the state
 forced, not waited for.
 
-## BallBlazer windscreen — we match on EVERY axis I can measure
-Simon (authoritative): "Ours doesn't have the windscreen.  On the animation where
-the man waves, Altirra DOES have the windscreen, then removes it to let the man
-wave" -- present again before and after.
+## BallBlazer windscreen — FIXED (Simon confirmed 2026-08-18)
+Fixed by **72040fe4, the GTIA mode-9 16-luminance fix** -- not by anything found
+in the long hunt that followed it.  The windscreen is a finely luminance-shaded
+object on a mode-9 screen; while the palette folded bit 0 away, adjacent
+luminances collapsed in pairs and the panel merged into the craft around it.
+Restoring all sixteen levels brought it back.
 
-**New tool: `6502 dump $ADDR [N]`** (dbg6502.c) -- bulk hex dump of GUEST memory
-through the ANTIC DMA peek port.  The one-byte `mem 43C00204 8000xxxx; mem
-43C00418` recipe costs an ssh round trip and a process spawn PER BYTE, which made
-content comparison impractical; the loop now lives in the tool.  It flushes every
-line (the output buffer silently truncated a 256-byte dump at ~57 bytes before
-that), and always clears OVL_BASE, since the peek hijacks ANTIC's DMA and glitches
-the picture while it runs.  Put the sampling loop on the BOARD (`sh /tmp/x.sh`)
-to drop the per-sample ssh latency too.
+**The lesson, which cost most of a day: after landing a fix, RE-CHECK THE OPEN
+SYMPTOMS AGAINST IT BEFORE HUNTING FURTHER.**  The luminance fix went into the
+bitstream, and every subsequent measurement was made against that already-fixed
+board -- which is exactly why the man, the P/M content, the mode-9 priority and
+the playfield all matched on every axis.  Matching everywhere is evidence the bug
+is already gone, not evidence the instruments are too blunt.  I read it the
+second way for six ticks.
 
-**RESULT: the player/missile CONTENT is byte-identical.**  Sampled the board's
-P0/P1 strips ($0400/$0500) 60 times across the intro and the oracle's across
-3200 frames, then compared SETS of SHA1s -- phase-robust, no frame matching
-needed.  TEN distinct shapes appear on both sides with identical hashes:
-
-    1c70571e  24a2c0a0  33e1d04f  731ed34a  aea6b1b7
-    b376885a  eb2839bb  f65cfda2  f9bf26b6  ff53a40a
-
-So our 6502 computes the same sprite data the reference does, and the remaining
-per-side shapes are sampling artefacts (each side sees a few the other's sampling
-missed).
-
-**Everything measurable now matches:**
-  * P/M table content -- 10 shapes byte-identical (above)
-  * P/M rendering -- the man is 562 px in a 62x26 box on both, frame-matched
-  * mode-9 playfield priority -- player wins all 16 nibbles, both sides (330ee374)
-  * screen bitmap -- static, same address, same display list
-  * mode-9 luminance -- fixed and verified on hardware (72040fe4)
-
-**I cannot localise this further with the instruments I have.**  What would help,
-in order of value:
-  1. A PHOTO of the board showing the animation where the windscreen should be --
-     his eye is the only oracle for "windscreen present", and all three phase
-     errors in this hunt came from me guessing which frame that was.
-  2. Which sub-animation, so the search is not over the whole intro.
-Without one of those, the next step is the whole-state transplant (dump the
-oracle's 64K + register set into a .xex, park the CPU, render on both sides),
-which is buildable but awkward: the screen bitmap at $B050 runs 6320 bytes to
-$C8FF, crossing $C000, so a .xex cannot write all of it without banking the ROM
-out first.
-
-## P/M vertical extent — a promising lead, and a probe flaw to fix first
-Found while clearing the windscreen: the non-GTIA priority modes disagree.
-`tools/pm_vertical_probe.py` (new) makes the vertical structure KNOWN -- P0 lit
-in 16-row blocks from table row 0, missiles in the same blocks shifted down 8, so
-the two interleave and cannot be confused -- and `SOLID=1` fills all 256 table
-rows to measure the coverage window directly.
-
-Same .xex, PRIOR $14, read by HUE:
-
-    ORACLE  solid player   rows 0..223  (128 of 224)
-            solid missiles rows 0..223  (224 of 224)
-    BOARD   solid player   rows 96..183 ( 72 of 192)
-            solid missiles none at all
-
-Looking at the board capture explains the shape of it: our objects appear ONLY
-BELOW the playfield band, never over it.  The reference draws them across the
-whole frame, playfield included.  With PRIOR $14 (priority select 4) players
-outrank PF2, so they should show over it.
-
-**BUT FIX THE PROBE BEFORE TRUSTING THE NUMBERS.**  In ANTIC mode $F a ZERO pixel
-takes **COLPF2**, not COLBK -- the probe set COLBK/COLOR4 and left COLPF2 at the
-OS default, so the "black playfield" came out bright blue and objects over it are
-hard to read.  The docstring's premise was wrong; the file now says so.  Next:
-set COLPF2 explicitly, re-run both sides, and only then decide whether "no
-objects over the playfield" is real.  (The probe already writes hardware
-registers as well as OS shadows -- shadow-only is a silent way for a probe to
-render nothing and be believed.)
-
-Also unexplained and worth keeping: with the STRIPED pattern the board DID render
-missiles (blocks at 104/136/168) while with SOLID data it renders none.  That is
-internally inconsistent, so at least one of the two measurements is being
-misread.  Resolve it before calling anything a defect.
+What the hunt did leave behind, all of it useful and kept:
+  * `6502 dump $ADDR [N]` (d23e0a04) -- bulk guest-memory dump; content comparison
+    against the reference is now cheap.
+  * `tools/gtia_ramp_scene.py`, `gr8_hires_probe.py`, `gtia_prior_probe.py`,
+    `pm_vertical_probe.py` -- static probes for mode-9 luminance, GR.8 hi-res,
+    per-nibble priority and P/M vertical extent.
+  * The measured method limits: Altirra fringes GTIA-mode pixels (hue is safe,
+    luminance and run widths are not); write-only registers read back
+    unreliably; frame numbers are not reproducible, anchor by hue populations.
+  * A frame-matched comparison technique that actually works.
 
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the
