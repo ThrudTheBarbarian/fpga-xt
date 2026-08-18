@@ -15,6 +15,8 @@
  * buttons carry full STATE (a lost packet skews the pointer a pixel, never a stuck button):
  *   u8  magic   'X'
  *   u8  buttons bit0 = left, bit1 = right, bit2 = middle  (STATE, not edges)
+ * All three reach clients: an edge on ANY of them injects a button event whose
+ * `button` field carries the whole 3-bit state, not just the left bit.
  *   s16 dx, dy  pointer delta
  *   s8  wheel   notches (+ = away/up)
  *   u8  pad
@@ -103,9 +105,19 @@ static void in_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
                 ev = (struct os_event){ OS_EV_MOTION, x, y, s_btn & 1, 0, 0, 0 };
                 xt_input_inject(&ev);
             }
-            if ((bt ^ s_btn) & 1) {                      /* left button edge */
-                ev = (struct os_event){ (bt & 1) ? OS_EV_BTN_DOWN : OS_EV_BTN_UP,
-                                        x, y, bt & 1, 0, 0, 0 };
+            /* ANY button edge, carrying the FULL state.  This used to test and
+             * report `& 1` only, so the RIGHT button never became an event at
+             * all -- xtmouse sent it, the wire carried it, and it died here.
+             * Everything downstream already handles the mask (gemd's route.c
+             * forwards ev->button verbatim; the AES matches it against
+             * bmask/bstate), so widening this one hop is what makes a
+             * right-click reach a client.  os_event.button is an int in the
+             * frozen ABI, so the mask fits without touching the struct. */
+            uint8_t chg = (uint8_t)((bt ^ s_btn) & 0x07);
+            if (chg) {
+                int down = (bt & chg) != 0;      /* this edge pressed something */
+                ev = (struct os_event){ down ? OS_EV_BTN_DOWN : OS_EV_BTN_UP,
+                                        x, y, bt & 0x07, 0, 0, 0 };
                 xt_input_inject(&ev);
             }
             s_btn = bt;
