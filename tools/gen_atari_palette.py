@@ -1,10 +1,26 @@
 #!/usr/bin/env python3
 """gen_atari_palette.py — generate hdl/palette/atari_ntsc.hex (256 x RGB888).
 
-The Atari colour byte is hue[7:4] : luma[3:1] : x[0] (bit 0 ignored, so entries
-come in identical pairs).  hue 0 = greyscale; hues 1..15 step 24 deg around the
-NTSC colour wheel.  We build each colour in YIQ (luma + chroma vector at the
-hue angle) and convert to RGB with the standard NTSC matrix.
+The Atari colour byte is hue[7:4] : luma[3:0].  hue 0 = greyscale; hues 1..15
+step 24 deg around the NTSC colour wheel.  We build each colour in YIQ (luma +
+chroma vector at the hue angle) and convert to RGB with the standard NTSC
+matrix.
+
+ALL SIXTEEN LUMINANCES ARE DISTINCT, and that is not a detail.  A COLOUR
+REGISTER ignores bit 0 -- gtia_reg_file masks it on the write, which is where
+the hardware drops it -- but GTIA MODE 9 does not go through a register: the
+screen nibble is dropped straight into the luminance field, which is the whole
+reason the mode is "16 shades" when the registers only reach 8.  This table
+used to fold bit 0 away, so mode 9 rendered eight shades in pairs: measured
+2026-08-18 with tools/gtia_ramp_scene.py (8 colours of 8 px where the mode
+promises 16 of 4), and visible in BallBlazer's pre-title screen as pillars
+whose dim end collapsed into two shades against the reference's four.
+
+The scale is luma/14, not luma/15, so that every EVEN entry keeps exactly the
+RGB it had -- the even codes are the ones a register can produce, they are what
+the calibration below was set against, and re-normalising would have quietly
+darkened the whole machine by up to 7%.  $xF clamps onto $xE at the top, where
+this palette is already clipping.
 
 HUE0 (phase of hue 1) is set so hue 1 = gold and hue 9 = the iconic GR.0 blue.
 Prints reference hues so the wheel can be sanity-checked, then writes the hex.
@@ -29,8 +45,8 @@ def gen(hue0_deg, sat, contrast=1.0):
     pal = []
     for cr in range(256):
         hue = (cr >> 4) & 0xF
-        lum = (cr >> 1) & 0x7          # bit0 ignored -> identical pairs
-        y = (lum / 7.0) * contrast
+        lum = cr & 0xF                 # all 16 levels: mode 9 feeds this directly
+        y = min(1.0, lum / 14.0) * contrast
         if hue == 0:
             i = q = 0.0
         else:
@@ -46,7 +62,9 @@ def gen(hue0_deg, sat, contrast=1.0):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--hue0", type=float, default=25.0, help="phase of hue 1 (deg)")
+    # 340 is the SHIPPED calibration -- the default has to reproduce the committed
+# hex, or a regeneration silently repaints the whole machine.
+    ap.add_argument("--hue0", type=float, default=340.0, help="phase of hue 1 (deg)")
     ap.add_argument("--sat",  type=float, default=0.32)
     ap.add_argument("--out",  default=os.path.join(os.path.dirname(__file__),
                                                    "..", "hdl", "palette", "atari_ntsc.hex"))

@@ -4,8 +4,15 @@
 
 `hdl/palette_lut.sv` is a 256-entry × 24-bit RAM. The address is the
 8-bit Atari hue:luma value coming out of `color_resolver`
-(bits[7:4] = hue 0..15, bits[3:1] = luma 0..7, bit[0] mirrors luma's
-LSB and is otherwise ignored). The data is straight RGB888.
+(bits[7:4] = hue 0..15, bits[3:0] = luma 0..15). The data is straight
+RGB888.
+
+All sixteen luminances are distinct. A colour *register* has no bit 0 —
+`gtia_reg_file` masks it on the write, where the hardware drops it — so
+register colours only ever reach the eight even entries. GTIA mode 9 does
+not go through a register: the screen nibble lands straight in the
+luminance field, which is why that mode gives sixteen shades where the
+registers give eight, and why the odd entries have to exist.
 
 The TMDS / DVI scan-out path reads `palette_lut[resolved_color]` once
 per pixel-clock and feeds the 24-bit result into the encoder.

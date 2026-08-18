@@ -1401,6 +1401,13 @@ build/tb_xl_publish.vvp: tb_xl_publish.sv $(HDL_DIR)/xl_buffer_ctrl.sv \
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_xl_publish \
 	    $(HDL_DIR)/xl_buffer_ctrl.sv $(HDL_DIR)/cdc_sync_bit.sv tb_xl_publish.sv
 
+gtia_lum16: build/tb_gtia_lum16.vvp
+	@vvp -N $<
+
+build/tb_gtia_lum16.vvp: tb_gtia_lum16.sv $(HDL_DIR)/gtia_special.sv $(HDL_DIR)/gtia_reg_file.sv $(HDL_DIR)/palette/atari_ntsc.hex | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_lum16 \
+	    $(HDL_DIR)/gtia_special.sv $(HDL_DIR)/gtia_reg_file.sv tb_gtia_lum16.sv
+
 gtia_special: build/tb_gtia_special.vvp
 	@vvp -N $<
 

@@ -163,15 +163,23 @@ module gtia_reg_file (
                     5'h0F: grafp2 <= wdata;
                     5'h10: grafp3 <= wdata;
                     5'h11: grafm  <= wdata;
-                    5'h12: colpm0 <= wdata;
-                    5'h13: colpm1 <= wdata;
-                    5'h14: colpm2 <= wdata;
-                    5'h15: colpm3 <= wdata;
-                    5'h16: colpf0 <= wdata;
-                    5'h17: colpf1 <= wdata;
-                    5'h18: colpf2 <= wdata;
-                    5'h19: colpf3 <= wdata;
-                    5'h1A: colbk  <= wdata;
+                    // A COLOUR REGISTER HAS NO BIT 0.  The luminance field a
+                    // register can drive is [3:1]; the DAC's low bit exists but
+                    // no register reaches it, which is why the registers give 8
+                    // shades and GTIA mode 9 -- whose nibble bypasses the
+                    // registers entirely -- gives 16.  The palette carries all
+                    // 16 levels for the mode's sake, so the drop has to happen
+                    // HERE, where the hardware drops it; leaving it to the
+                    // palette would fold mode 9's odd shades away with it.
+                    5'h12: colpm0 <= wdata & 8'hFE;
+                    5'h13: colpm1 <= wdata & 8'hFE;
+                    5'h14: colpm2 <= wdata & 8'hFE;
+                    5'h15: colpm3 <= wdata & 8'hFE;
+                    5'h16: colpf0 <= wdata & 8'hFE;
+                    5'h17: colpf1 <= wdata & 8'hFE;
+                    5'h18: colpf2 <= wdata & 8'hFE;
+                    5'h19: colpf3 <= wdata & 8'hFE;
+                    5'h1A: colbk  <= wdata & 8'hFE;
                     5'h1B: prior  <= wdata;
                     5'h1C: vdelay <= wdata;
                     5'h1D: gractl <= wdata;
