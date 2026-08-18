@@ -3398,6 +3398,11 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
          * never calls SIOV, so it needs the serial-bus drive's rotational
          * pacing or it is not paced at all. */
         g_sio_rot         = (uint32_t)(a0 != 0);
+        /* The stub's bus tone is pitched from this, and it reads the value
+         * BEFORE its doorbell -- so publish now, or the first sector of the
+         * load bleeps at the last launch's rate. */
+        extern void xl_sio_publish_pitch(void);
+        xl_sio_publish_pitch();
 #endif
         return 0;
     }

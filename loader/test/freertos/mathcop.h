@@ -128,6 +128,11 @@
                                          * (6502 falls through to real SIO),
                                          * bit0 = data DELIVERED direct to BRAM
                                          * via the ROM window (DBUF >= $1000) */
+#define MC_OFF_SIO_AUDF     0x0006      /* u8: AUDF4 for the stub's bus tone.
+                                         * The A9 owns it because the A9 is what
+                                         * knows the modelled serial rate, so the
+                                         * pitch tracks a US Doubler without the
+                                         * 6502 stub knowing what a baud is. */
 #define MC_OFF_SIO_DCB      (MC_OFF_SLOTS)          /* 12-byte Atari DCB copy */
 #define MC_OFF_SIO_DATA     (MC_OFF_SLOTS + 0x80)   /* <= 256 B sector payload */
 #define MC_SIO_NOTMINE      0x80

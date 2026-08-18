@@ -22,13 +22,42 @@
 ;   $40-$4B    dcb copy ($0300-$030B)
 ;   $C0-$1BF   sector payload (A9 to stub, for a page-copied read)
 ;   $03        SIO status byte (A9 to stub; 1 = ok, $8x/$9x = error)
+;   $06        AUDF4 for the bus tone (A9 to stub), computed from the ACTUAL
+;              serial rate -- see the sound note below
 ;   $04        flags (A9 to stub). bit7 = NOT MINE (fall through to real SIO),
 ;              bit0 = data already DELIVERED to BRAM (DBUF >= $1000; no copy)
+;
+; SERIAL-BUS SOUND. The real OS makes the bus audible while a transfer is in
+; flight (gated on SOUNDR, $41) and the pitch you hear IS the data rate, so a
+; US Doubler load sounds higher than a stock 1050. We have no serial waveform to
+; listen to -- the A9 answers the mailbox directly -- so the stub SYNTHESISES
+; the same cue - tone on before the doorbell, off after the reply, with AUDF from
+; the A9 at mailbox $06 (it knows the modelled baud, so the pitch tracks it for
+; free). The duration is right for nothing -- the 6502 is spinning in `wait` for
+; exactly as long as the A9 models the transfer to take, so an authentic-speed
+; load bleeps per sector and a snappy one is silent, which is what those two
+; settings mean.
+;
+; It costs POKEY channel 4 for the duration, which the real bus sound does not
+; (that is mixed in past the four voices). Gating on SOUNDR is what keeps this
+; honest - a title that scores its own loading screen zeroes SOUNDR and keeps all
+; four voices, exactly as it would on real hardware.
 ;
 ; Clobbers A/X/Y and BUFRLO/BUFRHI ($32/$33). Assemble - xa -o out.bin this.
 ; PIC; the trailing JMP operand [len-2] is fixed up to the original SIOV target.
 
 * = $0000
+
+    ; ---- bus tone on (SOUNDR = 0 means the program asked for silence) ------
+    lda $41
+    beq nosound
+    lda #$06
+    sta $D5CD                   ; index = MC_OFF_SIO_AUDF
+    lda $D5CE
+    sta $D206                   ; AUDF4 - pitch, from the modelled baud
+    lda #$A8
+    sta $D207                   ; AUDC4 - pure tone, half volume
+nosound:
 
     ; ---- request - dcb -> mailbox $40, then the magic byte at $05 ----------
     lda #$40
@@ -77,6 +106,11 @@ rcopy:
     bne rcopy
 
 done:
+    lda $41                     ; only OUR tone gets silenced - a title that set
+    beq quiet                   ; SOUNDR=0 keeps every voice it had
+    lda #$00
+    sta $D207                   ; bus tone off - the transfer is over
+quiet:
     lda #$03
     sta $D5CD                   ; index = MC_OFF_SIO_STATUS
     lda $D5CE
@@ -85,4 +119,9 @@ done:
     rts
 
 notmine:
+    lda $41
+    beq quiet2
+    lda #$00
+    sta $D207                   ; not ours - silence before the real bus speaks
+quiet2:
     jmp $FFFF
