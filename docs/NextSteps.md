@@ -70,41 +70,45 @@ happen to show did not occur in 170 sampled frames of that run, so the two runs
 are not picking the same animations. A frame-matched comparison needs the state
 forced, not waited for.
 
-## BallBlazer "windscreen" — MEASURED, and it is a PRIOR problem
-Simon: Altirra shows a windscreen on the vehicles in every animation, opening
-when the man waves; ours appears in one sub-animation and never opens.
+## BallBlazer windscreen — SHARPENED (Simon corrected the symptom)
+Simon, 2026-08-18: "the man has been waving for a while.  The difference is that
+the windscreen is UP, and lowers/removes itself on Altirra, but doesn't on ours."
+So it is a PERSISTENCE bug -- an object we fail to remove -- not a missing one.
+The earlier reading ("we never open it") was wrong.
 
-Measured instead of eyeballed, by inverting BOTH renders back to Atari colour
-CODES (exact on both sides -- the board's plane grab and the oracle's screenshot
-use palette entries verbatim, 0 unmapped pixels), so the two become comparable
-without comparing colour:
+Measured by inverting BOTH renders to Atari colour CODES (exact both sides, 0
+unmapped px), which makes structure comparable without comparing colour:
 
-- The man IS drawn on our side, and he DOES open progressively: a foreign-hue
-  region on the craft grows 12x4 -> 12x6 -> 12x8 -> 14x20 -> 14x24 -> 26x24 ->
-  30x24 -> 50x28 -> 62x26 px across our frames, and every size we see also
-  occurs in the reference.  `/tmp/bb4/d07` shows him waving, arm raised.
-- What actually differs is TEXTURE GRANULARITY.  On the LucasFilm loading screen
-  the reference resolves detail one COLOUR CLOCK wide: 69-80% of the runs across
-  the craft band (median 75%, 78 frames).  Ours: 0-9% (median 0%, 34 frames).
-  The distributions do not overlap.  Four times too coarse -- exactly the ratio
-  between a hi-res pixel pair and a GTIA-mode pixel.
-- That screen is **ANTIC mode $F (GR.8 hi-res), 158 lines, DMACTL $3E, and NO
-  GTIA mode** in the reference -- a GTIA mode cannot produce a 2 px run at all.
-- Our GR.8 hi-res path is PERFECT IN ISOLATION.  `tools/gr8_hires_probe.py`
-  (new) on hardware: fill $AA -> 9855 runs of 1 px, $CC -> 4909 of 2 px,
-  $F0 -> 2440 of 4 px.  Single BITS resolve.
+- **The man is pixel-identical.**  EXACTLY 562 px in a 62x26 box on both sides
+  (ours x120..181 y127..152, reference x130..191 y143..168 -- the offset is just
+  the different frame crop).  He is not the bug and neither is his animation.
+- **Both screens are GTIA mode 9**, ~18 distinct codes all of hue 1, odd
+  luminances included (which is itself a nice confirmation of 72040fe4 -- before
+  that fix we could not have produced $13/$15/$17/$19/$1D at all).
+- **The difference is inside the hue-1 playfield.**  The reference resolves
+  detail ONE COLOUR CLOCK wide (2 px) across the craft -- e.g. $1B/$1F/$1B/$1F
+  alternating in 2 px runs -- where ours is blocky, 8 px runs of $17/$18/$19/$1A.
+  69-80% of reference craft-band runs are 2 px (median 75%, 78 frames) against
+  our 0-9% (median 0%, 34 frames); the distributions do not overlap.
+- Visually: ours has a SOLID panel beside the waving man; the reference has none
+  there and shows a finely striped craft body instead.  That is the windscreen,
+  still up.
 
-So we are not failing to render hi-res; we are rendering that screen AS IF A
-GTIA MODE WERE STILL SELECTED.  Prime suspect: PRIOR is stale/late on our side.
-The intro alternates between a GTIA-mode animation (PRIOR $54, the pillars) and
-this plain hi-res one, so a PRIOR update that lands a frame late -- or a
-per-scanline kernel write we latch differently -- would leave the GTIA mode on
-across the wrong screen.  That also explains Simon's "only in one specific
-sub-animation": the screen looks right only when PRIOR happens to be correct.
+ELIMINATED: our GR.8 hi-res path (tools/gr8_hires_probe.py on hardware resolves
+single BITS: $AA -> 9855 runs of 1 px, $CC -> 4909 of 2 px, $F0 -> 2440 of 4 px);
+a wrong GTIA mode (both sides ARE mode 9); the man/P-M objects.
 
-NEXT: read PRIOR during the logo screen on both sides -- oracle via bp_set at a
-known scanline, board via a watch on $D01B -- and compare when the write lands
-relative to the frame.
+OPEN ANOMALY worth understanding first: a GTIA-mode pixel is 2 CC = 4 px, so the
+reference's 2 px runs should be IMPOSSIBLE in mode 9, yet 75% of its craft runs
+are 2 px with six distinct playfield codes on a single row -- too many for GR.8
+hi-res as well.  Do not theorise further from pixels; read the machine state.
+
+NEXT (well-defined): pull the reference's SCREEN RAM + display list + register
+writes for those scanlines over the bridge, build a STATIC .xex that reproduces
+that screen exactly, and run the SAME file on the board.  Any difference is then
+ours, with no animation phase and no timing in the way.  This is the method that
+cracked the mode-9 fifth player (59395858).  Note bp_set is a PC breakpoint, not
+a scanline one -- use watch_set on $D01B / history, or reproduce statically.
 
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the
