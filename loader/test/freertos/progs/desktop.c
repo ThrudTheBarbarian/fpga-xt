@@ -2765,7 +2765,15 @@ void _app_entry(int argc, char **argv) {
             m1on = MU_M1; m1f = g_fs_exit ? 0 : 1;
             m1x = g_fspx; m1y = g_fspy; m1w = g_fspw; m1h = g_fsph;
         }
-        int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|m1on|(pend?MU_TIMER:0), 2,1,1,
+        /* bmask/bstate = 0/0: match ANY button state, so a RIGHT-click is delivered
+         * at all.  With the old 1/1 the AES only ever returned a LEFT-button-down
+         * event -- `(ev.button & 1) == 1` is false for button 2 -- so right-clicks
+         * were dropped before any handler could see them and the context menu was
+         * unreachable on the board.  (The host twin gets there by a side flag its
+         * SDL layer sets; gemd reports the real button in `mb` instead.)  The cost
+         * of matching any state is that RELEASES arrive too, so the handler below
+         * acts only when a button is actually down. */
+        int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|m1on|(pend?MU_TIMER:0), 2,0,0,
                            m1f,m1x,m1y,m1w,m1h, 0,0,0,0,0, msg, pend?40:0, 0,
                            &mx, &my, &mb, &ks, &key, &nc);
         if (r & MU_M1) {                             // crossed the edge of the picture
@@ -2872,13 +2880,16 @@ void _app_entry(int argc, char **argv) {
             if (msg[3]) sys_klog("[desk] SD inserted\n", 19);
             else        sys_klog("[desk] SD removed\n", 18);
         }
-        if (r & MU_BUTTON) {
+        if ((r & MU_BUTTON) && mb) {         /* mb == 0 is the release half: ignore it */
             /* WHICH window? gemd says (aes_event_win): the coordinates are window-LOCAL, so we
              * cannot tell from them — every window's content starts at 0,0. wind_find() is not
              * an option and must not be: a client has no z-order and no geometry. */
             int wh = aes_event_win();
             browser *b = (wh && wh != deskwin) ? br_of_window(wh) : NULL;
-            if (g_fswin && wh == g_fswin) {
+            if (mb & 2) {                    /* RIGHT button -> the context menu */
+                ctx_menu_at(mx, my);
+            }
+            else if (g_fswin && wh == g_fswin) {
                 int bx, by, bw, bh; fs_btn_rect(&bx, &by, &bw, &bh);
                 if (g_fs_exit && mx >= bx && mx < bx+bw && my >= by && my < by+bh)
                     xl_fullscreen_exit();
@@ -2886,7 +2897,7 @@ void _app_entry(int argc, char **argv) {
             else if (b)             br_click(b, mx, my);
             else if (wh == deskwin) desk_click(mx, my);
         }
-        (void)mb; (void)ks;
+        (void)ks;
     }
     if (g_rsc) rscload_free(g_rsc);
     registry_close(); ctx_db_close();
