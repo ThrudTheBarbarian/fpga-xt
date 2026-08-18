@@ -70,29 +70,41 @@ happen to show did not occur in 170 sampled frames of that run, so the two runs
 are not picking the same animations. A frame-matched comparison needs the state
 forced, not waited for.
 
-## BallBlazer windscreen — still open, but the oracle is back
-Altirra shows a windscreen on the vehicles in every animation, opening when the
-man waves; we show it in one sub-animation only and it never opens.  Likely
-another object dropped in a specific configuration, as the mode-9 fifth player
-was (59395858).  Method that worked there: reproduce the configuration in a
-STATIC scene and bisect PRIOR.
+## BallBlazer "windscreen" — MEASURED, and it is a PRIOR problem
+Simon: Altirra shows a windscreen on the vehicles in every animation, opening
+when the man waves; ours appears in one sub-animation and never opens.
 
-**The oracle now reaches the intro animations** (deterministic, randmem off,
-frames ~900-3200 during the load; `/tmp/vscan.py` keeps every frame with
-structure in the lower half). The windscreen is the RIGHT target for it, because
-Simon's claim is PERSISTENT -- "Altirra shows one in every animation, ours in
-one sub-animation and it never opens" -- so it can be tested statistically over
-many frames instead of needing a frame-matched pair, which is what defeated the
-middle-object comparison above.
+Measured instead of eyeballed, by inverting BOTH renders back to Atari colour
+CODES (exact on both sides -- the board's plane grab and the oracle's screenshot
+use palette entries verbatim, 0 unmapped pixels), so the two become comparable
+without comparing colour:
 
-**AltirraBridgeServer is now built** (`cmake -DALTIRRA_BRIDGE_SERVER=ON` in
-`~/src/AltirraSDL/build/macos-release`), which is what makes this tractable --
-the GUI never opened a bridge port.  BallBlazer boots under it headless and the
-windscreen is plainly visible around frame 1200.  Two traps measured: 
-`screenshot()` returns PNG bytes, not pixels; and a one-shot `gtia()`/`pmg()`
-dump reads `GRAFP*=$00, COLBK=$00` on a screen that is plainly not blank,
-because the game drives P/M and COLBK from a per-scanline kernel.  Break at a
-known scanline, or compare rendered geometry.
+- The man IS drawn on our side, and he DOES open progressively: a foreign-hue
+  region on the craft grows 12x4 -> 12x6 -> 12x8 -> 14x20 -> 14x24 -> 26x24 ->
+  30x24 -> 50x28 -> 62x26 px across our frames, and every size we see also
+  occurs in the reference.  `/tmp/bb4/d07` shows him waving, arm raised.
+- What actually differs is TEXTURE GRANULARITY.  On the LucasFilm loading screen
+  the reference resolves detail one COLOUR CLOCK wide: 69-80% of the runs across
+  the craft band (median 75%, 78 frames).  Ours: 0-9% (median 0%, 34 frames).
+  The distributions do not overlap.  Four times too coarse -- exactly the ratio
+  between a hi-res pixel pair and a GTIA-mode pixel.
+- That screen is **ANTIC mode $F (GR.8 hi-res), 158 lines, DMACTL $3E, and NO
+  GTIA mode** in the reference -- a GTIA mode cannot produce a 2 px run at all.
+- Our GR.8 hi-res path is PERFECT IN ISOLATION.  `tools/gr8_hires_probe.py`
+  (new) on hardware: fill $AA -> 9855 runs of 1 px, $CC -> 4909 of 2 px,
+  $F0 -> 2440 of 4 px.  Single BITS resolve.
+
+So we are not failing to render hi-res; we are rendering that screen AS IF A
+GTIA MODE WERE STILL SELECTED.  Prime suspect: PRIOR is stale/late on our side.
+The intro alternates between a GTIA-mode animation (PRIOR $54, the pillars) and
+this plain hi-res one, so a PRIOR update that lands a frame late -- or a
+per-scanline kernel write we latch differently -- would leave the GTIA mode on
+across the wrong screen.  That also explains Simon's "only in one specific
+sub-animation": the screen looks right only when PRIOR happens to be correct.
+
+NEXT: read PRIOR during the logo screen on both sides -- oracle via bp_set at a
+known scanline, board via a watch on $D01B -- and compare when the write lands
+relative to the frame.
 
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the
