@@ -1,9 +1,17 @@
 # Next Steps / Open Work — consolidated
 
-## Per-application preferences — LANDED; right-click now works too (97f72cbd)
+## Per-application preferences — LANDED; right-click needed THREE fixes
 The right-click that opens the context menu had NEVER worked on the board, which
 is why "Preferences..." looked missing.  Not xtmouse -- it maps SDL_BUTTON_RIGHT
-to bit 1 and sends it.  Two breaks in the board desktop, both fixed:
+to bit 1 and sends it.  THREE layers dropped it, all now fixed:
+  * **the kernel's UDP input path (967e8764)** -- `input_udp.c` tested
+    `(bt ^ s_btn) & 1` and reported `bt & 1`, so a right press produced NO EVENT
+    AT ALL.  Any edge on any of the three bits now injects an event carrying the
+    whole 3-bit state.  (Motion/wheel still report the left bit only, on purpose:
+    they drive drag/hover, and widening them would drag a window on a
+    right-button move.)  Everything between was already mask-aware -- gemd's
+    route.c forwards ev->button verbatim and the AES matches bmask/bstate.
+  * and two in the board desktop (97f72cbd):
   * the AES request was `bmask/bstate = 1/1`, i.e. LEFT-button-down only, so a
     right-click failed `(ev.button & 1) == 1` and was dropped before any handler;
   * `ctx_menu_at()` had **no caller** -- the host twin has the wiring via a side
