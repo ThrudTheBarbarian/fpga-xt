@@ -2415,15 +2415,27 @@ static void ctx_apply(int chosen, ctxrow *crows, int scope, browser *b, int tent
 }
 // The right-click entry point: resolve the scope/target, highlight it, build the
 // registry menu (+ the Show cascade), run it, dispatch the choice.
+// mx,my arrive WINDOW-LOCAL (gemd localises a click to the window it landed in),
+// which is what ctx_resolve wants -- but menu_popup positions in SCREEN space, so
+// the popup has to be given the click point translated by the window's work-area
+// origin.  Passing the local pair straight through drew the menu up in the
+// top-left corner, a window's-origin away from the icon that was clicked.
 static void ctx_menu_at(int mx, int my) {
     browser *b; int tentry, tdeskobj;
     int scope = ctx_resolve(mx, my, &b, &tentry, &tdeskobj);
     if (b && tentry >= 0 && (b->sel != tentry || b->selall)) { b->sel = tentry; b->selall = 0; wind_redraw_win(b->win); }
-    g_ctx_mx = mx; g_ctx_my = my;                        // browse popups open at the right-click point
+    int sx = mx, sy = my;
+    int wh = aes_event_win();
+    if (wh) {                                            // 0 = already screen space
+        int wx, wy, ww, whh;
+        wind_get(wh, WF_WORKXYWH, &wx, &wy, &ww, &whh);
+        sx += wx; sy += wy;                              // the desktop window sits at 0,0: a no-op there
+    }
+    g_ctx_mx = sx; g_ctx_my = sy;                        // browse popups open at the right-click point
     ctxrow crows[24]; menu_item items[24], show[12]; int nshow;
     int n = ctx_build_items(scope, crows, 24, items, show, &nshow, b);
     if (n <= 0) return;
-    int chosen = menu_popup(items, n, mx, my);
+    int chosen = menu_popup(items, n, sx, sy);
     ctx_apply(chosen, crows, scope, b, tentry, tdeskobj);
 }
 
