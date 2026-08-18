@@ -8,6 +8,19 @@ hue angle) and convert to RGB with the standard NTSC matrix.
 
 HUE0 (phase of hue 1) is set so hue 1 = gold and hue 9 = the iconic GR.0 blue.
 Prints reference hues so the wheel can be sanity-checked, then writes the hex.
+
+DO NOT "FIX" THIS PALETTE TO MATCH ALTIRRA.  Altirra's default palette renders
+hue 1 as olive/yellow-green where ours renders it gold, so BallBlazer's intro
+comes out green in the emulator and gold on the board.  GOLD IS CORRECT: hue 1
+is "gold" in Atari's own hue table, the intro is documented as a gold title
+sequence over a dark reddish ground, and the green appearance is an artifact of
+one NTSC decoding model.  This calibration is deliberate; the emulator is the
+deviation, not us.  (2026-08-18: measured identical colour registers on both --
+PRIOR=$41, COLBK=$10, COLOR0-4 = 28 ca 94 46 10 -- with only the rendered RGB
+differing, and nearly changed the wrong side.)
+
+COROLLARY FOR ANY ALTIRRA COMPARISON: compare STRUCTURE AND GEOMETRY, never
+colour.  Hue-based detectors will disagree with the reference by design.
 """
 import math, argparse, os
 
