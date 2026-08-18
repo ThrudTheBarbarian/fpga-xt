@@ -46,61 +46,49 @@ shades collapsed in pairs and it merged into the craft.  I kept hunting it for s
 loop ticks AFTER that fix was already in the bitstream; everything matched on
 every axis, which was evidence the bug was GONE rather than that the instruments
 were blunt.  **After a fix lands, re-check the other open symptoms against it.**
-## Fifth player vs the playfield — RULE FOUND (Altirra's own GTIA equations)
-The defect is real and the rule is now settled.  What looked like a cycle was a
-SUPPRESSION TERM, and reading Altirra's source rather than inferring from
-black-box probes settled it in minutes.
+## Fifth player vs the playfield — FIXED AND VERIFIED ON HARDWARE (3456200a)
+The last open defect from the BallBlazer work, closed overnight.
 
-**THE DEFECT** (`tools/pm_vertical_probe.py`, PRIOR $14, same .xex both sides):
-the reference draws the fifth player over a playfield that correctly hides
-ordinary players; we let the playfield hide it too.  It wins OUTRIGHT, not by
-colour-OR (playfield lit to $76 -> reference shows $5A, not $76|$5A = $7E).
+**The defect:** with the fifth player enabled, the reference drew it over a
+playfield that correctly hides ordinary players; we let the playfield hide it.
+It wins OUTRIGHT, not by colour-OR (playfield lit to $76 -> reference shows $5A
+exactly, not $76|$5A = $7E).
 
-**THE MEASURED TABLE** (`tools/gtia_fifth_truth.py`, read by HUE):
+**The rule** -- Altirra `src/Altirra/source/gtiatables.cpp`, documenting the chip:
 
-    PRIOR   fifth ALONE: BAK PF0 PF1 PF2   |  fifth OVER A PLAYER: BAK PF0 PF1 PF2
-    $10     FIFTH FIFTH FIFTH FIFTH        |  player player player player
-    $11     FIFTH FIFTH FIFTH FIFTH        |  player player player player
-    $12     FIFTH FIFTH FIFTH FIFTH        |  player player player player
-    $14     FIFTH FIFTH FIFTH FIFTH        |  FIFTH  FIFTH  FIFTH  FIFTH
-    $18     FIFTH FIFTH FIFTH FIFTH        |  player PF0    PF1    player
-
-**THE RULE** -- Altirra `src/Altirra/source/gtiatables.cpp`, the real GTIA logic:
-
-    SP0 = P0 * /(PF01*PRI23) * /(PRI2*PF23)
-    SP1 = P1 * /(PF01*PRI23) * /(PRI2*PF23) * (/P0 + MULTI)
-    SP2 = P2 * /P01 * /(PF23*PRI12) * /(PF01*/PRI0)
-    SP3 = P3 * /P01 * /(PF23*PRI12) * /(PF01*/PRI0) * (/P2 + MULTI)
-    SF0 = PF0 * /(P23*PRI0)  * /(P01*PRI01) * /SF3
-    SF1 = PF1 * /(P23*PRI0)  * /(P01*PRI01) * /SF3
-    SF2 = PF2 * /(P23*PRI03) * /(P01*/PRI2) * /SF3
     SF3 = PF3 * /(P23*PRI03) * /(P01*/PRI2)
-    SB  = /P01 * /P23 * /PF01 * /PF23
+    SF0 = PF0 * ... * /SF3            (likewise SF1, SF2)
 
-  * With PRIOR bit4 (fifth player) the MISSILES feed the **PF3** input instead of
-    P0-P3 -- the fifth player is an input remapping, not a priority slot.
-  * `SF0/SF1/SF2` are each gated by **`/SF3`**: that is "the fifth player always
-    has priority over all playfields".
-  * `SF3` is itself gated by PLAYER presence -- `/(P01*/PRI2)` -- which is why a
-    player at the same pixel makes the playfield reappear.  That term is the
-    whole "contradiction".
-  * PRIOR bit4 = fifth player, bit5 = multi-colour player (gtia.cpp: "pl5" /
-    "multicolor").  Altirra's table index puts MULTI at bit 4 because the fifth
-    player is handled before the table.
-  * Anomaly worth keeping: with all four PRI bits zero the result is NOT black --
-    priority breaks and P0/P1 can mix with PF0/PF1/PF3.
+With PRIOR bit4 the MISSILES feed the PF3 input instead of P0-P3 -- the fifth
+player is an input remapping, not a priority slot.  `/SF3` on the other
+playfields IS "the fifth player always has priority over all playfields", and
+`SF3` is itself gated by PLAYER presence, which is why a player at the same pixel
+brings the playfield back.  That last term is what made the measured table look
+like an impossible cycle (fifth > PF0 > player > fifth in scheme $08); it is not
+a cycle, and reading the source settled in minutes what black-box probing could
+not.
 
-**VERIFIED**: evaluating those equations reproduces all 40 measured cells exactly.
+**The fix:** `hdl/gtia_priority.sv` computes SF3 and gates the playfield walk
+step with `/SF3`, instead of entering the fifth player as src 7 (PF3) to compete
+on rank.
 
-**OURS** (`hdl/gtia_priority.sv`) is a rank walk with the fifth player entered as
-src 7 (PF3) competing on rank, which is why it loses to PF2 in scheme $04.  It
-has no `/SF3` suppression and no player-presence gating of SF3.
+**Verified, in order:**
+  * `sim/tb_gtia_prior_eq` asserts the 40 cells measured against the reference
+    (every single-bit scheme x every playfield source x {no player, player at the
+    same pixel}).  24 of 40 FAIL on the old RTL, all 40 pass now.
+  * tb_gtia_special, tb_gtia_stage, tb_gtia_lum16 still pass; the ACID sim passes.
+  * Bitstream timing gate: clk_sys 0.168 ns, clk_sally 0.331, clk_pix 0.250, all ok.
+  * ON HARDWARE, `SOLID=1 tools/pm_vertical_probe.py` PRIOR $14:
+        before   fifth/missile rows 96..191 (96 of 192)   -- hidden in the band
+        after    fifth/missile rows  0..191 (192 of 192)  -- the whole frame
+    with the player still correctly hidden under the playfield band (96 of 192),
+    which is what the reference does.
 
-NEXT: an EXHAUSTIVE sim test -- all 256 presence patterns x 32 PRIOR values,
-expected values computed from the equations above -- to size the real deviation
-before choosing between patching the fifth-player case and reimplementing the
-equations directly.  Then ACID800 sim regressions, then a bitstream gated on
-WNS >= 0, then re-run pm_vertical_probe on hardware.
+SCOPE NOTE, deliberately not attempted: real GTIA ORs the colours of every
+surviving source (Altirra lists 24 reachable colours, e.g. "PF0 | P0") where ours
+picks a single winner, and a PRIOR with several priority bits set enables several
+orderings at once with BLACK where they disagree.  Both are real behaviours we do
+not model; the test excludes them rather than inventing ground truth for them.
 
 ## antic-sally-interop — phase 6 (one clock domain) landed; residuals
 The Atari realm (antic2 + GTIA + both POKEYs) runs NATIVE on clk_sally
