@@ -1,0 +1,23 @@
+altirraos-xl.rom -- AltirraOS XL/XE kernel, a drop-in replacement for the Atari
+XL OS ROM.  Copyright (C) Avery Lee.  Distributed under the all-permissive notice
+carried in the AltirraOS sources:
+
+    Copying and distribution of this file, with or without modification, are
+    permitted in any medium without royalty provided the copyright notice and
+    this notice are preserved.  This file is offered as-is, without any warranty.
+
+WHY IT IS HERE: rsrc/atari-xl.rom is Atari's copyrighted ROM and cannot be
+shipped.  AltirraOS can, so this is what a distributable image boots.  It is also
+what makes an Altirra comparison apples-to-apples, since the emulator runs the
+same kernel by default.
+
+DROP-IN, VERIFIED: a 16K image of $C000-$FFFF, the exact layout xl_boot.c's
+build_patched_os() expects.  SIOV at $E459 is a JMP it can re-point ($4C F7 E7);
+the longest ROM padding run is 1433 bytes at $C670, far more than the SIO (~164 B)
+and reset (~43 B) stubs need; and the checksum words at $C000/1 and $FFF8/9 are
+ZERO -- AltirraOS does not self-test -- so fix_os_checksums() writes its delta
+into unused bytes rather than corrupting code.  BallBlazer boots on it.
+
+NOT a fix for the intro colour difference: the board still renders BallBlazer's
+intro gold where Altirra renders it green, with this same kernel on both sides.
+That difference is ours, not the OS's.
