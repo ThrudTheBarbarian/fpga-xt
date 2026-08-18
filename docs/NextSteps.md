@@ -57,6 +57,17 @@ pushed 2 CC apart with something dim showing through the gap.  Next: match the
 frame under the bridge server and compare P/M state at a KNOWN SCANLINE (a
 one-shot register dump is useless here -- see below).
 
+Two suspects ELIMINATED by measurement, do not re-open:
+- It is not P/M.  Every run on that screen is a multiple of 4 px = one GTIA-mode
+  pixel (2 CC); a player or missile would land on 2-px colour-clock boundaries.
+  The whole picture is GTIA-mode PLAYFIELD.
+- It is not the GTIA-mode playfield phase.  `tools/altirra_gtia_shift_ref.py`
+  finally ran (it needed the headless server) and the reference does NOT move
+  the playfield edge between PRIOR $01 and $41 -- and neither do we: both put
+  the player exactly ON the edge with the playfield resuming right after it.
+  The script's docstring claimed otherwise; that note was stale since 13c03591
+  and has been corrected in place.
+
 ## BallBlazer windscreen — still open, but the oracle is back
 Altirra shows a windscreen on the vehicles in every animation, opening when the
 man waves; we show it in one sub-animation only and it never opens.  Likely

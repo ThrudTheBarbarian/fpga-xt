@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
 """REFERENCE for tb_pm_align: does a GTIA mode shift the playfield vs objects?
 
-Our chip (sim/tb_pm_align.sv, antic2_fabric, the live module) says:
+ANSWERED 2026-08-18 -- WE MATCH.  This script could not be run for months (the
+AltirraSDL GUI opens no bridge port; the answer needed the headless
+AltirraBridgeServer, which was not built until now).  Run against it:
 
-    PRIOR $01 ordinary     playfield edge at emitted px 176, player at 176
-    PRIOR $41 GTIA mode 9  playfield edge at emitted px 180, player at 176
+    REFERENCE   PRIOR $01 ordinary     bg 0..87, playfield 88..327
+                PRIOR $01 + player     bg 0..87, player 88..103, pf 104..327
+                PRIOR $41 GTIA mode 9  bg 0..87, playfield 88..327
+                PRIOR $41 + player     bg 0..87, player 88..103, pf 104..327
 
-i.e. in mode 9 the playfield edge moves +4 hi-res px (2 colour clocks) while
-the object stays put.  Real GTIA does delay the playfield in these modes, so
-the question is whether the reference shifts by the same amount.
+    OURS        PRIOR $41 GTIA mode 9  bg 0..175, playfield 176..415
+    (tb_pm_align)  PRIOR $41 + player  bg 0..175, player 176..191, pf 192..415
+
+Same structure on both sides: the playfield edge does NOT move between the two
+PRIOR values, and the player sits exactly ON the edge with the playfield
+resuming immediately after it.  (The absolute numbers differ only because the
+two harnesses capture different windows -- 440 px here vs 336 there -- so
+compare the RELATIONSHIP, never the coordinates.)
+
+The docstring used to claim our mode-9 playfield edge moved +4 px while the
+object stayed put.  That was fixed by 13c03591 and the note went stale; it is
+recorded here so the question is not re-opened a third time.  If a GTIA-mode
+geometry difference turns up again, it is NOT this.
 
 Identical scene, built over the bridge: mode F display list, screen of $00
 bytes then $FF bytes (a playfield edge on a known hi-res pixel), one solid
