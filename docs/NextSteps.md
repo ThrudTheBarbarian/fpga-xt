@@ -70,44 +70,54 @@ happen to show did not occur in 170 sampled frames of that run, so the two runs
 are not picking the same animations. A frame-matched comparison needs the state
 forced, not waited for.
 
-## BallBlazer windscreen — P/M table located; a method limit, and a new hypothesis
+## BallBlazer windscreen — every hypothesis so far is dead; next is a state transplant
 Simon (authoritative): "Ours doesn't have the windscreen.  On the animation where
 the man waves, Altirra DOES have the windscreen, then removes it to let the man
 wave" -- present again before and after.
 
-**P/M table located BY CONTENT** (write-only registers read back unreliably, so
-sparsity was the discriminator -- a sprite table is mostly zero, code is dense):
-PMBASE = **$00**, i.e. the table is at $0000 with P0 data at $0400 and P1 at
-$0500, 128 non-zero bytes each; **missiles, P2 and P3 are entirely EMPTY**.  The
-$0400/$0500 cassette-buffer scratch area, which is a normal thing for a game
-that has taken the machine over.  (peek($D407) said $FF -> $F800, which is OS
-ROM and dumps as 6502 code; `antic()` said $00 and was right.)
+WHAT IS ESTABLISHED (all measured, all frame-matched or static):
+- The bitmap is STATIC (screen-RAM hash constant, DL $BA00, LMS $B050 fixed).
+  The whole animation is P/M motion.
+- P/M table located BY CONTENT (sparsity scan over every 2K boundary -- sprite
+  tables are mostly zero, code is dense): **PMBASE = $00**, P0 data at $0400 and
+  P1 at $0500, 128 non-zero bytes each, **missiles/P2/P3 entirely EMPTY**.
+  peek($D407) lied ($FF -> $F800, which dumps as 6502 code); antic() was right.
+- The man matches EXACTLY at a frame-matched phase: 562 px of hue 5 in a 62x26
+  box on both sides.
+- PRIOR $54 with a uniform nibble matches (playfield/players/fifth player all
+  within 0.2% after scaling for the capture windows).
 
-**RETRACTED, a third phase mistake:** "our man is hue 5 where the reference is
-hue 3".  The REFERENCE ITSELF renders him hue 5 at f1200 and hue 3 at f2200 --
-the game recolours him through the animation.  At the matching phase we agree
-EXACTLY: 562 px of hue 5 in a 62x26 box, same as our board frame.  That is also
-the first genuinely FRAME-MATCHED pair obtained, found by walking for a frame
-whose hue populations match ours rather than by guessing a frame number.
+**HYPOTHESIS DISPROVEN THIS TICK.**  PRIOR $54 is priority select 4 (PF0/PF1
+above players), so a playfield feature might have shown through the sweeping
+craft on one side and not the other.  `tools/gtia_prior_probe.py` (new) tests it
+properly -- 16 horizontal bands, one nibble value each, crossed by a quad-width
+solid player, read by HUE (playfield hue 6 from COLBK, player hue 3) so the
+fringing cannot corrupt it.  Result, same .xex on both sides:
 
-**METHOD LIMIT, important:** Altirra's GTIA-mode fringing changes a pixel's
-LUMINANCE while preserving its HUE (mode 9 takes hue from COLBK).  Therefore:
-  * HUE populations and hue-level geometry are SAFE to compare -- and they match.
-  * PER-CODE (luminance) populations are NOT safe, and neither are run widths.
-So **an object that is the same hue as its surroundings -- which the windscreen is,
-hue 1 like the whole picture -- CANNOT be compared against Altirra through
-rendered pixels at all.**  Only content comparison can settle it.
+    PRIOR $54   player wins on ALL 16 nibbles, no playfield under the bar   BOTH
+    PRIOR $44   player wins on ALL 16 nibbles                              BOTH
 
-**NEW HYPOTHESIS, and the probe for it.**  PRIOR $54 selects priority mode 4:
-PF0/PF1 ABOVE the players, players above PF2/PF3.  The bitmap is static and the
-craft is P0+P1 sweeping across it, so a playfield feature that ranks above the
-players shows THROUGH the craft, and one that ranks below is covered -- which is
-exactly "the windscreen is there, then it goes away, then it comes back".  Our
-existing static scene used ONE uniform nibble ($8) and so never exercised which
-PRIORITY CLASS each mode-9 nibble maps to.
-  NEXT: a scene with a mode-9 playfield of SEVERAL nibble values crossed by a
-  quad-width player at PRIOR $54, and compare -- per nibble -- which side wins.
-  If our nibble-to-priority-class mapping differs for any value, that is the bug.
+Identical.  In GTIA mode 9 the player is above the playfield for every nibble on
+both sides, so the windscreen is NOT a playfield feature differently occluded by
+the craft.
+
+**NO LIVE HYPOTHESIS REMAINS.**  Given only P0/P1 carry data, the windscreen must
+be drawn by P0 or P1 at some point in the animation -- and our P/M rendering
+matches for the man.
+
+NEXT, and it is the definitive experiment: **TRANSPLANT THE WHOLE MACHINE STATE.**
+Dump the oracle's 64K of RAM at a windscreen-present moment plus the register set
+(PMBASE $00, DMACTL $3E, GRACTL $03, PRIOR $54, COLBK, COLPM0/1, COLPF0-3,
+HPOSP0/1, SIZEP0/1, SDLSTL), emit a .xex that loads that RAM, sets those
+registers and parks the CPU, then render the SAME file on both sides.  Identical
+input means any difference is ours, with no animation phase, no timing and no
+fringing in the way (hue-level comparison only).  GRAFP does not need
+transplanting -- with single-line P/M DMA it comes from the table, which is in the
+RAM image.
+
+Worth asking Simon for: which sub-animation, and whether a photo of the
+windscreen-present frame on the board exists -- his eye is the only oracle for
+"windscreen present" and my three phase errors all came from guessing it.
 
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the
