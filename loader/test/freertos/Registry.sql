@@ -261,6 +261,10 @@ INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (1,30,'Bro
 -- icon (scope 4) starter set
 INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (4,10,'Open','^O','open',NULL);
 INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (4,20,'Info...','^I','info',NULL);
+-- Preferences: per-item settings, edited by /OS/bin/prefs.  Their `settings`
+-- table is NOT declared here -- registry.c creates it on first write, so an
+-- existing board gains it silently and there is only ONE definition of it.
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (4,25,'Preferences...','^P','prefs',NULL);
 INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (4,30,'Delete','^D','delete',NULL);
 -- drive (scope 2) starter set — the {8-bit files, 16-bit files, Fujinet} desktop
 -- icons.  Browse roots the navigator at that icon's path (Fujinet -> net browser).

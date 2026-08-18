@@ -501,6 +501,32 @@ static void launch_none(const char *name) {
     char m[160]; snprintf(m, sizeof m, "[1][No application for|%s][OK]", nm);
     form_alert(1, m);
 }
+// Per-title LAUNCH SPEED, from the registry's per-application settings.
+//
+// g_siov_baud/g_siov_latency_us in the kernel are GLOBALS, and until now only
+// /System/bin/xlboot ever set them (`-a` on, absent off) while this launch path
+// set them not at all -- so every desktop launch silently inherited whatever the
+// last command-line invocation had left behind.  One `xlboot -a` from a terminal
+// made every later double-click load at 1050 speed, which reads as a hang
+// because our SIO is also silent.  Set it EXPLICITLY on every launch; never
+// inherit.
+//
+// The two speeds both have to exist rather than one being "correct".  Authentic
+// is real-drive timing and some titles need it: BallBlazer's intro ANIMATES FROM
+// THE VBI WHILE ITS SECTORS STREAM, so the duration of an SIO call is how much
+// animation it gets, and at snappy speed the vehicle never sweeps across.  Every
+// other title just wants to start. So it is a per-application preference, keyed
+// on the title, defaulting to snappy.
+#define LAUNCH_BAUD_AUTHENTIC   19200u
+#define LAUNCH_LAT_AUTHENTIC    27000u
+static void apply_launch_speed(const char *name) {
+    char v[16];
+    registry_setting_get(name, "launchSpeed", "snappy", v, sizeof v);
+    int authentic = !strcmp(v, "authentic");
+    sys_sio_timing(authentic ? LAUNCH_BAUD_AUTHENTIC : 0u,
+                   authentic ? LAUNCH_LAT_AUTHENTIC  : 0u);
+}
+
 // Launch a file THROUGH the mimeApps database (registry_mime): the file TYPE
 // (its extension glob) decides the app — an emulator (with the looked-up
 // machine + boot method), the text viewer, or a "no application" notice.  A
@@ -526,6 +552,7 @@ static void desk_launch_full(const char *name, const char *full, int media_type)
             // standalone .xex through the same loader /System/bin/xexload uses.
             // cart still opens the framed plane only (cart window is v1.5+).
             if (emu == ICT_EMU_8BIT && !strcmp(meth, "disk") && full) {
+                apply_launch_speed(name);
                 long rc = sys_xl_boot(full, 1);
                 if (rc != 0) {
                     char m[96]; snprintf(m, sizeof m, "[1][Can't boot %.48s (%ld)][OK]", name, rc);
@@ -560,6 +587,7 @@ static void desk_launch_full(const char *name, const char *full, int media_type)
         else snprintf(boot,sizeof boot,"RUN %s",name);        // prg/tos/app
     }
     if (emu == ICT_EMU_8BIT && is_disk && full) {
+        apply_launch_speed(name);          // never inherit the last CLI setting
         long rc = sys_xl_boot(full, 1);
         if (rc != 0) { char m[96]; snprintf(m, sizeof m, "[1][Can't boot %.48s (%ld)][OK]", name, rc);
                        form_alert(1, m); return; }
@@ -2017,7 +2045,7 @@ static int ctx_scope_rows(int scope, ctxrow *out, int max) {
     return n;
 }
 
-enum { ACT_UNKNOWN = 0, ACT_NEW, ACT_INFO, ACT_SELECTALL, ACT_DELETE, ACT_OPEN, ACT_BROWSE, ACT_SHOW, ACT_SEP };
+enum { ACT_UNKNOWN = 0, ACT_NEW, ACT_INFO, ACT_SELECTALL, ACT_DELETE, ACT_OPEN, ACT_BROWSE, ACT_SHOW, ACT_SEP, ACT_PREFS };
 static int ctx_action_id(const char *a) {
     if (!strcmp(a, "new"))       return ACT_NEW;
     if (!strcmp(a, "info"))      return ACT_INFO;
@@ -2027,6 +2055,7 @@ static int ctx_action_id(const char *a) {
     if (!strcmp(a, "browse"))    return ACT_BROWSE;
     if (!strcmp(a, "show"))      return ACT_SHOW;
     if (!strcmp(a, "sep"))       return ACT_SEP;
+    if (!strcmp(a, "prefs"))     return ACT_PREFS;
     return ACT_UNKNOWN;
 }
 // menu_popup id spaces: flat contextMenu rows return CTX_ROW_BASE+index; the
@@ -2162,6 +2191,23 @@ static void ctx_open_entry(browser *b, int i) {
 }
 // A context-sensitive Info alert: differs by scope (file / folder / window /
 // drive / desktop).
+// "Preferences..." — hand the target's LEAF NAME to /OS/bin/prefs as the settings
+// domain.  The name, not the path: the same title is the same title whichever
+// directory it is browsed from, and registry_setting_* namespaces on exactly
+// that.  A separate app rather than a dialog inside the desktop, so any app can
+// grow preferences without the desktop having to know about them.
+static void ctx_prefs(int scope, browser *b, int tentry, int tdeskobj) {
+    const char *nm = NULL;
+    if (b && tentry >= 0)            nm = b->ent[tentry].name;
+    else if (tdeskobj)               nm = rows[tdeskobj-1].displayName[0]
+                                        ? rows[tdeskobj-1].displayName : NULL;
+    (void)scope;
+    if (!nm || !nm[0]) return;
+    char arg[160]; snprintf(arg, sizeof arg, "%s", nm);
+    char *av[3]; av[0] = "prefs"; av[1] = arg; av[2] = NULL;
+    if (sys_spawn("/OS/bin/prefs", 2, av) < 0)
+        form_alert(1, "[1][Can't open Preferences][OK]");
+}
 static void ctx_info(int scope, browser *b, int tentry, int tdeskobj) {
     char m[300], nm[96], loc[160];
     if (scope == 4 && b && tentry >= 0) {                // an in-window entry
@@ -2349,6 +2395,7 @@ static void ctx_apply(int chosen, ctxrow *crows, int scope, browser *b, int tent
             case ACT_NEW:       ctx_new(b); break;
             case ACT_DELETE:    ctx_delete(b, scope, tentry); break;
             case ACT_BROWSE:    ctx_browse(scope, b, tentry, tdeskobj); break;
+            case ACT_PREFS:     ctx_prefs(scope, b, tentry, tdeskobj); break;
             default:            break;                    // sep / unknown: no-op
         }
         return;

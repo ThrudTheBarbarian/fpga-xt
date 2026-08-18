@@ -378,6 +378,13 @@ $(BUILD)/gemd.so: test/freertos/progs/gemd.c $(BUILD)/libGEM.so $(BUILD)/libc.so
 
 # gemtext — the first GEM CLIENT: connect to "gem", create a window, map the surface it is
 # handed, draw into it with the real VDI, post one damage rect. Touches no framebuffer.
+# prefs — per-application preferences (right-click -> Preferences...).  Links
+# libGEM alone: the registry rides inside it, which is exactly the case the
+# libGEM comment above describes (an app keeping its preferences).
+$(BUILD)/prefs.so: test/freertos/progs/prefs.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -I$(GEM) -Itest/qemu -c $< -o $(BUILD)/prefs.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/prefs.o $(BUILD)/libGEM.so $(BUILD)/libc.so
+
 $(BUILD)/gemtext.so: test/freertos/progs/gemtext.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/gemtext.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/gemtext.o $(BUILD)/libGEM.so $(BUILD)/libc.so
@@ -820,7 +827,7 @@ $(BUILD)/hwromfs/romfs_blob.h: $(BUILD)/romfs-hw.bin
 # login shell exists before the links do)
 SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
-sdstage: $(BUILD)/acid.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blitbench.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
+sdstage: $(BUILD)/prefs.so $(BUILD)/acid.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blitbench.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	@rm -rf $(SDSTAGE)
 	@# /OS/var: the kernel writes the across-boot entropy seed there at startup
 	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/fonts $(SDSTAGE)/OS/themes/Aristo2/1x $(SDSTAGE)/OS/Apps/Desktop/Spaces/1 $(SDSTAGE)/OS/var
@@ -831,6 +838,7 @@ sdstage: $(BUILD)/acid.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab
 	cp $(BUILD)/sqlite3.so $(SDSTAGE)/OS/bin/sqlite3
 	cp $(BUILD)/desktop.so $(SDSTAGE)/OS/bin/desktop
 	cp $(BUILD)/gemtext.so $(SDSTAGE)/OS/bin/gemtext
+	cp $(BUILD)/prefs.so   $(SDSTAGE)/OS/bin/prefs
 	cp $(BUILD)/gemd.so    $(SDSTAGE)/OS/bin/gemd
 	cp $(BUILD)/fbgrab.so  $(SDSTAGE)/OS/bin/fbgrab
 	cp $(BUILD)/blitbench.so $(SDSTAGE)/OS/bin/blitbench
