@@ -1,25 +1,35 @@
 # Next Steps / Open Work — consolidated
 
-## Per-application preferences — LANDED; right-click needed THREE fixes
-The right-click that opens the context menu had NEVER worked on the board, which
-is why "Preferences..." looked missing.  Not xtmouse -- it maps SDL_BUTTON_RIGHT
-to bit 1 and sends it.  THREE layers dropped it, all now fixed:
-  * **the kernel's UDP input path (967e8764)** -- `input_udp.c` tested
-    `(bt ^ s_btn) & 1` and reported `bt & 1`, so a right press produced NO EVENT
-    AT ALL.  Any edge on any of the three bits now injects an event carrying the
-    whole 3-bit state.  (Motion/wheel still report the left bit only, on purpose:
-    they drive drag/hover, and widening them would drag a window on a
-    right-button move.)  Everything between was already mask-aware -- gemd's
-    route.c forwards ev->button verbatim and the AES matches bmask/bstate.
-  * and two in the board desktop (97f72cbd):
-  * the AES request was `bmask/bstate = 1/1`, i.e. LEFT-button-down only, so a
-    right-click failed `(ev.button & 1) == 1` and was dropped before any handler;
-  * `ctx_menu_at()` had **no caller** -- the host twin has the wiring via a side
-    flag its SDL layer sets, the board version never got the equivalent and threw
-    the button away with `(void)mb`.
-Now: ask for any button state and dispatch on the button gemd actually reports
-(`mb & 2` -> context menu).  Matching any state also delivers releases, hence the
-`&& mb` guard.  Deployed; the desktop restarted cleanly.
+## Per-application preferences — DONE AND VERIFIED END TO END
+Right-click an item -> "Preferences..." -> a per-title launch-speed setting in
+the desktop's registry.  Verified on hardware by driving the pointer with
+`tools/xtinject.py` and reading screen grabs: right-click an ATR opens the menu
+AT THE ICON, Info... reports the right file, Preferences... spawns prefs for that
+title, and clicking "authentic" writes `acid800.atr|launchSpeed|authentic`.
+
+**The right-click was broken in FOUR layers**, none of which was xtmouse (it maps
+SDL_BUTTON_RIGHT to bit 1 and always sent it):
+  1. **kernel UDP input (967e8764)** -- `input_udp.c` fired only on a LEFT-button
+     edge and reported `bt & 1`, so a right press produced no event at all.  Any
+     edge on any of the three bits now injects an event carrying the full state.
+     (Motion/wheel still report the left bit only: they drive drag/hover.)
+  2. **the AES request (97f72cbd)** -- bmask/bstate 1/1 is left-down-only, so the
+     event was filtered out before any handler.  Now 0/0 (any state), with an
+     `&& mb` guard since that also delivers releases.
+  3. **dispatch (97f72cbd)** -- `ctx_menu_at()` had NO CALLER.  The host twin has
+     the wiring; the board version threw the button away with `(void)mb`.
+  4. **position (2b56e2b8 + the screen-coords change)** -- gemd delivers
+     WINDOW-LOCAL coordinates but menu_popup takes the input grab and therefore
+     lays out in SCREEN space, so the menu opened one window-origin away.  A
+     client has NO screen coordinates of its own -- `WF_WORKXYWH` answers 0,0 by
+     design -- so gemd now sends the screen position in the two spare words of
+     the button message (`w[6]`/`w[7]`) and `aes_event_screen()` exposes it.
+
+**Deployment trap worth remembering:** replacing `/OS/library/libGEM.so` does NOT
+affect copies already RESIDENT, and a new binary needing a new symbol from it
+fails with a bare "No such file or directory" and no loader message.  gemd
+started fine (it does not use the new symbol) while the desktop would not start
+at all.  A JTAG load (reboot) clears it.
 
 ## Per-application preferences — LANDED, one step needs a mouse
 Right-click an item -> "Preferences..." opens `/OS/bin/prefs` with that item's
