@@ -1401,6 +1401,13 @@ build/tb_xl_publish.vvp: tb_xl_publish.sv $(HDL_DIR)/xl_buffer_ctrl.sv \
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_xl_publish \
 	    $(HDL_DIR)/xl_buffer_ctrl.sv $(HDL_DIR)/cdc_sync_bit.sv tb_xl_publish.sv
 
+gtia_prior_eq: build/tb_gtia_prior_eq.vvp
+	@vvp -N $<
+
+build/tb_gtia_prior_eq.vvp: tb_gtia_prior_eq.sv $(HDL_DIR)/gtia_priority.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_prior_eq \
+	    $(HDL_DIR)/gtia_priority.sv tb_gtia_prior_eq.sv
+
 gtia_lum16: build/tb_gtia_lum16.vvp
 	@vvp -N $<
 

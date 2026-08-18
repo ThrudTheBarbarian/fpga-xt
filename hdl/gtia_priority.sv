@@ -109,7 +109,34 @@ module gtia_priority (
     wire any_missile = |pres[7:4];
 
     wire [3:0] p_present = pres[3:0] | ({4{~pm5}} & pres[7:4]);
-    wire       pf_here   = (pf_pri >= SRC_PF0) && (pf_pri <= SRC_PF3);
+    wire       pf_here_raw = (pf_pri >= SRC_PF0) && (pf_pri <= SRC_PF3);
+
+    // ---- the fifth player is not a rank, it is SF3 ------------------------
+    // Real GTIA does not rank the fifth player against the playfield; it gates
+    // them (Altirra src/Altirra/source/gtiatables.cpp, documenting the chip):
+    //
+    //     SF3 = PF3 * /(P23*PRI03) * /(P01*/PRI2)
+    //     SF0 = PF0 * ... * /SF3        (likewise SF1, SF2)
+    //
+    // Two things fall out that a rank walk cannot express.  /SF3 on the other
+    // playfields IS "the fifth player always has priority over all playfields",
+    // so a missile draws over PF0 even in a scheme where the playfield outranks
+    // everything.  And SF3 is itself gated by PLAYER presence, so a player at the
+    // same pixel brings the playfield back -- which is why the measured table
+    // looked like an impossible cycle (fifth > PF0 > player > fifth in scheme
+    // $08) until the equations explained it.
+    //
+    // Verified against the reference on hardware: the equations reproduce all 40
+    // cells of tools/gtia_fifth_truth.py, and sim/tb_gtia_prior_eq sweeps every
+    // presence pattern against every scheme.
+    wire       eq_p01 = |p_present[1:0];
+    wire       eq_p23 = |p_present[3:2];
+    wire       pri03  = prior[0] | prior[3];
+    wire       sf3    = pm5 && any_missile
+                        && !(eq_p23 && pri03)
+                        && !(eq_p01 && !prior[2]);
+    // /SF3: when the fifth player survives it suppresses the real playfield.
+    wire       pf_here   = pf_here_raw && !sf3;
 
     // ---- the four orderings, as ranks ------------------------------------
     // Rank 0 is highest.  Written as a table because it IS a table: four
@@ -181,7 +208,7 @@ module gtia_priority (
             end
             default: begin                               // PF3, fifth player
                 s         = 4'd7;
-                s_present = pm5 && any_missile;
+                s_present = sf3;                         // SF3, not raw presence
             end
         endcase
     end
