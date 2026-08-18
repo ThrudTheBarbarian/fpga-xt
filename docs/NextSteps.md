@@ -70,52 +70,41 @@ happen to show did not occur in 170 sampled frames of that run, so the two runs
 are not picking the same animations. A frame-matched comparison needs the state
 forced, not waited for.
 
-## BallBlazer windscreen — SHARPENED (Simon corrected the symptom)
-Simon's exact description (2026-08-18, after two corrections -- take THIS one):
-**on the animation where the man waves, Altirra HAS the windscreen and then
-REMOVES it to let him wave, and has it again afterwards.  Ours does not have the
-windscreen at all.**  So it is a MISSING object, and the thing to hunt is why we
-never draw it -- not why we fail to remove it.
+## BallBlazer windscreen — still open; my granularity finding was WRONG
+Simon's description (authoritative): **on the animation where the man waves,
+Altirra HAS the windscreen and removes it to let him wave, and has it again
+before and after.  Ours does not have it at all.**  A MISSING object.
 
-Seen in the reference at frame 2400 (before the wave): the windscreen is a tall
-finely-striped trapezoid panel rising from the craft body.  At 2560 (mid-wave)
-it is gone.  THAT SHAPE IS BUILT FROM ONE-COLOUR-CLOCK DETAIL -- which is exactly
-the detail we are measurably losing, so the granularity defect below is the
-prime candidate for the cause rather than a separate issue.
+**RETRACTED: "the reference resolves one-colour-clock detail and we do not."**
+That measurement (69-80% of reference craft-band runs 2 px, vs our 0-9%) was
+measuring ALTIRRA'S RENDERER, not the Atari's picture.
 
-Measured by inverting BOTH renders to Atari colour CODES (exact both sides, 0
-unmapped px), which makes structure comparable without comparing colour:
+The control that caught it: run our OWN `tools/gtia_ramp_scene.py` .xex -- whose
+content is known to be uniform 4 px mode-9 pixels -- through the oracle. It comes
+back as 2 px of the true colour plus a 2 px FRINGE whose value depends on the
+neighbouring pixel ($61 then $65, $62 then $6A, $63 then $6F ...), while our
+board renders the same file as clean 4 px pixels. `rawscreen()` shows the same
+fringing as `screenshot()`, so it is in Altirra's GTIA model, not a display
+filter, and `artifact: none` does not disable it.
 
-- **The man is pixel-identical.**  EXACTLY 562 px in a 62x26 box on both sides
-  (ours x120..181 y127..152, reference x130..191 y143..168 -- the offset is just
-  the different frame crop).  He is not the bug and neither is his animation.
-- **Both screens are GTIA mode 9**, ~18 distinct codes all of hue 1, odd
-  luminances included (which is itself a nice confirmation of 72040fe4 -- before
-  that fix we could not have produced $13/$15/$17/$19/$1D at all).
-- **The difference is inside the hue-1 playfield.**  The reference resolves
-  detail ONE COLOUR CLOCK wide (2 px) across the craft -- e.g. $1B/$1F/$1B/$1F
-  alternating in 2 px runs -- where ours is blocky, 8 px runs of $17/$18/$19/$1A.
-  69-80% of reference craft-band runs are 2 px (median 75%, 78 frames) against
-  our 0-9% (median 0%, 34 frames); the distributions do not overlap.
-- Visually: ours has a SOLID panel beside the waving man; the reference has none
-  there and shows a finely striped craft body instead.  That is the windscreen,
-  still up.
+So EVERY "we are 4x too coarse" number is void, and any pixel-level width
+comparison against Altirra in a GTIA mode is invalid unless this is accounted
+for.  Same family as the closed green-vs-gold issue: compare CONTENT, not a
+rendering model.
 
-ELIMINATED: our GR.8 hi-res path (tools/gr8_hires_probe.py on hardware resolves
-single BITS: $AA -> 9855 runs of 1 px, $CC -> 4909 of 2 px, $F0 -> 2440 of 4 px);
-a wrong GTIA mode (both sides ARE mode 9); the man/P-M objects.
+OPEN QUESTION worth its own investigation (not the windscreen): does REAL GTIA
+fringe like that?  If it does, we are missing a genuine hardware behaviour --
+sub-pixel colour transitions in GTIA modes.  ACID800 would be the place to look
+for a test that pins it.
 
-OPEN ANOMALY worth understanding first: a GTIA-mode pixel is 2 CC = 4 px, so the
-reference's 2 px runs should be IMPOSSIBLE in mode 9, yet 75% of its craft runs
-are 2 px with six distinct playfield codes on a single row -- too many for GR.8
-hi-res as well.  Do not theorise further from pixels; read the machine state.
-
-NEXT (well-defined): pull the reference's SCREEN RAM + display list + register
-writes for those scanlines over the bridge, build a STATIC .xex that reproduces
-that screen exactly, and run the SAME file on the board.  Any difference is then
-ours, with no animation phase and no timing in the way.  This is the method that
-cracked the mode-9 fifth player (59395858).  Note bp_set is a PC breakpoint, not
-a scanline one -- use watch_set on $D01B / history, or reproduce statically.
+WHAT THE WINDSCREEN NEEDS NEXT: a CONTENT comparison, not a pixel one.  Dump the
+guest's SCREEN RAM (the mode-9 nibbles) on both sides at the same point in the
+animation and diff those.  If the nibbles match, the object is being lost in our
+render; if they differ, the game computed a different picture and the cause is
+CPU/timing.  Board-side 6502 RAM is readable with
+`mem -w 0x43C00204 0x8000AAAA; mem 0x43C00418` (clear with `mem -w 0x43C00204 0`);
+oracle-side with `memdump`.  Anchor the two on a code landmark, never on "the
+screen looks the same".
 
 ## BallBlazer / XL plane — three bugs fixed, awaiting Simon's eye
 All on hardware 2026-08-17.  The one that produced the reported symptom was the
