@@ -9,7 +9,7 @@ export default defineConfig({
 		starlight({
 			title: 'Atari-XT',
 			description:
-				'A modern take on Atari computers, implemented on a single Xilinx Zynq-7020 — the SALLY 6502 and ANTIC/GTIA/POKEY pipeline in FPGA fabric, the modern half on dual Cortex-A9, plus the xtc compiler and toolchain.',
+				'A modern take on Atari computers, implemented on a single Xilinx Zynq-7020 — the SALLY 6502 and ANTIC/GTIA/POKEY pipeline in FPGA fabric, the modern half on dual Cortex-A9, plus the xcc compiler and toolchain.',
 			customCss: ['./src/styles/xtc.css'],
 			// Browser-tab icon, cropped to the golden jigsaw piece (see public/).
 			favicon: '/favicon.png',
@@ -67,7 +67,7 @@ export default defineConfig({
 					],
 				},
 				{
-					label: 'Compiler (xtc)',
+					label: 'Compiler (xcc)',
 					items: [
 						{ label: 'Overview', slug: 'compiler' },
 						{
@@ -107,6 +107,8 @@ export default defineConfig({
 								{ label: 'Sort', slug: 'compiler/api/sort' },
 								{ label: 'Memory', slug: 'compiler/api/memory' },
 								{ label: 'Foundation (Number / String / Data / Array)', slug: 'compiler/api/foundation' },
+								{ label: 'String (UTF-8)', slug: 'compiler/api/string' },
+								{ label: 'String 0.3 (legacy)', slug: 'compiler/api/string-03' },
 							],
 						},
 						{
@@ -116,6 +118,7 @@ export default defineConfig({
 								{ label: 'Overview', slug: 'compiler/usage' },
 								{ label: 'Install', slug: 'compiler/usage/install' },
 								{ label: 'CLI flag reference', slug: 'compiler/usage/cli' },
+								{ label: 'Migrating 0.3 → 0.4', slug: 'compiler/usage/migration' },
 								{ label: 'Optimisation', slug: 'compiler/usage/optimization' },
 								{ label: 'Memory models', slug: 'compiler/usage/memory-models' },
 								{ label: 'Allocator & ARC', slug: 'compiler/usage/allocator-arc' },

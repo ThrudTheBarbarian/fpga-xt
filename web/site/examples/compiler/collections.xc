@@ -100,7 +100,7 @@ i32 main(void)
     greeting.appendCString("!");
     Stdio.printf("%s / %s (%d chars) / %s\n",
                  greeting.cString(), longer.cString(),
-                 (i16)longer.length(), longer.uppercased().cString());
+                 (i16)longer.byteLength(), longer.uppercased().cString());
 
     Stdio.printf("equal by value: %d, same object: %d\n",
                  (i16)(String.withCString("ada").equals(names.get((u32)0)) ? 1 : 0),
@@ -109,9 +109,9 @@ i32 main(void)
     // Searching and slicing. A miss is String.notFound(), never a negative
     // index — the result type is unsigned.
     Stdio.printf("index of world: %d, prefix hello: %d, slice %s\n",
-                 (i16)longer.indexOf(String.withCString("world")),
+                 (i16)longer.byteIndexOf(String.withCString("world")),
                  (i16)(longer.hasPrefix(String.withCString("hello")) ? 1 : 0),
-                 longer.substring((u32)7, (u32)5).cString());
+                 longer.substringBytes((u32)7, (u32)5).cString());
 
     // Numbers to strings, including the 64-bit widths.
     Stdio.printf("i32 %s, u64 %s\n",

@@ -3,7 +3,7 @@ title: Collections & strings
 description: Array, Map, Set and String — element types in angle brackets, checked at compile time and erased at run time.
 ---
 
-The containers are ordinary xtc classes, shipped with the compiler and written in
+The containers are ordinary xcc classes, shipped with the compiler and written in
 the same language you are writing. What makes them pleasant is the **element
 type** in angle brackets:
 
@@ -153,6 +153,12 @@ greeting.appendCString("!");
 
 Hand the bytes to `printf`'s `%s` with `.cString()`.
 
+Since **0.4** a String is UTF-8, and every index-taking method names its unit
+— `byteLength` / `byteIndexOf` / `substringBytes` count bytes, `charCount` /
+`charAt` / `substringChars` count code points. The full surface, the UTF-8
+rules and the encodings are on [String (UTF-8)](/compiler/api/string/);
+0.3-era code is ported with the [migration guide](/compiler/usage/migration/).
+
 ### Formatting
 
 `String` formats with the same specifiers `Stdio.printf` uses — same width
@@ -178,7 +184,7 @@ Searching returns an unsigned index, so a miss is `String.notFound()` rather tha
 a negative number:
 
 ```c
-u32 at = longer.indexOf(String.withCString("world"));
+u32 at = longer.byteIndexOf(String.withCString("world"));
 if (at != String.notFound()) { … }
 ```
 
@@ -258,16 +264,16 @@ i32 main(void)
     greeting.appendCString("!");
     Stdio.printf("%s / %s (%d chars) / %s\n",
                  greeting.cString(), longer.cString(),
-                 (i16)longer.length(), longer.uppercased().cString());
+                 (i16)longer.byteLength(), longer.uppercased().cString());
 
     Stdio.printf("equal by value: %d, same object: %d\n",
                  (i16)(String.withCString("ada").equals(names.get((u32)0)) ? 1 : 0),
                  (i16)(String.withCString("ada") == names.get((u32)0) ? 1 : 0));
 
     Stdio.printf("index of world: %d, prefix hello: %d, slice %s\n",
-                 (i16)longer.indexOf(String.withCString("world")),
+                 (i16)longer.byteIndexOf(String.withCString("world")),
                  (i16)(longer.hasPrefix(String.withCString("hello")) ? 1 : 0),
-                 longer.substring((u32)7, (u32)5).cString());
+                 longer.substringBytes((u32)7, (u32)5).cString());
 
     Stdio.printf("i32 %s, u64 %s\n",
                  String.withI32((i32)-42).cString(),

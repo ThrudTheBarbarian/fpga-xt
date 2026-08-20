@@ -146,8 +146,8 @@ spawns a thread — so these flags are only for overriding that. See
 
 | Flag | Effect |
 |------|--------|
-| `-S`, `--xtc-stack` | Use the xtc software stack globally for return addresses and saved registers. |
-| `-ss <n>`, `--stack-size <n>` | Cap the xtc stack at `n` bytes (decimal, `$hex` or `0xhex`; 1..65535). No effect on banked-heap or non-heap targets, which is all of the current ones. |
+| `-S`, `--xtc-stack` | Use the xcc software stack globally for return addresses and saved registers. |
+| `-ss <n>`, `--stack-size <n>` | Cap the xcc stack at `n` bytes (decimal, `$hex` or `0xhex`; 1..65535). No effect on banked-heap or non-heap targets, which is all of the current ones. |
 
 ## Runtime behaviour
 
@@ -175,6 +175,12 @@ Suppress a category with `-Wno-<category>`. All are on by default.
 | `new-in-loop` | `new` inside a loop body — likely a leak unless you are deliberately accumulating |
 | `unknown-annotation` | an unrecognised function annotation, e.g. `:foo` |
 | `unknown-pragma` | an unrecognised `#` directive |
+
+## Library versioning
+
+| Flag | Effect |
+|------|--------|
+| `--migrate=<base>:<to>` | Compile as if the standard library were still `<base>`: methods annotated `since("V")` with `V` newer than `<base>` vanish from lookup, so a call whose **meaning changed** between the versions fails loudly instead of silently resolving to the new one. `--migrate=0.3:0.4` is the porting mode for the 0.4 String rename — see the [migration guide](/compiler/usage/migration/). |
 
 ## Environment
 

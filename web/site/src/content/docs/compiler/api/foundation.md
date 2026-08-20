@@ -3,7 +3,7 @@ title: Foundation classes
 description: "Object, Number, String, Data, Array, Map, Set — value wrappers, containers, insertion-ordered iteration, sorting and the functional methods, with the Comparable / Hashable / Enumerable / Error protocols behind them."
 ---
 
-Foundation is xtc's standard object library: value wrappers (`Number`, `String`, `Data`),
+Foundation is xcc's standard object library: value wrappers (`Number`, `String`, `Data`),
 containers (`Array`, `Map`, `Set`), and the three protocols they are built on (`Comparable`,
 `Hashable`, `Enumerable`).
 
@@ -201,47 +201,28 @@ The cost, and it is a real one: **`remove` is O(count)** rather than O(1), becau
 
 ## `String`
 
-A heap-owned, NUL-terminated byte string.
+A heap-owned, NUL-terminated **UTF-8** string. Since **0.4** every method
+that indexes into the string names its unit — `byteAt` / `substringBytes`
+count bytes, `charAt` / `substringChars` count Unicode code points — and the
+class carries a strict UTF-8 layer (validation, U+FFFD repair, transcoding
+to and from ASCII / Latin-1 / UTF-16 at the edge).
 
 ```c
-String* s = String.withCString("  Hello, World  ");
-String* t = s.trimmed();                             // "Hello, World"
-
-if (t.hasPrefix(String.withCString("Hello"))) { … }
-
-Array* fields = String.withCString("a,b,,c").split((u8)',');   // 4 parts — the gap counts
-String* back  = String.join(fields, String.withCString("-"));  // "a-b--c"
+String* s = String.withCString("héllo");    // 5 characters, 6 bytes — é is 2
+s.byteLength();                                   // 6
+s.charCount();                                    // 5
+s.charAt((u32)1);                                 // U+00E9 — a code point, not a byte
 ```
 
-| | |
-|---|---|
-| **Build** | `String.withCString(p)`, `withString(s)`, `withBytes(p, n)` |
-| **Numbers** | `String.withI32(v)`, `withU32(v)`, `withI16(v)`, `withU16(v)`, `withFloat(v)` |
-| **Read** | `length()`, `isEmpty()`, `charAt(i)`, `cString()`, `copyCString()` |
-| **Search** | `indexOf(needle)`, `indexOfChar(c)`, `lastIndexOfChar(c)`, `contains(s)`, `hasPrefix(s)`, `hasSuffix(s)` |
-| **Slice** | `substring(from, len)`, `substringFrom(from)`, `substringTo(to)` |
-| **Mutate** | `append(s)`, `appendChar(c)`, `appendCString(p)` — and `appending(s)`, which returns a new String instead |
-| **Case** | `uppercased()`, `lowercased()`, `caseInsensitiveCompare(s)`, `equalsIgnoringCase(s)` |
-| **Other** | `trimmed()`, `split(sep)` → `Array*`, `String.join(parts, sep)`, `replacing(find, sub)`, `description()` |
-| **Value** | `equals(other)`, `compare(other)`, `hash()` — FNV-1a over the bytes |
+The full surface — byte table, character table, encodings, and the
+`cString()` borrow rule — is on its own page: **[String (UTF-8)](/compiler/api/string/)**.
+The pre-0.4 byte-oriented surface (still live on xt6502) is preserved at
+[String 0.3 (legacy)](/compiler/api/string-03/), and porting is covered by the
+[0.3 → 0.4 migration guide](/compiler/usage/migration/).
 
-Out-of-range slicing **clamps to empty** rather than faulting — `substringFrom(999)` is an
-empty String, the same choice Foundation makes for a clamped range.
-
-`split` yields empty components for consecutive, leading or trailing separators, so `"a,,b"`
-is three fields. That is what a CSV needs; filter the empties out if you want tokens.
-
-Ordering is lexicographic by unsigned byte, then by length — so a prefix sorts before its
-extension (`"go"` before `"gone"`).
-
-**`cString()` is a borrow.** It returns a pointer into the String's own buffer, and any
-mutation that grows the String — `append`, `appendChar`, `appendCString`, `appendFormat`,
-`insert` — may reallocate that buffer and free the old one. The pointer is valid until the
-String is next grown; after that it dangles, and it *usually still appears to work*, which
-is exactly the failure that survives testing. A `string` is not a class pointer, so holding
-one neither retains the String nor stops it growing. If the bytes must outlive the next
-mutation, take a copy: `copyCString()` returns a fresh heap copy that the caller owns (and
-frees with `delete`).
+`equals(other)`, `compare(other)` and `hash()` give it value semantics —
+FNV-1a over the bytes; UTF-8 keeps byte order equal to code-point order, so
+none of them needed a character-aware variant.
 
 ## `Data`
 
@@ -260,6 +241,7 @@ Stdio.printf("%s\n", d.hexString().cString());     // "deadbeef"
 | **Slice** | `subdata(from, len)`, `subdataFrom(from)` |
 | **Search** | `indexOfByte(b)`, `containsByte(b)`, `Data.notFound()` |
 | **Text** | `hexString()`, `description()` |
+| **Encode** | `Data.withStringEncoded(s, enc)` — a String's bytes in `ENC_UTF8` / `ENC_ASCII` / `ENC_LATIN1` / `ENC_UTF16LE` / `ENC_UTF16BE` (see [String § encodings](/compiler/api/string/#other-encodings)) |
 | **Value** | `equals(other)`, `compare(other)`, `hash()` — FNV-1a over the bytes |
 
 ## `Number`

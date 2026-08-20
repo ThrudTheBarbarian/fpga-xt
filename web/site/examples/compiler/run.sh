@@ -11,7 +11,7 @@
 #   VERBOSE=1 ./run.sh  show each program's output
 set -u
 cd "$(dirname "$0")" || exit 1
-XCC=${XCC:-/opt/xcc/0.3/bin/xcc}
+XCC=${XCC:-/opt/xcc/0.4/bin/xcc}
 [ -x "$XCC" ] || XCC=$(command -v xcc) || { echo "no xcc found"; exit 1; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 PATTERN=${1:-}
