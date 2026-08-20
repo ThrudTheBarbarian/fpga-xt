@@ -5,7 +5,7 @@ description: Comments, identifiers, numeric and string literals, reserved words.
 
 ## Comments
 
-xtc uses C-family comment syntax:
+xcc uses C-family comment syntax:
 
 ```c
 // single-line — runs to end of line
@@ -79,7 +79,7 @@ These are the words the **lexer** turns into keyword tokens. They are never iden
 
 `asm`, `auto`, `bool`, `break`, `case`, `catch`, `class`, `continue`, `default`, `defer`, `delete`, `double`, `else`, `enum`, `extern`, `false`, `final`, `float`, `for`, `global`, `i8`, `i16`, `i32`, `if`, `in`, `inline`, `new`, `optional`, `pointer`, `protocol`, `register`, `release`, `retain`, `return`, `sizeof`, `static`, `string`, `struct`, `switch`, `throw`, `throws`, `true`, `try`, `typedef`, `u8`, `u16`, `u32`, `use`, `void`, `volatile`, `while`.
 
-Separately, the parser rejects the **C reserved words** as variable names even where xtc gives them no meaning of its own, so that C-shaped source doesn't quietly acquire a different meaning:
+Separately, the parser rejects the **C reserved words** as variable names even where xcc gives them no meaning of its own, so that C-shaped source doesn't quietly acquire a different meaning:
 
 `char`, `const`, `do`, `goto`, `int`, `long`, `restrict`, `short`, `signed`, `union`, `unsigned` — plus those above that C also reserves.
 
@@ -98,7 +98,7 @@ void greet(void) {
 ```
 
 :::note[`(( ))` has been removed]
-xtc once accepted `(( ... ))` as an alternative block delimiter, so source could
+xcc once accepted `(( ... ))` as an alternative block delimiter, so source could
 be typed on an **Atari 8-bit keyboard** — which has no `{` or `}` keys. It is
 gone, and the compiler now rejects it.
 

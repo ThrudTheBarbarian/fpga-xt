@@ -1,9 +1,9 @@
 ---
 title: Compiler usage
-description: How to drive the xtc toolchain — CLI flags, optimisation, memory models, allocator selection, linker scripts.
+description: How to drive the xcc toolchain — CLI flags, optimisation, memory models, allocator selection, linker scripts.
 ---
 
-This section is the practical guide to **driving** the xtc toolchain — picking flags, choosing memory models, tuning the optimiser, configuring the allocator, and (when needed) writing your own linker script. Language-level details (syntax, types, classes) live in the [Language reference](/compiler/language/); standard-library APIs live under [Standard library](/compiler/api/). This section is about the bits that affect the **binary** rather than the **source**.
+This section is the practical guide to **driving** the xcc toolchain — picking flags, choosing memory models, tuning the optimiser, configuring the allocator, and (when needed) writing your own linker script. Language-level details (syntax, types, classes) live in the [Language reference](/compiler/language/); standard-library APIs live under [Standard library](/compiler/api/). This section is about the bits that affect the **binary** rather than the **source**.
 
 ## A typical invocation
 
@@ -20,8 +20,8 @@ xcc -A 6502 -Q loop -o game.xex game.xc
 ```
 
 ```
-xtc: optimised -O3 (9877 → 9698 instructions)
-xtc: compiled 'game.xc' -> 'game.xex' (0 warnings, 0 errors)
+xcc: optimised -O3 (9877 → 9698 instructions)
+xcc: compiled 'game.xc' -> 'game.xex' (0 warnings, 0 errors)
 xcc-as: assembled -> 'game.xex' (19975 bytes, 1 segments)
 ```
 

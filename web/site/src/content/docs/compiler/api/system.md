@@ -29,7 +29,7 @@ void main(void)
 }
 ```
 
-If you don't call `exit`, `main` returning to its caller has the same effect as `exit(0)` on default-`xtc` builds: the runtime emits an `RTS` back into DOS. The difference is that `exit` works from anywhere in the program — you don't have to unwind back to `main`.
+If you don't call `exit`, `main` returning to its caller has the same effect as `exit(0)` on default-`xcc` builds: the runtime emits an `RTS` back into DOS. The difference is that `exit` works from anywhere in the program — you don't have to unwind back to `main`.
 
 The `-Q loop` command-line switch changes the post-`main` behaviour to an infinite loop instead of an `RTS`; in that mode, `System.exit(...)` is the only way to actually return to DOS.
 

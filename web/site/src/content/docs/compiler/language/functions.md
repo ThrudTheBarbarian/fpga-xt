@@ -25,7 +25,7 @@ does, never what the operator does. See
 [Types → Conversions](/compiler/language/types/#conversions).
 :::
 
-Forward declarations (signature without a body, terminated with `;`) work the same as in C, but they're rarely needed — xtc lets you call a function defined later in the same compilation unit. The main use of forward declarations is to declare external functions in headers.
+Forward declarations (signature without a body, terminated with `;`) work the same as in C, but they're rarely needed — xcc lets you call a function defined later in the same compilation unit. The main use of forward declarations is to declare external functions in headers.
 
 ## Return types and tuples
 
@@ -111,7 +111,7 @@ not a copy — there is no cost to it.
 
 arm9 is the exception: its varargs travel in registers, so a forwarder there
 relays its tail into the callee's argument slots. To keep that relay honest,
-an xtc variadic on arm9 starts its tail 8-byte aligned, which plain AAPCS does
+an xcc variadic on arm9 starts its tail 8-byte aligned, which plain AAPCS does
 not require — without it a `double` forwarded between functions with different
 named-argument counts would be read a word out. It costs a bounded copy and is
 otherwise invisible.
@@ -193,7 +193,7 @@ they apply:
 |---|---|---|
 | `:naked` | **all targets** | no prologue / epilogue at all |
 | `:hwStack` | xt6502 | use the 6502 hardware stack |
-| `:xtcStack` | xt6502 | use the xtc software stack throughout |
+| `:xtcStack` | xt6502 | use the xcc software stack throughout |
 | `:irq` | xt6502 | hardware-IRQ handler, ends with `RTI` |
 | `:vbi` | xt6502 | vertical-blank handler, chains through the OS |
 | `:needsOS` | xt6502 | wrap the body with ROM enable / disable |
@@ -212,7 +212,7 @@ void fn(void) :naked      { ... }    // no register save, just user code — all
 
 // xt6502 only, from here down
 void fn(void) :hwStack    { ... }    // use the 6502 hardware stack
-void fn(void) :xtcStack   { ... }    // use the xtc software stack
+void fn(void) :xtcStack   { ... }    // use the xcc software stack
 void fn(void) :needsOS    { ... }    // requires OS ROM mapped in
 void fn(void) :irq        { ... }    // hardware-IRQ handler, ends with RTI
 void fn(void) :vbi        { ... }    // VBI handler — install via Vbi.addImmediate()
@@ -224,8 +224,8 @@ void fn(void) :shadow     { ... }    // place in shadow RAM (no current layout h
 ### Calling convention / prologue (xt6502)
 
 - `:naked` — no prologue or epilogue. The compiler does not save A / X / Y or set up a frame; you write whatever your body needs. Mutually exclusive with `:irq` / `:vbi`.
-- `:hwStack` — force the function to use the 6502 hardware stack for return addresses and saved registers. Parameters always go on the xtc software stack regardless.
-- `:xtcStack` — force the function to use the xtc software stack throughout. The hardware stack is much smaller (256 bytes), so deep recursion needs the software stack.
+- `:hwStack` — force the function to use the 6502 hardware stack for return addresses and saved registers. Parameters always go on the xcc software stack regardless.
+- `:xtcStack` — force the function to use the xcc software stack throughout. The hardware stack is much smaller (256 bytes), so deep recursion needs the software stack.
 
 ### Interrupt handlers (xt6502)
 
@@ -249,7 +249,7 @@ On the banked `xt` target, `:irq` and `:vbi` handlers are placed in main RAM at 
 
 ## Default calling convention
 
-By default, parameters pass on the **xtc software stack**, return addresses and saved registers go on the **6502 hardware stack**. The `-S` / `--xtc-stack` command-line flag forces all stack traffic onto the software stack — larger but slower.
+By default, parameters pass on the **xcc software stack**, return addresses and saved registers go on the **6502 hardware stack**. The `-S` / `--xtc-stack` command-line flag forces all stack traffic onto the software stack — larger but slower.
 
 `:hwStack` and `:xtcStack` annotations override the command-line default per-function. Parameters always travel on the software stack regardless of which annotation wins.
 

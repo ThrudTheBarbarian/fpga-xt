@@ -1,9 +1,9 @@
 ---
 title: Standard library
-description: Classes shipped with the xtc compiler — I/O, math, timing, heap introspection, interrupts, assertions, sorting.
+description: Classes shipped with the xcc compiler — I/O, math, timing, heap introspection, interrupts, assertions, sorting.
 ---
 
-The xtc standard library is a set of `.xc` classes that ship alongside the compiler. Each class is `#import`-able by name; methods are predominantly `static`, so most calls look like `Stdio.print("hi\n")` or `Math.rand()` with no instance needed.
+The xcc standard library is a set of `.xc` classes that ship alongside the compiler. Each class is `#import`-able by name; methods are predominantly `static`, so most calls look like `Stdio.print("hi\n")` or `Math.rand()` with no instance needed.
 
 ## Where the files live
 
@@ -107,7 +107,7 @@ The `Where` column is load-bearing. A class present only under `xt6502/lib/` is 
 
 ## A note on overload resolution by return type
 
-xtc supports overloading by **return type** for zero-arg static methods, and the standard library exploits this for `Math.rand()` and the math constants. `auto x = Math.rand();` is ambiguous; the compiler needs to know what type you want:
+xcc supports overloading by **return type** for zero-arg static methods, and the standard library exploits this for `Math.rand()` and the math constants. `auto x = Math.rand();` is ambiguous; the compiler needs to know what type you want:
 
 ```c
 u8     a = Math.rand();      // resolves to the u8 overload

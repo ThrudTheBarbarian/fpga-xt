@@ -27,11 +27,11 @@ Regardless of which target CPU runs the multitasking kernel, these components ca
 
 | Component | Language | Lines | Description |
 |-----------|----------|-------|-------------|
-| **GEMDOS RPC protocol** | C or xtc | ~200 | Message format, mailbox read/write, reply handling |
+| **GEMDOS RPC protocol** | C or xcc | ~200 | Message format, mailbox read/write, reply handling |
 | **FreeRTOS backend** | C | ~200 | Mailbox dispatch on the ARM side (identical regardless of sender CPU) |
-| **Ready-queue logic** | C or xtc | ~100 | Priority queue insert/remove/pick (portable if compiled for the target) |
-| **Binary format header** | C or xtc | ~30 | The `.xex` header struct (6502) or ELF parsing (m68k) is different, but the concept of "read header, allocate, load" is the same |
-| **GEM AES event model** | xtc | ~500 | AES message queues, evnt_multi(), wind_*() — runs on the target CPU, same API |
+| **Ready-queue logic** | C or xcc | ~100 | Priority queue insert/remove/pick (portable if compiled for the target) |
+| **Binary format header** | C or xcc | ~30 | The `.xex` header struct (6502) or ELF parsing (m68k) is different, but the concept of "read header, allocate, load" is the same |
+| **GEM AES event model** | xcc | ~500 | AES message queues, evnt_multi(), wind_*() — runs on the target CPU, same API |
 | **SALLY-to-FreeRTOS mailbox driver** | Verilog + C | ~200 | The mailbox registers in the PL, CDC handling, IRQ |
 
 ### Target-specific

@@ -1,9 +1,9 @@
 ---
 title: Future work
-description: What's planned, in progress, and known-incomplete in xtc.
+description: What's planned, in progress, and known-incomplete in xcc.
 ---
 
-xtc is pre-1.0. This page tracks where it's going, what's known-incomplete, and what's
+xcc is pre-1.0. This page tracks where it's going, what's known-incomplete, and what's
 recently landed — sourced from the project's `doc/Issues` log. Pre-1.0 software is more
 useful when its rough edges are visible than when they're hidden.
 

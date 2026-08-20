@@ -3,7 +3,7 @@ title: "XT multitasking"
 description: "Bank-switched pre-emptive multitasking on the SALLY 6502 — banks as the MMU, the process model, scheduler, BRK syscalls, and a MiNT-style signal subset."
 ---
 
-The goal here is to port a significant fraction of MiNT over to the 6502, though it'll be written in xtc, not plain C.
+The goal here is to port a significant fraction of MiNT over to the 6502, though it'll be written in xcc, not plain C.
 
 ## Context
 
@@ -15,7 +15,7 @@ The SALLY CPU is a 6502-class core in the PL fabric with significant hardware em
 - **Multiple stack banks** for fast context switching (see [Context switching](/os/multitasking/6502/context-switch/))
 - **Banked memory** with three independent page-switchable windows
 
-The memory model (from the xtc linker layout):
+The memory model (from the xcc linker layout):
 
 ```
 $D5C0        code bank selector (selects $6000-$9FFF, 256 x 16 KB)
@@ -139,7 +139,7 @@ The scheduler tick comes from the ANTIC VBI (vertical blank interrupt, 50/60 Hz)
 3. Dispatches to the appropriate kernel service
 4. Restores context and returns via `RTI`
 
-The xtc compiler already uses `BRK` for its `_xcall` cross-bank mechanism; the syscall path reuses the same hardware vector.
+The xcc compiler already uses `BRK` for its `_xcall` cross-bank mechanism; the syscall path reuses the same hardware vector.
 
 ## Process startup
 

@@ -31,7 +31,7 @@ i16 descending(u16 a, u16 b) {
 
 ### Why `i16` and not `i8`?
 
-The same reason C's `qsort` uses `int`: xtc's codegen currently treats `i8` call results as **unsigned** when they're consumed directly by a relational operator (`cmp(x, y) < 0`), so an `i8` comparator with the obvious `< 0` test would silently never fire on negative returns. Using `i16` sidesteps the issue. Routing the result through a named local before the test is the alternative workaround, but `i16` is simpler.
+The same reason C's `qsort` uses `int`: xcc's codegen currently treats `i8` call results as **unsigned** when they're consumed directly by a relational operator (`cmp(x, y) < 0`), so an `i8` comparator with the obvious `< 0` test would silently never fire on negative returns. Using `i16` sidesteps the issue. Routing the result through a named local before the test is the alternative workaround, but `i16` is simpler.
 
 ## The sort
 
@@ -73,4 +73,4 @@ The warning is left in the library source and recorded here because it was real;
 
 On **xt6502**, `Sort.qsort`'s internal driver is recursive, so it allocates its frame on the software stack rather than taking the static-frame fast path — the codegen marks recursive functions ineligible for it. Non-recursive comparators stay eligible, so the comparator itself costs no more than an indirect `JSR`. On the register targets the frame is an ordinary stack frame and none of this applies.
 
-For arrays of thousands of elements, watch the depth: worst-case quicksort is O(N) deep on already-sorted input. The xtc stack is tunable with the `-ss` / `--stack-size` flag if you need more headroom.
+For arrays of thousands of elements, watch the depth: worst-case quicksort is O(N) deep on already-sorted input. The xcc stack is tunable with the `-ss` / `--stack-size` flag if you need more headroom.

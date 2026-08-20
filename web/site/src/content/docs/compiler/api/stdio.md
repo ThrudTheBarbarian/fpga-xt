@@ -1,6 +1,6 @@
 ---
 title: Stdio
-description: Screen output, cursor positioning, and formatted print for xtc programs.
+description: Screen output, cursor positioning, and formatted print for xcc programs.
 ---
 
 `Stdio` is the screen-I/O class. It writes characters to the active text-mode screen, positions the cursor, and offers a `printf`-style formatter that handles every primitive type plus structs and classes.
@@ -31,7 +31,7 @@ Stdio.print("centred-ish\n");
 
 ## `print` — type-overloaded direct printing
 
-`Stdio.print` is overloaded across every primitive xtc type. The compiler picks the right implementation based on the argument's type:
+`Stdio.print` is overloaded across every primitive xcc type. The compiler picks the right implementation based on the argument's type:
 
 ```c
 static void print(string s);

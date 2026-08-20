@@ -9,11 +9,11 @@ description: Random numbers, square root, trigonometry, log/exp/pow, and a compl
 #import <Math.xc>
 ```
 
-The class makes heavy use of xtc's overloading by **return type** for zero-argument methods — `Math.rand()` and the constants like `Math.PI()` resolve based on the variable being assigned to. The compiler emits the version that produces the requested type.
+The class makes heavy use of xcc's overloading by **return type** for zero-argument methods — `Math.rand()` and the constants like `Math.PI()` resolve based on the variable being assigned to. The compiler emits the version that produces the requested type.
 
 ## Random numbers
 
-xtc's RNG is a small linear-feedback generator. By default it auto-seeds from the Atari hardware (`RANDOM` register at `$D20A`) at first use; you can also seed it explicitly.
+xcc's RNG is a small linear-feedback generator. By default it auto-seeds from the Atari hardware (`RANDOM` register at `$D20A`) at first use; you can also seed it explicitly.
 
 ```c
 static void setSeed(u16 seed);       // re-seed the generator
@@ -160,12 +160,12 @@ double pi_d = Math.PI();             // double overload
 the lexer through to the back end, so a value written in source, stored to a
 file on one target and read back on another is bit-identical.
 
-The bespoke 5-byte format xtc used to define (1 sign byte + 1 exponent byte +
+The bespoke 5-byte format xcc used to define (1 sign byte + 1 exponent byte +
 24-bit mantissa) is **retired**; if you have code or data files that assume it,
 they need converting.
 
 **It is not the Atari OS math pack format either.** The Atari ROM uses
-**BCD**-encoded floats with a 6-decimal-digit mantissa. xtc is pure binary,
+**BCD**-encoded floats with a 6-decimal-digit mantissa. xcc is pure binary,
 which is far cheaper to multiply and divide on a CPU with no decimal arithmetic,
 at the cost of needing a binary↔ASCII conversion to print.
 

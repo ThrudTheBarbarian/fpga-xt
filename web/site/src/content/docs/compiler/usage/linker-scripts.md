@@ -181,7 +181,7 @@ Each region's bank is also reserved with the page tracker so `:banked` decls are
 
 `[cloaked]` applied to the **retired** `xe`-family Atari models, which used PORTB-style banking. No shipped layout declares the section, so in practice it is inert — the parser still accepts it, and `xt` (which reaches its extra RAM through the two bank windows instead) rejects a `:cloaked` annotation.
 
-### `[stack]` — xtc software stack
+### `[stack]` — xcc software stack
 
 ```ini
 [stack]
@@ -234,9 +234,9 @@ By convention, every shipped `.lnk` opens with a Unicode box-art comment showing
 #
 # ┌──────────────────────────────────────────────┐
 # │ $0000-$0081  OS/hardware zero page           │
-# │ $0082-$00BB  xtc ZP: SP, tmp, HP, vars       │
+# │ $0082-$00BB  xcc ZP: SP, tmp, HP, vars       │
 # │ $00B0-$00BB  runtime params (reserved)       │
-# │ $00BC-$00FF  xtc ZP: vars (continued)        │
+# │ $00BC-$00FF  xcc ZP: vars (continued)        │
 # ├──────────────────────────────────────────────┤
 # │ $2000-$9FFF  Main region (32 KB)             │
 # │   $2000      Code + data (entry point here)  │
@@ -286,4 +286,4 @@ If you write a layout for a piece of hardware that's likely to be useful to othe
 | `-m <layout>` | Activate a layout. Searches `<layout>` as a path (appends `.lnk` if needed), then `support/layouts/<layout>.lnk`, then `support/<platform>/layouts/<layout>.lnk`. |
 | `-ll`, `--list-layouts` | List every built-in layout. |
 | `--dump-layout` | Print the active layout's parsed diagram and exit. |
-| `-H <path>` / `XTC_HOME=...` | Point the search at a specific xtc home (so a custom `support/` tree is preferred over the system one). |
+| `-H <path>` / `XCC_HOME=...` | Point the search at a specific xcc home (so a custom `support/` tree is preferred over the system one). |

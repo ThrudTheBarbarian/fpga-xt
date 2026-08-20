@@ -29,7 +29,7 @@ below are defaults — they can be overridden at instantiation time.
 0x2040_0000 ├────────────────────────────────────────────────────┤
             │ SALLY data-bank pages (DDR3_DATA_BASE). $D5C1      │
             │ selects a 16 KB-strided page (12 KB used) → CPU    │
-            │ $A000-$CFFF; 256 pages; xtc heap maps on demand.   │
+            │ $A000-$CFFF; 256 pages; xcc heap maps on demand.   │
             │ Both via sally_mem's banked-window cache.          │
 0x3000_0000 ├────────────────────────────────────────────────────┤
             │ Main framebuffer (FB_BASE) — compositor plane 0:   │

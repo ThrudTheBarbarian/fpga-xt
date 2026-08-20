@@ -1,9 +1,9 @@
 ---
 title: Language reference
-description: The xtc language — syntax, types, classes, protocols, memory, collections, threading and inline assembly.
+description: The xcc language — syntax, types, classes, protocols, memory, collections, threading and inline assembly.
 ---
 
-xtc is a small, statically-typed language with C-family syntax, ObjC-like classes
+xcc is a small, statically-typed language with C-family syntax, ObjC-like classes
 and protocols, and a focus on producing dense code on machines that cannot afford
 waste. Every page below carries a **worked example that compiles and runs** — the
 programs live in the repository and are built by a script, so a code block here
@@ -27,7 +27,7 @@ If you're reading top-to-bottom, this is the recommended order:
 12. [**Collections & strings**](/compiler/language/collections/) — `Array<T>`, `Map<V>`, `Set<T>`, `String`, and how element types are checked then erased.
 13. [**Threading**](/compiler/language/threading/) — `Thread`, `Mutex`, `Atomic`, `Pool`, and the automatic atomic-refcount decision. Native targets only.
 14. [**Modules & shared libraries**](/compiler/language/modules/) — `--emit-lib`, `#import <Lib>`, what crosses a library boundary, and `extern` globals.
-15. [**Inline assembly**](/compiler/language/inline-asm/) — `asm { … }` blocks, byte-extract operators, reaching xtc variables, the `clobbers` annotation.
+15. [**Inline assembly**](/compiler/language/inline-asm/) — `asm { … }` blocks, byte-extract operators, reaching xcc variables, the `clobbers` annotation.
 
 For day-to-day reference, jump straight to the page you need from the sidebar.
 

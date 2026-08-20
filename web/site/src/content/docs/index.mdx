@@ -1,6 +1,6 @@
 ---
 title: Atari-XT
-description: A modern take on Atari computers, implemented on a single Xilinx Zynq-7020 — FPGA fabric for the SALLY 6502 and ANTIC/GTIA/POKEY pipeline, dual Cortex-A9 for the modern half, and the xtc toolchain.
+description: A modern take on Atari computers, implemented on a single Xilinx Zynq-7020 — FPGA fabric for the SALLY 6502 and ANTIC/GTIA/POKEY pipeline, dual Cortex-A9 for the modern half, and the xcc toolchain.
 template: splash
 hero:
   image:
@@ -35,7 +35,7 @@ The "T" machine, a 680x0-family STe/TT, is planned. Unlike the 6502, this will b
 
 Underlying both chipsets is the host that ties them together: Running on the boot-A9 core, is a FreeRTOS-based multi-tasking environment that offers the SD filesystem, ethernet networking, HDMI out (with audio), USB-HID input (handled by a companion MCU), and a desktop environment with vended UI services (eg: GEM, available to both 6502 and 68k)
 
-The system runs unmodified Atari XL/XE software, but isn't bounded by 1979: expanded RAM is bank-switched into the 6502's address space, the display is an always-on 1080p60 compositor in which each machine is just a scalable window, and a custom language — **xtc** (repo: [`fpga-xtc`](https://github.com/ThrudTheBarbarian/fpga-xtc))— compiles modern, typed, class-based code straight to executables.
+The system runs unmodified Atari XL/XE software, but isn't bounded by 1979: expanded RAM is bank-switched into the 6502's address space, the display is an always-on 1080p60 compositor in which each machine is just a scalable window, and a custom language — **xcc** (repo: [`fpga-xtc`](https://github.com/ThrudTheBarbarian/fpga-xtc))— compiles modern, typed, class-based code straight to executables.
 
 ## What this site covers
 
@@ -46,8 +46,8 @@ The system runs unmodified Atari XL/XE software, but isn't bounded by 1979: expa
 
 		[Explore the hardware →](/hardware/)
 	</Card>
-	<Card title="Compiler (xtc)" icon="open-book">
-		The xtc language, its standard library, and the xtc/xta/xts toolchain —
+	<Card title="Compiler (xcc)" icon="open-book">
+		The xcc language, its standard library, and the xcc toolchain —
 		a C/ObjC-like language that compiles to native executable with bank switching as a first-class feature.
 
 		[Read the compiler docs →](/compiler/)

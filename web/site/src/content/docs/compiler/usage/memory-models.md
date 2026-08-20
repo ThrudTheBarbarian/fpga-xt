@@ -101,7 +101,7 @@ is a planned fix.)
 
 ### Pointers carry their bank
 
-xtc's 6502 pointers are **three bytes**: `[addr-lo, addr-hi, data-bank]`. The backend writes
+xcc's 6502 pointers are **three bytes**: `[addr-lo, addr-hi, data-bank]`. The backend writes
 `$D5C1` from byte 2 on **every** dereference, so a pointer into any of the 256 data pages is
 just a pointer — no annotation, no manual bank juggling.
 

@@ -23,5 +23,5 @@ These pages cover the operating-system layer that bridges the two:
   reference for each.
 - **[VDI / blitter driver](/os/vdi-blitter/)** — how GEM VDI drawing calls map onto xt-blitter
   register writes, from either the PS or the SALLY side.
-- **[Self-hosting roadmap](/os/self-hosting/)** — the plan to compile xtc with itself, hosted on
+- **[Self-hosting roadmap](/os/self-hosting/)** — the plan to compile xcc with itself, hosted on
   the Zynq hardware.

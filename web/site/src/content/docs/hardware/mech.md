@@ -175,10 +175,10 @@ Strides make matrix columns, interleaved buffers and reversals addressable with 
 CPU-side reshuffling. Reductions (`vdot`, `vsum`) collapse a whole vector into a
 single slot in one op.
 
-## From xtc
+## From xcc
 
 The op stream is exactly what a compiler back-end emits, so this is mostly invisible
-in [xtc](/compiler/): a float or integer expression tree lowers to 3-address ops with
+in [xcc](/compiler/): a float or integer expression tree lowers to 3-address ops with
 the register allocator targeting the slot file, array expressions lower to vector ops,
 and all that is left in the generated code is "read the result slot." The
 [Math standard library](/compiler/api/math/) routes through MECH.
@@ -281,7 +281,7 @@ as the cost of a multiply; it is the *floor*, and real multiplies/divides tower 
 it.
 :::
 
-Because the break-even moves with the turbo multiplier, the xtc cost model takes the
+Because the break-even moves with the turbo multiplier, the xcc cost model takes the
 target `CLOCK_MULT` as an input when deciding inline-vs-offload.
 
 ### Where MECH excels

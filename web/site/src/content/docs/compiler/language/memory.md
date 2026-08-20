@@ -3,7 +3,7 @@ title: Heap, ARC & weak refs
 description: "new and delete, automatic reference counting, weak: references, manual -farc=off mode."
 ---
 
-xtc has a coalescing free-list heap with reference-counted ownership. It is available on any memory layout that declares a `[heap]` region — the shipped 6502 `xt` layouts do — and on all four native backends. On those targets `-falloc=heap` is the default; a layout without a `[heap]` region falls back to a bump allocator (heap-only statements are rejected at sema time).
+xcc has a coalescing free-list heap with reference-counted ownership. It is available on any memory layout that declares a `[heap]` region — the shipped 6502 `xt` layouts do — and on all four native backends. On those targets `-falloc=heap` is the default; a layout without a `[heap]` region falls back to a bump allocator (heap-only statements are rejected at sema time).
 
 Banked-heap targets reserve one or more 16 KB bank pages for the heap, and the runtime selects the appropriate bank on each allocator call transparently.
 
@@ -102,7 +102,7 @@ Releasing an array of class instances (an allocation from `new T[N]`) walks the 
 
 ## Weak references
 
-Pure reference counting leaks on cycles. If `Parent` owns `Child` strongly and `Child` carries a back-pointer to `Parent`, each instance's refcount stays at 1 after every external reference drops — they keep each other alive forever. xtc's answer is the `weak:` qualifier:
+Pure reference counting leaks on cycles. If `Parent` owns `Child` strongly and `Child` carries a back-pointer to `Parent`, each instance's refcount stays at 1 after every external reference drops — they keep each other alive forever. xcc's answer is the `weak:` qualifier:
 
 ```c
 class Child {

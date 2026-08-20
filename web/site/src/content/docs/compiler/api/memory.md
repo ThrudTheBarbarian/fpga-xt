@@ -50,7 +50,7 @@ When `dst <= src` (or the regions don't overlap at all) `memmove` simply forward
 
 ## Self-modifying code
 
-The unrolled paths patch the high byte of their own `LDA` / `STA` instructions once per page. That means the method body has to live in **writable RAM** — which xtc methods always do, whatever their placement (`:main`, `:banked`, `:shadow`), so this is a fact about the implementation rather than something you have to arrange.
+The unrolled paths patch the high byte of their own `LDA` / `STA` instructions once per page. That means the method body has to live in **writable RAM** — which xcc methods always do, whatever their placement (`:main`, `:banked`, `:shadow`), so this is a fact about the implementation rather than something you have to arrange.
 
 ## Reachability
 

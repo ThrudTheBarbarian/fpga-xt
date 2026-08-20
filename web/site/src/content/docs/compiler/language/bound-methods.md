@@ -13,7 +13,7 @@ Handler^ h = &c.accumulate;      // receiver + code, in one value
 h((i32)10);                      // calls c.accumulate(10)
 ```
 
-This is the whole of the callback story in xtc. There is no `void*` context
+This is the whole of the callback story in xcc. There is no `void*` context
 argument to thread through, no cast back from `void*` on entry, and no protocol
 to declare for a one-method interface.
 

@@ -1,6 +1,6 @@
 ---
 title: "6502 / SALLY extensions"
-description: "The SALLY CPU extensions that let xtc use C calling conventions — hidden stack, SP-relative addressing, PSH/PLL."
+description: "The SALLY CPU extensions that let xcc use C calling conventions — hidden stack, SP-relative addressing, PSH/PLL."
 ---
 
 

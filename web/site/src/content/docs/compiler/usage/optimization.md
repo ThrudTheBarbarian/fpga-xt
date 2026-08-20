@@ -3,14 +3,14 @@ title: Optimisation
 description: What -O0 through -O3 add, the tuning knobs (-Fli, -Flu), how to read the optimiser's summary line.
 ---
 
-xtc has four optimisation levels, plus two tuning knobs that modulate the most expensive transforms (leaf inlining and loop unrolling). **The default is `-O3`** — the production level, and what the fixture corpus is validated at. The lower levels are debugging aids: drop to `-O0` when you want the generated code to correspond line-for-line with the source, not because `-O3` is something to opt into.
+xcc has four optimisation levels, plus two tuning knobs that modulate the most expensive transforms (leaf inlining and loop unrolling). **The default is `-O3`** — the production level, and what the fixture corpus is validated at. The lower levels are debugging aids: drop to `-O0` when you want the generated code to correspond line-for-line with the source, not because `-O3` is something to opt into.
 
 ```bash
 xcc -O3 game.xc -o game.xex
 ```
 
 ```
-xtc: optimised -O3 (9877 → 9698 instructions)
+xcc: optimised -O3 (9877 → 9698 instructions)
 ```
 
 The "before / after" instruction count is printed when any optimisation pass actually moved the needle — useful as a sanity check that a flag did what you expect.

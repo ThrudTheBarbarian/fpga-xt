@@ -110,7 +110,7 @@ A class instance is almost always reached through a pointer (whether stack-resid
 
 ## Constructors: `init`
 
-Any method named `init` whose signature matches the construction arguments is the constructor. xtc supports multiple `init` overloads through the same parameter-type-overloading machinery as ordinary functions:
+Any method named `init` whose signature matches the construction arguments is the constructor. xcc supports multiple `init` overloads through the same parameter-type-overloading machinery as ordinary functions:
 
 ```c
 class Sprite {
@@ -123,7 +123,7 @@ class Sprite {
 
 `Sprite a;` calls `init()`; `Sprite b(160, 96);` calls `init(160, 96)`.
 
-There is **no operator overloading** in xtc — only method overloading.
+There is **no operator overloading** in xcc — only method overloading.
 
 ## Destructor: `dealloc`
 

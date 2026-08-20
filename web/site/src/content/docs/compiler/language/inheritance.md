@@ -3,7 +3,7 @@ title: Inheritance & protocols
 description: Single inheritance, virtual dispatch, casting objects, and protocols.
 ---
 
-xtc supports **single inheritance** between classes and **multiple-protocol conformance** for cross-tree interfaces. The two solve different problems: inheritance is for sharing implementation down a single line of descent, protocols are for sharing a *calling convention* across unrelated trees.
+xcc supports **single inheritance** between classes and **multiple-protocol conformance** for cross-tree interfaces. The two solve different problems: inheritance is for sharing implementation down a single line of descent, protocols are for sharing a *calling convention* across unrelated trees.
 
 ## Single inheritance
 
@@ -61,7 +61,7 @@ Unrelated class pointers do not silently alias. Within the same line of descent 
 
 ### Downcasts — runtime-checked
 
-Going the other direction — handing back a `Dog*` value that's stored in an `Animal*` variable — needs a runtime check because the actual runtime type isn't known statically. xtc expresses this with the existing `(type)` cast syntax; the compiler detects when the source and target are related classes in opposite directions and inserts a class-id check.
+Going the other direction — handing back a `Dog*` value that's stored in an `Animal*` variable — needs a runtime check because the actual runtime type isn't known statically. xcc expresses this with the existing `(type)` cast syntax; the compiler detects when the source and target are related classes in opposite directions and inserts a class-id check.
 
 Two cast forms cover the two failure-handling preferences:
 

@@ -1,9 +1,9 @@
 ---
-title: xtc
+title: xcc
 description: A statically-typed, ObjC-like language with classes, protocols, ARC and bound methods, compiling through one architecture-neutral IR to six targets — from a banked 6502 to native arm64, x86-64, Windows, ARM32 and 68000.
 ---
 
-**xtc** is a small, statically-typed, ObjC-like language with classes, single inheritance,
+**xcc** is a small, statically-typed, ObjC-like language with classes, single inheritance,
 protocols and automatic reference counting. It compiles through one architecture-neutral
 SSA intermediate representation to **six live backends**, from an 8-bit banked 6502 to
 64-bit macOS, Linux and Windows.

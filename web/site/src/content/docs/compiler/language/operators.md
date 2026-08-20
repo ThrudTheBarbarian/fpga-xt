@@ -3,7 +3,7 @@ title: Operators
 description: Full operator precedence table including the rotate and byte-extract operators.
 ---
 
-xtc operators are largely a subset of C's, with two notable additions: a pair of **rotate** operators (`<:` and `:>`) that map directly to the 6502's `ROL` / `ROR` instructions, and four **byte-extract** prefix operators (`<`, `>`, `>>`, `>>>`) that pull individual bytes out of wider constants and symbols. The byte-extract operators only mean anything inside [`asm { ... }`](/compiler/language/inline-asm/) blocks.
+xcc operators are largely a subset of C's, with two notable additions: a pair of **rotate** operators (`<:` and `:>`) that map directly to the 6502's `ROL` / `ROR` instructions, and four **byte-extract** prefix operators (`<`, `>`, `>>`, `>>>`) that pull individual bytes out of wider constants and symbols. The byte-extract operators only mean anything inside [`asm { ... }`](/compiler/language/inline-asm/) blocks.
 
 ## Precedence table
 
@@ -50,7 +50,7 @@ u8 q   = *p;     // q == 42
 *p     = 99;     // v becomes 99
 ```
 
-`->` is sugar for "dereference then access a member": `p->x` is exactly `(*p).x`. xtc also accepts the dot form `p.x` directly on a pointer — the compiler auto-dereferences. See [Types → Pointers](/compiler/language/types/#pointers) for the rationale.
+`->` is sugar for "dereference then access a member": `p->x` is exactly `(*p).x`. xcc also accepts the dot form `p.x` directly on a pointer — the compiler auto-dereferences. See [Types → Pointers](/compiler/language/types/#pointers) for the rationale.
 
 ### Cast extensions
 

@@ -45,7 +45,7 @@ float secs    = Time.secondsSince(t0);
 Stdio.printf("work took %lu jiffies (%f s)\n", jiffies, secs);
 ```
 
-The reason `dpSecondsSince` is named distinctly rather than overloading `secondsSince` by return type: xtc only uses return-type as a tiebreaker for **zero-arg** overloads. A `secondsSince(u32) → float` and `secondsSince(u32) → double` pair would be flagged as a redefinition.
+The reason `dpSecondsSince` is named distinctly rather than overloading `secondsSince` by return type: xcc only uses return-type as a tiebreaker for **zero-arg** overloads. A `secondsSince(u32) → float` and `secondsSince(u32) → double` pair would be flagged as a redefinition.
 
 ## Busy-wait delays
 

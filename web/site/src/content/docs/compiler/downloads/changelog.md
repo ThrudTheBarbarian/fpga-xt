@@ -1,6 +1,6 @@
 ---
 title: ChangeLog
-description: Release notes for the xtc toolchain — bug fixes and new features per version.
+description: Release notes for the xcc toolchain — bug fixes and new features per version.
 ---
 
 ## Version 0.2 — five backends, shared libraries, bound methods

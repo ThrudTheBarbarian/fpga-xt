@@ -1,9 +1,9 @@
 ---
 title: Inline assembly
-description: asm blocks, byte-extract operators, accessing xtc variables, the clobbers annotation.
+description: asm blocks, byte-extract operators, accessing xcc variables, the clobbers annotation.
 ---
 
-xtc supports embedded assembly via `asm { ... }` blocks. Inside the block the assembler grammar is the same as `xcc-as`'s — see the [xcc-as reference](/compiler/api/) — but with the added ability to refer to xtc identifiers by name and pull individual bytes out of wider values.
+xcc supports embedded assembly via `asm { ... }` blocks. Inside the block the assembler grammar is the same as `xcc-as`'s — see the [xcc-as reference](/compiler/api/) — but with the added ability to refer to xcc identifiers by name and pull individual bytes out of wider values.
 
 ## The asm block
 
@@ -14,7 +14,7 @@ asm {
 }
 ```
 
-The body is delimited by `{ ... }`, exactly as an xtc statement body is.
+The body is delimited by `{ ... }`, exactly as an xcc statement body is.
 
 By default the compiler scans the block, determines which registers it thinks will be written, and emits save / restore around the block. That is usually what you want — but if your block has *intended* side effects on a register the compiler thinks you didn't touch (or vice versa), you can override with a `clobbers` annotation:
 
@@ -28,9 +28,9 @@ asm {
 
 Mismatch warnings (compiler thought you'd touch A but you didn't, or vice versa) are emitted under the `asm-clobbers` warning category and may be suppressed with `-Wno-asm-clobbers` if you've audited and disagreed.
 
-## Accessing xtc variables
+## Accessing xcc variables
 
-Identifiers declared in xtc are visible inside `asm` blocks under their declared names. The assembler resolves them to their allocated address, so they can stand in anywhere a label or constant would normally appear.
+Identifiers declared in xcc are visible inside `asm` blocks under their declared names. The assembler resolves them to their allocated address, so they can stand in anywhere a label or constant would normally appear.
 
 ```c
 u16 score = 0;
@@ -76,7 +76,7 @@ asm {
 }
 ```
 
-These prefixes are recognised by the assembler grammar inside `asm` blocks; they are syntactically distinct from the xtc-level `<` / `>` comparison operators because the assembler accepts only constants and symbols after them. (See [Operators → Byte-extract prefixes](/compiler/language/operators/#byte-extract-prefixes-asm-context).)
+These prefixes are recognised by the assembler grammar inside `asm` blocks; they are syntactically distinct from the xcc-level `<` / `>` comparison operators because the assembler accepts only constants and symbols after them. (See [Operators → Byte-extract prefixes](/compiler/language/operators/#byte-extract-prefixes-asm-context).)
 
 ## What the assembler accepts
 
@@ -94,7 +94,7 @@ Every official instruction is recognised, with operand modes encoded the standar
 | (ZP, X) | `lda ($80,x);` |
 | (ZP), Y | `lda ($80),y;` |
 
-Instruction lines end with `;` (matching xtc's statement terminator). Labels are bare identifiers followed by `:`, addressable locally to the current `asm` block.
+Instruction lines end with `;` (matching xcc's statement terminator). Labels are bare identifiers followed by `:`, addressable locally to the current `asm` block.
 
 Platform memory-map symbols are predefined for the active target — on Atari that's `POKMSK`, `SDMCTL`, `AUDF1`, and the rest of the OS shadow / hardware register names — so you can use them directly without re-declaring constants. The symbol table the assembler loads lives at `support/<platform>/symbols/*.sym`; check there for the exact set available on a given platform, or to add your own. Each `.sym` file is a list of `NAME = $hex` lines (anything after `;` on a line is a comment), so adding a symbol is a one-line edit.
 
@@ -124,4 +124,4 @@ void atomic(void(*body)(void)) {
 }
 ```
 
-For larger helpers — multi-byte arithmetic, bank-switching trampolines, hardware-seeded PRNGs — the convention is to lift the routine into a hand-written `.asm` file under `support/` (see the source repo's `support/generic/asm/` and `support/<platform>/asm/` directories) and `JSR` to it from xtc. Inline `asm` blocks are best reserved for short, intent-revealing intercessions inline in xtc code.
+For larger helpers — multi-byte arithmetic, bank-switching trampolines, hardware-seeded PRNGs — the convention is to lift the routine into a hand-written `.asm` file under `support/` (see the source repo's `support/generic/asm/` and `support/<platform>/asm/` directories) and `JSR` to it from xcc. Inline `asm` blocks are best reserved for short, intent-revealing intercessions inline in xcc code.

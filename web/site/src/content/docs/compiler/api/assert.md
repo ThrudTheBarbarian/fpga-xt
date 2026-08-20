@@ -3,7 +3,7 @@ title: Assert
 description: Test-fixture assertion helpers; gated to no-ops by -DNDEBUG / -DRELEASE.
 ---
 
-`Assert` is a small set of test-assertion helpers used by xtc's own test fixtures and available to user code. Each assertion increments a test counter; failures increment a separate failure counter and print `FAIL T<n>` so the run-fixtures shell script can scan for them. `Assert.summary()` prints `DONE <count>` at the end of a run, plus a `FAIL <m> tests` line if anything failed.
+`Assert` is a small set of test-assertion helpers used by xcc's own test fixtures and available to user code. Each assertion increments a test counter; failures increment a separate failure counter and print `FAIL T<n>` so the run-fixtures shell script can scan for them. `Assert.summary()` prints `DONE <count>` at the end of a run, plus a `FAIL <m> tests` line if anything failed.
 
 ```c
 #import <Assert.xc>          // generic — works on every platform

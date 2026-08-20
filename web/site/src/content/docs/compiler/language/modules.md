@@ -1,6 +1,6 @@
 ---
 title: Modules & shared libraries
-description: Building an xtc shared library with --emit-lib, importing it with #import <Lib>, what crosses the interface, and the extern keyword for globals.
+description: Building an xcc shared library with --emit-lib, importing it with #import <Lib>, what crosses the interface, and the extern keyword for globals.
 ---
 
 On every target with a dynamic loader — the native hosts (`arm64`, `x86_64`, `win64`) and
@@ -102,7 +102,7 @@ you have not declared `extern` is an honest *"Undefined identifier"*.
 
 ## Importing a C library
 
-`#import <Foo>` also works for a **plain C** `.so`. There is no `.xtc.iface` in one, so xtc
+`#import <Foo>` also works for a **plain C** `.so`. There is no `.xtc.iface` in one, so xcc
 reads its **DWARF** instead and brings in its functions, its types, and its enum constants:
 
 ```c

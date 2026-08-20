@@ -66,13 +66,13 @@ void main(void) {
 ```
 
 ```bash
-xcc -O2 hello.xc -o hello.xex
+xtc -O2 hello.xc -o hello.xex
 ```
 
 ```
 xtc: optimised -O2 (... → ...)
 xtc: compiled 'hello.xc' -> 'hello.xex' (0 warnings, 0 errors)
-xcc-as: assembled -> 'hello.xex' (... bytes, 1 segments)
+xta: assembled -> 'hello.xex' (... bytes, 1 segments)
 ```
 
 Drop `hello.xex` into your favourite Atari emulator (Altirra, atari800, or run it under the bundled simulator with `xts hello.xex`) and you should see `hello, atari` print to the screen.
@@ -86,6 +86,6 @@ One thing to note is that xtc will attempt to read from its 'support' folder for
  - place the 'support' directory into /usr/local/xtc
  - place the 'support' directory into /opt/xtc
 
-You should find the support directory itself in the resources/ folder that came in the download along with xtc, xcc-as and xts.
+You should find the support directory itself in the resources/ folder that came in the download along with xtc, xta and xts.
 
 From here, [Compiler usage → CLI reference](/compiler/usage/cli/) covers the flags you'll reach for next; [Memory models](/compiler/usage/memory-models/) walks through the xt6502 memory map.

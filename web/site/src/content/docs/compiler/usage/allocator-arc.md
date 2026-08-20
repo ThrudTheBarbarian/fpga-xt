@@ -3,7 +3,7 @@ title: Allocator & ARC
 description: Picking between -falloc=bump and -falloc=heap, and between -farc=on automatic and -farc=off manual reference counting.
 ---
 
-xtc has two orthogonal flags that shape how heap allocation behaves:
+xcc has two orthogonal flags that shape how heap allocation behaves:
 
 - **`-falloc=bump|heap`** — picks the *allocator*. Bump is fast and one-way; heap supports `delete` / `release`.
 - **`-farc=on|off`** — picks the *lifecycle policy*. ARC-on emits retains and releases automatically; ARC-off leaves lifecycle to the user.

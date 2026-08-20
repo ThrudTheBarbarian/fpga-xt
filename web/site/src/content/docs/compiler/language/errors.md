@@ -3,7 +3,7 @@ title: Errors — throws, try & catch
 description: "Checked error propagation: the throws effect, throw, typed and untyped catch arms, the Error protocol, and how errors interact with defer and ARC."
 ---
 
-xtc's error model is **checked propagation**, not stack unwinding. A function that can fail says so on its signature; `throw` runs the scope teardown and returns; a call to such a function tests an error channel and either branches to a `catch` or propagates. The cost is a test-and-branch per throwing call — paid only where something can actually fail.
+xcc's error model is **checked propagation**, not stack unwinding. A function that can fail says so on its signature; `throw` runs the scope teardown and returns; a call to such a function tests an error channel and either branches to a `catch` or propagates. The cost is a test-and-branch per throwing call — paid only where something can actually fail.
 
 That choice is what makes the feature portable. Table-driven unwinding would need per-backend CFI tables, personality routines and an unwinder — machinery a banked 6502 with a 4 KB hardware stack cannot realistically carry. Checked propagation needs nothing the IR didn't already have (calls, compares, branches, returns), so every backend gets it at once, xt6502 included.
 
