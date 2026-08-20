@@ -39,6 +39,11 @@ s.charAt((u32)1);                // $E9 — the character é itself
 s.substringChars((u32)1, (u32)2) // "él" — slicing by characters
 ```
 
+String literals also take Unicode escapes directly — `"h\u00E9llo\u26A1"`
+is the same nine bytes — see
+[lexical structure](/compiler/language/lexical/#string-and-character-literals)
+for `\xNN` / `\uNNNN` / `\UNNNNNNNN` and their rules.
+
 ## The byte surface
 
 | | |

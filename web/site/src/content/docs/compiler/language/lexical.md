@@ -47,17 +47,34 @@ Strings are double-quoted, null-terminated, but the trailing `\0` is **not** cou
 | `\\` | a literal backslash |
 | `\"` | a literal `"` inside a string |
 | `\'` | a literal `'` inside a character literal |
+| `\xNN` | an ASCII byte — exactly 2 hex digits, `00`–`7F` *(since 0.4)* |
+| `\uNNNN` | a Unicode code point — exactly 4 hex digits *(since 0.4)* |
+| `\UNNNNNNNN` | a Unicode code point — exactly 8 hex digits *(since 0.4)* |
 
 ```c
 string greeting = "hello\n";
+String* s = String.withCString("caf\u00E9 \U0001F600");   // "café 😀"
 ```
 
-A character literal is a single character (or two characters where the first is `\`) inside single quotes, evaluated as a `u8`:
+`\u` and `\U` land in the string as **UTF-8** — `"\u00E9"` is the two bytes
+`C3 A9` — and a surrogate (`D800`–`DFFF`) or a value above `10FFFF` is a
+compile error. The digit counts are fixed, unlike C's greedy `\x`. And `\x`
+is deliberately capped at `7F`, also unlike C: a bare byte above `7F` inside
+a UTF-8 string is either half a character (which `\u` says better) or
+deliberate binary (which `Data`/`appendByte` say better), so the compiler
+refuses it rather than silently re-encoding. Source files are UTF-8, so a raw
+`é` in a literal is equivalent to `\u00E9`.
+
+A character literal is a single character (or an escape) inside single quotes, evaluated as a `u8`:
 
 ```c
 u8 tab = '\t';
 u8 a   = 'A';
+u8 e   = '\u00E9';    // must fit a u8 — the Latin-1 view
 ```
+
+Spell a non-ASCII character in a char literal with `\u`, not as a raw
+character — a raw multi-byte character between single quotes is not portable.
 
 A single string literal never splits across source lines — but **adjacent string
 literals concatenate**, as in C, and a newline between them makes no difference:
