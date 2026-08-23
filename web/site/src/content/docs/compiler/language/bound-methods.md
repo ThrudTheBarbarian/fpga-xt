@@ -3,6 +3,12 @@ title: Bound methods & callbacks
 description: The ^ type — a receiver and a code address travelling together, so a callback needs no context pointer and no cast.
 ---
 
+> Since 0.4 the language also has [blocks](/compiler/language/blocks/) —
+> function values that capture arbitrary locals, not just one receiver.
+> A bound method remains the right tool for "call this method on that
+> object"; a block is the right tool when the callback needs context.
+
+
 `&obj.method` yields a **bound method**: a two-word value carrying the receiver
 *and* the code address together. Store it, pass it, call it later — the receiver
 travels with it.

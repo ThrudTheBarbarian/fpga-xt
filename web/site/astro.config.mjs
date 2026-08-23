@@ -84,6 +84,7 @@ export default defineConfig({
 								{ label: 'Classes', slug: 'compiler/language/classes' },
 								{ label: 'Inheritance & protocols', slug: 'compiler/language/inheritance' },
 								{ label: 'Bound methods & callbacks', slug: 'compiler/language/bound-methods' },
+								{ label: 'Blocks', slug: 'compiler/language/blocks' },
 								{ label: 'Errors (throws / try / catch)', slug: 'compiler/language/errors' },
 								{ label: 'Heap, ARC & weak refs', slug: 'compiler/language/memory' },
 								{ label: 'Collections & strings', slug: 'compiler/language/collections' },
