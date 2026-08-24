@@ -9,108 +9,102 @@ useful when its rough edges are visible than when they're hidden.
 
 ## Where things stand
 
-The back-end rebuild that dominated the last stretch is **done**. The compiler lowers to a
-single architecture-neutral IR and out through **six live backends** — xt6502, arm64, arm9,
-m68k, x86_64 and win64 — and every one of them passes the full fixture corpus. The old AST code
-generator has been removed; the IR pipeline is the only path.
+The compiler lowers to a single architecture-neutral IR and out through **seven live
+backends** — xt6502, arm64 (macOS), arm9, m68k, x86_64 (Linux/musl), win64 and
+**wasm32** — every one passing the full fixture corpus, and every one produced end to
+end by the **in-house toolchain**: xcc's own assemblers, linkers and executable-format
+writers, with no external compiler in the chain. A macOS machine with nothing but xcc
+installed cross-builds native binaries for Linux, Windows and the browser out of the box —
+the libc link pools ship inside the install.
 
-On top of that, `arm9` grew a real module system: shared libraries, an interface that travels
-*inside* the `.so`, and protocol dispatch that works between libraries built in complete
-ignorance of each other. See [Modules & shared libraries](/compiler/language/modules/).
+The whole compiler also exists a **second time, written in xcc**, and every stage of it is
+held byte-identical to the original by a set of twenty-four differential harnesses. That
+"one language, one behaviour" claim is enforced to the byte on every commit, not asserted.
 
-## What's next
+Application code is **platform-neutral by default**: `Url`, `Log` and `Platform` are
+ambient on every target (each platform's prelude wires its own transports and loggers),
+so the same directive-free source file compiles, links and *runs* on a Mac, a Linux
+server, a browser and a banked 6502 — degrading honestly (a fetch with no transport
+completes with status 0 and a logged warning) rather than failing to build.
 
-1. **Graphics — the remaining modes.** `Gfx8` (GR.8), `Gfx7`, `Gfx6` and `Gfx15` ship with
-   the full primitive set: plot/line, hline/vline, rect/fillRect, circle/oval/arc/pie + filled
-   variants, bezier, drawText, floodFill, setupNative, setupSplit. The remaining Atari modes
-   (GR.0–GR.5) are further `Gfx` subclasses; first deliverable per mode is line draw. `Gfx` is
-   also **not ported to x86_64** — that target has no framebuffer to draw into.
+## What's next: mobile
 
-2. **A real Mach-O export trie.** `--emit-lib` now works on the native hosts as well as
-   arm9 — but on macOS the linker writes a single flat export node, and `childCount` is one
-   byte, so a dylib silently caps at **255 exported symbols**. A library that imports
-   Foundation exceeds that, warns, and then fails in the *client's* `dyld`. The format is a
-   prefix tree, so the cap is per-node: splitting on the first character lifts it past
-   anything a compilation unit will produce. Compiler bug 042. ELF and PE are unaffected —
-   6502 and m68k have no loader and stay whole-program.
+The next targets are **iOS/iPadOS and Android** — one language across desktop, server,
+browser and phone. The plans are staged and deliberately similar in shape:
 
-## Planned features
-
-### Bank memory via pointer
-
-Direct user-level access to bank pages, something like `u8* data = bank(4);`. An escape hatch
-to deliberately route reads and writes through a chosen bank when the compiler's automatic
-placement isn't what you want.
-
-### Intra-function banking
-
-Banking is **function-granular**: a function lives in one bank. A single function larger than
-a bank window (~22 KB) therefore cannot be placed at all. Splitting a function across banks
-is the fix, and is not yet attempted.
-
-### `inline:method()` on banked-heap targets
-
-The inlined body's `(selfPtr),Y` accesses to receiver ivars need bank brackets so the read
-lands in the heap's bank, matching what regular method dispatch already does via the call
-wrapper. Needs care around nested inlines targeting different banks.
+- **iOS is a platform variant of the shipped arm64/Mach-O target** — same ISA, object
+  format and calling convention as macOS. The deltas are a platform stamp in the binary,
+  the iOS SDK's stub libraries, a small native shell that owns the run loop and feeds
+  events in, and packaging/signing scripts. The simulator makes the whole loop
+  scriptable on a Mac.
+- **Android pairs the arm64 code generator with the ELF writer** (both already shipped,
+  never yet combined), links against Android's libc as a shared object, and rides
+  **NativeActivity** — an app whose entire logic is native code behind a boilerplate
+  manifest, the same mechanism QT and SDL use. No Java required.
+- On both, **the app draws itself**: the Xtg toolkit renders into a GPU surface (Metal /
+  GLES) hosted by the shell, so native widget-set bindings are a later option, never the
+  gate. And on both, the acceptance test is the same file that already runs everywhere
+  else, unchanged — the platform prelude is the seam, so `Log.info` goes to the console
+  on a server, the browser console on the web, and the system log on a phone, with app
+  source none the wiser.
 
 ## Accepted limitations
 
-These are tradeoffs in algorithm choice, not bugs — they won't be "fixed":
+These are tradeoffs, not bugs — they won't be "fixed":
 
-- **CORDIC trig** is ~14-bit accurate. Tests handle this via `APPROX_TOLERANCE`.
-- **`fpTan` precision degrades near ±π/2** — inherent to the identity used.
-- **NaN compares "equal"** per `fpCmp` — deterministic, non-IEEE.
-- **A single 6502 heap block cannot exceed one bank** (~12 KB). Multi-bank layouts hold more
-  *in total*, but no one allocation spans a bank boundary. By design.
 - **A bound method (`^`) widened in two *different* modules compares unequal.** Two `^`s
   widened in the *same* module are always equal — which is the case that matters, since a
-  program registers and unregisters its own callbacks. Closing the exotic case would need a
-  canonical trampoline address, which the loader cannot provide.
+  program registers and unregisters its own callbacks. Closing the exotic case would need
+  a canonical trampoline address, which the loader cannot provide.
+- **Floating point is IEEE-754 everywhere** — `float` is binary32 and `double` is
+  binary64 on every target, with literals encoded at lex time — but xcc makes no promise
+  that a *transcendental* (`sin`, `pow`, …) returns bit-identical results across
+  targets: each platform's math library answers with its own final-bit rounding, exactly
+  as C compilers behave across libms.
 
 ## Recently shipped
 
-- **Shared libraries (`--emit-lib`) and `#import <Lib>`.** A library carries its own
-  interface inside the `.so`, so a client type-checks against the *real binary* rather than a
-  header that may have drifted from it. Classes, protocols, structs (by value, in and out),
-  enums (constants **and** type names), free functions, typedefs, `weak:` fields, bound
-  methods, and C types re-exported from *other* libraries all cross the boundary.
-- **Protocols across a `.so`.** A protocol method is identified by its index within its own
-  declaration, and the protocol by a hash of its *name* — both derived identically by every
-  module, with no coordination. Two libraries built in ignorance of each other compose, and a
-  class conforming to a protocol from each dispatches correctly through both.
-- **`extern` globals.** Globals are scoped to the module they are compiled in; `extern` refers
-  to one defined elsewhere instead of silently defining a second copy.
-- **Bound methods (`^`) and optional protocol methods.** `&obj.method` is a storable,
-  callable `{receiver, code}` value, and a plain function *widens* into the same type. An
-  unimplemented `optional` protocol method leaves a null slot, so testing a `^` **is**
-  `respondsTo`. Together these make the delegate and target/action patterns work.
-- **`weak:` without a table.** Weak slots are threaded onto an intrusive list whose head lives
-  in the referent's own heap header — no capacity limit, O(1) stores, and destroying an object
-  with *no* weak references costs **one null test** instead of a full table scan. Works on a
-  stored `^` too (`weak: act_t^`), which is the idiomatic action field.
-- **`final`.** Opts a method back out of the vtable under `--emit-lib`, where whole-program
-  devirtualisation is unsound because the program isn't whole.
-- **m68k and x86_64 backends.** Atari ST (with the `xcc-sim-68k` simulator) and Linux/musl, both at
-  full corpus parity.
-- **The IR back-end rebuild, completed.** Architecture-neutral IR, ~21 optimisation passes,
-  six backends, and the legacy AST code generator removed.
-- **A differential fuzzer.** Generates random programs and compiles them through every
-  backend; any divergence between two targets is a bug. It found seven the corpus had missed.
+- **The ambient platform surface.** `Url` (an NSURL-style value with a cross-platform
+  `fetch`), a `Logger` protocol behind the `Log` facade (tty-coloured console on hosted
+  targets, browser console on wasm), and a `Platform` delegate seam — all available with
+  zero imports in application code, wired per-target by each platform's prelude.
+- **The wasm32 target.** `xcc -A wasm32 -o app app.xc` produces a `.wasm` plus a
+  universal loader that runs under Node and in a browser unchanged — classes, ARC,
+  protocols, blocks, 64-bit integers, IEEE floats, the lot — with the browser's
+  fetch/DOM/console surface carried inside the generated loader.
+- **Blocks.** Closures as first-class values with by-value snapshot captures, declared
+  the way variables are declared (`block b u32(u16 x) = { … };`), storable in fields and
+  registries, passable inline to methods — plus `block:` write-back captures for the
+  accumulate-into-a-local pattern, with escape analysis making the unsound cases compile
+  errors. See [Blocks](/compiler/language/blocks/).
+- **UTF-8 strings, end to end.** `String` is UTF-8-native with byte *and* character
+  interfaces, and 0.4 adds `\xNN`, `\uNNNN` and `\UNNNNNNNN` escapes with fixed digit
+  counts (deliberately unlike C's greedy `\x`).
+- **The toolchain-free cross matrix.** `make install` vendors the Linux (musl) and
+  Windows (mingw) link pools into the install, so producing static Linux ELFs and
+  Windows PEs from a Mac needs no external toolchain — and a missing pool is a clear
+  error naming what's absent, never a silent fallback.
+- **Export names are promises.** An `extern` definition exports under its *spelled* name
+  even when overload resolution mangles the symbol internally, and two `extern`
+  definitions of one name is a compile error — an export a host looks up by name can't
+  quietly wear a mangled one.
+- **A real Mach-O export trie.** The single-node writer that silently capped a dylib at
+  255 exported symbols now builds the full prefix tree; a 400-symbol library round-trips
+  with clients calling either side of the old cap.
+- **Shared libraries and `#import <Lib>`** on arm9, arm64, x86_64 and win64 — a library
+  carries its own interface *inside* the binary, so clients type-check against the real
+  artifact rather than a header that may have drifted. Protocols compose across
+  libraries built in complete ignorance of each other; `weak:` fields, bound methods and
+  re-exported C types all cross the boundary.
+- **`weak:` without a table.** Weak slots thread onto an intrusive list in the referent's
+  own heap header — no capacity limit, O(1) stores, and destroying an object with no
+  weak references costs one null test.
+- **A differential fuzzer.** Generates random programs, compiles them through every
+  backend, and treats any divergence between two targets as a bug. It found seven the
+  corpus had missed.
 - **Collections.** `Array`, `Map`, `Set`, `String`, `Data`, `Number` and `Sort`, plus the
-  `Comparable` / `Hashable` / `Enumerable` protocols, all under `support/generic/lib/` — one
-  implementation shared by every backend.
-- **Free-list heap allocator** with `_heap_init` / `_heap_alloc` / `_heap_free`. `delete ptr;`
-  runs ARC `release()` walks before the block is freed; class arrays iterate release across
-  every element. Gated by `-falloc=heap`.
-- **Class inheritance, protocols and runtime downcasts.** Single-inheritance chains, virtual
-  dispatch, `super.method(...)`, and runtime-checked `T*` downcasts (with the failable
-  `(T* ?)` form). See [Inheritance & protocols](/compiler/language/inheritance/).
-- **Array slicing in for-in.** `arr[m..n]` / `arr[..n]` / `arr[m..]` / `arr[m...n]` produce a
-  slice the for-in loop walks element by element, on fixed-size arrays and heap pointers
-  alike; bounds may be runtime expressions.
-- **`use Klass;` / `#use Klass`.** Static-method bare-call promotion: after `use Stdio;`, a
-  bare `printf(...)` resolves to `Stdio.printf(...)`.
+  `Comparable` / `Hashable` / `Enumerable` protocols — one implementation shared by
+  every backend.
 
 ## Known issues
 

@@ -3,6 +3,78 @@ title: ChangeLog
 description: Release notes for the xcc toolchain — bug fixes and new features per version.
 ---
 
+## Version 0.4 — the xcc rename, blocks, UTF-8 strings, the ambient platform
+
+The toolchain is renamed: the driver is **`xcc`** (formerly `xtc`), the assembler
+`xcc-as`, the simulators `xcc-sim-6502` / `xcc-sim-68k`. The *language* keeps the
+xtc name. Installs land in `/opt/xcc/<version>` and the compiler finds its
+libraries relative to its own binary — no flags, no environment variables.
+`xcc --migrate` rewrites the mechanical parts of pre-0.4 source, and library
+declarations carry `since("0.4")` markers so version mismatches are diagnosed
+rather than mis-parsed.
+
+### Blocks
+
+Closures as first-class values, declared the way variables are declared —
+`block b u32(u16 x, u16 y) = { … };` — with by-value snapshot captures, storable
+in fields and registries, passable inline to methods, plus `block:` write-back
+captures with escape analysis that turns the unsound cases into compile errors.
+Entirely a parse-time lowering onto classes, so blocks work on every backend
+including the 6502. See [Blocks](/compiler/language/blocks/).
+
+### Strings are UTF-8, end to end
+
+`String` is UTF-8-native with parallel byte and character interfaces, and string
+literals gain `\xNN` (ASCII only, by design), `\uNNNN` and `\UNNNNNNNN` escapes
+with fixed digit counts — deliberately unlike C's greedy `\x`.
+
+### The ambient platform surface
+
+`Url` (an NSURL-style value whose `fetch` completion is a block), the `Logger`
+protocol behind the `Log` facade, and the `Platform` delegate seam are available
+with **zero imports** on every target: each platform's prelude wires its own
+transport and logger (browser fetch/console on wasm32; tty-coloured console on
+hosted targets), and application source names no platform, ever.
+
+### The toolchain-free cross matrix
+
+`make install` vendors the musl and mingw link pools into the install, so a Mac
+with only xcc on it produces static Linux ELFs and Windows PEs. A link that
+finds no pool is a clear, named error — never a silent fallback. The in-house
+Mach-O path is now the default on every host.
+
+### Sharper edges made safe
+
+Raw and class pointers no longer convert silently in either direction (a sema
+error names the fix); an `extern` definition exports its *spelled* name even when
+overloads mangle the symbol internally, and two externs of one name is an error;
+a Linux binary's `main` return now flushes stdio through `exit(3)` — piped
+output no longer truncates at the buffer; and a 64-bit multiply by a wide
+constant keeps its top bits on x86-64.
+
+## Version 0.3 — two more backends, separate compilation, categories
+
+The line that grew the toolchain from five backends to seven, still under the
+`xtc` name:
+
+- **win64**: PE executables with full C interop (callbacks included), corpus-
+  verified under Wine, with xcc's own PE writer.
+- **wasm32**: `.wasm` plus a universal Node/browser loader, in-house WAT
+  assembler and binary writer, classes/ARC/protocols/i64/floats complete.
+- **Separate compilation**: `-c` objects carrying their interfaces, `-flto`
+  whole-program re-optimisation, and `--emit-lib` shared libraries on arm9,
+  arm64, x86_64 and win64 — the interface travels inside the binary.
+- **Class categories** (§4.2): extending a class from another module, with
+  chain dispatch that survives subclass overrides across library boundaries.
+- **Threading** on the native hosts: `Thread.spawn(&obj.method)`, `Mutex`,
+  `Cond`, `Sem`, `Atomic`, `ThreadLocal` — with ARC refcounts going atomic
+  automatically in modules that thread.
+- **`i64`/`u64` on every target**, including the 8- and 16-bit ones, byte-
+  identical through the self-hosted twin.
+- The **native toolchain completed**: xcc's own assemblers and executable
+  writers for every target, with external-toolchain fallback demoted to an
+  explicit opt-in.
+
 ## Version 0.2 — five backends, shared libraries, bound methods
 
 A new version line. 0.12 was the last of the AST code generator; **0.2** is the first of the

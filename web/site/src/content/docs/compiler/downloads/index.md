@@ -1,91 +1,86 @@
 ---
 title: Downloads
-description: Prebuilt xtc toolchain binaries for macOS, Linux, and Windows.
+description: Prebuilt xcc toolchain archives for macOS, Linux and Windows.
 ---
 
-:::caution[These archives predate the 0.4 rename]
-The binaries below are **0.12-era** builds, from before the toolchain was renamed:
-the driver in them is `xtc`, not `xcc`, and they carry the older `resources/support/`
-layout rather than the current `lib/xc`. They still work as documented on this page,
-but the rest of the documentation describes the current toolchain.
-
-For the current compiler, build from source and `make install` — it lands in
-`/opt/xcc/<version>` with the driver as `xcc`, and finds its own libraries with no
-flags. See [Install](/compiler/usage/install/).
-:::
-
-Prebuilt binaries for **xtc 0.12**. Each archive contains the compiler driver (`xtc`), the standalone assembler, the 6502 simulator, and the `resources/support/` tree the compiler expects to find alongside the binaries (linker scripts, startup stubs, runtime asm, standard-library classes).
+The current release line is **xcc 0.4**. One install is the whole toolchain: the
+driver (`xcc`), the front end, seven code generators, xcc's own assemblers and
+linkers, the simulators (`xcc-sim-6502`, `xcc-sim-68k`), and the complete standard
+library — plus the vendored Linux (musl) and Windows (mingw) link pools, so a
+single machine cross-builds native binaries for every target with **no other
+toolchain installed**.
 
 | Platform | Download | Size |
 | --- | --- | --- |
-| macOS (universal) | [xtc-osx-0.12.tar.bz2](/downloads/xtc-osx-0.12.tar.bz2) | 1.1 MB |
-| Linux (x86_64) | [xtc-linux-0.12.tar.bz2](/downloads/xtc-linux-0.12.tar.bz2) | 16 MB |
-| Windows (x64) | [xtc-win64-0.12.zip](/downloads/xtc-win64-0.12.zip) | 18 MB |
+| macOS (Apple silicon) | [xcc-osx-0.4.tar.bz2](/downloads/xcc-osx-0.4.tar.bz2) | 8.9 MB |
+| Linux (x86_64) | [xcc-linux-0.4.tar.bz2](/downloads/xcc-linux-0.4.tar.bz2) | 61 MB |
+| Windows (x64) | [xcc-win64-0.4.zip](/downloads/xcc-win64-0.4.zip) | 71 MB |
+
+Every archive is the same compiler: each host build cross-compiles to **all**
+targets, so the platform you download for is only where the compiler runs, never
+what it can produce.
 
 ## macOS
 
 ```bash
-tar xjf xtc-osx-0.12.tar.bz2
-cd xtc-osx-0.12
-./xtc --version
+tar xjf xcc-osx-0.4.tar.bz2
+export PATH="$PWD/xcc-osx-0.4/bin:$PATH"
+xcc -v
 ```
 
-Add `xtc-osx-0.12/` to your `PATH`, or invoke the binaries by full path. The first run on a fresh macOS install may need a one-time Gatekeeper override (`xattr -dr com.apple.quarantine xtc-osx-0.12/`) since the binaries aren't notarised.
+The compiler finds its libraries **relative to its own binary** — no flags, no
+environment variables, no fixed install path. Move the directory anywhere you
+like. The first run on a fresh macOS install may need a one-time Gatekeeper
+override (`xattr -dr com.apple.quarantine xcc-osx-0.4/`) since the binaries
+aren't notarised.
+
+One omission from every archive: the arm9 sysroot (it is large and
+target-specific); `-A arm9` needs a `-L` pointing at one.
 
 ## Linux
 
 ```bash
-tar xjf xtc-linux-0.12.tar.bz2
-cd xtc-linux-0.12
-./xtc --version
+tar xjf xcc-linux-0.4.tar.bz2
+export PATH="$PWD/xcc-linux-0.4/bin:$PATH"
+xcc -v
 ```
 
-The Linux build is statically linked against GNUstep, so no system GNUstep install is required. Tested on x86_64; if you need ARM64 or another architecture, build from source.
+The binaries are static (musl), so they run on any x86_64 distribution with no
+library dependencies at all.
 
 ## Windows
 
-```powershell
-Expand-Archive xtc-win64-0.12.zip -DestinationPath xtc
-cd xtc
-.\xtc.exe --version
-```
-
-The Windows build is statically linked against GNUstep, so no separate GNUstep installation is required.
+Unzip `xcc-win64-0.4.zip` anywhere and add the folder to `PATH` (or invoke
+`xcc.exe` by path). The binaries are self-contained; no runtime installer is
+needed.
 
 ## First build
 
-Try a small program to confirm everything's wired up:
-
 ```c
-// hello.xc
-#use Stdio
-
+// hello.xc — no imports needed: Log is ambient on every target.
 void main(void) {
-    Stdio.print("hello, atari\n");
+    Log.info("hello from %s", "xcc");
 }
 ```
 
 ```bash
-xtc -O2 hello.xc -o hello.xex
+xcc -o hello hello.xc      # native binary for this machine, like cc
+./hello
 ```
 
+The same file cross-compiles to every target by picking an architecture:
+
+```bash
+xcc -A x86_64 -o hello-linux hello.xc    # static Linux ELF (musl)
+xcc -A win64  -o hello.exe    hello.xc   # Windows PE
+xcc -A wasm32 -o hello        hello.xc   # hello.wasm + a Node/browser loader
+xcc -A 6502   -o hello.xex    hello.xc   # banked Atari XEX (run: xcc-sim-6502 -m xt hello.xex)
 ```
-xtc: optimised -O2 (... → ...)
-xtc: compiled 'hello.xc' -> 'hello.xex' (0 warnings, 0 errors)
-xta: assembled -> 'hello.xex' (... bytes, 1 segments)
-```
 
-Drop `hello.xex` into your favourite Atari emulator (Altirra, atari800, or run it under the bundled simulator with `xts hello.xex`) and you should see `hello, atari` print to the screen.
+From here, [Compiler usage → CLI reference](/compiler/usage/cli/) covers the flags
+you'll reach for next, and [Install](/compiler/usage/install/) covers a system-wide
+`make install`.
 
-One thing to note is that xtc will attempt to read from its 'support' folder for things like Stdio.xc. It therefore needs to know where those files are, and you can tell it that in one of several ways (in order of priority)...
-
- - pass "-H path-to-support-dir" to xtc on the command line
- - set an environment variable of XTC_HOME to point to the support dir
- - have the 'support' directory in the same directory as the files you're compiling
- - place the 'support' directory into $HOME/xtc
- - place the 'support' directory into /usr/local/xtc
- - place the 'support' directory into /opt/xtc
-
-You should find the support directory itself in the resources/ folder that came in the download along with xtc, xta and xts.
-
-From here, [Compiler usage → CLI reference](/compiler/usage/cli/) covers the flags you'll reach for next; [Memory models](/compiler/usage/memory-models/) walks through the xt6502 memory map.
+Older archives (including the pre-rename `xtc` 0.1x line) are on the
+[Historical Releases](/compiler/downloads/historical/) page, and the
+[ChangeLog](/compiler/downloads/changelog/) lists what changed per version.
